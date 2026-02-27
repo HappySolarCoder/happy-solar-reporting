@@ -1,21 +1,32 @@
-from flask import Flask, render_template_string, jsonify
-import os
+# -*- coding: utf-8 -*-
+
 import json
+import os
+from flask import Flask, render_template_string, jsonify
 from google.cloud import firestore
 
 app = Flask(__name__)
 
-# Initialize Firebase
-SERVICE_ACCOUNT = json.loads(os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '{}'))
+# Try to init Firestore
 db = None
-if SERVICE_ACCOUNT:
-    try:
-        import credentials
+try:
+    # For local development
+    creds_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    if creds_json:
+        import json
+        from google.oauth2 import service_account
+        from google.cloud import firestore
+        
+        creds_dict = json.loads(creds_json)
+        # Write temp credentials file
+        with open('/tmp/firebase-key.json', 'w') as f:
+            json.dump(creds_dict, f)
+        
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/tmp/firebase-key.json'
         db = firestore.Client()
-    except:
-        pass
+except Exception as e:
+    print(f"Firestore init error: {e}")
 
-# Simple HTML template for the dashboard
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html>
@@ -30,7 +41,6 @@ DASHBOARD_HTML = """
         .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .stat-card h3 { margin: 0 0 10px 0; color: #666; font-size: 14px; }
         .stat-card .value { font-size: 32px; font-weight: bold; color: #333; }
-        .loading { text-align: center; padding: 40px; color: #666; }
     </style>
     <meta http-equiv="refresh" content="30">
 </head>
@@ -111,3 +121,7 @@ def api_stats():
             stats['users'] = db.collection('ghl_users').count().get()[0].value
         except: stats['users'] = 0
     return jsonify(stats)
+
+# Vercel handler
+def handler(request):
+    return app(request.environ, lambda status, headers: request.respond(status, headers))

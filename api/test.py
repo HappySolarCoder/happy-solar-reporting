@@ -1,7 +1,4 @@
-import json
+from flask import jsonify
 
 def handler(request):
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"message": "Hello from Happy Solar API!"})
-    }
+    return jsonify({"message": "Hello from Happy Solar API!"})

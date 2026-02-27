@@ -1,0 +1,11 @@
+python-3.11.0
+
+# Firestore dependencies
+firebase-admin
+google-cloud-firestore
+
+# Dash/Plotly
+dash
+plotly
+pandas
+gunicorn

@@ -47,8 +47,8 @@ class SalesMetricContract:
     sold_date_custom_field_id: str = "P9oBjgbZjJdeE0OkBj9T"  # Sold Date (ISO)
 
     # TODO: fill these in once we identify the exact custom field IDs in GHL
-    setter_last_name_custom_field_id: str = ""
-    lead_gen_source_custom_field_id: str = ""
+    setter_last_name_custom_field_id: str = "Eq4NLTSkJ56KTxbxypuE"  # Setter Last Name
+    lead_gen_source_custom_field_id: str = "hd5QqHEOVSsPom5bJ32P"  # Lead Gen Source
     sold_date_field: str = "dateSold"  # legacy field name (not used in v2)
     stage_field: str = "pipelineStageId"
     opportunity_id_field: str = "id"  # opportunity id in ghl_opportunities

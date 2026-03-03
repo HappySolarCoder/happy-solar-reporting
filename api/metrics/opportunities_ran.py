@@ -215,13 +215,15 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         matched_time += 1
 
         # distinct count
-        distinct_opp_ids.add(opp_id)
-
-        # pipeline
+        # pipeline (and exclusions)
         pid = str(opp.get("pipelineId") or "")
         pname = pipe_names.get(pid) or pid or "unknown"
         if isinstance(pname, str) and pname.strip().lower() in set(c.excluded_pipeline_names):
             continue
+
+        # distinct count (after exclusions)
+        distinct_opp_ids.add(opp_id)
+
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
 
         # owner

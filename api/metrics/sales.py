@@ -116,6 +116,23 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
     # We'll join to ghl_contacts to get canonical sold date.
     contacts_col = db.collection("ghl_contacts")
+    pipelines_col = db.collection("ghl_pipelines")
+    pipeline_name_cache = {}
+
+    def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
+        if not pipeline_id:
+            return None
+        pid = str(pipeline_id)
+        if pid in pipeline_name_cache:
+            return pipeline_name_cache[pid]
+        snaps = list(pipelines_col.where('id', '==', pid).limit(1).stream())
+        if not snaps:
+            pipeline_name_cache[pid] = None
+            return None
+        name = (snaps[0].to_dict() or {}).get('name')
+        pipeline_name_cache[pid] = name
+        return name
+
 
     # Simple streaming approach for QA (optimize later with indexes/batching)
     for opp_doc in opp_q.stream():
@@ -168,7 +185,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                     "status": opp.get("status"),
                     "contactId": contact_id,
                     "dateSold": date_sold,
-                    "team": contact.get("team"),
+                    "pipelineName": pipeline_name_from_id(opp.get("pipelineId")),
                     "stageName_contact": contact.get("stageName"),
                     "assignedTo_contact": contact.get("assignedTo"),
                     "setter_contact": contact.get("setter"),
@@ -211,7 +228,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 def render_html(payload: dict[str, Any]) -> str:
     # Keep it dead simple for mobile QA.
     rows_html = "".join(
-        f"<tr><td><code>{r.get('opportunityId') or ''}</code></td><td><code>{r.get('pipelineStageId') or ''}</code></td><td>{r.get('team') or ''}</td><td>{r.get('lastName_contact') or ''}</td><td>{r.get('dateSold') or ''}</td></tr>"
+        f"<tr><td><code>{r.get('opportunityId') or ''}</code></td><td><code>{r.get('pipelineStageId') or ''}</code></td><td>{r.get('pipelineName') or ''}</td><td>{r.get('lastName_contact') or ''}</td><td>{r.get('dateSold') or ''}</td></tr>"
         for r in payload.get("sample_rows", [])
     )
 
@@ -262,7 +279,7 @@ def render_html(payload: dict[str, Any]) -> str:
       <div class=\"label\">Sample contributing rows (first 25)</div>
       <table>
         <thead>
-          <tr><th>opportunityId</th><th>pipelineStageId</th><th>team</th><th>lastName</th><th>dateSold</th></tr>
+          <tr><th>opportunityId</th><th>pipelineStageId</th><th>pipeline</th><th>lastName</th><th>dateSold</th></tr>
         </thead>
         <tbody>
           {rows_html or '<tr><td colspan="5">No rows in this window.</td></tr>'}

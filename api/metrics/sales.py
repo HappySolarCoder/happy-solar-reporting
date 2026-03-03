@@ -173,26 +173,28 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         for cf in (contact.get("customFields") or []):
             if isinstance(cf, dict) and cf.get("id") == contract.sold_date_custom_field_id:
                 date_sold = cf.get("value")
-                break
+                break        # Interpret Sold Date as a DATE-ONLY field in EST.
+        # GHL UI shows a calendar date (e.g., "Mar 1st 2026"). The API wraps it as an ISO timestamp
+        # like 2026-03-01T00:00:00.000Z. We must NOT shift that into Feb 28 when converting timezones.
+        sold_date_str = None
+        if isinstance(date_sold, str) and len(date_sold) >= 10:
+            sold_date_str = date_sold[:10]  # YYYY-MM-DD
 
-        # Parse ISO -> epoch millis
-        date_sold_ms = None
-        if isinstance(date_sold, str):
-            try:
-                # Example: 2026-01-07T00:00:00.000Z
-                # Force UTC parse then compare using millis window
-                dt = datetime.fromisoformat(date_sold.replace("Z", "+00:00"))
-                date_sold_ms = int(dt.timestamp() * 1000)
-            except Exception:
-                date_sold_ms = None
-
-        if not isinstance(date_sold_ms, int):
+        if not sold_date_str:
             continue
 
-        # Apply month window on sold date (millis)
-        if not (start_ms <= date_sold_ms < end_ms):
+        # Compare by local date month window (EST)
+        # Window boundaries are start_local/end_local; we compare on YYYY-MM-DD.
+        # Convert boundaries to YYYY-MM-DD strings.
+        start_date_str = start_local.date().isoformat()
+        end_date_str = end_local.date().isoformat()
+
+        if not (start_date_str <= sold_date_str < end_date_str):
             continue
         matched_date += 1
+
+        # For display/debug, store dateSold as the YYYY-MM-DD string.
+        date_sold_ms = sold_date_str
 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
@@ -225,7 +227,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "result": len(unique_opp_ids),
-        "count_method": "COUNT_DISTINCT(ghl_opportunities.id) where pipelineStageId in stage_ids AND joined ghl_contacts.dateSold in window",
+        "count_method": "COUNT_DISTINCT(ghl_opportunities_v2.id) where pipelineStageId in stage_ids AND joined ghl_contacts_v2 Sold Date (date-only, EST month) in window",
         "debug": {
             "opportunities_scanned": scanned,
             "opportunities_matched_stage": matched_stage,

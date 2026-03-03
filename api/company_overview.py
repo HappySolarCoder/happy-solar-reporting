@@ -204,10 +204,12 @@ def render_html(year: int, month: int) -> str:
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
     .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
     .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
 
     @media (max-width: 980px) {
-      .span-4, .span-8 { grid-column: span 12; }
+      .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
     }
 
     /* Horizontal bars */
@@ -328,41 +330,25 @@ def render_html(year: int, month: int) -> str:
         <div class="meta" id="opp2prelimMeta">—</div>
       </div>
 
-      <!-- Requested row: vertical sales-by-pipeline + sales-by-lead-channel -->
-      <div class="card span-8">
+      <!-- Row 2: Sales per Team full width -->
+      <div class="card span-12">
         <div class="card-header">
-          <div class="card-title">Sales per Pipeline (Team)</div>
+          <div class="card-title">Sales per Team (Pipeline)</div>
           <div class="meta">Vertical bars</div>
         </div>
         <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>
 
-      <div class="card span-4">
+      <!-- Row 3: vertical sales by lead gen source + vertical created by lead gen source -->
+      <div class="card span-6">
         <div class="card-header">
-          <div class="card-title">Sales per Lead Channel</div>
-          <div class="meta">Lead Gen Source</div>
-        </div>
-        <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
-      </div>
-
-      <!-- Additional context cards (kept) -->
-      <div class="card span-8">
-        <div class="card-header">
-          <div class="card-title">Sales per Owner (Sales Rep)</div>
-          <div class="meta">0 hidden</div>
-        </div>
-        <div class="barlist" id="salesByOwner"><div class="skeleton">Loading…</div></div>
-      </div>
-
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Opportunities Created by Setter</div>
+          <div class="card-title">Sales per Lead Gen Source</div>
           <div class="meta">Vertical bars</div>
         </div>
-        <div class="vchart" id="createdBySetter"><div class="skeleton">Loading…</div></div>
+        <div class="vchart" id="salesByChannelV"><div class="skeleton">Loading…</div></div>
       </div>
 
-      <div class="card span-8">
+      <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Opportunities Created by Lead Gen Source</div>
           <div class="meta">Vertical bars</div>
@@ -482,11 +468,9 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('createdMeta').textContent = '';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('salesByChannelV').innerHTML = '<div class="skeleton">Loading…</div>';
 
 
-        document.getElementById('salesByOwner').innerHTML = '<div class="skeleton">Loading…</div>';
-    document.getElementById('salesByChannel').innerHTML = '<div class="skeleton">Loading…</div>';
-    document.getElementById('createdBySetter').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
     const [salesRes, createdRes, ranRes] = await Promise.all([
@@ -510,8 +494,7 @@ def render_html(year: int, month: int) -> str:
 
     const b = (salesData.breakdowns || {});
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
-    renderBars(document.getElementById('salesByOwner'), b.sales_by_owner || {});
-    renderBars(document.getElementById('salesByChannel'), b.sales_by_lead_gen_source || {});
+    renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
 
     if (!createdData) {
       document.getElementById('createdMeta').textContent = `Opportunities Created HTTP ${createdRes.status}`;
@@ -538,7 +521,6 @@ def render_html(year: int, month: int) -> str:
 
 
     const cb = (createdData.breakdowns || {});
-    renderVertical(document.getElementById('createdBySetter'), cb.created_by_setter_last_name || {});
     renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});
   }
 

@@ -2,19 +2,23 @@
 
 """Vercel Python function: /api/company_overview
 
-Company Overview (first page of dashboard)
+Company Overview (first page of production dashboard)
 - Total Sales
 - Sales per Team (Pipeline)
 - Sales per Owner (Sales Rep)
 - Sales per Channel (Lead Gen Source)
+- Opportunities Created by Setter (vertical bar chart)
+- Opportunities Created by Lead Gen Source (vertical bar chart)
 
-Data source: /api/metrics/sales (v2)
+Data sources:
+- /api/metrics/sales (v2)
+- /api/metrics/opportunities_created (v2)
 
-UI intent (Production / Customer Insights style):
+UI intent (Customer Insights production style):
 - White cards on light gray background
 - Vibrant chart colors
-- 3-column grid
-- Pink gradient line accent
+- 3-column grid behavior
+- Pink gradient accent line
 
 NOTE: The canonical style reference file
 `Memories/Beane/Dashboard Designs/Customer Insights Dashboard UI Example.md`
@@ -152,13 +156,46 @@ def render_html(year: int, month: int) -> str:
       .span-4, .span-8 { grid-column: span 12; }
     }
 
-    /* Bars (vibrant, Customer-Insights-like) */
+    /* Horizontal bars */
     .barlist { margin-top: 10px; }
     .barrow { display:flex; align-items:center; gap: 10px; margin: 10px 0; }
     .barlabel { width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size: 13px; color: var(--text); }
     .barwrap { flex: 1; background: #f0f2f5; border: 1px solid var(--border); border-radius: 999px; height: 14px; overflow:hidden; }
     .barfill { height: 100%; }
     .barval { width: 54px; text-align:right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+
+    /* Vertical bars */
+    .vchart { margin-top: 10px; }
+    .vwrap {
+      display:flex;
+      align-items:flex-end;
+      gap: 10px;
+      height: 240px;
+      padding: 10px 10px;
+      background:#fafbfc;
+      border:1px solid var(--border);
+      border-radius:12px;
+      overflow-x:auto;
+    }
+    .vcol {
+      width: 54px;
+      flex: 0 0 54px;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap: 8px;
+    }
+    .vbar { width: 100%; border-radius: 12px 12px 5px 5px; }
+    .vval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .vlabel {
+      font-size: 11px;
+      color: var(--muted);
+      text-align:center;
+      width: 74px;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
 
     a { color: var(--pink); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -171,7 +208,7 @@ def render_html(year: int, month: int) -> str:
     <div class="topbar">
       <div>
         <div class="title">Company Overview</div>
-        <div class="subtitle">Happy Solar — Sales rollups</div>
+        <div class="subtitle">Happy Solar — Sales + created opportunities</div>
         <div class="pinkline"></div>
       </div>
 
@@ -221,12 +258,45 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
       </div>
+
+      <div class="card span-8">
+        <div class="card-header">
+          <div class="card-title">Opportunities Created by Setter</div>
+          <div class="meta"><a id="createdLink" href="#">/api/metrics/opportunities_created</a></div>
+        </div>
+        <div class="vchart" id="createdBySetter"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Opportunities Created by Lead Gen Source</div>
+          <div class="meta">Vertical bars</div>
+        </div>
+        <div class="vchart" id="createdByLead"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Debug</div>
+          <div class="meta">timezone</div>
+        </div>
+        <div class="meta" id="createdMeta">—</div>
+      </div>
     </div>
   </div>
 
 <script>
   const defaultYear = __YEAR__;
   const defaultMonth = __MONTH__;
+
+  const palette = [
+    'var(--pink)',
+    'var(--blue)',
+    'var(--purple)',
+    'var(--cyan)',
+    'var(--amber)',
+    'var(--green)'
+  ];
 
   function setOptions(sel, options, value) {
     sel.innerHTML = '';
@@ -242,6 +312,7 @@ def render_html(year: int, month: int) -> str:
   const yearSel = document.getElementById('year');
   const monthSel = document.getElementById('month');
   const salesLink = document.getElementById('salesLink');
+  const createdLink = document.getElementById('createdLink');
 
   const years = [];
   for (let y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
@@ -250,15 +321,6 @@ def render_html(year: int, month: int) -> str:
   setOptions(yearSel, years, defaultYear);
   setOptions(monthSel, months, defaultMonth);
 
-  const palette = [
-    'var(--pink)',
-    'var(--blue)',
-    'var(--purple)',
-    'var(--cyan)',
-    'var(--amber)',
-    'var(--green)'
-  ];
-
   function renderBars(container, obj) {
     container.innerHTML = '';
     const entries = Object.entries(obj || {});
@@ -266,9 +328,7 @@ def render_html(year: int, month: int) -> str:
       container.innerHTML = '<div class="skeleton">No data.</div>';
       return;
     }
-    // Keep sort stable by value desc then name
     entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
-
     const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
     let i = 0;
     for (const [name, val] of entries) {
@@ -278,7 +338,6 @@ def render_html(year: int, month: int) -> str:
       const pct = Math.round((v / maxVal) * 100);
       const color = palette[i % palette.length];
       i++;
-
       const row = document.createElement('div');
       row.className = 'barrow';
       row.innerHTML = `
@@ -290,35 +349,88 @@ def render_html(year: int, month: int) -> str:
     }
   }
 
+  function renderVertical(container, obj) {
+    container.innerHTML = '';
+    const entries = Object.entries(obj || {});
+    if (!entries.length) {
+      container.innerHTML = '<div class="skeleton">No data.</div>';
+      return;
+    }
+    entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
+    const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
+
+    let html = '<div class="vwrap">';
+    let i = 0;
+    for (const [name, val] of entries) {
+      const n = String(name);
+      const v = Number(val) || 0;
+      if (v === 0) continue;
+      const pct = Math.max(2, Math.round((v / maxVal) * 100));
+      const color = palette[i % palette.length];
+      i++;
+      html += `
+        <div class="vcol" title="${n}">
+          <div class="vval">${v}</div>
+          <div class="vbar" style="height:${pct}%; background:${color}"></div>
+          <div class="vlabel">${n}</div>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
   async function load() {
     const y = yearSel.value;
     const m = monthSel.value;
 
-    const url = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+
     salesLink.href = `/api/metrics/sales?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    createdLink.href = `/api/metrics/opportunities_created?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('salesMeta').textContent = '';
+    document.getElementById('createdMeta').textContent = '';
 
     document.getElementById('salesByPipeline').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('salesByOwner').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('salesByChannel').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('createdBySetter').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) {
+    const [salesRes, createdRes] = await Promise.all([
+      fetch(salesUrl, { cache: 'no-store' }),
+      fetch(createdUrl, { cache: 'no-store' })
+    ]);
+
+    if (!salesRes.ok) {
       document.getElementById('totalSales').textContent = 'ERR';
-      document.getElementById('salesMeta').textContent = `HTTP ${res.status}`;
+      document.getElementById('salesMeta').textContent = `Sales HTTP ${salesRes.status}`;
       return;
     }
-    const data = await res.json();
 
-    document.getElementById('totalSales').textContent = data.result;
-    document.getElementById('salesMeta').textContent = `${data.window_start_local} → ${data.window_end_local} (${data.timezone})`;
+    const salesData = await salesRes.json();
+    const createdData = createdRes.ok ? await createdRes.json() : null;
 
-    const b = (data.breakdowns || {});
+    document.getElementById('totalSales').textContent = salesData.result;
+    document.getElementById('salesMeta').textContent = `${salesData.window_start_local} → ${salesData.window_end_local} (${salesData.timezone})`;
+
+    const b = (salesData.breakdowns || {});
     renderBars(document.getElementById('salesByPipeline'), b.sales_by_pipeline || {});
     renderBars(document.getElementById('salesByOwner'), b.sales_by_owner || {});
     renderBars(document.getElementById('salesByChannel'), b.sales_by_lead_gen_source || {});
+
+    if (!createdData) {
+      document.getElementById('createdMeta').textContent = `Opportunities Created HTTP ${createdRes.status}`;
+      return;
+    }
+
+    document.getElementById('createdMeta').textContent = `${createdData.window_start_local} → ${createdData.window_end_local} (${createdData.timezone})`;
+
+    const cb = (createdData.breakdowns || {});
+    renderVertical(document.getElementById('createdBySetter'), cb.created_by_setter_last_name || {});
+    renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});
   }
 
   document.getElementById('apply').addEventListener('click', load);

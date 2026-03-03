@@ -1,0 +1,281 @@
+# -*- coding: utf-8 -*-
+
+"""Vercel Python function: /api/company_overview
+
+Company Overview (first page of dashboard)
+- Total Sales
+- Sales per Team (Pipeline)
+- Sales per Owner (Sales Rep)
+- Sales per Channel (Lead Gen Source)
+
+Data source: /api/metrics/sales (v2)
+UI style: PatientPop-style cards + green accent (#00C853)
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
+
+
+def render_html(year: int, month: int) -> str:
+    html = r"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Happy Solar — Company Overview</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --border: #e8ecf0;
+      --text: #111827;
+      --muted: #6b7280;
+      --muted2: #9ca3af;
+      --green: #00C853;
+    }
+    body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; margin:0; background: var(--bg); color: var(--text); }
+    .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
+
+    .topbar { display:flex; align-items:center; justify-content: space-between; gap: 16px; }
+    .title { font-size: 22px; font-weight: 800; color: #1a2b4a; }
+
+    .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+    .filter { display:flex; align-items:center; gap: 8px; }
+    .filter-label { font-size: 12px; color: var(--muted); background:#eef2f6; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); }
+    select, button {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 13px;
+    }
+    button { background: var(--green); border-color: var(--green); color: #fff; font-weight: 800; cursor:pointer; }
+
+    .grid {
+      display:grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+      margin-top: 16px;
+      align-content: start;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 3px rgba(17,24,39,0.06);
+      min-height: 120px;
+    }
+
+    .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
+    .card-title { font-size: 13px; font-weight: 700; color: var(--muted); }
+
+    .kpi { font-size: 46px; font-weight: 900; margin-top: 8px; letter-spacing: -0.02em; }
+    .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
+
+    .span-8 { grid-column: span 8; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-12 { grid-column: span 12; }
+
+    @media (max-width: 980px) {
+      .span-8, .span-6, .span-4 { grid-column: span 12; }
+    }
+
+    /* Bars */
+    .barlist { margin-top: 10px; }
+    .barrow { display:flex; align-items:center; gap: 10px; margin: 10px 0; }
+    .barlabel { width: 170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size: 13px; color: var(--text); }
+    .barwrap { flex: 1; background: #eef2f6; border: 1px solid var(--border); border-radius: 999px; height: 14px; overflow:hidden; }
+    .barfill { height: 100%; background: var(--green); }
+    .barval { width: 54px; text-align:right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+
+    a { color: var(--green); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .skeleton { color: var(--muted2); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <div class="title">Company Overview</div>
+        <div class="meta">Happy Solar — Sales rollups</div>
+      </div>
+
+      <div class="filters">
+        <div class="filter">
+          <div class="filter-label">Year</div>
+          <select id="year"></select>
+        </div>
+        <div class="filter">
+          <div class="filter-label">Month</div>
+          <select id="month"></select>
+        </div>
+        <button id="apply">Apply</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Total Sales</div>
+          <div class="meta"><a id="salesLink" href="#">/api/metrics/sales</a></div>
+        </div>
+        <div class="kpi" id="totalSales">—</div>
+        <div class="meta" id="salesMeta">—</div>
+      </div>
+
+      <div class="card span-8">
+        <div class="card-header">
+          <div class="card-title">Sales per Team (Pipeline)</div>
+          <div class="meta">Pipelines with 0 hidden</div>
+        </div>
+        <div class="barlist" id="salesByPipeline"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-header">
+          <div class="card-title">Sales per Owner (Sales Rep)</div>
+          <div class="meta">Owners with 0 hidden</div>
+        </div>
+        <div class="barlist" id="salesByOwner"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-header">
+          <div class="card-title">Sales per Channel (Lead Gen Source)</div>
+          <div class="meta">Channels with 0 hidden</div>
+        </div>
+        <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-12">
+        <div class="card-header">
+          <div class="card-title">Notes</div>
+          <div class="meta">Timezone + definitions</div>
+        </div>
+        <div class="meta" style="margin-top:8px">
+          Sales uses the canonical Sales metric (opportunity grain + Sold Date from contact; month windows in America/New_York; Sold Date compared as YYYY-MM-DD). Pipelines/Owners are resolved to human names.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const defaultYear = __YEAR__;
+  const defaultMonth = __MONTH__;
+
+  function setOptions(sel, options, value) {
+    sel.innerHTML = '';
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = String(opt.value);
+      o.textContent = opt.label;
+      if (String(opt.value) === String(value)) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+
+  const yearSel = document.getElementById('year');
+  const monthSel = document.getElementById('month');
+  const salesLink = document.getElementById('salesLink');
+
+  const years = [];
+  for (let y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
+  const months = Array.from({length:12}, (_,i)=>({value:i+1, label: new Date(2000,i,1).toLocaleString('en-US',{month:'long'})}));
+
+  setOptions(yearSel, years, defaultYear);
+  setOptions(monthSel, months, defaultMonth);
+
+  function renderBars(container, obj) {
+    container.innerHTML = '';
+    const entries = Object.entries(obj || {});
+    if (!entries.length) {
+      container.innerHTML = '<div class="skeleton">No data.</div>';
+      return;
+    }
+    const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
+    for (const [name, val] of entries) {
+      const n = String(name);
+      const v = Number(val) || 0;
+      if (v === 0) continue;
+      const pct = Math.round((v / maxVal) * 100);
+      const row = document.createElement('div');
+      row.className = 'barrow';
+      row.innerHTML = `
+        <div class="barlabel" title="${n}">${n}</div>
+        <div class="barwrap"><div class="barfill" style="width:${pct}%"></div></div>
+        <div class="barval">${v}</div>
+      `;
+      container.appendChild(row);
+    }
+  }
+
+  async function load() {
+    const y = yearSel.value;
+    const m = monthSel.value;
+
+    const url = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    salesLink.href = `/api/metrics/sales?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+
+    document.getElementById('totalSales').textContent = '…';
+    document.getElementById('salesMeta').textContent = '';
+
+    document.getElementById('salesByPipeline').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('salesByOwner').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('salesByChannel').innerHTML = '<div class="skeleton">Loading…</div>';
+
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      document.getElementById('totalSales').textContent = 'ERR';
+      document.getElementById('salesMeta').textContent = `HTTP ${res.status}`;
+      return;
+    }
+    const data = await res.json();
+
+    document.getElementById('totalSales').textContent = data.result;
+    document.getElementById('salesMeta').textContent = `${data.window_start_local} → ${data.window_end_local} (${data.timezone})`;
+
+    const b = (data.breakdowns || {});
+    renderBars(document.getElementById('salesByPipeline'), b.sales_by_pipeline || {});
+    renderBars(document.getElementById('salesByOwner'), b.sales_by_owner || {});
+    renderBars(document.getElementById('salesByChannel'), b.sales_by_lead_gen_source || {});
+  }
+
+  document.getElementById('apply').addEventListener('click', load);
+  load();
+</script>
+</body>
+</html>"""
+
+    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month))
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            qs = parse_qs(urlparse(self.path).query)
+            now = datetime.utcnow()
+            year = int(qs.get("year", [str(now.year)])[0])
+            month = int(qs.get("month", [str(now.month)])[0])
+
+            body = render_html(year, month).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            body = ("ERROR: " + str(e)).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)

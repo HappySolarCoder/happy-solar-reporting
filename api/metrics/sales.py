@@ -117,6 +117,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
     contrib_rows: list[dict[str, Any]] = []
     unique_opp_ids: set[str] = set()
+    pipeline_counts: dict[str, int] = {}
 
     scanned = 0
     matched_stage = 0
@@ -203,6 +204,10 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
 
+        # Breakdown by pipeline (human name)
+        pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
+        pipeline_counts[pname] = pipeline_counts.get(pname, 0) + 1
+
         if len(contrib_rows) < 50:
             contrib_rows.append(
                 {
@@ -246,6 +251,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "sold_date_field": f"ghl_contacts_v2.customFields[{contract.sold_date_custom_field_id}] (ISO)",
             "included_stage_ids": list(contract.stage_ids),
+        },
+        "breakdowns": {
+            "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
         },
         "sample_rows": contrib_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",

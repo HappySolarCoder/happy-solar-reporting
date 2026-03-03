@@ -82,6 +82,12 @@ def render_html(year: int, month: int) -> str:
         <div id="salesByPipeline" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:8px">Pipelines with 0 sales are hidden.</div>
       </div>
+
+      <div class="card">
+        <div class="label">Sales by Owner</div>
+        <div id="salesByOwner" style="margin-top:10px"></div>
+        <div class="muted" style="margin-top:8px">Owners with 0 sales are hidden.</div>
+      </div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -152,6 +158,7 @@ def render_html(year: int, month: int) -> str:
     salesKpi.textContent = '…';
     salesMeta.textContent = '';
     salesByPipeline.innerHTML = '';
+    salesByOwner.innerHTML = '';
 
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
@@ -163,6 +170,7 @@ def render_html(year: int, month: int) -> str:
     salesKpi.textContent = data.result;
     salesMeta.textContent = `${data.window_start_local} → ${data.window_end_local} (${data.timezone})`;
     renderBars(salesByPipeline, (data.breakdowns && data.breakdowns.sales_by_pipeline) || {});
+    renderBars(salesByOwner, (data.breakdowns && data.breakdowns.sales_by_owner) || {});
   }
 
   document.getElementById('apply').addEventListener('click', load);

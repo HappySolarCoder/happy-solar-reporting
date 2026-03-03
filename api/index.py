@@ -49,7 +49,8 @@ def safe_count(db: firestore.Client, collection: str) -> int:
     try:
         # Aggregation query (fast)
         return db.collection(collection).count().get()[0].value
-    except Exception:
+    except Exception as e:
+        print(f"count_failed collection={collection} err={e}")
         return -1
 
 

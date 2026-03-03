@@ -2,8 +2,7 @@
 
 """Vercel Python function: /api
 
-Implements a simple QA-friendly dashboard view that works on phone/desktop.
-Uses Firestore counts to verify credentials + connectivity.
+Simple QA dashboard. Uses Firestore counts to verify connectivity.
 
 Env vars (set in Vercel):
 - FIREBASE_SERVICE_ACCOUNT_JSON (stringified JSON)
@@ -47,8 +46,14 @@ def get_db() -> firestore.Client:
 
 def safe_count(db: firestore.Client, collection: str) -> int:
     try:
-        # Aggregation query (fast)
-        return db.collection(collection).count().get()[0].value
+        # Aggregation query - count() returns a list of results
+        result = db.collection(collection).count().get()
+        if isinstance(result, list) and len(result) > 0:
+            # First element is the aggregate result
+            return result[0][0].value
+        elif hasattr(result, 'value'):
+            return result.value
+        return -1
     except Exception as e:
         print(f"count_failed collection={collection} err={e}")
         return -1
@@ -106,8 +111,6 @@ def build_html(stats: dict) -> str:
       <div class=\"meta\">{stats['generated_at']}</div>
       <div class=\"meta\">JSON: <a href=\"/api?format=json\">/api?format=json</a></div>
     </div>
-
-    <div class=\"meta\">If any value is <code>—</code>, the Firestore aggregation count call failed (permissions/index/runtime). We can still query with fallbacks once metric endpoints are added.</div>
   </div>
 </body>
 </html>"""

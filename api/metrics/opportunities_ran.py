@@ -240,17 +240,17 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             lead = "none"
         by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
 
-        if len(sample_rows) < 50:
-            sample_rows.append({
-                "opportunityId": opp_id,
-                "pipeline": pname,
-                "owner": oname,
-                "contactId": cid,
-                "updatedAt": opp.get(c.updated_at_field),
-                "whatHappened": dispo_val,
-                "setterLastName": setter,
-                "leadGenSource": lead,
-            })
+        # For QA we include all matching rows (expected small counts like 29/33)
+        last_name = (contact.get("lastName") if isinstance(contact, dict) else None)
+        sample_rows.append({
+            "opportunityId": opp_id,
+            "contactId": cid,
+            "contactLastName": last_name,
+            "pipeline": pname,
+            "owner": oname,
+            "updatedAt": opp.get(c.updated_at_field),
+            "whatHappened": dispo_val,
+        })
 
     return {
         "metric": c.metric_name,
@@ -287,12 +287,46 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
 
 
 def render_html(payload: dict[str, Any]) -> str:
+    rows = payload.get("sample_rows", [])
+
+    # Sort by updatedAt for readability
+    rows = sorted(rows, key=lambda r: (r.get("updatedAt") or ""))
+
+    tr = []
+    for r in rows:
+        tr.append(
+            "<tr>"
+            f"<td><code>{r.get('opportunityId','')}</code></td>"
+            f"<td>{(r.get('contactLastName') or '')}</td>"
+            f"<td><code>{(r.get('whatHappened') or '')}</code></td>"
+            f"<td><code>{(r.get('updatedAt') or '')}</code></td>"
+            "</tr>"
+        )
+
+    rows_html = "\n".join(tr) if tr else "<tr><td colspan='4' style='padding:8px'>No rows</td></tr>"
+
+    table_html = f"""
+    <table style=\"width:100%; border-collapse: collapse; margin-top: 10px;\">
+      <thead>
+        <tr>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">opportunityId</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">contact last name</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">what happened</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">updatedAt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+    """
+
     return f"""<!doctype html>
 <html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
 <title>QA — Opportunities Ran</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;background:#0b0f14;color:#e8eef6;}}
-.wrap{{padding:18px;max-width:980px;margin:0 auto;}}
+.wrap{{padding:18px;max-width:1100px;margin:0 auto;}}
 .card{{background:#121a24;border:1px solid #1f2a38;border-radius:12px;padding:16px;margin-top:12px;}}
 .label{{color:#9db0c7;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}}
 .kpi{{font-size:44px;font-weight:900;}}
@@ -310,7 +344,14 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 <div class=\"card\"><div class=\"label\">Contract</div>
 <pre style=\"white-space:pre-wrap;color:#9db0c7\">{json.dumps(payload['contract'], indent=2)}</pre>
 </div>
+
+<div class=\"card\"><div class=\"label\">Matching opportunities (all)</div>
+<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + updatedAt</div>
+{table_html}
+</div>
+
 </div></body></html>"""
+
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -98,6 +98,37 @@ def render_html(year: int, month: int) -> str:
       margin-top: 10px;
     }
 
+    .nav {
+      margin-top: 12px;
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .navbtn {
+      display:inline-flex;
+      align-items:center;
+      padding: 9px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #1f2937;
+      font-size: 13px;
+      font-weight: 800;
+      text-decoration:none;
+    }
+
+    .navbtn:hover {
+      border-color: rgba(236,72,153,0.45);
+      box-shadow: 0 1px 2px rgba(17,24,39,0.06);
+    }
+
+    .navbtn.active {
+      background: rgba(236,72,153,0.10);
+      border-color: rgba(236,72,153,0.45);
+      color: #b80b66;
+    }
+
     .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
     .filter { display:flex; align-items:center; gap: 8px; }
     .filter-label {
@@ -223,6 +254,12 @@ def render_html(year: int, month: int) -> str:
         <div class="title">Company Overview</div>
         <div class="subtitle">Happy Solar — Sales + created opportunities</div>
         <div class="pinkline"></div>
+        <div class="nav">
+          <a class="navbtn active" href="/api/company_overview">Company overview</a>
+          <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
+          <a class="navbtn" href="/api/fma_dashboard">FMA dashboard</a>
+          <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
+        </div>
       </div>
 
       <div class="filters">

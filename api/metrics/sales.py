@@ -40,7 +40,7 @@ class SalesMetricContract:
     unit: str = "count"
 
     # DB mapping
-    collection: str = "ghl_opportunities"
+    collection: str = "ghl_opportunities_v2"
     sold_date_field: str = "dateSold"  # from ghl_contacts (epoch millis)
     stage_field: str = "pipelineStageId"
     opportunity_id_field: str = "id"  # opportunity id in ghl_opportunities
@@ -115,8 +115,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     matched_date = 0
 
     # We'll join to ghl_contacts to get canonical sold date.
-    contacts_col = db.collection("ghl_contacts")
-    pipelines_col = db.collection("ghl_pipelines")
+    contacts_col = db.collection("ghl_contacts_v2")
+    pipelines_col = db.collection("ghl_pipelines_v2")
     pipeline_name_cache = {}
 
     def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
@@ -209,14 +209,14 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "opportunities_matched_stage": matched_stage,
             "opportunities_matched_stage_and_date": matched_date,
             "distinct_opportunity_ids": len(unique_opp_ids),
-            "join": "ghl_opportunities.contactId -> ghl_contacts.id",
+            "join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
         },
         "contract": {
             "base_collection": contract.collection,
             "stage_field": f"{contract.collection}.{contract.stage_field}",
             "opportunity_id_field": f"{contract.collection}.{contract.opportunity_id_field}",
-            "contact_join": "ghl_opportunities.contactId -> ghl_contacts.id",
-            "sold_date_field": f"ghl_contacts.{contract.sold_date_field}",
+            "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
+            "sold_date_field": f"ghl_contacts_v2.{contract.sold_date_field}",
             "included_stage_ids": list(contract.stage_ids),
         },
         "sample_rows": contrib_rows,

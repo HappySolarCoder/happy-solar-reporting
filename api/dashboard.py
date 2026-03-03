@@ -88,6 +88,18 @@ def render_html(year: int, month: int) -> str:
         <div id="salesByOwner" style="margin-top:10px"></div>
         <div class="muted" style="margin-top:8px">Owners with 0 sales are hidden.</div>
       </div>
+
+      <div class="card">
+        <div class="label">Sales by Setter Last Name</div>
+        <div id="salesBySetter" style="margin-top:10px"></div>
+        <div class="muted" style="margin-top:8px">(Requires setter custom field mapping)</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Sales by Lead Gen Source</div>
+        <div id="salesByLeadSource" style="margin-top:10px"></div>
+        <div class="muted" style="margin-top:8px">(Requires lead source custom field mapping)</div>
+      </div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -159,6 +171,8 @@ def render_html(year: int, month: int) -> str:
     salesMeta.textContent = '';
     salesByPipeline.innerHTML = '';
     salesByOwner.innerHTML = '';
+    salesBySetter.innerHTML = '';
+    salesByLeadSource.innerHTML = '';
 
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
@@ -171,6 +185,8 @@ def render_html(year: int, month: int) -> str:
     salesMeta.textContent = `${data.window_start_local} → ${data.window_end_local} (${data.timezone})`;
     renderBars(salesByPipeline, (data.breakdowns && data.breakdowns.sales_by_pipeline) || {});
     renderBars(salesByOwner, (data.breakdowns && data.breakdowns.sales_by_owner) || {});
+    renderBars(salesBySetter, (data.breakdowns && data.breakdowns.sales_by_setter_last_name) || {});
+    renderBars(salesByLeadSource, (data.breakdowns && data.breakdowns.sales_by_lead_gen_source) || {});
   }
 
   document.getElementById('apply').addEventListener('click', load);

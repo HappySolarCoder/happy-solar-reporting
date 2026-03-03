@@ -262,6 +262,17 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             attr = contact.get("attributionSource") or {}
             if isinstance(attr, dict):
                 lead_src = attr.get("sessionSource") or attr.get("medium")
+
+        # Normalize buckets (treat CRM UI / Hand / blank as none)
+        if lead_src is None:
+            lead_src = "none"
+        if isinstance(lead_src, str):
+            norm = lead_src.strip()
+            if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
+                lead_src = "none"
+            else:
+                lead_src = norm
+
         if lead_src:
             lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1
 

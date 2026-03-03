@@ -118,6 +118,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     contrib_rows: list[dict[str, Any]] = []
     unique_opp_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
+    owner_counts: dict[str, int] = {}
 
     scanned = 0
     matched_stage = 0
@@ -126,7 +127,28 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     # We'll join to ghl_contacts to get canonical sold date.
     contacts_col = db.collection("ghl_contacts_v2")
     pipelines_col = db.collection("ghl_pipelines_v2")
+    users_col = db.collection("ghl_users_v2")
     pipeline_name_cache = {}
+    user_name_cache = {}
+
+    def user_name_from_id(user_id: str | None) -> str | None:
+        if not user_id:
+            return None
+        uid = str(user_id)
+        if uid in user_name_cache:
+            return user_name_cache[uid]
+        snaps = list(users_col.where('id', '==', uid).limit(1).stream())
+        if not snaps:
+            user_name_cache[uid] = None
+            return None
+        u = snaps[0].to_dict() or {}
+        name = u.get('name')
+        if not name:
+            fn = u.get('firstName') or ''
+            ln = u.get('lastName') or ''
+            name = (fn + ' ' + ln).strip() or None
+        user_name_cache[uid] = name
+        return name
 
     def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
         if not pipeline_id:
@@ -208,6 +230,11 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
         pipeline_counts[pname] = pipeline_counts.get(pname, 0) + 1
 
+        # Breakdown by opportunity owner (assignedTo)
+        owner_id = opp.get("assignedTo")
+        oname = user_name_from_id(owner_id) or str(owner_id or "unassigned")
+        owner_counts[oname] = owner_counts.get(oname, 0) + 1
+
         if len(contrib_rows) < 50:
             contrib_rows.append(
                 {
@@ -253,7 +280,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "included_stage_ids": list(contract.stage_ids),
         },
         "breakdowns": {
-            "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
+            "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            "sales_by_owner": {k: v for k, v in sorted(owner_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
         },
         "sample_rows": contrib_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",

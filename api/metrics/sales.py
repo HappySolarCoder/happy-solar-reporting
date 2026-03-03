@@ -40,10 +40,10 @@ class SalesMetricContract:
     unit: str = "count"
 
     # DB mapping
-    collection: str = "ghl_contacts"
-    sold_date_field: str = "dateSold"  # epoch millis
+    collection: str = "ghl_opportunities"
+    sold_date_field: str = "dateSold"  # from ghl_contacts (epoch millis)
     stage_field: str = "pipelineStageId"
-    opportunity_id_field: str = "opportunityId"
+    opportunity_id_field: str = "id"  # opportunity id in ghl_opportunities
 
     # Stage IDs (Sold + Sale Cancelled)
     stage_ids: tuple[str, ...] = (
@@ -100,51 +100,72 @@ def month_window_ms(year: int, month: int, tz_name: str) -> tuple[int, int, str,
 def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str) -> dict[str, Any]:
     start_ms, end_ms, start_iso, end_iso = month_window_ms(year, month, tz)
 
-    q = (
-        db.collection(contract.collection)
-        .where(contract.sold_date_field, ">=", start_ms)
-        .where(contract.sold_date_field, "<", end_ms)
-    )
-
+    # Base query: opportunities in Sold/Sale Cancelled stages (opportunity grain)
+    # NOTE: Firestore may require a composite index for (pipelineStageId IN ...).
+    # To keep QA reliable without indexes, we stream opportunities and filter stage client-side.
     stage_set = set(contract.stage_ids)
+
+    opp_q = db.collection(contract.collection)
+
     contrib_rows: list[dict[str, Any]] = []
-    unique_keys: set[str] = set()
+    unique_opp_ids: set[str] = set()
 
     scanned = 0
     matched_stage = 0
+    matched_date = 0
 
-    for doc in q.stream():
+    # We'll join to ghl_contacts to get canonical sold date.
+    contacts_col = db.collection("ghl_contacts")
+
+    # Simple streaming approach for QA (optimize later with indexes/batching)
+    for opp_doc in opp_q.stream():
         scanned += 1
-        d = doc.to_dict() or {}
-        stage_id = d.get(contract.stage_field)
+        opp = opp_doc.to_dict() or {}
+
+        stage_id = opp.get(contract.stage_field)
         if stage_id not in stage_set:
             continue
         matched_stage += 1
 
-        opp_id = d.get(contract.opportunity_id_field)
-        # Choose COUNT DISTINCT of opportunityId when present, else fall back to doc_id.
-        # This prevents double-counting if the same opportunity shows up multiple times.
-        key = str(opp_id) if opp_id else f"doc:{doc.id}"
-        unique_keys.add(key)
+        contact_id = opp.get("contactId")
+        if not contact_id:
+            continue
 
-        # Keep a small sample for QA (PII-minimal)
+        # Fetch contact sold date
+        contact_snap = contacts_col.document(str(contact_id)).get()
+        if not contact_snap.exists:
+            continue
+        contact = contact_snap.to_dict() or {}
+        date_sold = contact.get(contract.sold_date_field)
+        if not isinstance(date_sold, int):
+            continue
+
+        # Apply month window on contact sold date
+        if not (start_ms <= date_sold < end_ms):
+            continue
+        matched_date += 1
+
+        opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
+        unique_opp_ids.add(str(opp_id))
+
         if len(contrib_rows) < 25:
             contrib_rows.append(
                 {
-                    "doc_id": doc.id,
                     "opportunityId": opp_id,
                     "pipelineStageId": stage_id,
-                    "dateSold": d.get(contract.sold_date_field),
-                    "team": d.get("team"),
-                    "pipelineId": d.get("pipelineId"),
-                    "stageName": d.get("stageName"),
-                    "assignedTo": d.get("assignedTo"),
-                    "setter": d.get("setter"),
-                    "leadSource": d.get("leadSource"),
+                    "pipelineId": opp.get("pipelineId"),
+                    "status": opp.get("status"),
+                    "contactId": contact_id,
+                    "dateSold": date_sold,
+                    "team": contact.get("team"),
+                    "stageName_contact": contact.get("stageName"),
+                    "assignedTo_contact": contact.get("assignedTo"),
+                    "setter_contact": contact.get("setter"),
+                    "leadSource_contact": contact.get("leadSource"),
                 }
             )
 
-    result = {
+    payload = {
         "metric": contract.metric_name,
         "unit": contract.unit,
         "year": year,
@@ -152,24 +173,27 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "result": len(unique_keys),
-        "count_method": "COUNT_DISTINCT(opportunityId) with fallback to doc_id",
+        "result": len(unique_opp_ids),
+        "count_method": "COUNT_DISTINCT(ghl_opportunities.id) where pipelineStageId in stage_ids AND joined ghl_contacts.dateSold in window",
         "debug": {
-            "docs_scanned_in_date_range": scanned,
-            "docs_matched_stage": matched_stage,
-            "distinct_keys": len(unique_keys),
+            "opportunities_scanned": scanned,
+            "opportunities_matched_stage": matched_stage,
+            "opportunities_matched_stage_and_date": matched_date,
+            "distinct_opportunity_ids": len(unique_opp_ids),
+            "join": "ghl_opportunities.contactId -> ghl_contacts.id",
         },
         "contract": {
-            "collection": contract.collection,
-            "date_field": f"{contract.collection}.{contract.sold_date_field}",
+            "base_collection": contract.collection,
             "stage_field": f"{contract.collection}.{contract.stage_field}",
             "opportunity_id_field": f"{contract.collection}.{contract.opportunity_id_field}",
+            "contact_join": "ghl_opportunities.contactId -> ghl_contacts.id",
+            "sold_date_field": f"ghl_contacts.{contract.sold_date_field}",
             "included_stage_ids": list(contract.stage_ids),
         },
         "sample_rows": contrib_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
-    return result
+    return payload
 
 
 def render_html(payload: dict[str, Any]) -> str:
@@ -213,9 +237,9 @@ def render_html(payload: dict[str, Any]) -> str:
 
     <div class=\"card\">
       <div class=\"label\">Contract (How it is formed from DB)</div>
-      <div style=\"margin-top:8px\">Collection: <code>{payload['contract']['collection']}</code></div>
-      <div>Date field: <code>{payload['contract']['date_field']}</code></div>
-      <div>Stage field: <code>{payload['contract']['stage_field']}</code></div>
+      <div style=\"margin-top:8px\">Base collection: <code>{payload['contract']['base_collection']}</code></div>
+      <div>Sold date field: <code>{payload['contract']['sold_date_field']}</code></div>
+      <div>Stage field: <code>{payload['contract']['stage_field']}</code></div><div>Contact join: <code>{payload['contract']['contact_join']}</code></div>
       <div>Opportunity id field: <code>{payload['contract']['opportunity_id_field']}</code></div>
       <div style=\"margin-top:8px\">Included stage IDs: <code>{len(payload['contract']['included_stage_ids'])}</code></div>
       <div style=\"margin-top:8px\">Debug: scanned <code>{payload['debug']['docs_scanned_in_date_range']}</code> docs in date range; matched stage <code>{payload['debug']['docs_matched_stage']}</code></div>

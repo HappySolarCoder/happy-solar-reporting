@@ -50,9 +50,11 @@ def render_html(year: int, month: int) -> str:
       --muted2: #9ca3af;
 
       /* Customer Insights vibe */
-      --pink: #ec4899;
-      --pink2: #f472b6;
-      --blue: #3b82f6;
+      --green: #00C853;
+      --green2: #2EE07A;
+      --blue: #2196F3;
+      --blue2: #64B5F6;
+
       --purple: #8b5cf6;
       --cyan: #06b6d4;
       --amber: #f59e0b;
@@ -94,7 +96,7 @@ def render_html(year: int, month: int) -> str:
       height: 3px;
       width: 180px;
       border-radius: 999px;
-      background: linear-gradient(90deg, var(--pink) 0%, var(--pink2) 45%, rgba(244,114,182,0) 100%);
+      background: linear-gradient(90deg, var(--green) 0%, var(--blue) 55%, rgba(100,181,246,0) 100%);
       margin-top: 10px;
     }
 
@@ -119,14 +121,14 @@ def render_html(year: int, month: int) -> str:
     }
 
     .navbtn:hover {
-      border-color: rgba(236,72,153,0.45);
+      border-color: rgba(0,200,83,0.45);
       box-shadow: 0 1px 2px rgba(17,24,39,0.06);
     }
 
     .navbtn.active {
-      background: rgba(236,72,153,0.10);
-      border-color: rgba(236,72,153,0.45);
-      color: #b80b66;
+      background: rgba(0,200,83,0.10);
+      border-color: rgba(0,200,83,0.45);
+      color: #0a7a34;
     }
 
     .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -150,8 +152,8 @@ def render_html(year: int, month: int) -> str:
     }
 
     button {
-      background: var(--pink);
-      border-color: var(--pink);
+      background: var(--green);
+      border-color: var(--green);
       color: #fff;
       font-weight: 900;
       cursor:pointer;
@@ -241,7 +243,7 @@ def render_html(year: int, month: int) -> str:
       white-space:nowrap;
     }
 
-    a { color: var(--pink); text-decoration: none; }
+    a { color: var(--green); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
     .skeleton { color: var(--muted2); font-size: 13px; }
@@ -276,6 +278,7 @@ def render_html(year: int, month: int) -> str:
     </div>
 
     <div class="grid">
+      <!-- Top KPI row -->
       <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Total Sales</div>
@@ -285,14 +288,42 @@ def render_html(year: int, month: int) -> str:
         <div class="meta" id="salesMeta">—</div>
       </div>
 
-      <div class="card span-8">
+      <div class="card span-4">
         <div class="card-header">
-          <div class="card-title">Sales per Team (Pipeline)</div>
-          <div class="meta">0 hidden</div>
+          <div class="card-title">Total Opportunities Created</div>
+          <div class="meta"><a id="createdLink" href="#">/api/metrics/opportunities_created</a></div>
         </div>
-        <div class="barlist" id="salesByPipeline"><div class="skeleton">Loading…</div></div>
+        <div class="kpi" id="totalCreated">—</div>
+        <div class="meta" id="createdMeta">—</div>
       </div>
 
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Opp2Prelim %</div>
+          <div class="meta">Total Sales / Total Opps Ran</div>
+        </div>
+        <div class="kpi" id="opp2prelim">—</div>
+        <div class="meta" id="opp2prelimMeta">—</div>
+      </div>
+
+      <!-- Requested row: vertical sales-by-pipeline + sales-by-lead-channel -->
+      <div class="card span-8">
+        <div class="card-header">
+          <div class="card-title">Sales per Pipeline (Team)</div>
+          <div class="meta">Vertical bars</div>
+        </div>
+        <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Sales per Lead Channel</div>
+          <div class="meta">Lead Gen Source</div>
+        </div>
+        <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
+      </div>
+
+      <!-- Additional context cards (kept) -->
       <div class="card span-8">
         <div class="card-header">
           <div class="card-title">Sales per Owner (Sales Rep)</div>
@@ -303,21 +334,13 @@ def render_html(year: int, month: int) -> str:
 
       <div class="card span-4">
         <div class="card-header">
-          <div class="card-title">Sales per Channel</div>
-          <div class="meta">Lead Gen Source</div>
-        </div>
-        <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
-      </div>
-
-      <div class="card span-8">
-        <div class="card-header">
           <div class="card-title">Opportunities Created by Setter</div>
-          <div class="meta"><a id="createdLink" href="#">/api/metrics/opportunities_created</a></div>
+          <div class="meta">Vertical bars</div>
         </div>
         <div class="vchart" id="createdBySetter"><div class="skeleton">Loading…</div></div>
       </div>
 
-      <div class="card span-4">
+      <div class="card span-8">
         <div class="card-header">
           <div class="card-title">Opportunities Created by Lead Gen Source</div>
           <div class="meta">Vertical bars</div>
@@ -328,9 +351,9 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Debug</div>
-          <div class="meta">timezone</div>
+          <div class="meta" id="debugTz">timezone</div>
         </div>
-        <div class="meta" id="createdMeta">—</div>
+        <div class="meta" id="debugMeta">—</div>
       </div>
     </div>
   </div>
@@ -340,7 +363,7 @@ def render_html(year: int, month: int) -> str:
   const defaultMonth = __MONTH__;
 
   const palette = [
-    'var(--pink)',
+    'var(--green)',
     'var(--blue)',
     'var(--purple)',
     'var(--cyan)',
@@ -437,23 +460,31 @@ def render_html(year: int, month: int) -> str:
 
     const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
     const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
     salesLink.href = `/api/metrics/sales?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
     createdLink.href = `/api/metrics/opportunities_created?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
     document.getElementById('totalSales').textContent = '…';
+    document.getElementById('totalCreated').textContent = '…';
+    document.getElementById('opp2prelim').textContent = '…';
+    document.getElementById('opp2prelimMeta').textContent = '';
+    document.getElementById('debugMeta').textContent = '';
+    document.getElementById('debugTz').textContent = 'timezone';
     document.getElementById('salesMeta').textContent = '';
     document.getElementById('createdMeta').textContent = '';
+    document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    document.getElementById('salesByPipeline').innerHTML = '<div class="skeleton">Loading…</div>';
-    document.getElementById('salesByOwner').innerHTML = '<div class="skeleton">Loading…</div>';
+
+        document.getElementById('salesByOwner').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('salesByChannel').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('createdBySetter').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const [salesRes, createdRes] = await Promise.all([
+    const [salesRes, createdRes, ranRes] = await Promise.all([
       fetch(salesUrl, { cache: 'no-store' }),
-      fetch(createdUrl, { cache: 'no-store' })
+      fetch(createdUrl, { cache: 'no-store' }),
+      fetch(ranUrl, { cache: 'no-store' })
     ]);
 
     if (!salesRes.ok) {
@@ -464,12 +495,13 @@ def render_html(year: int, month: int) -> str:
 
     const salesData = await salesRes.json();
     const createdData = createdRes.ok ? await createdRes.json() : null;
+    const ranData = ranRes.ok ? await ranRes.json() : null;
 
     document.getElementById('totalSales').textContent = salesData.result;
     document.getElementById('salesMeta').textContent = `${salesData.window_start_local} → ${salesData.window_end_local} (${salesData.timezone})`;
 
     const b = (salesData.breakdowns || {});
-    renderBars(document.getElementById('salesByPipeline'), b.sales_by_pipeline || {});
+    renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
     renderBars(document.getElementById('salesByOwner'), b.sales_by_owner || {});
     renderBars(document.getElementById('salesByChannel'), b.sales_by_lead_gen_source || {});
 
@@ -479,6 +511,26 @@ def render_html(year: int, month: int) -> str:
     }
 
     document.getElementById('createdMeta').textContent = `${createdData.window_start_local} → ${createdData.window_end_local} (${createdData.timezone})`;
+
+    document.getElementById('totalCreated').textContent = createdData.result;
+
+    // Opp2Prelim = Sales / Opportunities Ran
+    if (!ranData) {
+      document.getElementById('opp2prelim').textContent = '—';
+      document.getElementById('opp2prelimMeta').textContent = `Opps Ran HTTP ${ranRes.status}`;
+    } else {
+      const sales = Number(salesData.result || 0);
+      const ran = Number(ranData.result || 0);
+      const pct = ran > 0 ? (sales / ran) * 100 : null;
+      document.getElementById('opp2prelim').textContent = pct === null ? '—' : `${pct.toFixed(1)}%`;
+      document.getElementById('opp2prelimMeta').textContent = `Sales ${sales} / Opps Ran ${ran}`;
+    }
+
+    // Debug / window visibility
+    const tz = (salesData.timezone || createdData.timezone || (ranData && ranData.timezone) || 'America/New_York');
+    document.getElementById('debugTz').textContent = tz;
+    const ranWindow = ranData ? `${ranData.window_start_local} → ${ranData.window_end_local}` : '—';
+    document.getElementById('debugMeta').textContent = `Sales: ${salesData.window_start_local} → ${salesData.window_end_local} | Created: ${createdData.window_start_local} → ${createdData.window_end_local} | Ran: ${ranWindow}`;
 
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdBySetter'), cb.created_by_setter_last_name || {});

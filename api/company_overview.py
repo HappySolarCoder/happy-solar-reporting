@@ -9,7 +9,17 @@ Company Overview (first page of dashboard)
 - Sales per Channel (Lead Gen Source)
 
 Data source: /api/metrics/sales (v2)
-UI style: PatientPop-style cards + green accent (#00C853)
+
+UI intent (Production / Customer Insights style):
+- White cards on light gray background
+- Vibrant chart colors
+- 3-column grid
+- Pink gradient line accent
+
+NOTE: The canonical style reference file
+`Memories/Beane/Dashboard Designs/Customer Insights Dashboard UI Example.md`
+was not found at the expected vault path at time of implementation, so this is a
+best-effort implementation based on the described rules.
 """
 
 from __future__ import annotations
@@ -34,17 +44,67 @@ def render_html(year: int, month: int) -> str:
       --text: #111827;
       --muted: #6b7280;
       --muted2: #9ca3af;
-      --green: #00C853;
+
+      /* Customer Insights vibe */
+      --pink: #ec4899;
+      --pink2: #f472b6;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+      --cyan: #06b6d4;
+      --amber: #f59e0b;
+      --green: #10b981;
     }
-    body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; margin:0; background: var(--bg); color: var(--text); }
+
+    body {
+      font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      margin:0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
     .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
 
-    .topbar { display:flex; align-items:center; justify-content: space-between; gap: 16px; }
-    .title { font-size: 22px; font-weight: 800; color: #1a2b4a; }
+    .topbar {
+      display:flex;
+      align-items:flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+      padding: 18px 20px;
+      border-radius: 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(17,24,39,0.05);
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: 900;
+      color: #1a2b4a;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
+
+    .pinkline {
+      height: 3px;
+      width: 180px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--pink) 0%, var(--pink2) 45%, rgba(244,114,182,0) 100%);
+      margin-top: 10px;
+    }
 
     .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
     .filter { display:flex; align-items:center; gap: 8px; }
-    .filter-label { font-size: 12px; color: var(--muted); background:#eef2f6; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); }
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      background:#f0f2f5;
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
     select, button {
       background: var(--card);
       color: var(--text);
@@ -53,13 +113,20 @@ def render_html(year: int, month: int) -> str:
       padding: 9px 12px;
       font-size: 13px;
     }
-    button { background: var(--green); border-color: var(--green); color: #fff; font-weight: 800; cursor:pointer; }
+
+    button {
+      background: var(--pink);
+      border-color: var(--pink);
+      color: #fff;
+      font-weight: 900;
+      cursor:pointer;
+    }
 
     .grid {
       display:grid;
       grid-template-columns: repeat(12, 1fr);
       gap: 14px;
-      margin-top: 16px;
+      margin-top: 14px;
       align-content: start;
     }
 
@@ -73,29 +140,27 @@ def render_html(year: int, month: int) -> str:
     }
 
     .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
-    .card-title { font-size: 13px; font-weight: 700; color: var(--muted); }
+    .card-title { font-size: 13px; font-weight: 800; color: var(--muted); }
 
-    .kpi { font-size: 46px; font-weight: 900; margin-top: 8px; letter-spacing: -0.02em; }
+    .kpi { font-size: 46px; font-weight: 950; margin-top: 8px; letter-spacing: -0.02em; }
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
-    .span-8 { grid-column: span 8; }
     .span-4 { grid-column: span 4; }
-    .span-6 { grid-column: span 6; }
-    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
 
     @media (max-width: 980px) {
-      .span-8, .span-6, .span-4 { grid-column: span 12; }
+      .span-4, .span-8 { grid-column: span 12; }
     }
 
-    /* Bars */
+    /* Bars (vibrant, Customer-Insights-like) */
     .barlist { margin-top: 10px; }
     .barrow { display:flex; align-items:center; gap: 10px; margin: 10px 0; }
-    .barlabel { width: 170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size: 13px; color: var(--text); }
-    .barwrap { flex: 1; background: #eef2f6; border: 1px solid var(--border); border-radius: 999px; height: 14px; overflow:hidden; }
-    .barfill { height: 100%; background: var(--green); }
+    .barlabel { width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size: 13px; color: var(--text); }
+    .barwrap { flex: 1; background: #f0f2f5; border: 1px solid var(--border); border-radius: 999px; height: 14px; overflow:hidden; }
+    .barfill { height: 100%; }
     .barval { width: 54px; text-align:right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
 
-    a { color: var(--green); text-decoration: none; }
+    a { color: var(--pink); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
     .skeleton { color: var(--muted2); font-size: 13px; }
@@ -106,7 +171,8 @@ def render_html(year: int, month: int) -> str:
     <div class="topbar">
       <div>
         <div class="title">Company Overview</div>
-        <div class="meta">Happy Solar — Sales rollups</div>
+        <div class="subtitle">Happy Solar — Sales rollups</div>
+        <div class="pinkline"></div>
       </div>
 
       <div class="filters">
@@ -135,35 +201,25 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-8">
         <div class="card-header">
           <div class="card-title">Sales per Team (Pipeline)</div>
-          <div class="meta">Pipelines with 0 hidden</div>
+          <div class="meta">0 hidden</div>
         </div>
         <div class="barlist" id="salesByPipeline"><div class="skeleton">Loading…</div></div>
       </div>
 
-      <div class="card span-6">
+      <div class="card span-8">
         <div class="card-header">
           <div class="card-title">Sales per Owner (Sales Rep)</div>
-          <div class="meta">Owners with 0 hidden</div>
+          <div class="meta">0 hidden</div>
         </div>
         <div class="barlist" id="salesByOwner"><div class="skeleton">Loading…</div></div>
       </div>
 
-      <div class="card span-6">
+      <div class="card span-4">
         <div class="card-header">
-          <div class="card-title">Sales per Channel (Lead Gen Source)</div>
-          <div class="meta">Channels with 0 hidden</div>
+          <div class="card-title">Sales per Channel</div>
+          <div class="meta">Lead Gen Source</div>
         </div>
         <div class="barlist" id="salesByChannel"><div class="skeleton">Loading…</div></div>
-      </div>
-
-      <div class="card span-12">
-        <div class="card-header">
-          <div class="card-title">Notes</div>
-          <div class="meta">Timezone + definitions</div>
-        </div>
-        <div class="meta" style="margin-top:8px">
-          Sales uses the canonical Sales metric (opportunity grain + Sold Date from contact; month windows in America/New_York; Sold Date compared as YYYY-MM-DD). Pipelines/Owners are resolved to human names.
-        </div>
       </div>
     </div>
   </div>
@@ -194,6 +250,15 @@ def render_html(year: int, month: int) -> str:
   setOptions(yearSel, years, defaultYear);
   setOptions(monthSel, months, defaultMonth);
 
+  const palette = [
+    'var(--pink)',
+    'var(--blue)',
+    'var(--purple)',
+    'var(--cyan)',
+    'var(--amber)',
+    'var(--green)'
+  ];
+
   function renderBars(container, obj) {
     container.innerHTML = '';
     const entries = Object.entries(obj || {});
@@ -201,17 +266,24 @@ def render_html(year: int, month: int) -> str:
       container.innerHTML = '<div class="skeleton">No data.</div>';
       return;
     }
+    // Keep sort stable by value desc then name
+    entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
+
     const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
+    let i = 0;
     for (const [name, val] of entries) {
       const n = String(name);
       const v = Number(val) || 0;
       if (v === 0) continue;
       const pct = Math.round((v / maxVal) * 100);
+      const color = palette[i % palette.length];
+      i++;
+
       const row = document.createElement('div');
       row.className = 'barrow';
       row.innerHTML = `
         <div class="barlabel" title="${n}">${n}</div>
-        <div class="barwrap"><div class="barfill" style="width:${pct}%"></div></div>
+        <div class="barwrap"><div class="barfill" style="width:${pct}%; background:${color}"></div></div>
         <div class="barval">${v}</div>
       `;
       container.appendChild(row);

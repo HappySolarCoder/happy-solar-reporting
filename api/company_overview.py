@@ -223,6 +223,7 @@ def render_html(year: int, month: int) -> str:
     .vwrap {
       display:flex;
       align-items:stretch;
+      justify-content:center;
       gap: 10px;
       height: 260px;
       padding: 12px 12px;
@@ -232,15 +233,15 @@ def render_html(year: int, month: int) -> str:
       overflow-x:auto;
     }
     .vcol {
-      width: 64px;
-      flex: 0 0 64px;
+      width: 86px;
+      flex: 0 0 86px;
       height: 100%;
       display:flex;
       flex-direction:column;
       align-items:center;
       gap: 8px;
     }
-    .vval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .vval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align:center; width:100%; }
     .vbarArea {
       width: 100%;
       flex: 1;
@@ -258,7 +259,7 @@ def render_html(year: int, month: int) -> str:
       font-size: 11px;
       color: var(--muted);
       text-align:center;
-      width: 86px;
+      width: 100%;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;

@@ -176,7 +176,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
     by_setter: dict[str, int] = {}
     by_lead: dict[str, int] = {}
 
-    sample_rows: list[dict[str, Any]] = []
+    matching_rows: dict[str, dict[str, Any]] = {}
 
     for doc in db.collection(c.opp_collection).stream():
         scanned += 1
@@ -247,9 +247,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             lead = "none"
         by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
 
-        # For QA we include all matching rows (expected small counts like 29/33)
+        # Capture matching row keyed by opportunityId so result and list cannot diverge
         last_name = (contact.get("lastName") if isinstance(contact, dict) else None)
-        sample_rows.append({
+        matching_rows[opp_id] = {
             "opportunityId": opp_id,
             "contactId": cid,
             "contactLastName": last_name,
@@ -257,7 +257,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "owner": oname,
             "updatedAt": opp.get(c.updated_at_field),
             "whatHappened": dispo_val,
-        })
+        }
 
     return {
         "metric": c.metric_name,
@@ -267,12 +267,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "timezone": c.timezone,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "result": len(distinct_opp_ids),
+        "result": len(matching_rows),
         "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and updatedAt in window",
         "debug": {
             "opps_scanned": scanned,
             "opps_with_disposition": matched_dispo,
             "opps_with_disposition_and_in_window": matched_time,
+            "rows_listed": len(matching_rows),
         },
         "contract": {
             "base_collection": c.opp_collection,
@@ -289,7 +290,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "ran_by_setter_last_name": {k: v for k, v in sorted(by_setter.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
             "ran_by_lead_gen_source": {k: v for k, v in sorted(by_lead.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
         },
-        "sample_rows": sample_rows,
+        "sample_rows": list(matching_rows.values()),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
 

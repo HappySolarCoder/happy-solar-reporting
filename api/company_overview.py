@@ -248,14 +248,22 @@ def render_html(year: int, month: int) -> str:
       width: 100%;
       flex: 1;
       display:flex;
-      align-items:flex-end;
+      align-items:stretch;
       justify-content:center;
+    }
+
+    .vbarStack {
+      width: 100%;
+      height: 100%;
+      display:flex;
+      flex-direction:column;
+      justify-content:flex-end;
+      align-items:stretch;
+      gap: 6px;
     }
     .vbar {
       width: 100%;
-      height: 100%;
       border-radius: 14px 14px 6px 6px;
-      transform-origin: bottom;
     }
     .vlabel {
       font-size: 11px;
@@ -441,9 +449,11 @@ def render_html(year: int, month: int) -> str:
       i++;
       html += `
         <div class="vcol" title="${n}">
-          <div class="vval">${v}</div>
           <div class="vbarArea">
-            <div class="vbar" style="background:${color}; transform: scaleY(${scale})"></div>
+            <div class="vbarStack">
+              <div class="vval">${v}</div>
+              <div class="vbar" style="background:${color}; height:${(scale*100).toFixed(2)}%"></div>
+            </div>
           </div>
           <div class="vlabel">${n}</div>
         </div>`;

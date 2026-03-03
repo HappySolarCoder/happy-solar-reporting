@@ -168,30 +168,43 @@ def render_html(year: int, month: int) -> str:
     .vchart { margin-top: 10px; }
     .vwrap {
       display:flex;
-      align-items:flex-end;
+      align-items:stretch;
       gap: 10px;
-      height: 240px;
-      padding: 10px 10px;
+      height: 260px;
+      padding: 12px 12px;
       background:#fafbfc;
       border:1px solid var(--border);
       border-radius:12px;
       overflow-x:auto;
     }
     .vcol {
-      width: 54px;
-      flex: 0 0 54px;
+      width: 64px;
+      flex: 0 0 64px;
+      height: 100%;
       display:flex;
       flex-direction:column;
       align-items:center;
       gap: 8px;
     }
-    .vbar { width: 100%; border-radius: 12px 12px 5px 5px; }
     .vval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .vbarArea {
+      width: 100%;
+      flex: 1;
+      display:flex;
+      align-items:flex-end;
+      justify-content:center;
+    }
+    .vbar {
+      width: 100%;
+      height: 100%;
+      border-radius: 14px 14px 6px 6px;
+      transform-origin: bottom;
+    }
     .vlabel {
       font-size: 11px;
       color: var(--muted);
       text-align:center;
-      width: 74px;
+      width: 86px;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
@@ -359,22 +372,21 @@ def render_html(year: int, month: int) -> str:
     entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
     const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
 
-    // Must use px heights; % heights don't render reliably inside flexible columns.
-    const chartPx = 170; // bar max height inside the 240px wrapper
-
     let html = '<div class="vwrap">';
     let i = 0;
     for (const [name, val] of entries) {
       const n = String(name);
       const v = Number(val) || 0;
       if (v === 0) continue;
-      const barPx = Math.max(4, Math.round((v / maxVal) * chartPx));
+      const scale = Math.max(0.02, v / maxVal);
       const color = palette[i % palette.length];
       i++;
       html += `
         <div class="vcol" title="${n}">
           <div class="vval">${v}</div>
-          <div class="vbar" style="height:${barPx}px; background:${color}"></div>
+          <div class="vbarArea">
+            <div class="vbar" style="background:${color}; transform: scaleY(${scale})"></div>
+          </div>
           <div class="vlabel">${n}</div>
         </div>`;
     }

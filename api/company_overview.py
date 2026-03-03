@@ -177,6 +177,27 @@ def render_html(year: int, month: int) -> str:
     }
 
     .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
+
+    .gear {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width: 30px;
+      height: 30px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--muted);
+      text-decoration:none;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .gear:hover {
+      border-color: rgba(0,200,83,0.45);
+      color: #0a7a34;
+      box-shadow: 0 1px 2px rgba(17,24,39,0.06);
+    }
     .card-title { font-size: 13px; font-weight: 800; color: var(--muted); }
 
     .kpi { font-size: 46px; font-weight: 950; margin-top: 8px; letter-spacing: -0.02em; }
@@ -282,7 +303,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Total Sales</div>
-          <div class="meta"><a id="salesLink" href="#">/api/metrics/sales</a></div>
+          <div class="meta"><a class="gear" href="/api/dashboard" title="Debug / settings">⚙</a></div>
         </div>
         <div class="kpi" id="totalSales">—</div>
         <div class="meta" id="salesMeta">—</div>
@@ -291,7 +312,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Total Opportunities Created</div>
-          <div class="meta"><a id="createdLink" href="#">/api/metrics/opportunities_created</a></div>
+          <div class="meta"><a class="gear" href="/api/dashboard" title="Debug / settings">⚙</a></div>
         </div>
         <div class="kpi" id="totalCreated">—</div>
         <div class="meta" id="createdMeta">—</div>
@@ -347,14 +368,6 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="vchart" id="createdByLead"><div class="skeleton">Loading…</div></div>
       </div>
-
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Debug</div>
-          <div class="meta" id="debugTz">timezone</div>
-        </div>
-        <div class="meta" id="debugMeta">—</div>
-      </div>
     </div>
   </div>
 
@@ -384,8 +397,6 @@ def render_html(year: int, month: int) -> str:
 
   const yearSel = document.getElementById('year');
   const monthSel = document.getElementById('month');
-  const salesLink = document.getElementById('salesLink');
-  const createdLink = document.getElementById('createdLink');
 
   const years = [];
   for (let y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
@@ -462,16 +473,12 @@ def render_html(year: int, month: int) -> str:
     const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
-    salesLink.href = `/api/metrics/sales?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
-    createdLink.href = `/api/metrics/opportunities_created?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('totalCreated').textContent = '…';
     document.getElementById('opp2prelim').textContent = '…';
     document.getElementById('opp2prelimMeta').textContent = '';
-    document.getElementById('debugMeta').textContent = '';
-    document.getElementById('debugTz').textContent = 'timezone';
-    document.getElementById('salesMeta').textContent = '';
+
     document.getElementById('createdMeta').textContent = '';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
 
@@ -498,7 +505,7 @@ def render_html(year: int, month: int) -> str:
     const ranData = ranRes.ok ? await ranRes.json() : null;
 
     document.getElementById('totalSales').textContent = salesData.result;
-    document.getElementById('salesMeta').textContent = `${salesData.window_start_local} → ${salesData.window_end_local} (${salesData.timezone})`;
+    document.getElementById('salesMeta').textContent = '';
 
     const b = (salesData.breakdowns || {});
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
@@ -510,27 +517,24 @@ def render_html(year: int, month: int) -> str:
       return;
     }
 
-    document.getElementById('createdMeta').textContent = `${createdData.window_start_local} → ${createdData.window_end_local} (${createdData.timezone})`;
+    document.getElementById('createdMeta').textContent = '';
+
 
     document.getElementById('totalCreated').textContent = createdData.result;
 
     // Opp2Prelim = Sales / Opportunities Ran
     if (!ranData) {
       document.getElementById('opp2prelim').textContent = '—';
-      document.getElementById('opp2prelimMeta').textContent = `Opps Ran HTTP ${ranRes.status}`;
+      document.getElementById('opp2prelimMeta').textContent = ''; // hidden in prod UI
     } else {
       const sales = Number(salesData.result || 0);
       const ran = Number(ranData.result || 0);
       const pct = ran > 0 ? (sales / ran) * 100 : null;
       document.getElementById('opp2prelim').textContent = pct === null ? '—' : `${pct.toFixed(1)}%`;
-      document.getElementById('opp2prelimMeta').textContent = `Sales ${sales} / Opps Ran ${ran}`;
+      document.getElementById('opp2prelimMeta').textContent = ''; // hidden in prod UI
     }
 
-    // Debug / window visibility
-    const tz = (salesData.timezone || createdData.timezone || (ranData && ranData.timezone) || 'America/New_York');
-    document.getElementById('debugTz').textContent = tz;
-    const ranWindow = ranData ? `${ranData.window_start_local} → ${ranData.window_end_local}` : '—';
-    document.getElementById('debugMeta').textContent = `Sales: ${salesData.window_start_local} → ${salesData.window_end_local} | Created: ${createdData.window_start_local} → ${createdData.window_end_local} | Ran: ${ranWindow}`;
+
 
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdBySetter'), cb.created_by_setter_last_name || {});

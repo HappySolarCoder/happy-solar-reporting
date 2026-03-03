@@ -45,6 +45,10 @@ class SalesMetricContract:
     collection: str = "ghl_opportunities_v2"
     # Canonical sold date lives in a Contact custom field (ISO string) in v2 payload
     sold_date_custom_field_id: str = "P9oBjgbZjJdeE0OkBj9T"  # Sold Date (ISO)
+
+    # TODO: fill these in once we identify the exact custom field IDs in GHL
+    setter_last_name_custom_field_id: str = ""
+    lead_gen_source_custom_field_id: str = ""
     sold_date_field: str = "dateSold"  # legacy field name (not used in v2)
     stage_field: str = "pipelineStageId"
     opportunity_id_field: str = "id"  # opportunity id in ghl_opportunities
@@ -119,6 +123,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     unique_opp_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
     owner_counts: dict[str, int] = {}
+    setter_counts: dict[str, int] = {}
+    lead_source_counts: dict[str, int] = {}
 
     scanned = 0
     matched_stage = 0
@@ -235,6 +241,30 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         oname = user_name_from_id(owner_id) or str(owner_id or "unassigned")
         owner_counts[oname] = owner_counts.get(oname, 0) + 1
 
+        # Breakdown by Setter Last Name (custom field on contact)
+        setter_name = None
+        if contract.setter_last_name_custom_field_id:
+            for cf in (contact.get("customFields") or []):
+                if isinstance(cf, dict) and cf.get("id") == contract.setter_last_name_custom_field_id:
+                    setter_name = cf.get("value")
+                    break
+        if setter_name:
+            setter_counts[str(setter_name)] = setter_counts.get(str(setter_name), 0) + 1
+
+        # Breakdown by Lead Gen Source (custom field on contact, fallback to attributionSource)
+        lead_src = None
+        if contract.lead_gen_source_custom_field_id:
+            for cf in (contact.get("customFields") or []):
+                if isinstance(cf, dict) and cf.get("id") == contract.lead_gen_source_custom_field_id:
+                    lead_src = cf.get("value")
+                    break
+        if not lead_src:
+            attr = contact.get("attributionSource") or {}
+            if isinstance(attr, dict):
+                lead_src = attr.get("sessionSource") or attr.get("medium")
+        if lead_src:
+            lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1
+
         if len(contrib_rows) < 50:
             contrib_rows.append(
                 {
@@ -251,6 +281,11 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                     "setter_contact": contact.get("setter"),
                     "leadSource_contact": contact.get("leadSource"),
                     "lastName_contact": contact.get("lastName"),
+                    "customFieldsPreview": [
+                        {"id": cf.get("id"), "value": cf.get("value")}
+                        for cf in (contact.get("customFields") or [])
+                        if isinstance(cf, dict) and cf.get("value") not in (None, "")
+                    ][:12],
                 }
             )
 
@@ -281,7 +316,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         },
         "breakdowns": {
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
-            "sales_by_owner": {k: v for k, v in sorted(owner_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
+            "sales_by_owner": {k: v for k, v in sorted(owner_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            "sales_by_setter_last_name": {k: v for k, v in sorted(setter_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            "sales_by_lead_gen_source": {k: v for k, v in sorted(lead_source_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
         },
         "sample_rows": contrib_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",

@@ -173,6 +173,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                     "assignedTo_contact": contact.get("assignedTo"),
                     "setter_contact": contact.get("setter"),
                     "leadSource_contact": contact.get("leadSource"),
+                    "lastName_contact": contact.get("lastName"),
                 }
             )
 
@@ -210,7 +211,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 def render_html(payload: dict[str, Any]) -> str:
     # Keep it dead simple for mobile QA.
     rows_html = "".join(
-        f"<tr><td><code>{r.get('opportunityId') or ''}</code></td><td><code>{r.get('pipelineStageId') or ''}</code></td><td>{r.get('team') or ''}</td><td>{r.get('dateSold') or ''}</td></tr>"
+        f"<tr><td><code>{r.get('opportunityId') or ''}</code></td><td><code>{r.get('pipelineStageId') or ''}</code></td><td>{r.get('team') or ''}</td><td>{r.get('lastName_contact') or ''}</td><td>{r.get('dateSold') or ''}</td></tr>"
         for r in payload.get("sample_rows", [])
     )
 
@@ -261,10 +262,10 @@ def render_html(payload: dict[str, Any]) -> str:
       <div class=\"label\">Sample contributing rows (first 25)</div>
       <table>
         <thead>
-          <tr><th>opportunityId</th><th>pipelineStageId</th><th>team</th><th>dateSold</th></tr>
+          <tr><th>opportunityId</th><th>pipelineStageId</th><th>team</th><th>lastName</th><th>dateSold</th></tr>
         </thead>
         <tbody>
-          {rows_html or '<tr><td colspan="4">No rows in this window.</td></tr>'}
+          {rows_html or '<tr><td colspan="5">No rows in this window.</td></tr>'}
         </tbody>
       </table>
     </div>

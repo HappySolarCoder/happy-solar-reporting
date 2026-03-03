@@ -129,13 +129,24 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
         contact_id = opp.get("contactId")
         if not contact_id:
+            continue        # Fetch contact sold date (canonical field lives on contact)
+        # IMPORTANT: ghl_contacts Firestore doc_id is NOT the same as GHL contact id.
+        # So we must query by field `ghl_contacts.id == contactId`.
+        if 'contact_cache' not in locals():
+            contact_cache = {}
+
+        cache_key = str(contact_id)
+        contact = contact_cache.get(cache_key)
+        if contact is None:
+            snaps = list(contacts_col.where('id', '==', cache_key).limit(1).stream())
+            if not snaps:
+                contact_cache[cache_key] = False
+                continue
+            contact = snaps[0].to_dict() or {}
+            contact_cache[cache_key] = contact
+        if contact is False:
             continue
 
-        # Fetch contact sold date
-        contact_snap = contacts_col.document(str(contact_id)).get()
-        if not contact_snap.exists:
-            continue
-        contact = contact_snap.to_dict() or {}
         date_sold = contact.get(contract.sold_date_field)
         if not isinstance(date_sold, int):
             continue

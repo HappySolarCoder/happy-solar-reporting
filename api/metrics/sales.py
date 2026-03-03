@@ -104,6 +104,10 @@ def month_window_ms(year: int, month: int, tz_name: str) -> tuple[int, int, str,
 def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str) -> dict[str, Any]:
     start_ms, end_ms, start_iso, end_iso = month_window_ms(year, month, tz)
 
+    # Parse local window boundaries for date-only comparisons
+    start_local = datetime.fromisoformat(start_iso)
+    end_local = datetime.fromisoformat(end_iso)
+
     # Base query: opportunities in Sold/Sale Cancelled stages (opportunity grain)
     # NOTE: Firestore may require a composite index for (pipelineStageId IN ...).
     # To keep QA reliable without indexes, we stream opportunities and filter stage client-side.

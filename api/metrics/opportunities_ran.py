@@ -186,8 +186,19 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             if isinstance(cf, dict) and cf.get("id") == c.what_happened_custom_field_id:
                 dispo_val = cf_value(cf)
                 break
-        if dispo_val in (None, ""):
+        # Normalize disposition to Sit/No Sit only
+        if isinstance(dispo_val, str):
+            dispo_norm = dispo_val.strip().lower()
+        else:
+            dispo_norm = ""
+
+        allowed = {"sit", "no sit", "nosit"}
+        if dispo_norm not in allowed:
+            # Filter out blanks and any other values
             continue
+
+        # Canonical display
+        dispo_val = "Sit" if dispo_norm == "sit" else "No Sit"
         matched_dispo += 1
 
         # time window check (updatedAt)

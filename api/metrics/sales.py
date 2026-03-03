@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from typing import Any
+from datetime import timezone
+import re
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
@@ -41,7 +43,9 @@ class SalesMetricContract:
 
     # DB mapping
     collection: str = "ghl_opportunities_v2"
-    sold_date_field: str = "dateSold"  # from ghl_contacts (epoch millis)
+    # Canonical sold date lives in a Contact custom field (ISO string) in v2 payload
+    sold_date_custom_field_id: str = "P9oBjgbZjJdeE0OkBj9T"  # Sold Date (ISO)
+    sold_date_field: str = "dateSold"  # legacy field name (not used in v2)
     stage_field: str = "pipelineStageId"
     opportunity_id_field: str = "id"  # opportunity id in ghl_opportunities
 
@@ -164,12 +168,29 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if contact is False:
             continue
 
-        date_sold = contact.get(contract.sold_date_field)
-        if not isinstance(date_sold, int):
+        # Extract Sold Date from customFields (ISO string)
+        date_sold = None
+        for cf in (contact.get("customFields") or []):
+            if isinstance(cf, dict) and cf.get("id") == contract.sold_date_custom_field_id:
+                date_sold = cf.get("value")
+                break
+
+        # Parse ISO -> epoch millis
+        date_sold_ms = None
+        if isinstance(date_sold, str):
+            try:
+                # Example: 2026-01-07T00:00:00.000Z
+                # Force UTC parse then compare using millis window
+                dt = datetime.fromisoformat(date_sold.replace("Z", "+00:00"))
+                date_sold_ms = int(dt.timestamp() * 1000)
+            except Exception:
+                date_sold_ms = None
+
+        if not isinstance(date_sold_ms, int):
             continue
 
-        # Apply month window on contact sold date
-        if not (start_ms <= date_sold < end_ms):
+        # Apply month window on sold date (millis)
+        if not (start_ms <= date_sold_ms < end_ms):
             continue
         matched_date += 1
 
@@ -184,7 +205,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                     "pipelineId": opp.get("pipelineId"),
                     "status": opp.get("status"),
                     "contactId": contact_id,
-                    "dateSold": date_sold,
+                    "soldDateRaw": date_sold,
+                    "dateSold": date_sold_ms,
                     "pipelineName": pipeline_name_from_id(opp.get("pipelineId")),
                     "stageName_contact": contact.get("stageName"),
                     "assignedTo_contact": contact.get("assignedTo"),
@@ -216,7 +238,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "stage_field": f"{contract.collection}.{contract.stage_field}",
             "opportunity_id_field": f"{contract.collection}.{contract.opportunity_id_field}",
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
-            "sold_date_field": f"ghl_contacts_v2.{contract.sold_date_field}",
+            "sold_date_field": f"ghl_contacts_v2.customFields[{contract.sold_date_custom_field_id}] (ISO)",
             "included_stage_ids": list(contract.stage_ids),
         },
         "sample_rows": contrib_rows,

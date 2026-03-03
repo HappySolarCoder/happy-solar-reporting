@@ -8,22 +8,30 @@ from google.cloud import firestore
 app = Flask(__name__)
 
 # Try to init Firestore
+# Expected env vars (Vercel):
+# - FIREBASE_SERVICE_ACCOUNT_JSON (stringified JSON)
+# - GCP_PROJECT_ID (e.g. gemini-assistant-bot)
+# - FIRESTORE_DATABASE_ID (e.g. happy-solar)
+
 db = None
 try:
-    # For local development
-    creds_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-    if creds_json:
+    creds_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
+    project_id = os.environ.get('GCP_PROJECT_ID')
+    database_id = os.environ.get('FIRESTORE_DATABASE_ID')
+
+    if creds_json and project_id and database_id:
         import json
         from google.oauth2 import service_account
         from google.cloud import firestore
-        
+
         creds_dict = json.loads(creds_json)
-        # Write temp credentials file
-        with open('/tmp/firebase-key.json', 'w') as f:
-            json.dump(creds_dict, f)
-        
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/tmp/firebase-key.json'
-        db = firestore.Client()
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        db = firestore.Client(project=project_id, database=database_id, credentials=creds)
+    else:
+        # Fallback for local dev when GOOGLE_APPLICATION_CREDENTIALS is a file path
+        # (e.g. export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp/key.json)
+        from google.cloud import firestore
+        db = firestore.Client(project=project_id, database=database_id) if (project_id and database_id) else firestore.Client()
 except Exception as e:
     print(f"Firestore init error: {e}")
 

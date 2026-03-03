@@ -176,7 +176,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
 
-        if len(contrib_rows) < 25:
+        if len(contrib_rows) < 50:
             contrib_rows.append(
                 {
                     "opportunityId": opp_id,

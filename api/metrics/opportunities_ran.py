@@ -51,6 +51,9 @@ class MetricContract:
     # Identified from live v2 opportunity customFields sample: id=GYGpLKBPfMpiBqyU2ogQ value='No Sit'
     what_happened_custom_field_id: str = "GYGpLKBPfMpiBqyU2ogQ"
 
+    # Exclusions
+    excluded_pipeline_names: tuple[str, ...] = ("sweeper", "rehash")
+
     # breakdown fields (reuse contact custom fields we already identified)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
@@ -217,6 +220,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         # pipeline
         pid = str(opp.get("pipelineId") or "")
         pname = pipe_names.get(pid) or pid or "unknown"
+        if isinstance(pname, str) and pname.strip().lower() in set(c.excluded_pipeline_names):
+            continue
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
 
         # owner
@@ -272,6 +277,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "disposition_field": f"{c.opp_collection}.customFields[{c.what_happened_custom_field_id}] (What happened with Appointment?)",
             "time_field": f"{c.opp_collection}.{c.updated_at_field} (ISO)",
             "time_handling": "Parse ISO -> convert to America/New_York -> compare to month window",
+            "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
         },

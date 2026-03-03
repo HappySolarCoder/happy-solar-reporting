@@ -242,7 +242,7 @@ def render_html(payload: dict[str, Any]) -> str:
       <div>Stage field: <code>{payload['contract']['stage_field']}</code></div><div>Contact join: <code>{payload['contract']['contact_join']}</code></div>
       <div>Opportunity id field: <code>{payload['contract']['opportunity_id_field']}</code></div>
       <div style=\"margin-top:8px\">Included stage IDs: <code>{len(payload['contract']['included_stage_ids'])}</code></div>
-      <div style=\"margin-top:8px\">Debug: scanned <code>{payload['debug']['docs_scanned_in_date_range']}</code> docs in date range; matched stage <code>{payload['debug']['docs_matched_stage']}</code></div>
+      <div style=\"margin-top:8px\">Debug: opps scanned <code>{payload['debug']['opportunities_scanned']}</code>; matched stage <code>{payload['debug']['opportunities_matched_stage']}</code>; matched stage+date <code>{payload['debug']['opportunities_matched_stage_and_date']}</code></div>
       <div style=\"margin-top:8px\">JSON: <a href=\"?format=json\">?format=json</a></div>
     </div>
 

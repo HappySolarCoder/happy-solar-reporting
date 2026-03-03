@@ -359,19 +359,22 @@ def render_html(year: int, month: int) -> str:
     entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
     const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
 
+    // Must use px heights; % heights don't render reliably inside flexible columns.
+    const chartPx = 170; // bar max height inside the 240px wrapper
+
     let html = '<div class="vwrap">';
     let i = 0;
     for (const [name, val] of entries) {
       const n = String(name);
       const v = Number(val) || 0;
       if (v === 0) continue;
-      const pct = Math.max(2, Math.round((v / maxVal) * 100));
+      const barPx = Math.max(4, Math.round((v / maxVal) * chartPx));
       const color = palette[i % palette.length];
       i++;
       html += `
         <div class="vcol" title="${n}">
           <div class="vval">${v}</div>
-          <div class="vbar" style="height:${pct}%; background:${color}"></div>
+          <div class="vbar" style="height:${barPx}px; background:${color}"></div>
           <div class="vlabel">${n}</div>
         </div>`;
     }

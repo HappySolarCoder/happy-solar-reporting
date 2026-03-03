@@ -284,7 +284,8 @@ class Handler(BaseHTTPRequestHandler):
             now = datetime.utcnow()
             year = int(qs.get("year", [str(now.year)])[0])
             month = int(qs.get("month", [str(now.month)])[0])
-            tz = qs.get("tz", ["America/New_York"])[0]
+            # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
+            tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()

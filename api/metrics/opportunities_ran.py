@@ -408,7 +408,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = compute(db, c, year=year, month=month)
 
             if want_json:
-                body = json.dumps(payload).encode("utf-8")
+                body = json.dumps(json_safe(payload)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")

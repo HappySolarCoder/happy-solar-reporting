@@ -5,7 +5,7 @@
 Metric: Opportunities Ran
 Definition: Opportunities/Appointments that have been completed (dispositioned).
 Logic: Opportunity is considered 'ran' if custom field "What happened with Appointment?" is non-empty.
-Time filter: based on opportunity updatedAt (EST month window).
+Time filter: based on opportunity dispositionDate (EST month window).
 
 Params:
 - year, month (default current UTC year/month)
@@ -45,7 +45,9 @@ class MetricContract:
 
     # time
     timezone: str = "America/New_York"  # MANDATORY
-    updated_at_field: str = "updatedAt"  # ISO string
+
+    # Derived field maintained by Cloud Run ghl-firestore-sync-v2
+    disposition_date_field: str = "dispositionDate"  # Firestore Timestamp/datetime
 
     # Disposition field: "What happened with Appointment?"
     # Identified from live v2 opportunity customFields sample: id=GYGpLKBPfMpiBqyU2ogQ value='No Sit'
@@ -96,6 +98,20 @@ def parse_iso_dt(s: str) -> datetime | None:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def as_dt(v: Any) -> datetime | None:
+    """Coerce Firestore Timestamp/datetime/ISO string to datetime."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    if isinstance(v, str):
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    return None
 
 
 def cf_value(cf: dict) -> Any:
@@ -204,13 +220,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         dispo_val = "Sit" if dispo_norm == "sit" else "No Sit"
         matched_dispo += 1
 
-        # time window check (updatedAt)
-        upd = parse_iso_dt(opp.get(c.updated_at_field))
-        if not upd:
+        # time window check (dispositionDate)
+        dispo_dt = as_dt(opp.get(c.disposition_date_field))
+        if not dispo_dt:
             continue
         # compare in EST
-        upd_local = upd.astimezone(start_local.tzinfo)
-        if not (start_local <= upd_local < end_local):
+        dispo_local = dispo_dt.astimezone(start_local.tzinfo) if dispo_dt.tzinfo else dispo_dt.replace(tzinfo=timezone.utc).astimezone(start_local.tzinfo)
+        if not (start_local <= dispo_local < end_local):
             continue
         matched_time += 1
 
@@ -255,7 +271,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "contactLastName": last_name,
             "pipeline": pname,
             "owner": oname,
-            "updatedAt": opp.get(c.updated_at_field),
+            "dispositionDate": opp.get(c.disposition_date_field),
             "whatHappened": dispo_val,
         }
 
@@ -268,7 +284,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "result": len(matching_rows),
-        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and updatedAt in window",
+        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and dispositionDate in window",
         "debug": {
             "opps_scanned": scanned,
             "opps_with_disposition": matched_dispo,
@@ -278,8 +294,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "contract": {
             "base_collection": c.opp_collection,
             "disposition_field": f"{c.opp_collection}.customFields[{c.what_happened_custom_field_id}] (What happened with Appointment?)",
-            "time_field": f"{c.opp_collection}.{c.updated_at_field} (ISO)",
-            "time_handling": "Parse ISO -> convert to America/New_York -> compare to month window",
+            "time_field": f"{c.opp_collection}.{c.disposition_date_field} (Timestamp)",
+            "time_handling": "Convert Timestamp -> America/New_York -> compare to month window",
             "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
@@ -355,7 +371,7 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 </div>
 
 <div class=\"card\"><div class=\"label\">Matching opportunities (all)</div>
-<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + updatedAt</div>
+<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + dispositionDate</div>
 {table_html}
 </div>
 

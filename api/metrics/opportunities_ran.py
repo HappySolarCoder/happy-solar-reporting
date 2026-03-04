@@ -5,7 +5,7 @@
 Metric: Opportunities Ran
 Definition: Opportunities/Appointments that have been completed (dispositioned).
 Logic: Opportunity is considered 'ran' if custom field "What happened with Appointment?" is non-empty.
-Time filter: based on opportunity appointmentStartTime (EST month window).
+Time filter: based on opportunity appointmentOccurredAt (EST month window).
 
 Params:
 - year, month (default current UTC year/month)
@@ -46,8 +46,8 @@ class MetricContract:
     # time
     timezone: str = "America/New_York"  # MANDATORY
 
-    # Denormalized by Cloud Run ghl-firestore-sync-v2 (via calendars/events)
-    appointment_start_time_field: str = "appointmentStartTime"  # Firestore Timestamp/datetime
+    # Stable occurred timestamp (backfilled from CSV; future logic can set at disposition time)
+    appointment_occurred_at_field: str = "appointmentOccurredAt"  # Firestore Timestamp/datetime
 
     # Disposition field: "What happened with Appointment?"
     # Identified from live v2 opportunity customFields sample: id=GYGpLKBPfMpiBqyU2ogQ value='No Sit'
@@ -219,8 +219,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         # Canonical display
         dispo_val = "Sit" if dispo_norm == "sit" else "No Sit"
         matched_dispo += 1
-        # time window check (appointmentStartTime)
-        appt_dt = as_dt(opp.get("appointmentStartTime"))
+        # time window check (appointmentOccurredAt)
+        appt_dt = as_dt(opp.get("appointmentOccurredAt"))
         if not appt_dt:
             continue
         # compare in EST
@@ -270,7 +270,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "contactLastName": last_name,
             "pipeline": pname,
             "owner": oname,
-            "appointmentStartTime": opp.get(c.appointment_start_time_field),
+            "appointmentOccurredAt": opp.get(c.appointment_occurred_at_field),
             "whatHappened": dispo_val,
         }
 
@@ -283,7 +283,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "result": len(matching_rows),
-        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and appointmentStartTime in window",
+        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and appointmentOccurredAt in window",
         "debug": {
             "opps_scanned": scanned,
             "opps_with_disposition": matched_dispo,
@@ -293,8 +293,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "contract": {
             "base_collection": c.opp_collection,
             "disposition_field": f"{c.opp_collection}.customFields[{c.what_happened_custom_field_id}] (What happened with Appointment?)",
-            "time_field": f"{c.opp_collection}.appointmentStartTime (Timestamp)",
-            "time_handling": "Convert Timestamp -> America/New_York -> compare to month window (appointmentStartTime)",
+            "time_field": f"{c.opp_collection}.{c.appointment_occurred_at_field} (Timestamp)",
+            "time_handling": "Convert Timestamp -> America/New_York -> compare to month window (appointmentOccurredAt)",
             "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
@@ -313,8 +313,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
 def render_html(payload: dict[str, Any]) -> str:
     rows = payload.get("sample_rows", [])
 
-    # Sort by appointmentStartTime for readability
-    rows = sorted(rows, key=lambda r: (str(r.get("appointmentStartTime") or "")))
+    # Sort by appointmentOccurredAt for readability
+    rows = sorted(rows, key=lambda r: (str(r.get("appointmentOccurredAt") or "")))
 
     tr = []
     for r in rows:
@@ -323,7 +323,7 @@ def render_html(payload: dict[str, Any]) -> str:
             f"<td><code>{r.get('opportunityId','')}</code></td>"
             f"<td>{(r.get('contactLastName') or '')}</td>"
             f"<td><code>{(r.get('whatHappened') or '')}</code></td>"
-            f"<td><code>{(r.get('appointmentStartTime') or '')}</code></td>"
+            f"<td><code>{(r.get('appointmentOccurredAt') or '')}</code></td>"
             "</tr>"
         )
 
@@ -336,7 +336,7 @@ def render_html(payload: dict[str, Any]) -> str:
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">opportunityId</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">contact last name</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">what happened</th>
-          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">appointmentStartTime</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">appointmentOccurredAt</th>
         </tr>
       </thead>
       <tbody>
@@ -370,7 +370,7 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 </div>
 
 <div class=\"card\"><div class=\"label\">Matching opportunities (all)</div>
-<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + appointmentStartTime</div>
+<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + appointmentOccurredAt</div>
 {table_html}
 </div>
 

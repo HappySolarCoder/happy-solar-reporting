@@ -313,7 +313,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Owner Performance</div>
-          <div class="meta">Opp2Prelim = Sales / Opps Ran</div>
+          <div class="meta">Opp2Prelim = Sales / Opps Ran (Opps Ran uses appointmentOccurredAt month window)</div>
         </div>
         <div class="tablewrap">
           <table>
@@ -398,7 +398,7 @@ def render_html(year: int, month: int) -> str:
     const m = monthSel.value;
 
     const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
-    const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`; // now filtered by appointmentOccurredAt
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';

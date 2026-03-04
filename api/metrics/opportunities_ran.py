@@ -314,8 +314,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
 def render_html(payload: dict[str, Any]) -> str:
     rows = payload.get("sample_rows", [])
 
-    # Sort by updatedAt for readability
-    rows = sorted(rows, key=lambda r: (r.get("updatedAt") or ""))
+    # Sort by dispositionDate for readability
+    rows = sorted(rows, key=lambda r: (str(r.get("dispositionDate") or "")))
 
     tr = []
     for r in rows:
@@ -324,7 +324,7 @@ def render_html(payload: dict[str, Any]) -> str:
             f"<td><code>{r.get('opportunityId','')}</code></td>"
             f"<td>{(r.get('contactLastName') or '')}</td>"
             f"<td><code>{(r.get('whatHappened') or '')}</code></td>"
-            f"<td><code>{(r.get('updatedAt') or '')}</code></td>"
+            f"<td><code>{(r.get('dispositionDate') or '')}</code></td>"
             "</tr>"
         )
 
@@ -337,7 +337,7 @@ def render_html(payload: dict[str, Any]) -> str:
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">opportunityId</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">contact last name</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">what happened</th>
-          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">updatedAt</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">dispositionDate</th>
         </tr>
       </thead>
       <tbody>

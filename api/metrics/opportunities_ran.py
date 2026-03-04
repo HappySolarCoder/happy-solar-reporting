@@ -5,7 +5,7 @@
 Metric: Opportunities Ran
 Definition: Opportunities/Appointments that have been completed (dispositioned).
 Logic: Opportunity is considered 'ran' if custom field "What happened with Appointment?" is non-empty.
-Time filter: based on opportunity dispositionDate (EST month window).
+Time filter: based on opportunity appointmentStartTime (EST month window).
 
 Params:
 - year, month (default current UTC year/month)
@@ -313,8 +313,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
 def render_html(payload: dict[str, Any]) -> str:
     rows = payload.get("sample_rows", [])
 
-    # Sort by dispositionDate for readability
-    rows = sorted(rows, key=lambda r: (str(r.get("dispositionDate") or "")))
+    # Sort by appointmentStartTime for readability
+    rows = sorted(rows, key=lambda r: (str(r.get("appointmentStartTime") or "")))
 
     tr = []
     for r in rows:
@@ -323,7 +323,7 @@ def render_html(payload: dict[str, Any]) -> str:
             f"<td><code>{r.get('opportunityId','')}</code></td>"
             f"<td>{(r.get('contactLastName') or '')}</td>"
             f"<td><code>{(r.get('whatHappened') or '')}</code></td>"
-            f"<td><code>{(r.get('dispositionDate') or '')}</code></td>"
+            f"<td><code>{(r.get('appointmentStartTime') or '')}</code></td>"
             "</tr>"
         )
 
@@ -336,7 +336,7 @@ def render_html(payload: dict[str, Any]) -> str:
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">opportunityId</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">contact last name</th>
           <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">what happened</th>
-          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">dispositionDate</th>
+          <th style=\"text-align:left; border-bottom:1px solid #1f2a38; padding:8px; color:#9db0c7\">appointmentStartTime</th>
         </tr>
       </thead>
       <tbody>

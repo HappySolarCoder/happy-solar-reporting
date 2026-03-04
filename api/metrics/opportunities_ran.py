@@ -46,8 +46,8 @@ class MetricContract:
     # time
     timezone: str = "America/New_York"  # MANDATORY
 
-    # Derived field maintained by Cloud Run ghl-firestore-sync-v2
-    disposition_date_field: str = "dispositionDate"  # Firestore Timestamp/datetime
+    # Denormalized by Cloud Run ghl-firestore-sync-v2 (via calendars/events)
+    appointment_start_time_field: str = "appointmentStartTime"  # Firestore Timestamp/datetime
 
     # Disposition field: "What happened with Appointment?"
     # Identified from live v2 opportunity customFields sample: id=GYGpLKBPfMpiBqyU2ogQ value='No Sit'
@@ -219,14 +219,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         # Canonical display
         dispo_val = "Sit" if dispo_norm == "sit" else "No Sit"
         matched_dispo += 1
-
-        # time window check (dispositionDate)
-        dispo_dt = as_dt(opp.get(c.disposition_date_field))
-        if not dispo_dt:
+        # time window check (appointmentStartTime)
+        appt_dt = as_dt(opp.get("appointmentStartTime"))
+        if not appt_dt:
             continue
         # compare in EST
-        dispo_local = dispo_dt.astimezone(start_local.tzinfo) if dispo_dt.tzinfo else dispo_dt.replace(tzinfo=timezone.utc).astimezone(start_local.tzinfo)
-        if not (start_local <= dispo_local < end_local):
+        appt_local = appt_dt.astimezone(start_local.tzinfo) if appt_dt.tzinfo else appt_dt.replace(tzinfo=timezone.utc).astimezone(start_local.tzinfo)
+        if not (start_local <= appt_local < end_local):
             continue
         matched_time += 1
 
@@ -271,7 +270,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
             "contactLastName": last_name,
             "pipeline": pname,
             "owner": oname,
-            "dispositionDate": opp.get(c.disposition_date_field),
+            "appointmentStartTime": opp.get(c.appointment_start_time_field),
             "whatHappened": dispo_val,
         }
 
@@ -284,7 +283,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "result": len(matching_rows),
-        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and dispositionDate in window",
+        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and appointmentStartTime in window",
         "debug": {
             "opps_scanned": scanned,
             "opps_with_disposition": matched_dispo,
@@ -294,8 +293,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "contract": {
             "base_collection": c.opp_collection,
             "disposition_field": f"{c.opp_collection}.customFields[{c.what_happened_custom_field_id}] (What happened with Appointment?)",
-            "time_field": f"{c.opp_collection}.{c.disposition_date_field} (Timestamp)",
-            "time_handling": "Convert Timestamp -> America/New_York -> compare to month window",
+            "time_field": f"{c.opp_collection}.appointmentStartTime (Timestamp)",
+            "time_handling": "Convert Timestamp -> America/New_York -> compare to month window (appointmentStartTime)",
             "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
@@ -371,7 +370,7 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 </div>
 
 <div class=\"card\"><div class=\"label\">Matching opportunities (all)</div>
-<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + dispositionDate</div>
+<div style=\"color:#9db0c7\">opportunityId + contact last name + disposition + appointmentStartTime</div>
 {table_html}
 </div>
 

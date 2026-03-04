@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -50,7 +50,9 @@ class MetricContract:
 
     # Derived fields we write into ghl_opportunities_v2
     disposition_value_field: str = "dispositionValue"  # Sit / No Sit / null
-    disposition_date_field: str = "dispositionDate"  # Firestore Timestamp/datetime
+
+    # Stable occurred timestamp used for ran/demo month windows
+    appointment_occurred_at_field: str = "appointmentOccurredAt"  # Firestore Timestamp/datetime
 
     # Pipeline scope
     included_pipeline_names: tuple[str, ...] = ("buffalo", "rochester", "virtual", "syracuse")
@@ -173,7 +175,7 @@ def html_page(payload: dict) -> str:
         )
 
     table_rows = "".join(
-        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('dispositionDate'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
+        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('appointmentOccurredAt'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
         for r in rows[:500]
     )
 
@@ -233,7 +235,7 @@ def html_page(payload: dict) -> str:
                 <th>opportunityId</th>
                 <th>pipeline</th>
                 <th>disposition</th>
-                <th>dispositionDate</th>
+                <th>appointmentOccurredAt</th>
                 <th>setter</th>
                 <th>lead_source</th>
               </tr>
@@ -256,8 +258,15 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
     pipelines = pipeline_name_lookup(db)
 
-    # Pull all opportunities (same pattern as other metrics). We filter in Python to allow dispositionDate comparisons.
-    opp_docs = list(db.collection(c.opp_collection).stream())
+    # Firestore query: only scan opportunities in the month window (big speedup)
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
+    opp_query = (
+        db.collection(c.opp_collection)
+        .where(c.appointment_occurred_at_field, ">=", start_utc)
+        .where(c.appointment_occurred_at_field, "<", end_utc)
+    )
 
     matching = []
     ran = 0
@@ -268,7 +277,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
 
-    for snap in opp_docs:
+    for snap in opp_query.stream():
         opp = snap.to_dict() or {}
 
         pid = str(opp.get("pipelineId") or "")
@@ -288,7 +297,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if dispo not in ("Sit", "No Sit"):
             continue
 
-        dispo_dt = as_dt(opp.get(c.disposition_date_field))
+        dispo_dt = as_dt(opp.get(c.appointment_occurred_at_field))
         if not dispo_dt:
             continue
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -194,39 +194,28 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
 
     matching_rows: dict[str, dict[str, Any]] = {}
 
-    for doc in db.collection(c.opp_collection).stream():
+    # Firestore query: only scan opportunities in the time window (big speedup)
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
+    opp_query = (
+        db.collection(c.opp_collection)
+        .where(c.appointment_occurred_at_field, ">=", start_utc)
+        .where(c.appointment_occurred_at_field, "<", end_utc)
+    )
+
+    for doc in opp_query.stream():
         scanned += 1
         opp = doc.to_dict() or {}
         opp_id = str(opp.get("id") or doc.id)
 
-        # disposition check
-        dispo_val = None
-        for cf in (opp.get("customFields") or []):
-            if isinstance(cf, dict) and cf.get("id") == c.what_happened_custom_field_id:
-                dispo_val = cf_value(cf)
-                break
-        # Normalize disposition to Sit/No Sit only
-        if isinstance(dispo_val, str):
-            dispo_norm = dispo_val.strip().lower()
-        else:
-            dispo_norm = ""
-
-        allowed = {"sit", "no sit", "nosit"}
-        if dispo_norm not in allowed:
-            # Filter out blanks and any other values
+        # disposition check (use derived field for speed)
+        dispo_val = opp.get("dispositionValue")
+        if dispo_val not in ("Sit", "No Sit"):
             continue
-
-        # Canonical display
-        dispo_val = "Sit" if dispo_norm == "sit" else "No Sit"
         matched_dispo += 1
-        # time window check (appointmentOccurredAt)
-        appt_dt = as_dt(opp.get("appointmentOccurredAt"))
-        if not appt_dt:
-            continue
-        # compare in EST
-        appt_local = appt_dt.astimezone(start_local.tzinfo) if appt_dt.tzinfo else appt_dt.replace(tzinfo=timezone.utc).astimezone(start_local.tzinfo)
-        if not (start_local <= appt_local < end_local):
-            continue
+
+        # time window check already handled by Firestore query, but keep counters consistent
         matched_time += 1
 
         # distinct count
@@ -285,7 +274,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -
         "result": len(matching_rows),
         "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and appointmentOccurredAt in window",
         "debug": {
-            "opps_scanned": scanned,
+            "opps_scanned": scanned,  # scanned within time window query
             "opps_with_disposition": matched_dispo,
             "opps_with_disposition_and_in_window": matched_time,
             "rows_listed": len(matching_rows),
@@ -380,7 +369,7 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 
 def json_safe(x):
     """Recursively convert datetime/Timestamp objects to ISO strings for JSON."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     if isinstance(x, datetime):
         return x.isoformat()

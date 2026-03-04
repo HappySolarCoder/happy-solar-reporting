@@ -378,6 +378,21 @@ code{{background:#0e1520;padding:2px 6px;border-radius:6px;}}
 
 
 
+def json_safe(x):
+    """Recursively convert datetime/Timestamp objects to ISO strings for JSON."""
+    from datetime import datetime
+
+    if isinstance(x, datetime):
+        return x.isoformat()
+    if isinstance(x, dict):
+        return {k: json_safe(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [json_safe(v) for v in x]
+    if isinstance(x, tuple):
+        return [json_safe(v) for v in x]
+    return x
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:

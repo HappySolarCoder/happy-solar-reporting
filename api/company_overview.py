@@ -203,13 +203,14 @@ def render_html(year: int, month: int) -> str:
     .kpi { font-size: 46px; font-weight: 950; margin-top: 8px; letter-spacing: -0.02em; }
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
+    .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
     .span-6 { grid-column: span 6; }
     .span-8 { grid-column: span 8; }
     .span-12 { grid-column: span 12; }
 
     @media (max-width: 980px) {
-      .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
+      .span-3, .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
     }
 
     /* Horizontal bars */
@@ -336,6 +337,39 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="kpi" id="opp2prelim">—</div>
         <div class="meta" id="opp2prelimMeta">—</div>
+      </div>
+
+      <!-- Demo Rate KPI row -->
+      <div class="card span-3">
+        <div class="card-header">
+          <div class="card-title">Demo Rate (Company)</div>
+          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        </div>
+        <div class="kpi" id="demoRateCompany">—</div>
+      </div>
+
+      <div class="card span-3">
+        <div class="card-header">
+          <div class="card-title">Demo Rate — Doors</div>
+          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        </div>
+        <div class="kpi" id="demoRateDoors">—</div>
+      </div>
+
+      <div class="card span-3">
+        <div class="card-header">
+          <div class="card-title">Demo Rate — Virtual</div>
+          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        </div>
+        <div class="kpi" id="demoRateVirtual">—</div>
+      </div>
+
+      <div class="card span-3">
+        <div class="card-header">
+          <div class="card-title">Demo Rate — 3PL</div>
+          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        </div>
+        <div class="kpi" id="demoRate3pl">—</div>
       </div>
 
       <!-- Row 2: Sales per Team full width -->
@@ -470,10 +504,20 @@ def render_html(year: int, month: int) -> str:
     const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
 
+    const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+    const demoDoorsUrl = demoBase + `&lead_source=${encodeURIComponent('doors')}`;
+    const demoVirtualUrl = demoBase + `&lead_source=${encodeURIComponent('virtual')}`;
+    const demo3plUrl = demoBase + `&lead_source=${encodeURIComponent('3pl')}`;
+
+
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('totalCreated').textContent = '…';
     document.getElementById('opp2prelim').textContent = '…';
+    document.getElementById('demoRateCompany').textContent = '…';
+    document.getElementById('demoRateDoors').textContent = '…';
+    document.getElementById('demoRateVirtual').textContent = '…';
+    document.getElementById('demoRate3pl').textContent = '…';
     document.getElementById('opp2prelimMeta').textContent = '';
 
     document.getElementById('createdMeta').textContent = '';
@@ -483,10 +527,14 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const [salesRes, createdRes, ranRes] = await Promise.all([
+    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoVirtualRes, demo3plRes] = await Promise.all([
       fetch(salesUrl, { cache: 'no-store' }),
       fetch(createdUrl, { cache: 'no-store' }),
-      fetch(ranUrl, { cache: 'no-store' })
+      fetch(ranUrl, { cache: 'no-store' }),
+      fetch(demoBase, { cache: 'no-store' }),
+      fetch(demoDoorsUrl, { cache: 'no-store' }),
+      fetch(demoVirtualUrl, { cache: 'no-store' }),
+      fetch(demo3plUrl, { cache: 'no-store' })
     ]);
 
     if (!salesRes.ok) {
@@ -498,6 +546,10 @@ def render_html(year: int, month: int) -> str:
     const salesData = await salesRes.json();
     const createdData = createdRes.ok ? await createdRes.json() : null;
     const ranData = ranRes.ok ? await ranRes.json() : null;
+    const demoData = demoRes.ok ? await demoRes.json() : null;
+    const demoDoorsData = demoDoorsRes.ok ? await demoDoorsRes.json() : null;
+    const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
+    const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
 
     document.getElementById('totalSales').textContent = salesData.result;
     document.getElementById('salesMeta').textContent = '';
@@ -515,6 +567,12 @@ def render_html(year: int, month: int) -> str:
 
 
     document.getElementById('totalCreated').textContent = createdData.result;
+
+    const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
+    document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
+    document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
+    document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
+    document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
 
     // Opp2Prelim = Sales / Opportunities Ran
     if (!ranData) {

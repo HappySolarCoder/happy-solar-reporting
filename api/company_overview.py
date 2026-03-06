@@ -346,6 +346,7 @@ def render_html(year: int, month: int) -> str:
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
         <div class="kpi" id="demoRateCompany">—</div>
+        <div class="meta" id="demoRateCompanyCounts">Demos: — • Ran: —</div>
       </div>
 
       <div class="card span-3">
@@ -354,6 +355,7 @@ def render_html(year: int, month: int) -> str:
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
         <div class="kpi" id="demoRateDoors">—</div>
+        <div class="meta" id="demoRateDoorsCounts">Demos: — • Ran: —</div>
       </div>
 
       <div class="card span-3">
@@ -362,6 +364,7 @@ def render_html(year: int, month: int) -> str:
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
         <div class="kpi" id="demoRateVirtual">—</div>
+        <div class="meta" id="demoRateVirtualCounts">Demos: — • Ran: —</div>
       </div>
 
       <div class="card span-3">
@@ -370,6 +373,7 @@ def render_html(year: int, month: int) -> str:
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
         <div class="kpi" id="demoRate3pl">—</div>
+        <div class="meta" id="demoRate3plCounts">Demos: — • Ran: —</div>
       </div>
 
       <!-- Row 2: Sales per Team full width -->
@@ -518,6 +522,11 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('demoRateDoors').textContent = '…';
     document.getElementById('demoRateVirtual').textContent = '…';
     document.getElementById('demoRate3pl').textContent = '…';
+
+    document.getElementById('demoRateCompanyCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('demoRateDoorsCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('demoRateVirtualCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('demoRate3plCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('opp2prelimMeta').textContent = '';
 
     document.getElementById('createdMeta').textContent = '';
@@ -569,10 +578,24 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('totalCreated').textContent = createdData.result;
 
     const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
+    const fmtCounts = (d) => {
+      if (!d) return 'Demos: — • Ran: —';
+      const demos = (typeof d.sit_count !== 'undefined') ? Number(d.sit_count) : null;
+      const ran = (typeof d.ran_count !== 'undefined') ? Number(d.ran_count) : null;
+      const demosTxt = (demos === null || Number.isNaN(demos)) ? '—' : String(demos);
+      const ranTxt = (ran === null || Number.isNaN(ran)) ? '—' : String(ran);
+      return `Demos: ${demosTxt} • Ran: ${ranTxt}`;
+    };
+
     document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
     document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
     document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
     document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
+
+    document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
+    document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
+    document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
+    document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
 
     // Opp2Prelim = Sales / Opportunities Ran
     if (!ranData) {

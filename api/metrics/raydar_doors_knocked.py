@@ -223,8 +223,8 @@ def html_page(payload: dict) -> str:
 
       <div class=\"card\">
         <div class=\"label\">Contract</div>
-        <div class=\"meta\"><code>{esc(payload.get('contract',{{}}).get('collection'))}</code></div>
-        <div class=\"meta\"><code>{esc(payload.get('contract',{{}}).get('time_field'))}</code></div>
+        <div class=\"meta\"><code>{esc((payload.get('contract') or {}).get('collection'))}</code></div>
+        <div class=\"meta\"><code>{esc((payload.get('contract') or {}).get('time_field'))}</code></div>
       </div>
 
       <div class=\"card wide\">

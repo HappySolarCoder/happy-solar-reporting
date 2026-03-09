@@ -279,7 +279,7 @@ def html_page(payload: dict) -> str:
 </html>"""
 
 
-def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str, str | None]) -> dict:
+def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str, str | None], start: str | None = None, end: str | None = None) -> dict:
     c = MetricContract()
     if start and end:
         start_local, end_local, start_str, end_str = date_range_window(start, end, c.timezone)

@@ -371,10 +371,12 @@ class Handler(BaseHTTPRequestHandler):
             now = datetime.utcnow()
             year = int(qs.get("year", [str(now.year)])[0])
             month = int(qs.get("month", [str(now.month)])[0])
+            start = (qs.get("start", [""])[0] or "").strip() or None
+            end = (qs.get("end", [""])[0] or "").strip() or None
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month)
+            payload = compute(db, c, year=year, month=month, start=start, end=end)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

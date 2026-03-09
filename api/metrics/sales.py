@@ -105,8 +105,42 @@ def month_window_ms(year: int, month: int, tz_name: str) -> tuple[int, int, str,
     return start_ms, end_ms, start_local.isoformat(), next_local.isoformat()
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str) -> dict[str, Any]:
-    start_ms, end_ms, start_iso, end_iso = month_window_ms(year, month, tz)
+def parse_date_ymd(s: str | None) -> tuple[int,int,int] | None:
+    if not s or not isinstance(s, str):
+        return None
+    t = s.strip()
+    try:
+        y, m, d = [int(x) for x in t.split('-')]
+        return y, m, d
+    except Exception:
+        return None
+
+
+def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[int, int, str, str]:
+    """Date-only window, end inclusive; returns epoch ms boundaries [start, end_exclusive)."""
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(tz_name)
+    sp = parse_date_ymd(start_ymd)
+    ep = parse_date_ymd(end_ymd)
+    if not (sp and ep):
+        raise ValueError('Invalid start/end date; expected YYYY-MM-DD')
+    sy, sm, sd = sp
+    ey, em, ed = ep
+    start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
+    end_local = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz)
+    end_exclusive = end_local + timedelta(days=1)
+    start_ms = int(start_local.timestamp() * 1000)
+    end_ms = int(end_exclusive.timestamp() * 1000)
+    return start_ms, end_ms, start_local.isoformat(), end_exclusive.isoformat()
+
+
+
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    if start and end:
+        start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
+    else:
+        start_ms, end_ms, start_iso, end_iso = month_window_ms(year, month, tz)
 
     # Parse local window boundaries for date-only comparisons
     start_local = datetime.fromisoformat(start_iso)

@@ -10,8 +10,11 @@ Business rule (canonical):
 - Reporting windows computed in America/New_York.
 
 Params:
-- year (int) default current UTC year
-- month (int) 1-12 default current UTC month
+- start=YYYY-MM-DD (optional; date-only, America/New_York)
+- end=YYYY-MM-DD (optional; date-only, inclusive, America/New_York)
+- period (optional) today|yesterday|7d|thiswk|lastwk|thismo|lastmo|all
+- year (int) default current UTC year (used if no start/end/period)
+- month (int) 1-12 default current UTC month (used if no start/end/period)
 - format=json (optional)
 
 Output:
@@ -147,6 +150,48 @@ def parse_int(qs: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
+    if not s or not isinstance(s, str):
+        return None
+    t = s.strip()
+    try:
+        parts = t.split('-')
+        if len(parts) != 3:
+            return None
+        y, m, d = (int(parts[0]), int(parts[1]), int(parts[2]))
+        if y < 2000 or m < 1 or m > 12 or d < 1 or d > 31:
+            return None
+        return y, m, d
+    except Exception:
+        return None
+
+
+def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datetime, datetime, str, str, str]:
+    """Date-only range in tz, end date inclusive (full day).
+
+    Returns (start_local, end_local_exclusive, start_iso, end_iso, label).
+    """
+
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(tz_name)
+    sp = parse_date_ymd(start_ymd)
+    ep = parse_date_ymd(end_ymd)
+    if not (sp and ep):
+        raise ValueError('Invalid start/end date; expected YYYY-MM-DD')
+
+    sy, sm, sd = sp
+    ey, em, ed = ep
+
+    start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
+    end_local_inclusive = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz)
+    end_local_exclusive = end_local_inclusive + timedelta(days=1)
+
+    label = f"{start_ymd} → {end_ymd}"
+    return start_local, end_local_exclusive, start_local.isoformat(), end_local_exclusive.isoformat(), label
+
+
+
 def user_name_map(db: firestore.Client) -> dict[str, str]:
     out: dict[str, str] = {}
     for snap in db.collection(MetricContract.users_collection).stream():
@@ -155,10 +200,13 @@ def user_name_map(db: firestore.Client) -> dict[str, str]:
     return out
 
 
-def build_payload(db: firestore.Client, year: int, month: int, period: str | None = None) -> dict:
+def build_payload(db: firestore.Client, year: int, month: int, period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
     from zoneinfo import ZoneInfo
 
-    if period:
+    if start and end:
+        start_local, end_local, start_iso, end_iso, period_label = date_range_window(start, end, MetricContract.timezone)
+        period = None
+    elif period:
         start_local, end_local, start_iso, end_iso, period_label = period_window(period, MetricContract.timezone)
     else:
         start_local, end_local, start_iso, end_iso = month_window(year, month, MetricContract.timezone)
@@ -216,6 +264,8 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
         "year": year,
         "month": month,
         "period": period or None,
+        "start": start or None,
+        "end": end or None,
         "period_label": period_label,
         "timezone": MetricContract.timezone,
         "window_start_local": start_iso,
@@ -328,11 +378,13 @@ class handler(BaseHTTPRequestHandler):
         year = parse_int(qs, "year", now.year)
         month = parse_int(qs, "month", now.month)
         period = (qs.get("period", [""])[0] or "").strip() or None
+        start = (qs.get("start", [""])[0] or "").strip() or None
+        end = (qs.get("end", [""])[0] or "").strip() or None
         fmt = (qs.get("format", [""])[0] or "").lower()
 
         try:
             db = get_db()
-            payload = build_payload(db, year, month, period)
+            payload = build_payload(db, year, month, period, start, end)
 
             if fmt == "json":
                 body = json.dumps(payload, indent=2).encode("utf-8")

@@ -337,9 +337,16 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
         </div>
       </div>
-      <div style="min-width:260px">
-        <div class="card-title">Month</div>
-        <div class="meta">Year: __YEAR__ • Month: __MONTH__</div>
+      <div style="min-width:320px">
+        <div class="card-title">Custom Range (date-only)</div>
+        <div class="meta">Overrides tabs when set</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center">
+          <input id="startDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
+          <input id="endDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
+          <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
+          <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
+        </div>
+        <div class="meta" id="rangeMeta">Month view: __YEAR__-__MONTH__</div>
       </div>
     </div>
 
@@ -463,6 +470,24 @@ def render_html(year: int, month: int) -> str:
   </div>
 
 <script>
+  // Custom range persistence
+  const rangeKey = 'fms_range_v1';
+  function getRange() {
+    try {
+      const raw = localStorage.getItem(rangeKey);
+      if (!raw) return null;
+      const j = JSON.parse(raw);
+      if (j && j.start && j.end) return j;
+      return null;
+    } catch { return null; }
+  }
+  function setRange(r) {
+    try { localStorage.setItem(rangeKey, JSON.stringify(r)); } catch {}
+  }
+  function clearRange() {
+    try { localStorage.removeItem(rangeKey); } catch {}
+  }
+
   // Period tabs: UI only (metric wiring comes after schema confirmation)
   document.querySelectorAll('#periodTabs .pill').forEach(p => {
     p.addEventListener('click', () => {
@@ -525,9 +550,12 @@ def render_html(year: int, month: int) -> str:
       const y = __YEAR__;
       const m = __MONTH__;
 
-      const url = period
-        ? `/api/metrics/raydar_doors_knocked?format=json&period=${encodeURIComponent(period)}`
-        : `/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+      const r = getRange();
+      const url = (r && r.start && r.end)
+        ? `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(r.start)}&end=${encodeURIComponent(r.end)}`
+        : (period
+            ? `/api/metrics/raydar_doors_knocked?format=json&period=${encodeURIComponent(period)}`
+            : `/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`);
 
       const res = await fetch(url, { cache: 'no-store' });
       const data = res.ok ? await res.json() : null;

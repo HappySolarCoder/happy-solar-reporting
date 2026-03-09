@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -91,6 +91,33 @@ def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetim
     else:
         end_local = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=tz)
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
+
+def parse_date_ymd(s: str | None) -> tuple[int,int,int] | None:
+    if not s or not isinstance(s, str):
+        return None
+    t = s.strip()
+    try:
+        y, m, d = [int(x) for x in t.split('-')]
+        return y, m, d
+    except Exception:
+        return None
+
+
+def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datetime, datetime, str, str]:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(tz_name)
+    sp = parse_date_ymd(start_ymd)
+    ep = parse_date_ymd(end_ymd)
+    if not (sp and ep):
+        raise ValueError('Invalid start/end date; expected YYYY-MM-DD')
+    sy, sm, sd = sp
+    ey, em, ed = ep
+    start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
+    end_local = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
+    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
 
 
 def as_dt(v: Any) -> datetime | None:
@@ -254,7 +281,10 @@ def html_page(payload: dict) -> str:
 
 def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str, str | None]) -> dict:
     c = MetricContract()
-    start_local, end_local, start_str, end_str = month_window(year, month, c.timezone)
+    if start and end:
+        start_local, end_local, start_str, end_str = date_range_window(start, end, c.timezone)
+    else:
+        start_local, end_local, start_str, end_str = month_window(year, month, c.timezone)
 
     pipelines = pipeline_name_lookup(db)
 
@@ -378,6 +408,9 @@ class handler(BaseHTTPRequestHandler):
         month = parse_int(qs, "month", now.month)
         fmt = (qs.get("format", [""])[0] or "").lower()
 
+        start = (qs.get("start", [None])[0] or None)
+        end = (qs.get("end", [None])[0] or None)
+
         filters = {
             "pipeline": (qs.get("pipeline", [None])[0] or None),
             "setter": (qs.get("setter", [None])[0] or None),
@@ -386,7 +419,7 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             db = get_db()
-            payload = build_payload(db, year, month, filters)
+            payload = build_payload(db, year, month, filters, start, end)
 
             if fmt == "json":
                 body = json.dumps(payload, indent=2).encode("utf-8")

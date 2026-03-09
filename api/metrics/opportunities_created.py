@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -91,6 +91,33 @@ def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetim
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
+def parse_date_ymd(s: str | None) -> tuple[int,int,int] | None:
+    if not s or not isinstance(s, str):
+        return None
+    t = s.strip()
+    try:
+        y, m, d = [int(x) for x in t.split('-')]
+        return y, m, d
+    except Exception:
+        return None
+
+
+def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datetime, datetime, str, str]:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(tz_name)
+    sp = parse_date_ymd(start_ymd)
+    ep = parse_date_ymd(end_ymd)
+    if not (sp and ep):
+        raise ValueError('Invalid start/end date; expected YYYY-MM-DD')
+    sy, sm, sd = sp
+    ey, em, ed = ep
+    start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
+    end_local = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
+    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
+
+
 def parse_iso_dt(s: str) -> datetime | None:
     if not isinstance(s, str) or not s:
         return None
@@ -146,8 +173,11 @@ def normalize_channel(v: Any) -> str:
     return str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int) -> dict[str, Any]:
-    start_local, end_local, start_iso, end_iso = month_window(year, month, c.timezone)
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    if start and end:
+        start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
+    else:
+        start_local, end_local, start_iso, end_iso = month_window(year, month, c.timezone)
 
     pipe_names = pipeline_name_lookup(db, c)
     user_names = user_name_lookup(db, c)

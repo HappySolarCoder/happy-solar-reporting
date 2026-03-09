@@ -136,7 +136,7 @@ def render_html(year: int, month: int) -> str:
       border: 1px solid var(--border);
     }
 
-    select, button {
+    select, button, input[type=date] {
       background: var(--card);
       color: var(--text);
       border: 1px solid var(--border);
@@ -289,6 +289,15 @@ def render_html(year: int, month: int) -> str:
           <select id="month"></select>
         </div>
         <button id="apply">Apply</button>
+        <div class="filter">
+          <div class="filter-label">Start</div>
+          <input id="startDate" type="date" />
+        </div>
+        <div class="filter">
+          <div class="filter-label">End</div>
+          <input id="endDate" type="date" />
+        </div>
+        <button id="clearRange" style="background:#fff;color:#1f2937;border-color:var(--border);font-weight:900">Clear</button>
       </div>
     </div>
 
@@ -393,12 +402,20 @@ def render_html(year: int, month: int) -> str:
     return (s / r) * 100;
   }
 
+  function rangeParams() {
+    const s = (document.getElementById('startDate').value || '').trim();
+    const e = (document.getElementById('endDate').value || '').trim();
+    if (s && e) return `&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
+    return '';
+  }
+
   async function load() {
     const y = yearSel.value;
     const m = monthSel.value;
 
-    const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
-    const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`; // now filtered by appointmentOccurredAt
+    const rp = rangeParams();
+    const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
+    const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`; // now filtered by appointmentOccurredAt
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
@@ -478,6 +495,11 @@ def render_html(year: int, month: int) -> str:
   setOptions(monthSel, months, defaultMonth);
 
   document.getElementById('apply').addEventListener('click', load);
+  document.getElementById('clearRange').addEventListener('click', () => {
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
+    load();
+  });
   load();
 </script>
 </body>

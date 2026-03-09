@@ -2,7 +2,7 @@
 
 """Vercel Python function: /api/fma_dashboard
 
-FMA Dashboard (production)
+FMS Dashboard (production)
 
 Intent: mirror the Raydar "Team Performance" layout for canvassing/FMA lead gen.
 Metric wiring will be added after schema is confirmed.
@@ -28,7 +28,7 @@ def render_html(year: int, month: int) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Happy Solar — FMA Dashboard</title>
+  <title>Happy Solar — FMS Dashboard</title>
   <style>
     :root {
       --bg: #f5f7fa;
@@ -327,13 +327,13 @@ def render_html(year: int, month: int) -> str:
   <div class="wrap">
     <div class="topbar">
       <div>
-        <div class="title">FMA Dashboard</div>
+        <div class="title">FMS Dashboard</div>
         <div class="subtitle">Team Performance — real-time setter metrics (Raydar-style cards)</div>
         <div class="pinkline"></div>
         <div class="nav">
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
-          <a class="navbtn active" href="/api/fma_dashboard">FMA dashboard</a>
+          <a class="navbtn active" href="/api/fma_dashboard">FMS dashboard</a>
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
         </div>
       </div>
@@ -517,16 +517,16 @@ def render_html(year: int, month: int) -> str:
     setText('segAppts', '— Appts');
 
     try {
-      // Temporary wiring: treat "knocks" as the number of Raydar dispositioned leads in the selected month window.
-      // Next: replace with proper period handling + breakdown by user.
+      // Knocks (Doors Knocked) date filter is raydar_leads_v1.dispositionedAt (canonical).
+      // For now we wire month window via the QA metric endpoint.
       const y = __YEAR__;
       const m = __MONTH__;
-      const res = await fetch(`/api/raydar/stats?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { cache: 'no-store' });
       const data = res.ok ? await res.json() : null;
 
-      const knocks = data && typeof data.leads !== 'undefined' ? Number(data.leads) : null;
+      const knocks = data && typeof data.result !== 'undefined' ? Number(data.result) : null;
       setText('kpiKnocks', knocks === null ? '—' : String(knocks));
-      setText('kpiKnocksSub', 'Dispositioned leads (all-time in reporting DB)');
+      setText('kpiKnocksSub', 'Dispositioned leads in month (dispositionedAt)');
       setText('segKnocks', `${knocks === null ? '—' : knocks} Knocks`);
 
       // Placeholder funnel numbers

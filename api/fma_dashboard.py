@@ -518,15 +518,28 @@ def render_html(year: int, month: int) -> str:
 
     try {
       // Knocks (Doors Knocked) date filter is raydar_leads_v1.dispositionedAt (canonical).
-      // For now we wire month window via the QA metric endpoint.
+      // Wire to the selected period tab.
+      const active = document.querySelector('#periodTabs .pill.active');
+      const period = active ? String(active.getAttribute('data-period') || '') : '';
+
       const y = __YEAR__;
       const m = __MONTH__;
-      const res = await fetch(`/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { cache: 'no-store' });
+
+      const url = period
+        ? `/api/metrics/raydar_doors_knocked?format=json&period=${encodeURIComponent(period)}`
+        : `/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+
+      const res = await fetch(url, { cache: 'no-store' });
       const data = res.ok ? await res.json() : null;
 
       const knocks = data && typeof data.result !== 'undefined' ? Number(data.result) : null;
       setText('kpiKnocks', knocks === null ? '—' : String(knocks));
-      setText('kpiKnocksSub', 'Dispositioned leads in month (dispositionedAt)');
+
+      const sub = data && data.window_start_local && data.window_end_local
+        ? `Dispositioned leads (${data.window_start_local} → ${data.window_end_local})`
+        : 'Dispositioned leads (dispositionedAt)';
+      setText('kpiKnocksSub', sub);
+
       setText('segKnocks', `${knocks === null ? '—' : knocks} Knocks`);
 
       // Placeholder funnel numbers

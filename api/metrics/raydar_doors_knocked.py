@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -77,6 +77,69 @@ def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetim
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
+def period_window(period: str, tz_name: str) -> tuple[datetime, datetime, str, str, str]:
+    """Return (start_local, end_local, start_iso, end_iso, label).
+
+    Period values (Raydar-style): today, yesterday, 7d, thiswk, lastwk, thismo, lastmo, all
+    All boundaries computed in America/New_York.
+    """
+
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(tz_name)
+    now = datetime.now(tz)
+    p = (period or "").strip().lower()
+
+    # Helpers
+    def start_of_day(d: datetime) -> datetime:
+        return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz)
+
+    if p == "today":
+        start = start_of_day(now)
+        end = now
+        label = "Today"
+    elif p == "yesterday":
+        y = now - timedelta(days=1)
+        start = start_of_day(y)
+        end = start_of_day(now)
+        label = "Yesterday"
+    elif p in ("7d", "7days", "7_days", "7 days"):
+        start = now - timedelta(days=7)
+        end = now
+        label = "7 Days"
+    elif p == "thiswk":
+        # Week starts Monday
+        start = start_of_day(now) - timedelta(days=now.weekday())
+        end = now
+        label = "This Wk"
+    elif p == "lastwk":
+        this_start = start_of_day(now) - timedelta(days=now.weekday())
+        start = this_start - timedelta(days=7)
+        end = this_start
+        label = "Last Wk"
+    elif p == "thismo":
+        start = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=tz)
+        end = now
+        label = "This Mo"
+    elif p == "lastmo":
+        if now.month == 1:
+            y, m = now.year - 1, 12
+        else:
+            y, m = now.year, now.month - 1
+        start = datetime(y, m, 1, 0, 0, 0, tzinfo=tz)
+        # end is start of this month
+        end = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=tz)
+        label = "Last Mo"
+    elif p == "all":
+        start = datetime(1970, 1, 1, 0, 0, 0, tzinfo=tz)
+        end = now
+        label = "All"
+    else:
+        raise ValueError(f"Unsupported period: {period}")
+
+    return start, end, start.isoformat(), end.isoformat(), label
+
+
 def parse_int(qs: dict[str, list[str]], key: str, default: int) -> int:
     try:
         return int(qs.get(key, [str(default)])[0])
@@ -92,11 +155,14 @@ def user_name_map(db: firestore.Client) -> dict[str, str]:
     return out
 
 
-def build_payload(db: firestore.Client, year: int, month: int) -> dict:
-    start_local, end_local, start_iso, end_iso = month_window(year, month, MetricContract.timezone)
-    start_utc = start_local.astimezone(datetime.now().astimezone().tzinfo).astimezone(datetime.utcnow().astimezone().tzinfo)  # no-op safety
-    # Above is messy; do explicit UTC conversion
+def build_payload(db: firestore.Client, year: int, month: int, period: str | None = None) -> dict:
     from zoneinfo import ZoneInfo
+
+    if period:
+        start_local, end_local, start_iso, end_iso, period_label = period_window(period, MetricContract.timezone)
+    else:
+        start_local, end_local, start_iso, end_iso = month_window(year, month, MetricContract.timezone)
+        period_label = "Month"
 
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     end_utc = end_local.astimezone(ZoneInfo("UTC"))
@@ -149,6 +215,8 @@ def build_payload(db: firestore.Client, year: int, month: int) -> dict:
         "unit": MetricContract.unit,
         "year": year,
         "month": month,
+        "period": period or None,
+        "period_label": period_label,
         "timezone": MetricContract.timezone,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
@@ -259,11 +327,12 @@ class handler(BaseHTTPRequestHandler):
 
         year = parse_int(qs, "year", now.year)
         month = parse_int(qs, "month", now.month)
+        period = (qs.get("period", [""])[0] or "").strip() or None
         fmt = (qs.get("format", [""])[0] or "").lower()
 
         try:
             db = get_db()
-            payload = build_payload(db, year, month)
+            payload = build_payload(db, year, month, period)
 
             if fmt == "json":
                 body = json.dumps(payload, indent=2).encode("utf-8")

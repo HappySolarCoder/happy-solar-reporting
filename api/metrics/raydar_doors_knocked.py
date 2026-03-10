@@ -252,8 +252,13 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
         at = d.get('assignedTo')
 
         # Appointment: disposition name == 'Appointment Set' (case-insensitive)
-        dispo_id = d.get('dispositionId')
-        dispo_name = dispo_names.get(str(dispo_id), '') if dispo_id not in (None, '') else ''
+        # Raydar leads often store the disposition as `status` (e.g. "not-home", "appointment")
+        # and may not populate dispositionId.
+        dispo_key = d.get('dispositionId')
+        if dispo_key in (None, ''):
+            dispo_key = d.get('status')
+
+        dispo_name = dispo_names.get(str(dispo_key), '') if dispo_key not in (None, '') else ''
         if isinstance(dispo_name, str) and dispo_name.strip().lower() == appt_name:
             appts_total += 1
             if cb not in (None, ''):

@@ -223,14 +223,27 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
         .order_by(MetricContract.time_field)
     )
 
+    # Breakdown: knocks by user (claimedBy / assignedTo)
+    # Note: Firestore doesn't support group-by server-side; stream the filtered docs.
+    by_claimed: dict[str, int] = {}
+    by_assigned: dict[str, int] = {}
+
+    streamed = 0
+    for snap in q.stream():
+        streamed += 1
+        d = snap.to_dict() or {}
+        cb = d.get('claimedBy')
+        at = d.get('assignedTo')
+        if cb not in (None, ''):
+            k = str(cb)
+            by_claimed[k] = by_claimed.get(k, 0) + 1
+        if at not in (None, ''):
+            k = str(at)
+            by_assigned[k] = by_assigned.get(k, 0) + 1
+
     # Count
-    try:
-        result = q.count().get()[0][0].value
-        count_method = "count_aggregation"
-    except Exception:
-        docs = list(q.stream())
-        result = len(docs)
-        count_method = "stream_len"
+    result = streamed
+    count_method = 'stream_len'
 
     # Sample rows (first 25)
     docs = list(q.limit(25).stream())
@@ -277,6 +290,18 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
             "inclusion": "dispositionedAt is non-null (enforced by >= start)",
         },
+        "breakdowns": {
+            "knocks_by_claimed_by": by_claimed,
+            "knocks_by_assigned_to": by_assigned,
+        },
+        "top_knockers": [
+            {
+                "userId": uid,
+                "name": users.get(uid, uid),
+                "knocks": cnt,
+            }
+            for uid, cnt in sorted(by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        ],
         "sample_rows": sample_rows,
     }
 

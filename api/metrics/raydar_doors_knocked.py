@@ -45,6 +45,7 @@ class MetricContract:
 
     leads_collection: str = "raydar_leads_v1"
     users_collection: str = "raydar_users_v1"
+    dispositions_collection: str = "raydar_dispositions_v1"
 
     time_field: str = "dispositionedAt"  # Firestore Timestamp
 
@@ -200,6 +201,15 @@ def user_name_map(db: firestore.Client) -> dict[str, str]:
     return out
 
 
+def disposition_name_map(db: firestore.Client) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for snap in db.collection(MetricContract.dispositions_collection).stream():
+        d = snap.to_dict() or {}
+        out[str(snap.id)] = str(d.get('name') or snap.id)
+    return out
+
+
+
 def build_payload(db: firestore.Client, year: int, month: int, period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
     from zoneinfo import ZoneInfo
 
@@ -229,11 +239,26 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
     by_assigned: dict[str, int] = {}
 
     streamed = 0
+    dispo_names = disposition_name_map(db)
+    appt_name = 'appointment set'
+
+    appts_total = 0
+    appts_by_claimed: dict[str, int] = {}
+
     for snap in q.stream():
         streamed += 1
         d = snap.to_dict() or {}
         cb = d.get('claimedBy')
         at = d.get('assignedTo')
+
+        # Appointment: disposition name == 'Appointment Set' (case-insensitive)
+        dispo_id = d.get('dispositionId')
+        dispo_name = dispo_names.get(str(dispo_id), '') if dispo_id not in (None, '') else ''
+        if isinstance(dispo_name, str) and dispo_name.strip().lower() == appt_name:
+            appts_total += 1
+            if cb not in (None, ''):
+                k = str(cb)
+                appts_by_claimed[k] = appts_by_claimed.get(k, 0) + 1
         if cb not in (None, ''):
             k = str(cb)
             by_claimed[k] = by_claimed.get(k, 0) + 1
@@ -293,6 +318,8 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
         "breakdowns": {
             "knocks_by_claimed_by": by_claimed,
             "knocks_by_assigned_to": by_assigned,
+            "appointments_set_total": appts_total,
+            "appointments_set_by_claimed_by": appts_by_claimed,
         },
         "top_knockers": [
             {
@@ -301,6 +328,14 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
                 "knocks": cnt,
             }
             for uid, cnt in sorted(by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        ],
+        "top_appt_setters": [
+            {
+                "userId": uid,
+                "name": users.get(uid, uid),
+                "appointments": cnt,
+            }
+            for uid, cnt in sorted(appts_by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
         "sample_rows": sample_rows,
     }

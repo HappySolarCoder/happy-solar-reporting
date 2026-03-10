@@ -570,19 +570,27 @@ def render_html(year: int, month: int) -> str:
 
       setText('segKnocks', `${knocks === null ? '—' : knocks} Knocks`);
 
-      // Placeholder funnel numbers
+      // Appointments = Raydar leads with disposition name "Appointment Set" (case-insensitive)
+      const appts = (data && data.breakdowns && typeof data.breakdowns.appointments_set_total !== 'undefined')
+        ? Number(data.breakdowns.appointments_set_total)
+        : null;
+
+      setText('kpiAppts', appts === null ? '—' : String(appts));
+      setText('kpiApptsSub', 'Disposition = Appointment Set');
+
+      const pct = (appts !== null && knocks !== null && knocks > 0) ? (appts / knocks) * 100 : null;
+      setText('kpiApptPct', pct === null ? '—' : `${pct.toFixed(1)}%`);
+      setText('kpiApptPctSub', 'Appointments / Knocks');
+
+      // Funnel (Convos still pending)
       setText('segConvos', '— Convos');
-      setText('segAppts', '— Appts');
+      setText('segAppts', `${appts === null ? '—' : appts} Appts`);
 
       const top = (data && Array.isArray(data.top_knockers)) ? data.top_knockers : [];
       renderTopList('topKnocks', top.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.knocks })));
-      renderTopList('topAppts', [
-        { name: '—', value: '—' },
-        { name: '—', value: '—' },
-        { name: '—', value: '—' },
-        { name: '—', value: '—' },
-        { name: '—', value: '—' },
-      ]);
+
+      const topAp = (data && Array.isArray(data.top_appt_setters)) ? data.top_appt_setters : [];
+      renderTopList('topAppts', topAp.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.appointments })));
 
     } catch (e) {
       setText('kpiKnocks', 'ERR');

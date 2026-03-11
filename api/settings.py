@@ -156,7 +156,10 @@ HTML = """<!doctype html>
 
           <div class="col-4" id="wrapGhlSetterLast">
             <label>GHL Setter Last Name (Setter role only)</label>
-            <select id="ghlSetterLastName"></select>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select id="ghlSetterLastName"></select>
+              <button class="btn secondary" id="refreshSetterNames" title="Force refresh setter last names" style="width:auto; padding:9px 10px;">↻</button>
+            </div>
           </div>
 
           <div class="col-4" id="wrapRaydarUser">
@@ -482,6 +485,21 @@ function setStatus(t) { document.getElementById('status').textContent = t; }
   document.getElementById('displayName').addEventListener('blur', () => {
     autoPersonKey();
   });
+
+  const refreshBtn = document.getElementById('refreshSetterNames');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      try {
+        const res = await postJson({ action: 'setter_last_names', force: true });
+        fillSelect(document.getElementById('ghlSetterLastName'), res.ghl_setter_last_names || [], 'Select setter last name…');
+      } catch (e) {
+        document.getElementById('rosterToast').textContent = `Error refreshing setters: ${String(e)}`;
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    });
+  }
 
   const setterSel = document.getElementById('ghlSetterLastName');
   if (setterSel) {

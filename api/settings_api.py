@@ -358,7 +358,18 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             if action == "setter_last_names":
-                out = {"ghl_setter_last_names": get_cached_ghl_setter_last_names(db)}
+                force = bool(payload.get("force"))
+                if force:
+                    # bypass TTL and recompute
+                    values = list_ghl_setter_last_names(db)
+                    db.collection("settings_cache_v1").document("ghl_setter_last_names").set(
+                        {"updatedAt": datetime.now(timezone.utc).isoformat(), "values": values},
+                        merge=True,
+                    )
+                else:
+                    values = get_cached_ghl_setter_last_names(db)
+
+                out = {"ghl_setter_last_names": values, "forced": force}
                 write_json(self, 200, out)
                 return
 

@@ -17,6 +17,36 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler
 
+import base64
+import os
+
+
+def _unauthorized(h: BaseHTTPRequestHandler):
+    h.send_response(401)
+    h.send_header('WWW-Authenticate', 'Basic realm="Happy Solar Settings"')
+    h.send_header('Content-Type', 'text/plain; charset=utf-8')
+    h.end_headers()
+    h.wfile.write(b'Unauthorized')
+
+
+def _check_auth(h: BaseHTTPRequestHandler) -> bool:
+    # Password is stored in Vercel env var (do NOT hardcode)
+    pw = os.environ.get('SETTINGS_PASSWORD')
+    if not pw:
+        # if not set, block by default
+        return False
+
+    auth = h.headers.get('Authorization') or ''
+    if not auth.startswith('Basic '):
+        return False
+    try:
+        raw = base64.b64decode(auth.split(' ', 1)[1]).decode('utf-8')
+        user, pwd = raw.split(':', 1)
+        return (pwd == pw)
+    except Exception:
+        return False
+
+
 
 HTML = """<!doctype html>
 <html>
@@ -514,6 +544,9 @@ HTML = """<!doctype html>
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if not _check_auth(self):
+            return _unauthorized(self)
+
         body = HTML.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

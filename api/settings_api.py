@@ -26,6 +26,32 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+
+import base64
+
+
+def _unauthorized(h: BaseHTTPRequestHandler):
+    h.send_response(401)
+    h.send_header('WWW-Authenticate', 'Basic realm="Happy Solar Settings"')
+    h.send_header('Content-Type', 'application/json; charset=utf-8')
+    h.end_headers()
+    h.wfile.write(b'{"error":"Unauthorized"}')
+
+
+def _check_auth(h: BaseHTTPRequestHandler) -> bool:
+    pw = os.environ.get('SETTINGS_PASSWORD')
+    if not pw:
+        return False
+    auth = h.headers.get('Authorization') or ''
+    if not auth.startswith('Basic '):
+        return False
+    try:
+        raw = base64.b64decode(auth.split(' ', 1)[1]).decode('utf-8')
+        _user, pwd = raw.split(':', 1)
+        return pwd == pw
+    except Exception:
+        return False
+
 from typing import Any
 
 from google.cloud import firestore
@@ -379,6 +405,9 @@ def upsert_roster_and_goals(db: firestore.Client, payload: dict) -> dict:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        if not _check_auth(self):
+            return _unauthorized(self)
+
         try:
             db = get_db()
             payload = read_json(self)

@@ -20,6 +20,15 @@ Params:
 Output:
 - HTML QA page by default
 - JSON if ?format=json
+
+Extended outputs used by FMS Dashboard:
+- breakdowns.knocks_by_claimed_by
+- breakdowns.appointments_set_total / ..._by_claimed_by
+- breakdowns.convos_total / ..._by_claimed_by
+- top_knockers / top_appt_setters / top_convo_knockers
+
+Convos definition (per Evan): dispositions that indicate we talked to homeowner.
+Explicit exclusion: Shade DQ is NOT a convo.
 """
 
 from __future__ import annotations
@@ -94,7 +103,6 @@ def period_window(period: str, tz_name: str) -> tuple[datetime, datetime, str, s
     now = datetime.now(tz)
     p = (period or "").strip().lower()
 
-    # Helpers
     def start_of_day(d: datetime) -> datetime:
         return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz)
 
@@ -112,7 +120,6 @@ def period_window(period: str, tz_name: str) -> tuple[datetime, datetime, str, s
         end = now
         label = "7 Days"
     elif p == "thiswk":
-        # Week starts Monday
         start = start_of_day(now) - timedelta(days=now.weekday())
         end = now
         label = "This Wk"
@@ -131,7 +138,6 @@ def period_window(period: str, tz_name: str) -> tuple[datetime, datetime, str, s
         else:
             y, m = now.year, now.month - 1
         start = datetime(y, m, 1, 0, 0, 0, tzinfo=tz)
-        # end is start of this month
         end = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=tz)
         label = "Last Mo"
     elif p == "all":
@@ -156,7 +162,7 @@ def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
         return None
     t = s.strip()
     try:
-        parts = t.split('-')
+        parts = t.split("-")
         if len(parts) != 3:
             return None
         y, m, d = (int(parts[0]), int(parts[1]), int(parts[2]))
@@ -179,7 +185,7 @@ def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datet
     sp = parse_date_ymd(start_ymd)
     ep = parse_date_ymd(end_ymd)
     if not (sp and ep):
-        raise ValueError('Invalid start/end date; expected YYYY-MM-DD')
+        raise ValueError("Invalid start/end date; expected YYYY-MM-DD")
 
     sy, sm, sd = sp
     ey, em, ed = ep
@@ -190,7 +196,6 @@ def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datet
 
     label = f"{start_ymd} → {end_ymd}"
     return start_local, end_local_exclusive, start_local.isoformat(), end_local_exclusive.isoformat(), label
-
 
 
 def user_name_map(db: firestore.Client) -> dict[str, str]:
@@ -205,12 +210,18 @@ def disposition_name_map(db: firestore.Client) -> dict[str, str]:
     out: dict[str, str] = {}
     for snap in db.collection(MetricContract.dispositions_collection).stream():
         d = snap.to_dict() or {}
-        out[str(snap.id)] = str(d.get('name') or snap.id)
+        out[str(snap.id)] = str(d.get("name") or snap.id)
     return out
 
 
-
-def build_payload(db: firestore.Client, year: int, month: int, period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+def build_payload(
+    db: firestore.Client,
+    year: int,
+    month: int,
+    period: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict:
     from zoneinfo import ZoneInfo
 
     if start and end:
@@ -225,7 +236,6 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     end_utc = end_local.astimezone(ZoneInfo("UTC"))
 
-    # Query: dispositionedAt in window (nulls excluded implicitly by >=)
     q = (
         db.collection(MetricContract.leads_collection)
         .where(MetricContract.time_field, ">=", start_utc)
@@ -233,59 +243,84 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
         .order_by(MetricContract.time_field)
     )
 
-    # Breakdown: knocks by user (claimedBy / assignedTo)
-    # Note: Firestore doesn't support group-by server-side; stream the filtered docs.
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
 
     streamed = 0
     dispo_names = disposition_name_map(db)
-    appt_name = 'appointment set'
+
+    appt_name = "appointment set"
+    convo_allow = {
+        "appointment set",
+        "call scheduling manager",
+        "callback scheduled",
+        "dq credit",
+        "go back",
+        "has solar",
+        "interested",
+        "not interested",
+        "renter",
+        "sale!",
+    }
 
     appts_total = 0
     appts_by_claimed: dict[str, int] = {}
 
+    convos_total = 0
+    convos_by_claimed: dict[str, int] = {}
+
     for snap in q.stream():
         streamed += 1
         d = snap.to_dict() or {}
-        cb = d.get('claimedBy')
-        at = d.get('assignedTo')
+        cb = d.get("claimedBy")
+        at = d.get("assignedTo")
 
-        # Appointment: disposition name == 'Appointment Set' (case-insensitive)
-        # Raydar leads often store the disposition as `status` (e.g. "not-home", "appointment")
-        # and may not populate dispositionId.
-        dispo_key = d.get('dispositionId')
-        if dispo_key in (None, ''):
-            dispo_key = d.get('status')
+        # Disposition key:
+        # - Raydar leads usually store the disposition under `status` (e.g. "not-home", "appointment")
+        # - Some payloads may include dispositionId; use it if present.
+        dispo_key = d.get("dispositionId")
+        if dispo_key in (None, ""):
+            dispo_key = d.get("status")
 
-        dispo_name = dispo_names.get(str(dispo_key), '') if dispo_key not in (None, '') else ''
-        if isinstance(dispo_name, str) and dispo_name.strip().lower() == appt_name:
+        dispo_name = dispo_names.get(str(dispo_key), "") if dispo_key not in (None, "") else ""
+        dispo_low = dispo_name.strip().lower() if isinstance(dispo_name, str) else ""
+
+        # Convos: disposition indicates homeowner conversation
+        # Explicit exclusion handled by allowlist (Shade DQ + Not Home are not included)
+        if dispo_low in convo_allow:
+            convos_total += 1
+            if cb not in (None, ""):
+                k = str(cb)
+                convos_by_claimed[k] = convos_by_claimed.get(k, 0) + 1
+
+        # Appointments Set
+        if dispo_low == appt_name:
             appts_total += 1
-            if cb not in (None, ''):
+            if cb not in (None, ""):
                 k = str(cb)
                 appts_by_claimed[k] = appts_by_claimed.get(k, 0) + 1
-        if cb not in (None, ''):
+
+        # Knocks by user
+        if cb not in (None, ""):
             k = str(cb)
             by_claimed[k] = by_claimed.get(k, 0) + 1
-        if at not in (None, ''):
+        if at not in (None, ""):
             k = str(at)
             by_assigned[k] = by_assigned.get(k, 0) + 1
 
-    # Count
     result = streamed
-    count_method = 'stream_len'
+    count_method = "stream_len"
 
-    # Sample rows (first 25)
     docs = list(q.limit(25).stream())
     users = user_name_map(db)
 
     sample_rows: list[dict[str, Any]] = []
     for snap in docs:
-        d = snap.to_dict() or {}
-        ts = d.get(MetricContract.time_field)
+        dd = snap.to_dict() or {}
+        ts = dd.get(MetricContract.time_field)
         ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else None
-        claimed_by = d.get("claimedBy")
-        assigned_to = d.get("assignedTo")
+        claimed_by = dd.get("claimedBy")
+        assigned_to = dd.get("assignedTo")
         sample_rows.append(
             {
                 "leadId": snap.id,
@@ -294,10 +329,10 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
                 "claimedByName": users.get(str(claimed_by), claimed_by),
                 "assignedTo": assigned_to,
                 "assignedToName": users.get(str(assigned_to), assigned_to),
-                "city": d.get("city"),
-                "state": d.get("state"),
-                "zip": d.get("zip"),
-                "status": d.get("status"),
+                "city": dd.get("city"),
+                "state": dd.get("state"),
+                "zip": dd.get("zip"),
+                "status": dd.get("status"),
             }
         )
 
@@ -325,21 +360,19 @@ def build_payload(db: firestore.Client, year: int, month: int, period: str | Non
             "knocks_by_assigned_to": by_assigned,
             "appointments_set_total": appts_total,
             "appointments_set_by_claimed_by": appts_by_claimed,
+            "convos_total": convos_total,
+            "convos_by_claimed_by": convos_by_claimed,
         },
         "top_knockers": [
-            {
-                "userId": uid,
-                "name": users.get(uid, uid),
-                "knocks": cnt,
-            }
+            {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
             for uid, cnt in sorted(by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
+        "top_convo_knockers": [
+            {"userId": uid, "name": users.get(uid, uid), "convos": cnt}
+            for uid, cnt in sorted(convos_by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        ],
         "top_appt_setters": [
-            {
-                "userId": uid,
-                "name": users.get(uid, uid),
-                "appointments": cnt,
-            }
+            {"userId": uid, "name": users.get(uid, uid), "appointments": cnt}
             for uid, cnt in sorted(appts_by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
         "sample_rows": sample_rows,

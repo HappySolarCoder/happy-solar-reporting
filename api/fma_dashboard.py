@@ -538,7 +538,7 @@ def render_html(year: int, month: int) -> str:
     setText('kpiGobacksSub', 'Schema pending');
 
     setText('segKnocks', '… Knocks');
-    setText('segConvos', '— Convos');
+    setText('segConvos', `${convos === null ? '—' : convos} Convos`);
     setText('segAppts', '— Appts');
 
     try {
@@ -570,6 +570,15 @@ def render_html(year: int, month: int) -> str:
 
       setText('segKnocks', `${knocks === null ? '—' : knocks} Knocks`);
 
+      // Convos = homeowner conversations (Raydar disposition allowlist; Shade DQ excluded)
+      const convos = (data && data.breakdowns && typeof data.breakdowns.convos_total !== 'undefined')
+        ? Number(data.breakdowns.convos_total)
+        : null;
+      setText('kpiConvos', convos === null ? '—' : String(convos));
+      setText('kpiConvosSub', 'Disposition allowlist (Shade DQ excluded)');
+
+
+
       // Appointments = Raydar leads with disposition name "Appointment Set" (case-insensitive)
       const appts = (data && data.breakdowns && typeof data.breakdowns.appointments_set_total !== 'undefined')
         ? Number(data.breakdowns.appointments_set_total)
@@ -583,7 +592,7 @@ def render_html(year: int, month: int) -> str:
       setText('kpiApptPctSub', 'Appointments / Knocks');
 
       // Funnel (Convos still pending)
-      setText('segConvos', '— Convos');
+      setText('segConvos', `${convos === null ? '—' : convos} Convos`);
       setText('segAppts', `${appts === null ? '—' : appts} Appts`);
 
       const top = (data && Array.isArray(data.top_knockers)) ? data.top_knockers : [];

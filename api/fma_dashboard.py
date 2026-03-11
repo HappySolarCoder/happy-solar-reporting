@@ -462,8 +462,20 @@ def render_html(year: int, month: int) -> str:
 
             <div class="card span-12">
         <div class="card-header">
-          <div class="card-title">GHL — Demo Rate by Setter (Current Month)</div>
-          <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran)</div>
+          <div>
+            <div class="card-title">GHL — Demo Rate by Setter (Current Month)</div>
+            <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran)</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <div class="meta" style="margin-top:0">Lead Gen Source</div>
+            <select id="setterTableLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
+              <option value="">All</option>
+              <option value="Doors">Doors</option>
+              <option value="Virtual">Virtual</option>
+              <option value="3PL">3PL</option>
+              <option value="none">none</option>
+            </select>
+          </div>
         </div>
         <div style="margin-top:10px; overflow:auto">
           <table style="width:100%; border-collapse: collapse;">
@@ -625,7 +637,10 @@ def render_html(year: int, month: int) -> str:
 
       // --- GHL Demo Rate by Setter (current month) ---
       try {
-        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { cache: 'no-store' });
+        const lsEl = document.getElementById('setterTableLeadSource');
+        const ls = lsEl ? String(lsEl.value || '') : '';
+        const lsParam = ls ? `&lead_source=${encodeURIComponent(ls)}` : '';
+        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}`, { cache: 'no-store' });
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
@@ -663,6 +678,14 @@ def render_html(year: int, month: int) -> str:
       setText('kpiKnocksSub', String(e));
       setText('segKnocks', 'ERR Knocks');
     }
+  }
+
+  // Setter demo table filter (Lead Gen Source)
+  const setterLs = document.getElementById('setterTableLeadSource');
+  if (setterLs) {
+    setterLs.addEventListener('change', () => {
+      load();
+    });
   }
 
   load();

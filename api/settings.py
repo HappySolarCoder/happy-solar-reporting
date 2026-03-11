@@ -131,14 +131,14 @@ HTML = """<!doctype html>
         <div class="card-header">
           <div>
             <div class="card-title">Roster Mapping</div>
-            <div class="meta">Create a stable <code>person_key</code> and map it to GHL + Raydar</div>
+            <div class="meta">Select Raydar + GHL mappings; <code>person_key</code> auto-generates</div>
           </div>
         </div>
 
         <div class="row">
           <div class="col-6">
             <label>Person Key (stable)</label>
-            <input id="personKey" placeholder="setter:devin_plyley" />
+            <input id="personKey" placeholder="setter:devin_plyley" readonly />
           </div>
           <div class="col-6">
             <label>Display Name</label>
@@ -156,7 +156,7 @@ HTML = """<!doctype html>
 
           <div class="col-4" id="wrapGhlSetterLast">
             <label>GHL Setter Last Name (Setter role only)</label>
-            <input id="ghlSetterLastName" placeholder="Plyley" />
+            <select id="ghlSetterLastName"></select>
           </div>
 
           <div class="col-4" id="wrapRaydarUser">
@@ -261,6 +261,43 @@ HTML = """<!doctype html>
     return `${d.getFullYear()}-${m}`;
   }
 
+  function slugify(s) {
+    return String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g,'_')
+      .replace(/^_+|_+$/g,'')
+      .slice(0, 48);
+  }
+
+  function autoPersonKey() {
+    const role = String(document.getElementById('role').value || 'setter');
+    const raySel = document.getElementById('raydarUser');
+    const rayText = raySel && raySel.selectedOptions && raySel.selectedOptions[0]
+      ? raySel.selectedOptions[0].textContent
+      : '';
+    const name = (document.getElementById('displayName').value || rayText || '').trim();
+    const slug = slugify(name || rayText);
+
+    let prefix = role + ':';
+    if (role === 'rep') prefix = 'rep:';
+    if (role === 'setter') prefix = 'setter:';
+    if (role === 'team') prefix = 'team:';
+
+    const pk = prefix + (slug || 'unknown');
+    document.getElementById('personKey').value = pk;
+  }
+
+  function autoDisplayNameFromRaydar() {
+    const raySel = document.getElementById('raydarUser');
+    const label = raySel && raySel.selectedOptions && raySel.selectedOptions[0]
+      ? raySel.selectedOptions[0].textContent
+      : '';
+    if (label && !(document.getElementById('displayName').value || '').trim()) {
+      document.getElementById('displayName').value = label.trim();
+    }
+  }
+
   function esc(s) {
     return String(s ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
   }
@@ -363,8 +400,9 @@ HTML = """<!doctype html>
 
     const data = await postJson({ action: 'bootstrap', month });
 
-    fillSelect(document.getElementById('raydarUser'), data.raydar_users, '—');
-    fillSelect(document.getElementById('ghlUser'), data.ghl_users, '—');
+    fillSelect(document.getElementById('raydarUser'), data.raydar_users, 'Select Raydar user…');
+    fillSelect(document.getElementById('ghlSetterLastName'), data.ghl_setter_last_names || [], 'Select setter last name…');
+    fillSelect(document.getElementById('ghlUser'), data.ghl_users, 'Select GHL owner…');
 
     fillSelect(document.getElementById('goalPerson'), data.roster_people.map(p => ({ value: p.person_key, label: `${p.display_name} (${p.person_key})` })), 'Select person…');
 
@@ -417,9 +455,20 @@ HTML = """<!doctype html>
   document.getElementById('goalMonth').addEventListener('change', refresh);
   document.getElementById('role').addEventListener('change', () => {
     applyRoleUI();
+    autoPersonKey();
+  });
+
+  document.getElementById('raydarUser').addEventListener('change', () => {
+    autoDisplayNameFromRaydar();
+    autoPersonKey();
+  });
+
+  document.getElementById('displayName').addEventListener('blur', () => {
+    autoPersonKey();
   });
 
   applyRoleUI();
+  autoPersonKey();
   refresh();
 </script>
 </body>

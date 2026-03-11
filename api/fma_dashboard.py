@@ -476,6 +476,13 @@ def render_html(year: int, month: int) -> str:
               <option value="Self Gen">Self Gen</option>
               <option value="none">none</option>
             </select>
+
+            <div class="meta" style="margin-top:0">Start</div>
+            <input id="setterTableStart" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;" />
+            <div class="meta" style="margin-top:0">End</div>
+            <input id="setterTableEnd" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;" />
+            <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
+            <button id="setterTableClear" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
           </div>
         </div>
         <div style="margin-top:10px; overflow:auto">
@@ -515,6 +522,25 @@ def render_html(year: int, month: int) -> str:
 <script>
   // Custom range persistence
   const rangeKey = 'fms_range_v1';
+  // Setter demo table range persistence (table-only)
+  const setterRangeKey = 'fms_setter_table_range_v1';
+  function getSetterRange() {
+    try {
+      const raw = localStorage.getItem(setterRangeKey);
+      if (!raw) return null;
+      const j = JSON.parse(raw);
+      if (j && j.start && j.end) return j;
+      return null;
+    } catch { return null; }
+  }
+  function setSetterRange(r) {
+    try { localStorage.setItem(setterRangeKey, JSON.stringify(r)); } catch {}
+  }
+  function clearSetterRange() {
+    try { localStorage.removeItem(setterRangeKey); } catch {}
+  }
+
+
   function getRange() {
     try {
       const raw = localStorage.getItem(rangeKey);
@@ -649,7 +675,13 @@ def render_html(year: int, month: int) -> str:
         const lsEl = document.getElementById('setterTableLeadSource');
         const ls = lsEl ? String(lsEl.value || '') : '';
         const lsParam = ls ? `&lead_source=${encodeURIComponent(ls)}` : '';
-        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}`, { cache: 'no-store' });
+
+        const sr = getSetterRange();
+        const rangeParam = (sr && sr.start && sr.end)
+          ? `&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`
+          : '';
+
+        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}${rangeParam}`, { cache: 'no-store' });
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
@@ -735,6 +767,37 @@ def render_html(year: int, month: int) -> str:
       load();
     });
   }
+
+  // Setter demo table date range (filters demo_rate by appointmentOccurredAt)
+  const stEl = document.getElementById('setterTableStart');
+  const enEl = document.getElementById('setterTableEnd');
+  const apBtn = document.getElementById('setterTableApply');
+  const clBtn = document.getElementById('setterTableClear');
+
+  const existingSetterRange = getSetterRange();
+  if (existingSetterRange && stEl && enEl) {
+    stEl.value = existingSetterRange.start;
+    enEl.value = existingSetterRange.end;
+  }
+
+  if (apBtn && stEl && enEl) {
+    apBtn.addEventListener('click', () => {
+      if (stEl.value && enEl.value) {
+        setSetterRange({ start: stEl.value, end: enEl.value });
+      }
+      load();
+    });
+  }
+
+  if (clBtn && stEl && enEl) {
+    clBtn.addEventListener('click', () => {
+      stEl.value = '';
+      enEl.value = '';
+      clearSetterRange();
+      load();
+    });
+  }
+
 
   load();
 </script>

@@ -491,6 +491,14 @@ def render_html(year: int, month: int) -> str:
             <tbody id="setterDemoRows">
               <tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
             </tbody>
+            <tfoot id="setterDemoTotals">
+              <tr>
+                <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
@@ -654,10 +662,26 @@ def render_html(year: int, month: int) -> str:
           return { setter: k, ran, sit, pct };
         }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || a.setter.localeCompare(b.setter));
 
+        const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
+        const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
+        const totalPct = totalRan > 0 ? (totalSit / totalRan) * 100 : 0;
+
+
         const tbody = document.getElementById('setterDemoRows');
         if (tbody) {
           if (!rows.length) {
             tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
+            const tfoot = document.getElementById('setterDemoTotals');
+            if (tfoot) {
+              tfoot.innerHTML = `
+                <tr>
+                  <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                </tr>`;
+            }
+
           } else {
             tbody.innerHTML = rows.map(r => `
               <tr>
@@ -666,11 +690,34 @@ def render_html(year: int, month: int) -> str:
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.sit}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
               </tr>`).join('');
+
+            const tfoot = document.getElementById('setterDemoTotals');
+            if (tfoot) {
+              tfoot.innerHTML = `
+                <tr>
+                  <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
+                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
+                </tr>`;
+            }
+
           }
         }
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
         if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
+        const tfoot = document.getElementById('setterDemoTotals');
+        if (tfoot) {
+          tfoot.innerHTML = `
+            <tr>
+              <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+            </tr>`;
+        }
+
       }
 
 

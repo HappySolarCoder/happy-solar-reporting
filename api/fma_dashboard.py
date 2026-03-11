@@ -692,8 +692,13 @@ def render_html(year: int, month: int) -> str:
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
 
         // 2) Roster + goals for month (to pull goal values)
-        const monthStr = String(document.getElementById('goalMonth').value || `${y}-${String(m).padStart(2,'0')}`);
-        const settings = await postJson({ action: 'bootstrap', month: monthStr });
+        const monthStr = `${y}-${String(m).padStart(2,'0')}`;
+        const settingsRes = await fetch('/api/settings_api', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'bootstrap', month: monthStr }),
+        });
+        const settings = settingsRes.ok ? await settingsRes.json() : null;
         const roster = settings && Array.isArray(settings.roster_people) ? settings.roster_people : [];
         const goalsRows = settings && Array.isArray(settings.goals_for_month) ? settings.goals_for_month : [];
 
@@ -744,9 +749,9 @@ def render_html(year: int, month: int) -> str:
           const appts = rayId ? Number(apptsByClaimed[rayId] || 0) : 0;
 
           const g = pk ? (goalsByPerson[pk] || {}) : {};
-          const knocksGoal = Number(g.doors_goal || 0);
-          const apptsGoal = Number(g.appts_goal || 0);
-          const demosGoal = Number(g.demos_goal || 0);
+          const knocksGoal = (typeof g.doors_goal !== 'undefined') ? Number(g.doors_goal) : null;
+          const apptsGoal = (typeof g.appts_goal !== 'undefined') ? Number(g.appts_goal) : null;
+          const demosGoal = (typeof g.demos_goal !== 'undefined') ? Number(g.demos_goal) : null;
 
           return { setter, ran, sit, pct, knocks, appts, knocksGoal, apptsGoal, demosGoal };
         }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || a.setter.localeCompare(b.setter));
@@ -765,10 +770,10 @@ def render_html(year: int, month: int) -> str:
             tbody.innerHTML = rows.map(r => `
               <tr>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.knocks}${r.knocksGoal ? ` / ${r.knocksGoal}` : ''}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.appts}${r.apptsGoal ? ` / ${r.apptsGoal}` : ''}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.ran}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.sit}${r.demosGoal ? ` / ${r.demosGoal}` : ''}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.knocks || 0)} / ${(r.knocksGoal === null || Number.isNaN(r.knocksGoal)) ? 'No Goal' : r.knocksGoal}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.appts || 0)} / ${(r.apptsGoal === null || Number.isNaN(r.apptsGoal)) ? 'No Goal' : r.apptsGoal}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.ran || 0)}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.sit || 0)} / ${(r.demosGoal === null || Number.isNaN(r.demosGoal)) ? 'No Goal' : r.demosGoal}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
               </tr>`).join('');
           }

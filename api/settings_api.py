@@ -6,12 +6,15 @@ JSON API backing /api/settings.
 
 Actions:
 - bootstrap: returns raydar_users, ghl_users, roster_people, goals_for_month
+- setter_last_names: returns cached GHL setter last names dropdown options (can force refresh)
 - upsert_roster: create/update roster_people_v1/<person_key>
-- upsert_goal: write goals_monthly_v1/<month> (sub-map by person_key + metric)
+- upsert_goal: upsert a single goal into goals_monthly_v1/<month>
+- upsert_roster_and_goals: upsert roster mapping + multiple goals in one call
 
 Firestore (happy-solar):
 - roster_people_v1
 - goals_monthly_v1
+- settings_cache_v1/ghl_setter_last_names
 
 Notes
 - No auth in v1.
@@ -70,12 +73,7 @@ def list_raydar_users(db: firestore.Client) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for snap in db.collection("raydar_users_v1").stream():
         d = snap.to_dict() or {}
-        out.append(
-            {
-                "value": str(snap.id),
-                "label": str(d.get("name") or snap.id),
-            }
-        )
+        out.append({"value": str(snap.id), "label": str(d.get("name") or snap.id)})
     out.sort(key=lambda x: x["label"].lower())
     return out
 
@@ -96,66 +94,67 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
 
     NOTE: This can be expensive; do not call from bootstrap.
     Prefer using get_cached_ghl_setter_last_names().
+
+    Implementation uses recent opps (appointmentOccurredAt) + pipeline scope + Sit/No Sit,
+    then joins to contacts for setter last name.
     """
 
-    # Lookback window (avoid full scan)
     since = datetime.now(timezone.utc) - timedelta(days=30)
 
-    # Use the same base filters as demo_rate/opps_ran:
     included = {"buffalo", "rochester", "virtual", "syracuse"}
     excluded = {"rehash", "sweeper", "inbound/lead locker"}
 
-    # Pipeline name lookup
-    pipe = {}
-    for snap in db.collection('ghl_pipelines_v2').stream():
+    pipe: dict[str, str] = {}
+    for snap in db.collection("ghl_pipelines_v2").stream():
         d = snap.to_dict() or {}
-        pid = str(d.get('id') or snap.id)
-        nm = str(d.get('name') or '').strip()
+        pid = str(d.get("id") or snap.id)
+        nm = str(d.get("name") or "").strip()
         if pid and nm:
             pipe[pid] = nm
 
-    # Helper: contact lookup (doc id fallback by id field)
     def contact_lookup(contact_id: str) -> dict | None:
         if not contact_id:
             return None
-        snap = db.collection('ghl_contacts_v2').document(str(contact_id)).get()
+        snap = db.collection("ghl_contacts_v2").document(str(contact_id)).get()
         if snap.exists:
             return snap.to_dict() or {}
-        q = db.collection('ghl_contacts_v2').where('id','==',str(contact_id)).limit(1)
+        q = db.collection("ghl_contacts_v2").where("id", "==", str(contact_id)).limit(1)
         docs = list(q.stream())
         return (docs[0].to_dict() or {}) if docs else None
 
     def contact_custom_field(contact: dict | None, cf_id: str):
         if not isinstance(contact, dict):
             return None
-        for cf in (contact.get('customFields') or []):
-            if isinstance(cf, dict) and cf.get('id') == cf_id:
-                return cf.get('value')
+        for cf in (contact.get("customFields") or []):
+            if isinstance(cf, dict) and cf.get("id") == cf_id:
+                return cf.get("value")
         return None
 
-    setter_cf = 'Eq4NLTSkJ56KTxbxypuE'
+    setter_cf = "Eq4NLTSkJ56KTxbxypuE"
 
     q = (
-        db.collection('ghl_opportunities_v2')
-          .where('appointmentOccurredAt','>=', since)
-          .order_by('appointmentOccurredAt')
+        db.collection("ghl_opportunities_v2")
+        .where("appointmentOccurredAt", ">=", since)
+        .order_by("appointmentOccurredAt")
     )
 
-    names = set()
+    names: set[str] = set()
     contact_cache: dict[str, dict] = {}
     scanned = 0
+
     for snap in q.stream():
         scanned += 1
         if scanned > 600:
             break
+
         opp = snap.to_dict() or {}
 
-        dispo = opp.get('dispositionValue')
-        if dispo not in ('Sit','No Sit'):
+        dispo = opp.get("dispositionValue")
+        if dispo not in ("Sit", "No Sit"):
             continue
 
-        pid = str(opp.get('pipelineId') or '')
-        pname = (pipe.get(pid) or '').strip().lower()
+        pid = str(opp.get("pipelineId") or "")
+        pname = (pipe.get(pid) or "").strip().lower()
         if not pname:
             continue
         if pname in excluded:
@@ -163,19 +162,19 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
         if pname not in included:
             continue
 
-        cid = str(opp.get('contactId') or '')
+        cid = str(opp.get("contactId") or "")
         if cid in contact_cache:
             contact = contact_cache[cid]
         else:
             contact = contact_lookup(cid) or {}
             contact_cache[cid] = contact
+
         setter = contact_custom_field(contact, setter_cf)
-        setter_s = str(setter).strip() if setter not in (None,'') else 'none'
+        setter_s = str(setter).strip() if setter not in (None, "") else "none"
         names.add(setter_s)
 
     out = [{"value": n, "label": n} for n in sorted(names, key=lambda x: x.lower())]
     return out
-
 
 
 def get_cached_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
@@ -186,31 +185,27 @@ def get_cached_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str
 
     cache_ref = db.collection("settings_cache_v1").document("ghl_setter_last_names")
     snap = cache_ref.get()
+
     if snap.exists:
         d = snap.to_dict() or {}
         updated_at = str(d.get("updatedAt") or "")
         values = d.get("values")
+
         # 6-hour TTL
         try:
             dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00")) if updated_at else None
         except Exception:
             dt = None
+
         if dt and (datetime.now(timezone.utc) - dt) < timedelta(hours=6) and isinstance(values, list):
             return values
 
     values = list_ghl_setter_last_names(db)
-    cache_ref.set(
-        {
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
-            "values": values,
-        },
-        merge=True,
-    )
+    cache_ref.set({"updatedAt": datetime.now(timezone.utc).isoformat(), "values": values}, merge=True)
     return values
 
 
 def list_roster(db: firestore.Client) -> list[dict[str, Any]]:
-    # Build name maps for enrichment
     raydar_map = {u["value"]: u["label"] for u in list_raydar_users(db)}
     ghl_map = {u["value"]: u["label"] for u in list_ghl_users(db)}
 
@@ -243,6 +238,7 @@ def goals_for_month(db: firestore.Client, month: str) -> list[dict[str, Any]]:
     snap = db.collection("goals_monthly_v1").document(month).get()
     if not snap.exists:
         return []
+
     d = snap.to_dict() or {}
     goals = d.get("goals") or {}
 
@@ -270,7 +266,6 @@ def upsert_roster(db: firestore.Client, payload: dict) -> dict:
     raydar_user_id = str(payload.get("raydar_user_id") or "").strip()
     ghl_user_id = str(payload.get("ghl_user_id") or "").strip()
 
-    # Role-based requirements
     if role in ("setter", "rep") and not raydar_user_id:
         raise ValueError("raydar_user_id is required for setter/rep")
     if role == "setter" and not ghl_setter_last_name:
@@ -292,6 +287,13 @@ def upsert_roster(db: firestore.Client, payload: dict) -> dict:
     return {"ok": True, "person_key": person_key}
 
 
+def _coerce_number(v: Any) -> int | float:
+    value = float(str(v).replace(",", "").strip())
+    if value.is_integer():
+        return int(value)
+    return value
+
+
 def upsert_goal(db: firestore.Client, payload: dict) -> dict:
     month = str(payload.get("month") or "").strip()
     person_key = str(payload.get("person_key") or "").strip()
@@ -305,20 +307,10 @@ def upsert_goal(db: firestore.Client, payload: dict) -> dict:
     if not metric:
         raise ValueError("metric is required")
 
-    # numeric coercion
     try:
-        value = float(str(value_raw).replace(",", "").strip())
-        if value.is_integer():
-            value = int(value)
+        value = _coerce_number(value_raw)
     except Exception:
         raise ValueError("value must be numeric")
-
-    # goals doc structure:
-    # goals_monthly_v1/<month> {
-    #   month,
-    #   goals: { person_key: { metric: value } },
-    #   updatedAt
-    # }
 
     ref = db.collection("goals_monthly_v1").document(month)
     ref.set(
@@ -331,6 +323,58 @@ def upsert_goal(db: firestore.Client, payload: dict) -> dict:
     )
 
     return {"ok": True, "month": month, "person_key": person_key, "metric": metric, "value": value}
+
+
+def upsert_roster_and_goals(db: firestore.Client, payload: dict) -> dict:
+    """Write roster mapping and multiple goals in one round-trip."""
+
+    # 1) roster
+    roster_payload = {
+        "person_key": payload.get("person_key"),
+        "display_name": payload.get("display_name"),
+        "role": payload.get("role"),
+        "ghl_setter_last_name": payload.get("ghl_setter_last_name"),
+        "raydar_user_id": payload.get("raydar_user_id"),
+        "ghl_user_id": payload.get("ghl_user_id"),
+    }
+    upsert_roster(db, roster_payload)
+
+    # 2) goals
+    month = str(payload.get("month") or "").strip()
+    if not month or len(month) != 7 or month[4] != "-":
+        raise ValueError("month must be YYYY-MM")
+
+    goals_list = payload.get("goals")
+    if not isinstance(goals_list, list) or not goals_list:
+        raise ValueError("goals must be a non-empty list")
+
+    person_key = str(payload.get("person_key") or "").strip()
+    goal_map: dict[str, dict[str, int | float]] = {}
+    goal_map[person_key] = {}
+
+    for g in goals_list:
+        if not isinstance(g, dict):
+            continue
+        metric = str(g.get("metric") or "").strip()
+        if not metric:
+            continue
+        try:
+            value = _coerce_number(g.get("value"))
+        except Exception:
+            raise ValueError(f"Invalid numeric value for metric {metric}")
+        goal_map[person_key][metric] = value
+
+    ref = db.collection("goals_monthly_v1").document(month)
+    ref.set(
+        {
+            "month": month,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "goals": goal_map,
+        },
+        merge=True,
+    )
+
+    return {"ok": True, "person_key": person_key, "month": month, "goals_written": list(goal_map[person_key].keys())}
 
 
 class handler(BaseHTTPRequestHandler):
@@ -350,8 +394,6 @@ class handler(BaseHTTPRequestHandler):
                     "raydar_users": list_raydar_users(db),
                     "ghl_users": list_ghl_users(db),
                     "roster_people": list_roster(db),
-                    # NOTE: Setter last names are intentionally NOT computed during bootstrap (too slow).
-                    # Fetch lazily via action=setter_last_names (cached) when UI needs it.
                     "goals_for_month": goals_for_month(db, month),
                 }
                 write_json(self, 200, out)
@@ -360,7 +402,6 @@ class handler(BaseHTTPRequestHandler):
             if action == "setter_last_names":
                 force = bool(payload.get("force"))
                 if force:
-                    # bypass TTL and recompute
                     values = list_ghl_setter_last_names(db)
                     db.collection("settings_cache_v1").document("ghl_setter_last_names").set(
                         {"updatedAt": datetime.now(timezone.utc).isoformat(), "values": values},
@@ -369,8 +410,7 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     values = get_cached_ghl_setter_last_names(db)
 
-                out = {"ghl_setter_last_names": values, "forced": force}
-                write_json(self, 200, out)
+                write_json(self, 200, {"ghl_setter_last_names": values, "forced": force})
                 return
 
             if action == "upsert_roster":
@@ -383,9 +423,12 @@ class handler(BaseHTTPRequestHandler):
                 write_json(self, 200, out)
                 return
 
+            if action == "upsert_roster_and_goals":
+                out = upsert_roster_and_goals(db, payload)
+                write_json(self, 200, out)
+                return
+
             write_json(self, 400, {"error": f"Unknown action: {action}"})
 
         except Exception as e:
             write_json(self, 500, {"error": str(e)})
-
-

@@ -2,16 +2,15 @@
 
 """Vercel Python function: /api/settings
 
-Settings UI (v1):
-- Roster mapping across systems (GHL + Raydar)
-- Monthly goals entry (writes to Firestore)
+Settings UI (v2):
+- Combined workflow: map person (Raydar + GHL) then add 1+ goals and save once.
 
 Backend API:
 - /api/settings_api
 
 Notes
 - This is a production admin surface; keep it simple.
-- Auth is not implemented in this v1.
+- Auth is not implemented in this v2.
 """
 
 from __future__ import annotations
@@ -22,8 +21,8 @@ from http.server import BaseHTTPRequestHandler
 HTML = """<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>Happy Solar — Settings</title>
   <style>
     :root {
@@ -36,6 +35,7 @@ HTML = """<!doctype html>
       --pink: #ec4899;
       --pink2: #f472b6;
       --shadow: 0 1px 3px rgba(17,24,39,0.06);
+      --danger: #ef4444;
     }
 
     body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; margin:0; background: var(--bg); color: var(--text); }
@@ -67,8 +67,6 @@ HTML = """<!doctype html>
     .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 14px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
     .span-12 { grid-column: span 12; }
-    .span-6 { grid-column: span 6; }
-    @media (max-width: 980px) { .span-6 { grid-column: span 12; } }
 
     .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
     .card-title { font-size: 13px; font-weight: 900; color: var(--muted); }
@@ -84,10 +82,9 @@ HTML = """<!doctype html>
     .row { display:grid; grid-template-columns: repeat(12, 1fr); gap: 10px; }
     .col-4 { grid-column: span 4; }
     .col-6 { grid-column: span 6; }
-    .col-3 { grid-column: span 3; }
     .col-8 { grid-column: span 8; }
     .col-12 { grid-column: span 12; }
-    @media (max-width: 980px) { .col-4,.col-6,.col-3,.col-8 { grid-column: span 12; } }
+    @media (max-width: 980px) { .col-4,.col-6,.col-8 { grid-column: span 12; } }
 
     .btn {
       display:inline-flex; align-items:center; justify-content:center;
@@ -96,162 +93,157 @@ HTML = """<!doctype html>
       font-size: 13px; font-weight: 950; cursor:pointer;
     }
     .btn.secondary { background:#fff; border: 1px solid var(--border); color:#334155; }
+    .btn.danger { background: var(--danger); border-color: var(--danger); }
 
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { border-bottom: 1px solid var(--border); padding: 8px 10px; font-size: 12px; text-align:left; }
     th { color: var(--muted); font-weight: 950; }
     td { color: #0f172a; font-weight: 800; }
 
-    .toast { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .pill { display:inline-flex; align-items:center; padding: 6px 10px; border-radius: 999px; border:1px solid var(--border); background:#fff; font-size: 12px; font-weight: 950; color:#334155; }
+
     code { background:#f1f5f9; padding: 2px 6px; border-radius: 8px; }
+
+    .stack { display:flex; flex-direction: column; gap: 12px; }
+    .hgroup { display:flex; gap: 10px; align-items:center; flex-wrap:wrap; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
+  <div class=\"wrap\">
+    <div class=\"topbar\">
       <div>
-        <div class="title">Settings</div>
-        <div class="subtitle">Roster mapping + monthly goals</div>
-        <div class="pinkline"></div>
-        <div class="nav">
-          <a class="navbtn" href="/api/company_overview">Company overview</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
-          <a class="navbtn" href="/api/fma_dashboard">FMS dashboard</a>
-          <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
-          <a class="navbtn active" href="/api/settings">Settings</a>
+        <div class=\"title\">Settings</div>
+        <div class=\"subtitle\">Map person → add goals → save once</div>
+        <div class=\"pinkline\"></div>
+        <div class=\"nav\">
+          <a class=\"navbtn\" href=\"/api/company_overview\">Company overview</a>
+          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales dashboard</a>
+          <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMS dashboard</a>
+          <a class=\"navbtn\" href=\"/api/leadership_dashboard\">Leadership dashboard</a>
+          <a class=\"navbtn active\" href=\"/api/settings\">Settings</a>
         </div>
       </div>
-      <div style="min-width:320px">
-        <div class="card-title">Status</div>
-        <div class="meta" id="status">Loading…</div>
+      <div style=\"min-width:320px\">
+        <div class=\"card-title\">Status</div>
+        <div class=\"meta\" id=\"status\">Loading…</div>
       </div>
     </div>
 
-    <div class="grid">
-      <div class="card span-6">
-        <div class="card-header">
+    <div class=\"grid\">
+      <div class=\"card span-12\">
+        <div class=\"card-header\">
           <div>
-            <div class="card-title">Roster Mapping</div>
-            <div class="meta">Select Raydar + GHL mappings; <code>person_key</code> auto-generates</div>
+            <div class=\"card-title\">Roster + Goals (combined)</div>
+            <div class=\"meta\">Select Role + Raydar → select GHL mapping → add goals → Save</div>
+          </div>
+          <div class=\"hgroup\">
+            <span class=\"pill\" id=\"currentMonthPill\">Month: —</span>
+            <button class=\"btn secondary\" id=\"refreshAll\">Refresh</button>
           </div>
         </div>
 
-        <div class="row">
-          <div class="col-6">
-            <label>Person Key (stable)</label>
-            <input id="personKey" placeholder="setter:devin_plyley" readonly />
-          </div>
-          <div class="col-6">
-            <label>Display Name</label>
-            <input id="displayName" placeholder="Devin Plyley" />
-          </div>
-
-          <div class="col-4">
+        <div class=\"row\" style=\"margin-top:8px\">
+          <div class=\"col-4\">
             <label>Role</label>
-            <select id="role">
-              <option value="setter">setter</option>
-              <option value="rep">rep</option>
-              <option value="team">team</option>
+            <select id=\"role\">
+              <option value=\"setter\">setter</option>
+              <option value=\"rep\">rep</option>
+              <option value=\"team\">team</option>
             </select>
           </div>
 
-          <div class="col-4" id="wrapGhlSetterLast">
-            <label>GHL Setter Last Name (Setter role only)</label>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select id="ghlSetterLastName"></select>
-              <button class="btn secondary" id="refreshSetterNames" title="Force refresh setter last names" style="width:auto; padding:9px 10px;">↻</button>
+          <div class=\"col-4\" id=\"wrapRaydarUser\">
+            <label>Raydar User</label>
+            <select id=\"raydarUser\"></select>
+          </div>
+
+          <div class=\"col-4\" id=\"wrapGhlSetterLast\">
+            <label>GHL Setter Last Name</label>
+            <div style=\"display:flex; gap:8px; align-items:center\">
+              <select id=\"ghlSetterLastName\"></select>
+              <button class=\"btn secondary\" id=\"refreshSetterNames\" title=\"Force refresh setter last names\" style=\"width:auto; padding:9px 10px;\">↻</button>
             </div>
           </div>
 
-          <div class="col-4" id="wrapRaydarUser">
-            <label>Raydar User (Setter/Rep)</label>
-            <select id="raydarUser"></select>
+          <div class=\"col-4\" id=\"wrapGhlUser\">
+            <label>GHL Owner User</label>
+            <select id=\"ghlUser\"></select>
           </div>
 
-          <div class="col-6" id="wrapGhlUser">
-            <label>GHL Owner User (Rep role)</label>
-            <select id="ghlUser"></select>
+          <div class=\"col-4\">
+            <label>Display Name</label>
+            <input id=\"displayName\" placeholder=\"Auto from Raydar…\" />
           </div>
 
-          <div class="col-6" style="display:flex; gap:10px; align-items:flex-end">
-            <button class="btn" id="saveRoster">Save Mapping</button>
-            <button class="btn secondary" id="refreshRoster">Refresh</button>
+          <div class=\"col-4\">
+            <label>Person Key (auto)</label>
+            <input id=\"personKey\" readonly />
           </div>
+
+          <div class=\"col-12\" style=\"border-top:1px solid var(--border); margin-top:6px; padding-top:12px\">
+            <div class=\"card-title\">Goals to Save (for this person)</div>
+            <div class=\"meta\">Add one or multiple goals, then click Save All once.</div>
+
+            <div class=\"row\" style=\"margin-top:8px\">
+              <div class=\"col-4\">
+                <label>Month (YYYY-MM)</label>
+                <input id=\"goalMonth\" placeholder=\"2026-03\" />
+              </div>
+              <div class=\"col-4\">
+                <label>Metric</label>
+                <select id=\"goalMetric\">
+                  <option value=\"sales_goal\">sales_goal</option>
+                  <option value=\"doors_goal\">doors_goal</option>
+                  <option value=\"appts_goal\">appts_goal</option>
+                  <option value=\"demos_goal\">demos_goal</option>
+                </select>
+              </div>
+              <div class=\"col-4\">
+                <label>Value</label>
+                <input id=\"goalValue\" placeholder=\"1500\" />
+              </div>
+              <div class=\"col-12\" style=\"display:flex; gap:10px; flex-wrap:wrap; align-items:center\">
+                <button class=\"btn secondary\" id=\"addGoal\">Add Goal</button>
+                <button class=\"btn danger\" id=\"clearGoals\">Clear Goals</button>
+                <button class=\"btn\" id=\"saveAll\">Save Mapping + Goals</button>
+              </div>
+            </div>
+
+            <div id=\"pendingToast\" class=\"meta\"></div>
+
+            <div style=\"margin-top:10px; overflow:auto\">
+              <table>
+                <thead>
+                  <tr>
+                    <th>metric</th>
+                    <th style=\"text-align:right\">value</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id=\"pendingGoalsRows\"><tr><td colspan=\"3\" style=\"color:var(--muted2)\">No goals added yet</td></tr></tbody>
+              </table>
+            </div>
+
+            <div style=\"margin-top:14px\">
+              <div class=\"card-title\">Existing goals for selected month</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>person_key</th>
+                    <th>metric</th>
+                    <th style=\"text-align:right\">value</th>
+                  </tr>
+                </thead>
+                <tbody id=\"goalRows\"><tr><td colspan=\"3\" style=\"color:var(--muted2)\">Loading…</td></tr></tbody>
+              </table>
+            </div>
+
+          </div>
+
         </div>
 
-        <div class="toast" id="rosterToast"></div>
+        <div class=\"meta\" id=\"toast\" style=\"margin-top:10px\"></div>
 
-        <div style="margin-top:12px">
-          <div class="card-title">Current roster</div>
-          <table>
-            <thead>
-              <tr>
-                <th>person_key</th>
-                <th>role</th>
-                <th>display</th>
-                <th>ghl_setter_last_name</th>
-                <th>raydar_user</th>
-                <th>ghl_user</th>
-              </tr>
-            </thead>
-            <tbody id="rosterRows"><tr><td colspan="6" style="color:var(--muted2)">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card span-6">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Monthly Goals</div>
-            <div class="meta">Set goals for a person_key, per month, per metric</div>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="col-4">
-            <label>Month (YYYY-MM)</label>
-            <input id="goalMonth" placeholder="2026-03" />
-          </div>
-          <div class="col-8">
-            <label>Person</label>
-            <select id="goalPerson"></select>
-          </div>
-
-          <div class="col-6">
-            <label>Metric</label>
-            <select id="goalMetric">
-              <option value="sales_goal">sales_goal</option>
-              <option value="doors_goal">doors_goal</option>
-              <option value="appts_goal">appts_goal</option>
-              <option value="demos_goal">demos_goal</option>
-            </select>
-          </div>
-          <div class="col-6">
-            <label>Value</label>
-            <input id="goalValue" placeholder="1500" />
-          </div>
-
-          <div class="col-6" style="display:flex; gap:10px; align-items:flex-end">
-            <button class="btn" id="saveGoal">Save Goal</button>
-            <button class="btn secondary" id="refreshGoals">Refresh</button>
-          </div>
-        </div>
-
-        <div class="toast" id="goalToast"></div>
-
-        <div style="margin-top:12px">
-          <div class="card-title">Goals for selected month</div>
-          <table>
-            <thead>
-              <tr>
-                <th>person_key</th>
-                <th>metric</th>
-                <th>value</th>
-              </tr>
-            </thead>
-            <tbody id="goalRows"><tr><td colspan="3" style="color:var(--muted2)">Loading…</td></tr></tbody>
-          </table>
-        </div>
       </div>
     </div>
   </div>
@@ -263,43 +255,6 @@ HTML = """<!doctype html>
     const d = new Date();
     const m = String(d.getMonth() + 1).padStart(2,'0');
     return `${d.getFullYear()}-${m}`;
-  }
-
-  function slugify(s) {
-    return String(s || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g,'_')
-      .replace(/^_+|_+$/g,'')
-      .slice(0, 48);
-  }
-
-  function autoPersonKey() {
-    const role = String(document.getElementById('role').value || 'setter');
-    const raySel = document.getElementById('raydarUser');
-    const rayText = raySel && raySel.selectedOptions && raySel.selectedOptions[0]
-      ? raySel.selectedOptions[0].textContent
-      : '';
-    const name = (document.getElementById('displayName').value || rayText || '').trim();
-    const slug = slugify(name || rayText);
-
-    let prefix = role + ':';
-    if (role === 'rep') prefix = 'rep:';
-    if (role === 'setter') prefix = 'setter:';
-    if (role === 'team') prefix = 'team:';
-
-    const pk = prefix + (slug || 'unknown');
-    document.getElementById('personKey').value = pk;
-  }
-
-  function autoDisplayNameFromRaydar() {
-    const raySel = document.getElementById('raydarUser');
-    const label = raySel && raySel.selectedOptions && raySel.selectedOptions[0]
-      ? raySel.selectedOptions[0].textContent
-      : '';
-    if (label && !(document.getElementById('displayName').value || '').trim()) {
-      document.getElementById('displayName').value = label.trim();
-    }
   }
 
   function esc(s) {
@@ -315,23 +270,7 @@ HTML = """<!doctype html>
     return data;
   }
 
-  async function loadSetterLastNames() {
-    try {
-      const el = document.getElementById('ghlSetterLastName');
-      if (!el) return;
-      // If already populated, skip
-      if (el.options && el.options.length > 1) return;
-
-      const res = await postJson({ action: 'setter_last_names' });
-      fillSelect(el, res.ghl_setter_last_names || [], 'Select setter last name…');
-    } catch (e) {
-      // best-effort
-      const el = document.getElementById('ghlSetterLastName');
-      if (el) fillSelect(el, [], 'Error loading setters');
-    }
-  }
-
-function setStatus(t) { document.getElementById('status').textContent = t; }
+  function setStatus(t) { document.getElementById('status').textContent = t; }
 
   function fillSelect(el, options, placeholder) {
     el.innerHTML = '';
@@ -349,22 +288,87 @@ function setStatus(t) { document.getElementById('status').textContent = t; }
     }
   }
 
-  function renderRosterTable(rows) {
-    const tb = document.getElementById('rosterRows');
-    if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted2)">No roster rows</td></tr>';
+  function slugify(s) {
+    return String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g,'_')
+      .replace(/^_+|_+$/g,'')
+      .slice(0, 48);
+  }
+
+  function applyRoleUI() {
+    const role = String(document.getElementById('role').value || 'setter');
+    const wrapSetterLast = document.getElementById('wrapGhlSetterLast');
+    const wrapRaydar = document.getElementById('wrapRaydarUser');
+    const wrapGhlUser = document.getElementById('wrapGhlUser');
+
+    if (role === 'setter') {
+      wrapSetterLast.style.display = '';
+      wrapRaydar.style.display = '';
+      wrapGhlUser.style.display = 'none';
+      loadSetterLastNames();
+    } else if (role === 'rep') {
+      wrapSetterLast.style.display = 'none';
+      wrapRaydar.style.display = '';
+      wrapGhlUser.style.display = '';
+    } else {
+      wrapSetterLast.style.display = 'none';
+      wrapRaydar.style.display = 'none';
+      wrapGhlUser.style.display = 'none';
+    }
+  }
+
+  function autoDisplayNameFromRaydar() {
+    const raySel = document.getElementById('raydarUser');
+    const label = raySel && raySel.selectedOptions && raySel.selectedOptions[0]
+      ? raySel.selectedOptions[0].textContent
+      : '';
+    if (label) {
+      document.getElementById('displayName').value = label.trim();
+    }
+  }
+
+  function autoPersonKey() {
+    const role = String(document.getElementById('role').value || 'setter');
+    const name = (document.getElementById('displayName').value || '').trim();
+    const slug = slugify(name);
+
+    let prefix = role + ':';
+    if (role === 'rep') prefix = 'rep:';
+    if (role === 'setter') prefix = 'setter:';
+    if (role === 'team') prefix = 'team:';
+
+    document.getElementById('personKey').value = prefix + (slug || 'unknown');
+  }
+
+  let pendingGoals = [];
+
+  function renderPendingGoals() {
+    const tb = document.getElementById('pendingGoalsRows');
+    if (!pendingGoals.length) {
+      tb.innerHTML = '<tr><td colspan="3" style="color:var(--muted2)">No goals added yet</td></tr>';
+      document.getElementById('pendingToast').textContent = '';
       return;
     }
-    tb.innerHTML = rows.map(r => `
+
+    tb.innerHTML = pendingGoals.map((g, idx) => `
       <tr>
-        <td><code>${esc(r.person_key)}</code></td>
-        <td>${esc(r.role)}</td>
-        <td>${esc(r.display_name)}</td>
-        <td>${esc(r.ghl_setter_last_name)}</td>
-        <td>${esc(r.raydar_user_name || r.raydar_user_id || '')}</td>
-        <td>${esc(r.ghl_user_name || r.ghl_user_id || '')}</td>
+        <td><code>${esc(g.metric)}</code></td>
+        <td style="text-align:right; font-variant-numeric: tabular-nums;">${esc(g.value)}</td>
+        <td style="text-align:right"><button class="btn secondary" data-idx="${idx}" style="padding:6px 10px; width:auto">Remove</button></td>
       </tr>
     `).join('');
+
+    document.getElementById('pendingToast').textContent = `Pending goals: ${pendingGoals.length}`;
+
+    tb.querySelectorAll('button[data-idx]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.getAttribute('data-idx'));
+        pendingGoals = pendingGoals.filter((_, j) => j !== i);
+        renderPendingGoals();
+      });
+    });
   }
 
   function renderGoalsTable(rows) {
@@ -382,97 +386,36 @@ function setStatus(t) { document.getElementById('status').textContent = t; }
     `).join('');
   }
 
-
-  function applyRoleUI() {
-    const role = String(document.getElementById('role').value || 'setter');
-
-    const wrapSetterLast = document.getElementById('wrapGhlSetterLast');
-    const wrapRaydar = document.getElementById('wrapRaydarUser');
-    const wrapGhlUser = document.getElementById('wrapGhlUser');
-
-    // Defaults
-    if (wrapSetterLast) wrapSetterLast.style.display = '';
-    if (wrapRaydar) wrapRaydar.style.display = '';
-    if (wrapGhlUser) wrapGhlUser.style.display = '';
-
-    if (role === 'setter') {
-      loadSetterLastNames();
-      // Setter: Raydar user + GHL Setter Last Name
-      if (wrapSetterLast) wrapSetterLast.style.display = '';
-      if (wrapRaydar) wrapRaydar.style.display = '';
-      if (wrapGhlUser) wrapGhlUser.style.display = 'none';
-    } else if (role === 'rep') {
-      // Rep: Raydar user + GHL owner user
-      if (wrapSetterLast) wrapSetterLast.style.display = 'none';
-      if (wrapRaydar) wrapRaydar.style.display = '';
-      if (wrapGhlUser) wrapGhlUser.style.display = '';
-    } else {
-      // Team: usually no person mapping; hide system-specific fields for now
-      if (wrapSetterLast) wrapSetterLast.style.display = 'none';
-      if (wrapRaydar) wrapRaydar.style.display = 'none';
-      if (wrapGhlUser) wrapGhlUser.style.display = 'none';
+  async function loadSetterLastNames() {
+    try {
+      const el = document.getElementById('ghlSetterLastName');
+      if (!el) return;
+      if (el.options && el.options.length > 1) return;
+      const res = await postJson({ action: 'setter_last_names' });
+      fillSelect(el, res.ghl_setter_last_names || [], 'Select setter last name…');
+    } catch {
+      const el = document.getElementById('ghlSetterLastName');
+      if (el) fillSelect(el, [], 'Error loading setters');
     }
   }
 
-  async function refresh() {
+  async function refreshAll() {
     setStatus('Loading…');
-    const month = document.getElementById('goalMonth').value || nowMonth();
+    const month = (document.getElementById('goalMonth').value || nowMonth()).trim();
     document.getElementById('goalMonth').value = month;
+    document.getElementById('currentMonthPill').textContent = `Month: ${month}`;
 
     const data = await postJson({ action: 'bootstrap', month });
 
     fillSelect(document.getElementById('raydarUser'), data.raydar_users, 'Select Raydar user…');
-        fillSelect(document.getElementById('ghlUser'), data.ghl_users, 'Select GHL owner…');
+    fillSelect(document.getElementById('ghlUser'), data.ghl_users, 'Select GHL owner…');
 
-    fillSelect(document.getElementById('goalPerson'), data.roster_people.map(p => ({ value: p.person_key, label: `${p.display_name} (${p.person_key})` })), 'Select person…');
-
-    renderRosterTable(data.roster_people);
-    renderGoalsTable(data.goals_for_month);
+    renderGoalsTable(data.goals_for_month || []);
 
     setStatus('Ready');
   }
 
-  document.getElementById('saveRoster').addEventListener('click', async () => {
-    const payload = {
-      action: 'upsert_roster',
-      person_key: (document.getElementById('personKey').value || '').trim(),
-      display_name: (document.getElementById('displayName').value || '').trim(),
-      role: (document.getElementById('role').value || 'setter').trim(),
-      ghl_setter_last_name: (document.getElementById('ghlSetterLastName').value || '').trim(),
-      raydar_user_id: (document.getElementById('raydarUser').value || '').trim(),
-      ghl_user_id: (document.getElementById('ghlUser').value || '').trim(),
-    };
-
-    try {
-      const res = await postJson(payload);
-      document.getElementById('rosterToast').textContent = `Saved: ${res.person_key}`;
-      await refresh();
-    } catch (e) {
-      document.getElementById('rosterToast').textContent = `Error: ${String(e)}`;
-    }
-  });
-
-  document.getElementById('refreshRoster').addEventListener('click', refresh);
-
-  document.getElementById('saveGoal').addEventListener('click', async () => {
-    const payload = {
-      action: 'upsert_goal',
-      month: (document.getElementById('goalMonth').value || '').trim(),
-      person_key: (document.getElementById('goalPerson').value || '').trim(),
-      metric: (document.getElementById('goalMetric').value || '').trim(),
-      value: (document.getElementById('goalValue').value || '').trim(),
-    };
-    try {
-      const res = await postJson(payload);
-      document.getElementById('goalToast').textContent = `Saved goal: ${res.month} ${res.person_key} ${res.metric}`;
-      await refresh();
-    } catch (e) {
-      document.getElementById('goalToast').textContent = `Error: ${String(e)}`;
-    }
-  });
-
-  document.getElementById('refreshGoals').addEventListener('click', refresh);
-  document.getElementById('goalMonth').addEventListener('change', refresh);
+  // Events
   document.getElementById('role').addEventListener('change', () => {
     applyRoleUI();
     autoPersonKey();
@@ -487,6 +430,9 @@ function setStatus(t) { document.getElementById('status').textContent = t; }
     autoPersonKey();
   });
 
+  document.getElementById('refreshAll').addEventListener('click', refreshAll);
+  document.getElementById('goalMonth').addEventListener('change', refreshAll);
+
   const refreshBtn = document.getElementById('refreshSetterNames');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', async () => {
@@ -495,27 +441,75 @@ function setStatus(t) { document.getElementById('status').textContent = t; }
         const res = await postJson({ action: 'setter_last_names', force: true });
         fillSelect(document.getElementById('ghlSetterLastName'), res.ghl_setter_last_names || [], 'Select setter last name…');
       } catch (e) {
-        document.getElementById('rosterToast').textContent = `Error refreshing setters: ${String(e)}`;
+        document.getElementById('toast').textContent = `Error refreshing setters: ${String(e)}`;
       } finally {
         refreshBtn.disabled = false;
       }
     });
   }
 
-  const setterSel = document.getElementById('ghlSetterLastName');
-  if (setterSel) {
-    setterSel.addEventListener('focus', () => {
-      loadSetterLastNames();
-    });
-  }
+  document.getElementById('addGoal').addEventListener('click', () => {
+    const metric = String(document.getElementById('goalMetric').value || '').trim();
+    const value = String(document.getElementById('goalValue').value || '').trim();
+    if (!metric || !value) return;
 
+    // Replace if metric already exists
+    const filtered = pendingGoals.filter(g => g.metric !== metric);
+    filtered.push({ metric, value });
+    pendingGoals = filtered;
+
+    document.getElementById('goalValue').value = '';
+    renderPendingGoals();
+  });
+
+  document.getElementById('clearGoals').addEventListener('click', () => {
+    pendingGoals = [];
+    renderPendingGoals();
+  });
+
+  document.getElementById('saveAll').addEventListener('click', async () => {
+    const role = String(document.getElementById('role').value || '').trim();
+    const raydar_user_id = String(document.getElementById('raydarUser').value || '').trim();
+    const ghl_setter_last_name = String(document.getElementById('ghlSetterLastName').value || '').trim();
+    const ghl_user_id = String(document.getElementById('ghlUser').value || '').trim();
+
+    const person_key = String(document.getElementById('personKey').value || '').trim();
+    const display_name = String(document.getElementById('displayName').value || '').trim();
+
+    const month = String(document.getElementById('goalMonth').value || '').trim();
+
+    const payload = {
+      action: 'upsert_roster_and_goals',
+      month,
+      person_key,
+      display_name,
+      role,
+      raydar_user_id,
+      ghl_setter_last_name,
+      ghl_user_id,
+      goals: pendingGoals,
+    };
+
+    try {
+      document.getElementById('toast').textContent = 'Saving…';
+      const res = await postJson(payload);
+      pendingGoals = [];
+      renderPendingGoals();
+      document.getElementById('toast').textContent = `Saved: ${res.person_key} (${res.goals_written?.length || 0} goals)`;
+      await refreshAll();
+    } catch (e) {
+      document.getElementById('toast').textContent = `Error: ${String(e)}`;
+    }
+  });
+
+  // Init
+  document.getElementById('goalMonth').value = nowMonth();
   applyRoleUI();
-  autoPersonKey();
-  refresh();
+  renderPendingGoals();
+  refreshAll();
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 
 class handler(BaseHTTPRequestHandler):

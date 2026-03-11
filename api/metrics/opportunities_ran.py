@@ -228,6 +228,11 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
 
+    # Guardrail (business rule): appointmentOccurredAt should not be in the future.
+    now_utc = datetime.now(timezone.utc)
+    if end_utc > now_utc:
+        end_utc = now_utc
+
     opp_query = (
         db.collection(c.opp_collection)
         .where(c.appointment_occurred_at_field, ">=", start_utc)

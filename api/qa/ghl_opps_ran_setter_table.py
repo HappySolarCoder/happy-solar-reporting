@@ -215,10 +215,13 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
         occ = opp.get(c.time_field)
         occ_iso = occ.isoformat() if hasattr(occ, "isoformat") else str(occ)
 
+        contact_last = (contact.get("lastName") if isinstance(contact, dict) else None)
+
         rows.append(
             {
                 "opportunityId": str(opp.get("id") or snap.id),
                 "contactId": cid,
+                "contactLastName": contact_last,
                 "setterLastName": setter_s,
                 "pipeline": pname,
                 "dispositionValue": dispo,
@@ -269,6 +272,7 @@ def render_html(payload: dict[str, Any]) -> str:
         trs.append(
             "<tr>"
             f"<td>{html_escape(r.get('setterLastName'))}</td>"
+            f"<td>{html_escape(r.get('contactLastName'))}</td>"
             f"<td>{html_escape(r.get('pipeline'))}</td>"
             f"<td>{html_escape(r.get('dispositionValue'))}</td>"
             f"<td><code>{html_escape(r.get('appointmentOccurredAt'))}</code></td>"
@@ -313,6 +317,7 @@ def render_html(payload: dict[str, Any]) -> str:
         <thead>
           <tr>
             <th>Setter</th>
+            <th>Contact Last</th>
             <th>Pipeline</th>
             <th>Disposition</th>
             <th>appointmentOccurredAt</th>

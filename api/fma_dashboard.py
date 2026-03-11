@@ -490,17 +490,21 @@ def render_html(year: int, month: int) -> str:
             <thead>
               <tr>
                 <th style="text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Setter Last Name</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Knocks / Goal</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Appts Set / Goal</th>
                 <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos (Sit)</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos / Goal</th>
                 <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
               </tr>
             </thead>
             <tbody id="setterDemoRows">
-              <tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
+              <tr><td colspan="6" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
             </tbody>
             <tfoot id="setterDemoTotals">
               <tr>
                 <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
@@ -681,61 +685,107 @@ def render_html(year: int, month: int) -> str:
           ? `&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`
           : '';
 
+        // 1) GHL demo rate counts (opps ran + sit demos)
         const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}${rangeParam}`, { cache: 'no-store' });
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
 
+        // 2) Roster + goals for month (to pull goal values)
+        const monthStr = String(document.getElementById('goalMonth').value || `${y}-${String(m).padStart(2,'0')}`);
+        const settings = await postJson({ action: 'bootstrap', month: monthStr });
+        const roster = settings && Array.isArray(settings.roster_people) ? settings.roster_people : [];
+        const goalsRows = settings && Array.isArray(settings.goals_for_month) ? settings.goals_for_month : [];
+
+        const setterToPerson = {};
+        const setterToRaydar = {};
+        for (const r of roster) {
+          if (String(r.role || '') !== 'setter') continue;
+          const sln = String(r.ghl_setter_last_name || '').trim();
+          if (!sln) continue;
+          setterToPerson[sln] = String(r.person_key || '');
+          setterToRaydar[sln] = String(r.raydar_user_id || '');
+        }
+
+        const goalsByPerson = {};
+        for (const gr of goalsRows) {
+          const pk = String(gr.person_key || '');
+          const metric = String(gr.metric || '');
+          const value = Number(gr.value || 0);
+          if (!pk || !metric) continue;
+          if (!goalsByPerson[pk]) goalsByPerson[pk] = {};
+          goalsByPerson[pk][metric] = value;
+        }
+
+        // 3) Raydar knocks/appts set for the *same window* (use thismo or date range)
+        let rayUrl = '';
+        if (sr && sr.start && sr.end) {
+          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`;
+        } else {
+          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
+        }
+        const rayRes = await fetch(rayUrl, { cache: 'no-store' });
+        const ray = rayRes.ok ? await rayRes.json() : null;
+        const knocksByClaimed = ray && ray.breakdowns && ray.breakdowns.knocks_by_claimed_by ? ray.breakdowns.knocks_by_claimed_by : {};
+        const apptsByClaimed = ray && ray.breakdowns && ray.breakdowns.appointments_set_by_claimed_by ? ray.breakdowns.appointments_set_by_claimed_by : {};
+
+        // Build row list
         const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}) ]);
         const rows = Array.from(keys).map(k => {
-          const ran = Number(ranBy[k] || 0);
-          const sit = Number(sitBy[k] || 0);
+          const setter = String(k);
+          const ran = Number(ranBy[setter] || 0);
+          const sit = Number(sitBy[setter] || 0);
           const pct = ran > 0 ? (sit / ran) * 100 : 0;
-          return { setter: k, ran, sit, pct };
+
+          const pk = setterToPerson[setter] || '';
+          const rayId = setterToRaydar[setter] || '';
+
+          const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
+          const appts = rayId ? Number(apptsByClaimed[rayId] || 0) : 0;
+
+          const g = pk ? (goalsByPerson[pk] || {}) : {};
+          const knocksGoal = Number(g.doors_goal || 0);
+          const apptsGoal = Number(g.appts_goal || 0);
+          const demosGoal = Number(g.demos_goal || 0);
+
+          return { setter, ran, sit, pct, knocks, appts, knocksGoal, apptsGoal, demosGoal };
         }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || a.setter.localeCompare(b.setter));
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
         const totalPct = totalRan > 0 ? (totalSit / totalRan) * 100 : 0;
 
-
         const tbody = document.getElementById('setterDemoRows');
+        const tfoot = document.getElementById('setterDemoTotals');
+
         if (tbody) {
           if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
-            const tfoot = document.getElementById('setterDemoTotals');
-            if (tfoot) {
-              tfoot.innerHTML = `
-                <tr>
-                  <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-                </tr>`;
-            }
-
+            tbody.innerHTML = `<tr><td colspan="6" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
           } else {
             tbody.innerHTML = rows.map(r => `
               <tr>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.knocks}${r.knocksGoal ? ` / ${r.knocksGoal}` : ''}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.appts}${r.apptsGoal ? ` / ${r.apptsGoal}` : ''}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.ran}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.sit}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.sit}${r.demosGoal ? ` / ${r.demosGoal}` : ''}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
               </tr>`).join('');
-
-            const tfoot = document.getElementById('setterDemoTotals');
-            if (tfoot) {
-              tfoot.innerHTML = `
-                <tr>
-                  <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
-                  <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
-                </tr>`;
-            }
-
           }
         }
+
+        if (tfoot) {
+          tfoot.innerHTML = `
+            <tr>
+              <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
+            </tr>`;
+        }
+
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
         if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;

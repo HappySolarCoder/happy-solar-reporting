@@ -188,7 +188,7 @@ HTML = """<!doctype html>
           </div>
 
           <div class=\"col-4\" id=\"wrapGhlSetterLast\">
-            <label>GHL Setter Last Name</label>
+            <label>GHL Setter Last Name (optional for reps; required for setters)</label>
             <div style=\"display:flex; gap:8px; align-items:center\">
               <select id=\"ghlSetterLastName\"></select>
               <button class=\"btn secondary\" id=\"refreshSetterNames\" title=\"Force refresh setter last names\" style=\"width:auto; padding:9px 10px;\">↻</button>
@@ -339,7 +339,7 @@ HTML = """<!doctype html>
       wrapGhlUser.style.display = 'none';
       loadSetterLastNames();
     } else if (role === 'rep') {
-      wrapSetterLast.style.display = 'none';
+      wrapSetterLast.style.display = '';  // optional
       wrapRaydar.style.display = '';
       wrapGhlUser.style.display = '';
     } else {

@@ -369,7 +369,7 @@ def render_html(year: int, month: int) -> str:
 
       <div class="card span-3">
         <div class="card-header">
-          <div class="card-title">Demo Rate — Virtual</div>
+          <div class="card-title">Demo Rate — Phones</div>
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
         <div class="kpi" id="demoRateVirtual">—</div>
@@ -527,7 +527,7 @@ def render_html(year: int, month: int) -> str:
 
     const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
     const demoDoorsUrl = demoBase + `&lead_source=${encodeURIComponent('Doors')}`;
-    const demoVirtualUrl = demoBase + `&lead_source=${encodeURIComponent('Virtual')}`;
+    const demoVirtualUrl = demoBase + `&lead_source=${encodeURIComponent('Phones')}`;
     const demo3plUrl = demoBase + `&lead_source=${encodeURIComponent('3PL')}`;
 
 

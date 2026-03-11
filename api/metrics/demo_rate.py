@@ -135,14 +135,36 @@ def as_dt(v: Any) -> datetime | None:
 
 
 def normalize_lead_source(v: Any) -> str:
+    """Normalize lead gen source to canonical casing.
+
+    Business update: "Virtual" is now treated as "Phones".
+    """
+
     if v is None:
         return "none"
     s = str(v).strip()
     if not s:
         return "none"
+
     low = s.lower()
     if low in ("crm ui", "hand", "manual"):
         return "none"
+
+    if low in ("doors", "door", "d2d"):
+        return "Doors"
+
+    # New canonical
+    if low in ("phones", "phone", "ph", "call", "calls"):
+        return "Phones"
+
+    # Legacy mapping
+    if low in ("virtual", "virt"):
+        return "Phones"
+
+    if low in ("3pl", "3p", "threepl"):
+        return "3PL"
+
+    # fallback to raw casing
     return s
 
 

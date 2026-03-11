@@ -53,7 +53,7 @@ class MetricContract:
     created_at_field: str = "createdAt"  # ISO string
 
     # pipeline scoping
-    included_pipeline_names: tuple[str, ...] = ("buffalo", "syracuse", "rochester", "virtual")
+    included_pipeline_names: tuple[str, ...] = ("buffalo", "syracuse", "rochester", "virtual")  # pipeline name; not lead source
     excluded_pipeline_names: tuple[str, ...] = ("rehash", "sweeper", "inbound/lead locker")
 
     # breakdown fields (already used in Sales)

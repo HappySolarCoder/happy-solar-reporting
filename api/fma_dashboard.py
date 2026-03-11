@@ -471,8 +471,9 @@ def render_html(year: int, month: int) -> str:
             <select id="setterTableLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
               <option value="">All</option>
               <option value="Doors">Doors</option>
-              <option value="Virtual">Virtual</option>
+              <option value="Phones">Phones</option>
               <option value="3PL">3PL</option>
+              <option value="Virtual">(legacy) Virtual</option>
               <option value="none">none</option>
             </select>
           </div>

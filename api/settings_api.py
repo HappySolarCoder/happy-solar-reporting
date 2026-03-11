@@ -320,6 +320,28 @@ def _coerce_number(v: Any) -> int | float:
     return value
 
 
+def delete_goal(db: firestore.Client, payload: dict) -> dict:
+    month = str(payload.get("month") or "").strip()
+    person_key = str(payload.get("person_key") or "").strip()
+    metric = str(payload.get("metric") or "").strip()
+
+    if not month or len(month) != 7 or month[4] != "-":
+        raise ValueError("month must be YYYY-MM")
+    if not person_key:
+        raise ValueError("person_key is required")
+    if not metric:
+        raise ValueError("metric is required")
+
+    ref = db.collection("goals_monthly_v1").document(month)
+
+    # Remove the specific field
+    ref.set({"updatedAt": datetime.now(timezone.utc).isoformat()}, merge=True)
+    ref.update({f"goals.{person_key}.{metric}": firestore.DELETE_FIELD})
+
+    return {"ok": True, "month": month, "person_key": person_key, "metric": metric, "deleted": True}
+
+
+
 def upsert_goal(db: firestore.Client, payload: dict) -> dict:
     month = str(payload.get("month") or "").strip()
     person_key = str(payload.get("person_key") or "").strip()
@@ -449,6 +471,11 @@ class handler(BaseHTTPRequestHandler):
 
             if action == "upsert_goal":
                 out = upsert_goal(db, payload)
+                write_json(self, 200, out)
+                return
+
+            if action == "delete_goal":
+                out = delete_goal(db, payload)
                 write_json(self, 200, out)
                 return
 

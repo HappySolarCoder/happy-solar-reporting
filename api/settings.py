@@ -407,13 +407,57 @@ HTML = """<!doctype html>
       tb.innerHTML = '<tr><td colspan="3" style="color:var(--muted2)">No goals</td></tr>';
       return;
     }
-    tb.innerHTML = rows.map(r => `
-      <tr>
-        <td><code>${esc(r.person_key)}</code></td>
-        <td><code>${esc(r.metric)}</code></td>
-        <td style="text-align:right; font-variant-numeric: tabular-nums;">${esc(r.value)}</td>
-      </tr>
-    `).join('');
+
+    tb.innerHTML = rows.map((r, idx) => {
+      const id = `g_${idx}`;
+      return `
+        <tr>
+          <td><code>${esc(r.person_key)}</code></td>
+          <td><code>${esc(r.metric)}</code></td>
+          <td style="text-align:right; font-variant-numeric: tabular-nums;">
+            <div style="display:flex; gap:8px; justify-content:flex-end; align-items:center; flex-wrap:wrap;">
+              <input id="${id}" value="${esc(r.value)}" style="max-width:140px; text-align:right;" />
+              <button class="btn secondary" data-save="${idx}" style="padding:6px 10px; width:auto">Save</button>
+              <button class="btn danger" data-del="${idx}" style="padding:6px 10px; width:auto">Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // bind actions
+    tb.querySelectorAll('button[data-save]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const i = Number(btn.getAttribute('data-save'));
+        const row = rows[i];
+        const inp = document.getElementById(`g_${i}`);
+        const value = inp ? String(inp.value || '').trim() : '';
+        try {
+          document.getElementById('toast').textContent = 'Saving goal…';
+          await postJson({ action: 'upsert_goal', month: document.getElementById('goalMonth').value, person_key: row.person_key, metric: row.metric, value });
+          document.getElementById('toast').textContent = 'Saved.';
+          await refreshAll();
+        } catch (e) {
+          document.getElementById('toast').textContent = `Error: ${String(e)}`;
+        }
+      });
+    });
+
+    tb.querySelectorAll('button[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const i = Number(btn.getAttribute('data-del'));
+        const row = rows[i];
+        if (!confirm(`Delete goal ${row.person_key} ${row.metric}?`)) return;
+        try {
+          document.getElementById('toast').textContent = 'Deleting goal…';
+          await postJson({ action: 'delete_goal', month: document.getElementById('goalMonth').value, person_key: row.person_key, metric: row.metric });
+          document.getElementById('toast').textContent = 'Deleted.';
+          await refreshAll();
+        } catch (e) {
+          document.getElementById('toast').textContent = `Error: ${String(e)}`;
+        }
+      });
+    });
   }
 
   async function loadSetterLastNames() {

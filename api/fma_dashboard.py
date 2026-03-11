@@ -473,7 +473,7 @@ def render_html(year: int, month: int) -> str:
               <option value="Doors">Doors</option>
               <option value="Phones">Phones</option>
               <option value="3PL">3PL</option>
-              <option value="Virtual">(legacy) Virtual</option>
+              <option value="Self Gen">Self Gen</option>
               <option value="none">none</option>
             </select>
           </div>

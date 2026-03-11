@@ -538,7 +538,7 @@ def render_html(year: int, month: int) -> str:
     setText('kpiGobacksSub', 'Schema pending');
 
     setText('segKnocks', '… Knocks');
-    setText('segConvos', `${convos === null ? '—' : convos} Convos`);
+    setText('segConvos', '— Convos');
     setText('segAppts', '— Appts');
 
     try {

@@ -303,7 +303,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     sit = 0
 
     # breakdowns
-    by_setter: dict[str, int] = {}
+    ran_by_setter: dict[str, int] = {}
+    sit_by_setter: dict[str, int] = {}
     by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
 
@@ -361,7 +362,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if dispo == "Sit":
             sit += 1
 
-        by_setter[setter_s] = by_setter.get(setter_s, 0) + 1
+        ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
+        if dispo == "Sit":
+            sit_by_setter[setter_s] = sit_by_setter.get(setter_s, 0) + 1
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_lead[lead] = by_lead.get(lead, 0) + 1
 
@@ -391,7 +394,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "sit_count": sit,
         "result": pct,
         "breakdowns": {
-            "demo_rate_by_setter_last_name": by_setter,
+            "ran_by_setter_last_name": ran_by_setter,
+            "sit_by_setter_last_name": sit_by_setter,
+            "demo_rate_by_setter_last_name": ran_by_setter,  # legacy: was misnamed; kept for backward-compat
+
             "demo_rate_by_pipeline": by_pipeline,
             "demo_rate_by_lead_gen_source": by_lead,
         },

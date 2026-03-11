@@ -194,7 +194,7 @@ def list_roster(db: firestore.Client) -> list[dict[str, Any]]:
             }
         )
 
-    rows.sort(key=lambda r: (str(r.get("role") or ""), str(r.get("display_name") or "")).lower())
+    rows.sort(key=lambda r: (str(r.get("role") or "").lower(), str(r.get("display_name") or "").lower()))
     return rows
 
 

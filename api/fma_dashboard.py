@@ -705,7 +705,8 @@ def render_html(year: int, month: int) -> str:
         const setterToPerson = {};
         const setterToRaydar = {};
         for (const r of roster) {
-          if (String(r.role || '') !== 'setter') continue;
+          // Do not filter by role here. If someone has a GHL setter last name mapping,
+          // we should apply goals + Raydar actuals regardless of their role label.
           const sln = String(r.ghl_setter_last_name || '').trim();
           if (!sln) continue;
           setterToPerson[sln] = String(r.person_key || '');

@@ -256,7 +256,6 @@ def build_payload(
         "callback scheduled",
         "dq credit",
         "go back",
-        "has solar",
         "interested",
         "not interested",
         "renter",

@@ -154,18 +154,18 @@ HTML = """<!doctype html>
             </select>
           </div>
 
-          <div class="col-4">
-            <label>GHL Setter Last Name (for demo table)</label>
+          <div class="col-4" id="wrapGhlSetterLast">
+            <label>GHL Setter Last Name (Setter role only)</label>
             <input id="ghlSetterLastName" placeholder="Plyley" />
           </div>
 
-          <div class="col-4">
-            <label>Raydar User</label>
+          <div class="col-4" id="wrapRaydarUser">
+            <label>Raydar User (Setter/Rep)</label>
             <select id="raydarUser"></select>
           </div>
 
-          <div class="col-6">
-            <label>GHL User (optional)</label>
+          <div class="col-6" id="wrapGhlUser">
+            <label>GHL Owner User (Rep role)</label>
             <select id="ghlUser"></select>
           </div>
 
@@ -325,6 +325,37 @@ HTML = """<!doctype html>
     `).join('');
   }
 
+
+  function applyRoleUI() {
+    const role = String(document.getElementById('role').value || 'setter');
+
+    const wrapSetterLast = document.getElementById('wrapGhlSetterLast');
+    const wrapRaydar = document.getElementById('wrapRaydarUser');
+    const wrapGhlUser = document.getElementById('wrapGhlUser');
+
+    // Defaults
+    if (wrapSetterLast) wrapSetterLast.style.display = '';
+    if (wrapRaydar) wrapRaydar.style.display = '';
+    if (wrapGhlUser) wrapGhlUser.style.display = '';
+
+    if (role === 'setter') {
+      // Setter: Raydar user + GHL Setter Last Name
+      if (wrapSetterLast) wrapSetterLast.style.display = '';
+      if (wrapRaydar) wrapRaydar.style.display = '';
+      if (wrapGhlUser) wrapGhlUser.style.display = 'none';
+    } else if (role === 'rep') {
+      // Rep: Raydar user + GHL owner user
+      if (wrapSetterLast) wrapSetterLast.style.display = 'none';
+      if (wrapRaydar) wrapRaydar.style.display = '';
+      if (wrapGhlUser) wrapGhlUser.style.display = '';
+    } else {
+      // Team: usually no person mapping; hide system-specific fields for now
+      if (wrapSetterLast) wrapSetterLast.style.display = 'none';
+      if (wrapRaydar) wrapRaydar.style.display = 'none';
+      if (wrapGhlUser) wrapGhlUser.style.display = 'none';
+    }
+  }
+
   async function refresh() {
     setStatus('Loading…');
     const month = document.getElementById('goalMonth').value || nowMonth();
@@ -384,7 +415,11 @@ HTML = """<!doctype html>
 
   document.getElementById('refreshGoals').addEventListener('click', refresh);
   document.getElementById('goalMonth').addEventListener('change', refresh);
+  document.getElementById('role').addEventListener('change', () => {
+    applyRoleUI();
+  });
 
+  applyRoleUI();
   refresh();
 </script>
 </body>

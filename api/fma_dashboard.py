@@ -460,7 +460,29 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
-      <div class="card span-12">
+            <div class="card span-12">
+        <div class="card-header">
+          <div class="card-title">GHL — Demo Rate by Setter (Current Month)</div>
+          <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran)</div>
+        </div>
+        <div style="margin-top:10px; overflow:auto">
+          <table style="width:100%; border-collapse: collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Setter Last Name</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos (Sit)</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
+              </tr>
+            </thead>
+            <tbody id="setterDemoRows">
+              <tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+<div class="card span-12">
         <div class="card-title">Status</div>
         <div class="meta">
           UI is built to match Raydar. Next step: confirm metric definitions + exact field mappings (Knocks, Convos, Appts, Go-backs) and wire these cards.
@@ -600,6 +622,41 @@ def render_html(year: int, month: int) -> str:
 
       const topAp = (data && Array.isArray(data.top_appt_setters)) ? data.top_appt_setters : [];
       renderTopList('topAppts', topAp.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.appointments })));
+
+      // --- GHL Demo Rate by Setter (current month) ---
+      try {
+        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { cache: 'no-store' });
+        const demoData = demoRes.ok ? await demoRes.json() : null;
+        const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
+        const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
+
+        const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}) ]);
+        const rows = Array.from(keys).map(k => {
+          const ran = Number(ranBy[k] || 0);
+          const sit = Number(sitBy[k] || 0);
+          const pct = ran > 0 ? (sit / ran) * 100 : 0;
+          return { setter: k, ran, sit, pct };
+        }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || a.setter.localeCompare(b.setter));
+
+        const tbody = document.getElementById('setterDemoRows');
+        if (tbody) {
+          if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
+          } else {
+            tbody.innerHTML = rows.map(r => `
+              <tr>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.ran}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.sit}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
+              </tr>`).join('');
+          }
+        }
+      } catch (e) {
+        const tbody = document.getElementById('setterDemoRows');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
+      }
+
 
     } catch (e) {
       setText('kpiKnocks', 'ERR');

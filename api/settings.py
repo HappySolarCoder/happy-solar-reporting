@@ -85,8 +85,9 @@ HTML = """<!doctype html>
     .col-4 { grid-column: span 4; }
     .col-6 { grid-column: span 6; }
     .col-3 { grid-column: span 3; }
+    .col-8 { grid-column: span 8; }
     .col-12 { grid-column: span 12; }
-    @media (max-width: 980px) { .col-4,.col-6,.col-3 { grid-column: span 12; } }
+    @media (max-width: 980px) { .col-4,.col-6,.col-3,.col-8 { grid-column: span 12; } }
 
     .btn {
       display:inline-flex; align-items:center; justify-content:center;

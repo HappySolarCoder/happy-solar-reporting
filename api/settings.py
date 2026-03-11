@@ -311,7 +311,23 @@ HTML = """<!doctype html>
     return data;
   }
 
-  function setStatus(t) { document.getElementById('status').textContent = t; }
+  async function loadSetterLastNames() {
+    try {
+      const el = document.getElementById('ghlSetterLastName');
+      if (!el) return;
+      // If already populated, skip
+      if (el.options && el.options.length > 1) return;
+
+      const res = await postJson({ action: 'setter_last_names' });
+      fillSelect(el, res.ghl_setter_last_names || [], 'Select setter last name…');
+    } catch (e) {
+      // best-effort
+      const el = document.getElementById('ghlSetterLastName');
+      if (el) fillSelect(el, [], 'Error loading setters');
+    }
+  }
+
+function setStatus(t) { document.getElementById('status').textContent = t; }
 
   function fillSelect(el, options, placeholder) {
     el.innerHTML = '';
@@ -376,6 +392,7 @@ HTML = """<!doctype html>
     if (wrapGhlUser) wrapGhlUser.style.display = '';
 
     if (role === 'setter') {
+      loadSetterLastNames();
       // Setter: Raydar user + GHL Setter Last Name
       if (wrapSetterLast) wrapSetterLast.style.display = '';
       if (wrapRaydar) wrapRaydar.style.display = '';
@@ -401,8 +418,7 @@ HTML = """<!doctype html>
     const data = await postJson({ action: 'bootstrap', month });
 
     fillSelect(document.getElementById('raydarUser'), data.raydar_users, 'Select Raydar user…');
-    fillSelect(document.getElementById('ghlSetterLastName'), data.ghl_setter_last_names || [], 'Select setter last name…');
-    fillSelect(document.getElementById('ghlUser'), data.ghl_users, 'Select GHL owner…');
+        fillSelect(document.getElementById('ghlUser'), data.ghl_users, 'Select GHL owner…');
 
     fillSelect(document.getElementById('goalPerson'), data.roster_people.map(p => ({ value: p.person_key, label: `${p.display_name} (${p.person_key})` })), 'Select person…');
 
@@ -466,6 +482,13 @@ HTML = """<!doctype html>
   document.getElementById('displayName').addEventListener('blur', () => {
     autoPersonKey();
   });
+
+  const setterSel = document.getElementById('ghlSetterLastName');
+  if (setterSel) {
+    setterSel.addEventListener('focus', () => {
+      loadSetterLastNames();
+    });
+  }
 
   applyRoleUI();
   autoPersonKey();

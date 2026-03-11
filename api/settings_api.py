@@ -92,13 +92,14 @@ def list_ghl_users(db: firestore.Client) -> list[dict[str, str]]:
 
 
 def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
-    """Return distinct GHL setter last names observed on ran opps (last ~180 days).
+    """Return distinct GHL setter last names observed on ran opps.
 
-    This drives a dropdown so users do not have to type the setter last name manually.
+    NOTE: This can be expensive; do not call from bootstrap.
+    Prefer using get_cached_ghl_setter_last_names().
     """
 
-    # Lookback window (avoid full contact scan)
-    since = datetime.now(timezone.utc) - timedelta(days=180)
+    # Lookback window (avoid full scan)
+    since = datetime.now(timezone.utc) - timedelta(days=30)
 
     # Use the same base filters as demo_rate/opps_ran:
     included = {"buffalo", "rochester", "virtual", "syracuse"}
@@ -141,7 +142,12 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
     )
 
     names = set()
+    contact_cache: dict[str, dict] = {}
+    scanned = 0
     for snap in q.stream():
+        scanned += 1
+        if scanned > 600:
+            break
         opp = snap.to_dict() or {}
 
         dispo = opp.get('dispositionValue')
@@ -158,7 +164,11 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
             continue
 
         cid = str(opp.get('contactId') or '')
-        contact = contact_lookup(cid)
+        if cid in contact_cache:
+            contact = contact_cache[cid]
+        else:
+            contact = contact_lookup(cid) or {}
+            contact_cache[cid] = contact
         setter = contact_custom_field(contact, setter_cf)
         setter_s = str(setter).strip() if setter not in (None,'') else 'none'
         names.add(setter_s)
@@ -166,6 +176,37 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
     out = [{"value": n, "label": n} for n in sorted(names, key=lambda x: x.lower())]
     return out
 
+
+
+def get_cached_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
+    """Cached dropdown options for GHL setter last names.
+
+    Stored in Firestore to keep Settings UI snappy.
+    """
+
+    cache_ref = db.collection("settings_cache_v1").document("ghl_setter_last_names")
+    snap = cache_ref.get()
+    if snap.exists:
+        d = snap.to_dict() or {}
+        updated_at = str(d.get("updatedAt") or "")
+        values = d.get("values")
+        # 6-hour TTL
+        try:
+            dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00")) if updated_at else None
+        except Exception:
+            dt = None
+        if dt and (datetime.now(timezone.utc) - dt) < timedelta(hours=6) and isinstance(values, list):
+            return values
+
+    values = list_ghl_setter_last_names(db)
+    cache_ref.set(
+        {
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "values": values,
+        },
+        merge=True,
+    )
+    return values
 
 
 def list_roster(db: firestore.Client) -> list[dict[str, Any]]:
@@ -309,9 +350,15 @@ class handler(BaseHTTPRequestHandler):
                     "raydar_users": list_raydar_users(db),
                     "ghl_users": list_ghl_users(db),
                     "roster_people": list_roster(db),
-                    "ghl_setter_last_names": list_ghl_setter_last_names(db),
+                    # NOTE: Setter last names are intentionally NOT computed during bootstrap (too slow).
+                    # Fetch lazily via action=setter_last_names (cached) when UI needs it.
                     "goals_for_month": goals_for_month(db, month),
                 }
+                write_json(self, 200, out)
+                return
+
+            if action == "setter_last_names":
+                out = {"ghl_setter_last_names": get_cached_ghl_setter_last_names(db)}
                 write_json(self, 200, out)
                 return
 

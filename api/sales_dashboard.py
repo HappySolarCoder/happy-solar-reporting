@@ -276,6 +276,7 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn active" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMA dashboard</a>
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
+          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/settings">Settings</a>
         </div>
       </div>

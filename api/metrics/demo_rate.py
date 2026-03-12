@@ -56,7 +56,7 @@ class MetricContract:
 
     # Pipeline scope
     included_pipeline_names: tuple[str, ...] = ("buffalo", "rochester", "virtual", "syracuse")
-    excluded_pipeline_names: tuple[str, ...] = ("sweeper", "rehash", "inbound/lead locker")
+    excluded_pipeline_names: tuple[str, ...] = ("inbound/lead locker",)  # do not exclude sweeper/rehash
 
     # Breakdown fields
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"

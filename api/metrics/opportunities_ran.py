@@ -54,7 +54,7 @@ class MetricContract:
     what_happened_custom_field_id: str = "GYGpLKBPfMpiBqyU2ogQ"
 
     # Exclusions
-    excluded_pipeline_names: tuple[str, ...] = ("sweeper", "rehash")
+    excluded_pipeline_names: tuple[str, ...] = ()  # do not exclude sweeper/rehash for ran
 
     # breakdown fields (reuse contact custom fields we already identified)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"

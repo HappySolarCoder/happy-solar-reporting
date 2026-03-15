@@ -529,7 +529,9 @@ def render_html(year: int, month: int) -> str:
 
     const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
 
-
+    const demoDoorsUrl = `${demoBase}&lead_source=Doors`;
+    const demoVirtualUrl = `${demoBase}&lead_source=Phones`;
+    const demo3plUrl = `${demoBase}&lead_source=3PL`;
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('totalCreated').textContent = '…';
@@ -544,11 +546,6 @@ def render_html(year: int, month: int) -> str:
       const pct = ran > 0 ? (sit / ran) * 100 : null;
       return { ran, sit, pct };
     }
-
-    const selfGen = pickLeadSource(demoData, 'Self Gen');
-    const doors = pickLeadSource(demoData, 'Doors');
-    const phones = pickLeadSource(demoData, 'Phones');
-    const pl3 = pickLeadSource(demoData, '3PL');
 document.getElementById('demoRateCompany').textContent = '…';
     document.getElementById('demoRateDoors').textContent = '…';
     document.getElementById('demoRateVirtual').textContent = '…';
@@ -590,6 +587,9 @@ document.getElementById('demoRateCompany').textContent = '…';
     const demoDoorsData = demoDoorsRes.ok ? await demoDoorsRes.json() : null;
     const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
     const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
+
+    const doors = pickLeadSource(demoData, 'Doors');
+    const pl3 = pickLeadSource(demoData, '3PL');
 
     document.getElementById('totalSales').textContent = salesData.result;
     document.getElementById('salesMeta').textContent = '';

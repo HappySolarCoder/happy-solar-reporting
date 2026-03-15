@@ -405,8 +405,11 @@ def render_html(year: int, month: int) -> str:
   }
 
   function canonicalOwner(name) {
-    const raw = (name || '').toString().trim();
-    if (!raw) return '—';
+    const raw0 = (name || '').toString().trim();
+    if (!raw0) return '—';
+
+    // normalize internal whitespace (handles double spaces, etc.)
+    const raw = raw0.replace(/\s+/g, ' ').trim();
     const low = raw.toLowerCase();
 
     // Combine owners for dashboard reporting

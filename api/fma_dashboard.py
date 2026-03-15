@@ -535,6 +535,12 @@ def render_html(year: int, month: int) -> str:
 <script>
   // Custom range persistence
   const rangeKey = 'fms_range_v1';
+
+  // Keep range in URL too (so the date inputs always reflect current state)
+  const pageUrl = new URL(window.location.href);
+  const urlStart = pageUrl.searchParams.get('start') || '';
+  const urlEnd = pageUrl.searchParams.get('end') || '';
+
   // Setter demo table range persistence (table-only)
   const setterRangeKey = 'fms_setter_table_range_v1';
   function getSetterRange() {
@@ -568,6 +574,61 @@ def render_html(year: int, month: int) -> str:
   }
   function clearRange() {
     try { localStorage.removeItem(rangeKey); } catch {}
+  }
+
+  // Sync date inputs from URL/localStorage and wire Apply/Clear buttons
+  (function initRangeUI() {
+    const startEl = document.getElementById('startDate');
+    const endEl = document.getElementById('endDate');
+    const metaEl = document.getElementById('rangeMeta');
+
+    // prefer URL params when present
+    if (urlStart && urlEnd) {
+      if (startEl) startEl.value = urlStart;
+      if (endEl) endEl.value = urlEnd;
+      setRange({ start: urlStart, end: urlEnd });
+      if (metaEl) metaEl.textContent = `Custom range: ${urlStart} → ${urlEnd}`;
+      return;
+    }
+
+    const r = getRange();
+    if (r && r.start && r.end) {
+      if (startEl) startEl.value = r.start;
+      if (endEl) endEl.value = r.end;
+      if (metaEl) metaEl.textContent = `Custom range: ${r.start} → ${r.end}`;
+    }
+  })();
+
+  function setUrlRange(s, e) {
+    const u = new URL(window.location.href);
+    if (s && e) {
+      u.searchParams.set('start', s);
+      u.searchParams.set('end', e);
+    } else {
+      u.searchParams.delete('start');
+      u.searchParams.delete('end');
+    }
+    window.location.href = u.toString();
+  }
+
+  const applyBtn = document.getElementById('applyRange');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', () => {
+      const s = (document.getElementById('startDate').value || '').trim();
+      const e = (document.getElementById('endDate').value || '').trim();
+      if (s && e) {
+        setRange({ start: s, end: e });
+        setUrlRange(s, e);
+      }
+    });
+  }
+
+  const clearBtn = document.getElementById('clearRange');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      clearRange();
+      setUrlRange('', '');
+    });
   }
 
   // Period tabs: UI only (metric wiring comes after schema confirmation)

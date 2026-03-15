@@ -432,6 +432,15 @@ def render_html(year: int, month: int) -> str:
     return '';
   }
 
+  // Persist range in URL so the UI always reflects the active range
+  const pageUrl = new URL(window.location.href);
+  const urlStart = pageUrl.searchParams.get('start') || '';
+  const urlEnd = pageUrl.searchParams.get('end') || '';
+  if (urlStart && urlEnd) {
+    document.getElementById('startDate').value = urlStart;
+    document.getElementById('endDate').value = urlEnd;
+  }
+
   async function load() {
     const y = yearSel.value;
     const m = monthSel.value;
@@ -524,12 +533,27 @@ def render_html(year: int, month: int) -> str:
   setOptions(yearSel, years, defaultYear);
   setOptions(monthSel, months, defaultMonth);
 
-  document.getElementById('apply').addEventListener('click', load);
-  document.getElementById('clearRange').addEventListener('click', () => {
-    document.getElementById('startDate').value = '';
-    document.getElementById('endDate').value = '';
-    load();
+  document.getElementById('apply').addEventListener('click', () => {
+    const s = (document.getElementById('startDate').value || '').trim();
+    const e = (document.getElementById('endDate').value || '').trim();
+    const u = new URL(window.location.href);
+    if (s && e) {
+      u.searchParams.set('start', s);
+      u.searchParams.set('end', e);
+    } else {
+      u.searchParams.delete('start');
+      u.searchParams.delete('end');
+    }
+    window.location.href = u.toString();
   });
+
+  document.getElementById('clearRange').addEventListener('click', () => {
+    const u = new URL(window.location.href);
+    u.searchParams.delete('start');
+    u.searchParams.delete('end');
+    window.location.href = u.toString();
+  });
+
   load();
 </script>
 </body>

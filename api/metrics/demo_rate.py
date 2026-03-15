@@ -224,7 +224,7 @@ def html_page(payload: dict) -> str:
         )
 
     table_rows = "".join(
-        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('appointmentOccurredAt'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
+        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('appointmentOccurredAt'))}</td><td>{esc(r.get('contactFirstName'))}</td><td>{esc(r.get('contactLastName'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
         for r in rows[:500]
     )
 
@@ -285,6 +285,8 @@ def html_page(payload: dict) -> str:
                 <th>pipeline</th>
                 <th>disposition</th>
                 <th>appointmentOccurredAt</th>
+                <th>contactFirstName</th>
+                <th>contactLastName</th>
                 <th>setter</th>
                 <th>lead_source</th>
               </tr>
@@ -401,6 +403,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "pipeline": pname,
                 "disposition": dispo,
                 "appointmentOccurredAt": local_dt.isoformat(),
+                "contactFirstName": contact.get("firstName"),
+                "contactLastName": contact.get("lastName"),
                 "setter": setter_s,
                 "lead_source": lead,
             }

@@ -274,7 +274,6 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMS dashboard</a>
-          <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>

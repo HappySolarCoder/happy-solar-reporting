@@ -124,7 +124,6 @@ def render_html() -> str:
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMA dashboard</a>
-          <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn active" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>

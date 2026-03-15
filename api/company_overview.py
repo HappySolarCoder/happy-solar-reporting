@@ -805,29 +805,6 @@ def render_html(year: int, month: int) -> str:
       document.getElementById('opp2prelimMeta').textContent = '';
     }
 
-    // ---- Demo KPI cards ----
-    const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
-    const fmtCounts = (d) => {
-      if (!d) return 'Demos: — • Ran: —';
-      const demos = (typeof d.sit_count !== 'undefined') ? Number(d.sit_count) : null;
-      const ran = (typeof d.ran_count !== 'undefined') ? Number(d.ran_count) : null;
-      const demosTxt = (demos === null || Number.isNaN(demos)) ? '—' : String(demos);
-      const ranTxt = (ran === null || Number.isNaN(ran)) ? '—' : String(ran);
-      return `Demos: ${demosTxt} • Ran: ${ranTxt}`;
-    };
-
-    document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
-    document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
-    document.getElementById('demoRateSelfGen').textContent = fmtPct(demoSelfGenData);
-    document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
-    document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
-
-    document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
-    document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
-    document.getElementById('demoRateSelfGenCounts').textContent = fmtCounts(demoSelfGenData);
-    document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
-    document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
-
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});
   }

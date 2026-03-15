@@ -528,8 +528,9 @@ def render_html(year: int, month: int) -> str:
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
 
     const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
+    const demoSelfGenUrl = demoBase + `&lead_source=${encodeURIComponent('Self Gen')}`;
     const demoDoorsUrl = demoBase + `&lead_source=${encodeURIComponent('Doors')}`;
-    const demoVirtualUrl = demoBase + `&lead_source=${encodeURIComponent('Phones')}`;
+    const demoPhonesUrl = demoBase + `&lead_source=${encodeURIComponent('Phones')}`;
     const demo3plUrl = demoBase + `&lead_source=${encodeURIComponent('3PL')}`;
 
 

@@ -4,10 +4,9 @@
 
 Metric: Kixie Calls / Connections / Connection Rate
 
-Definition (needs confirmation):
+Definition:
 - Calls = count of kixie_calls records in date window
-- Connections = calls where callStatus == "answered" OR powerlistContactDetails.result.lastDialOutcome == "Answered"
-  (we treat this as a *connected/answered call*; confirm with ops)
+- Connections = calls with `duration` > 60 seconds
 - Connection rate = connections / calls * 100
 
 Time filter:
@@ -103,29 +102,14 @@ def coerce_dt(v: Any) -> datetime | None:
 
 
 def is_connection(doc: dict) -> bool:
-    # Primary: callStatus
-    cs = str(doc.get("callStatus") or "").strip().lower()
-    if cs in {"answered", "answer", "connected"}:
-        return True
+    """Connection definition (per Evan): duration > 60 seconds."""
 
-    # Secondary: nested powerlist outcome
     try:
-        last = (
-            (doc.get("powerlistContactDetails") or {})
-            .get("result", {})
-            .get("lastDialOutcome")
-        )
-        if str(last or "").strip().lower() in {"answered", "answer", "connected"}:
-            return True
+        dur = int(doc.get("duration") or 0)
     except Exception:
-        pass
+        dur = 0
 
-    # Tertiary: outcome string heuristic
-    out = str(doc.get("outcome") or "").strip().lower()
-    if out in {"answered", "connected"}:
-        return True
-
-    return False
+    return dur > 60
 
 
 class handler(BaseHTTPRequestHandler):

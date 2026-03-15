@@ -460,6 +460,10 @@ def render_html(year: int, month: int) -> str:
     return '';
   }
 
+  // selectors (must exist before we read yearSel/monthSel)
+  const yearSel = document.getElementById('year');
+  const monthSel = document.getElementById('month');
+
   // Persist range in URL so the UI always reflects the active range
   const pageUrl = new URL(window.location.href);
   const urlStart = pageUrl.searchParams.get('start') || '';
@@ -640,9 +644,6 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('ownerRows').innerHTML = html;
   }
-
-  const yearSel = document.getElementById('year');
-  const monthSel = document.getElementById('month');
 
   const years = [];
   for (let y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});

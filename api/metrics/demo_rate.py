@@ -55,7 +55,7 @@ class MetricContract:
     appointment_occurred_at_field: str = "appointmentOccurredAt"  # Firestore Timestamp/datetime
 
     # Pipeline scope
-    included_pipeline_names: tuple[str, ...] = ("buffalo", "rochester", "virtual", "syracuse")
+    included_pipeline_names: tuple[str, ...] = ("buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper")
     excluded_pipeline_names: tuple[str, ...] = ("inbound/lead locker",)  # do not exclude sweeper/rehash
 
     # Breakdown fields

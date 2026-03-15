@@ -100,6 +100,7 @@ class Handler(BaseHTTPRequestHandler):
             start = now - timedelta(days=days)
 
             docs = []
+            last_error = None
             try:
                 docs = list(
                     col.where(field, ">=", start)
@@ -107,12 +108,22 @@ class Handler(BaseHTTPRequestHandler):
                     .limit(5000)
                     .stream()
                 )
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
+
+            if not docs:
                 # Fallback: just take last 5000 docs by receivedAt
                 try:
                     docs = list(col.order_by(field, direction=firestore.Query.DESCENDING).limit(5000).stream())
-                except Exception:
+                except Exception as e:
+                    last_error = str(e)
                     docs = []
+
+            if not docs:
+                # Last resort: stream a small sample without ordering and try to infer timestamp field
+                sample = list(col.limit(200).stream())
+                docs = sample
+                last_error = last_error or "no_docs_from_ordered_queries"
 
             # Timezone for business view
             from zoneinfo import ZoneInfo
@@ -162,6 +173,10 @@ class Handler(BaseHTTPRequestHandler):
                 "series_utc": series_utc,
                 "series_ny": series_ny,
                 "generated_at_utc": now.isoformat(),
+                "debug": {
+                    "docs_scanned": len(docs),
+                    "last_error": last_error,
+                },
             }
 
             body = json.dumps(payload).encode("utf-8")

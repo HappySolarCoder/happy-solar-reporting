@@ -89,8 +89,14 @@ def render_html() -> str:
     .span-12 { grid-column: span 12; }
 
     .chartWrap { margin-top: 10px; }
-    .bar { height: 10px; border-radius: 999px; background: #f1f5f9; overflow:hidden; }
-    .bar > div { height:100%; background: var(--pink); width:0%; }
+
+    /* Lightweight line chart */
+    .lineChart { width:100%; height: 260px; }
+    .axisLabel { font-size: 11px; fill: #94a3b8; }
+    .tickLine { stroke: #eef2f7; stroke-width: 1; }
+    .pathLine { stroke: var(--pink); stroke-width: 3; fill: none; }
+    .dot { fill: var(--pink); opacity: 0.9; }
+    .dot:hover { opacity: 1; }
 
     table { width:100%; border-collapse: collapse; margin-top: 8px; }
     th { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 950; }
@@ -159,7 +165,7 @@ def render_html() -> str:
 
       <div class="card span-12">
         <div class="card-title">Connection Rate by Day</div>
-        <div class="meta">Connections / Calls</div>
+        <div class="meta">Connections / Calls • daily points</div>
         <div class="chartWrap" id="chart"></div>
       </div>
 
@@ -307,19 +313,85 @@ def render_html() -> str:
     }
     document.getElementById('agentRows').innerHTML = html || '<tr><td colspan="4" style="color: var(--muted2)">No rows</td></tr>';
 
-    // Chart (simple bar rows)
+    // Chart: connection rate line (daily points)
     const series = (k.by_day || []);
-    let cHtml = '';
-    for (const d of series) {
-      const rate = (d.connection_rate === null || typeof d.connection_rate === 'undefined') ? 0 : Number(d.connection_rate);
-      cHtml += `<div style="display:flex; align-items:center; gap:12px; margin-top:10px">
-        <div style="width:110px; font-size:12px; color: var(--muted); font-weight:900">${d.day}</div>
-        <div class="bar" style="flex:1"><div style="width:${Math.max(0, Math.min(100, rate)).toFixed(1)}%"></div></div>
-        <div style="width:80px; text-align:right; font-variant-numeric: tabular-nums; font-weight:950">${fmtPct(d.connection_rate)}</div>
-        <div style="width:120px; text-align:right; color: var(--muted2); font-variant-numeric: tabular-nums;">${d.connections}/${d.calls}</div>
-      </div>`;
+
+    // Build normalized points
+    const pts = series.map(d => ({
+      day: String(d.day || ''),
+      rate: (d.connection_rate === null || typeof d.connection_rate === 'undefined') ? null : Number(d.connection_rate),
+      calls: Number(d.calls || 0),
+      connections: Number(d.connections || 0)
+    })).filter(p => p.day);
+
+    if (!pts.length) {
+      document.getElementById('chart').innerHTML = '<div class="meta">No data.</div>';
+    } else {
+      const W = 1120;
+      const H = 260;
+      const padL = 44, padR = 16, padT = 12, padB = 36;
+      const iw = W - padL - padR;
+      const ih = H - padT - padB;
+
+      const minX = 0;
+      const maxX = Math.max(1, pts.length - 1);
+
+      // y-domain 0..100
+      const minY = 0;
+      const maxY = 100;
+
+      const x = (i) => padL + (i - minX) / (maxX - minX) * iw;
+      const y = (v) => padT + (1 - ((v - minY) / (maxY - minY))) * ih;
+
+      // gridlines (0, 25, 50, 75, 100)
+      const yTicks = [0,25,50,75,100];
+      let grid = '';
+      for (const t of yTicks) {
+        grid += `<line class="tickLine" x1="${padL}" x2="${W-padR}" y1="${y(t)}" y2="${y(t)}" />`;
+        grid += `<text class="axisLabel" x="${padL-10}" y="${y(t)+4}" text-anchor="end">${t}%</text>`;
+      }
+
+      // path
+      let dpath = '';
+      let started = false;
+      for (let i=0;i<pts.length;i++) {
+        const p = pts[i];
+        if (p.rate === null || Number.isNaN(p.rate)) { started = false; continue; }
+        const cmd = started ? 'L' : 'M';
+        dpath += `${cmd}${x(i).toFixed(2)},${y(p.rate).toFixed(2)} `;
+        started = true;
+      }
+
+      // x labels: show every ~7th tick + last
+      let xlabels = '';
+      const step = Math.max(1, Math.floor(pts.length / 8));
+      for (let i=0;i<pts.length;i+=step) {
+        xlabels += `<text class="axisLabel" x="${x(i)}" y="${H-14}" text-anchor="middle">${pts[i].day.slice(5)}</text>`;
+      }
+      if ((pts.length-1) % step !== 0) {
+        const i = pts.length - 1;
+        xlabels += `<text class="axisLabel" x="${x(i)}" y="${H-14}" text-anchor="middle">${pts[i].day.slice(5)}</text>`;
+      }
+
+      // dots
+      let dots = '';
+      for (let i=0;i<pts.length;i++) {
+        const p = pts[i];
+        if (p.rate === null || Number.isNaN(p.rate)) continue;
+        const title = `${p.day} — ${fmtPct(p.rate)} (${p.connections}/${p.calls})`;
+        dots += `<circle class="dot" cx="${x(i)}" cy="${y(p.rate)}" r="3.5"><title>${title}</title></circle>`;
+      }
+
+      const svg = `
+        <svg class="lineChart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          ${grid}
+          <path class="pathLine" d="${dpath}" />
+          ${dots}
+          ${xlabels}
+        </svg>
+      `;
+      document.getElementById('chart').innerHTML = svg;
     }
-    document.getElementById('chart').innerHTML = cHtml || '<div class="meta">No data.</div>';
 
     // Appointments: sum created_by_setter_last_name for last names seen in Kixie agent list
     if (createdRes.ok) {

@@ -235,6 +235,22 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
 
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); margin-top: 14px; }
 
+    .pillbar { margin-top: 14px; display:flex; gap: 10px; flex-wrap: wrap; }
+    .pill {
+      display:inline-flex; align-items:center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 950;
+      cursor: pointer;
+      user-select: none;
+    }
+    .pill:hover { border-color: rgba(236,72,153,0.45); box-shadow: 0 1px 2px rgba(17,24,39,0.06); }
+    .pill.active { background: rgba(236,72,153,0.10); border-color: rgba(236,72,153,0.45); color: #b80b66; }
+
     table { width:100%; border-collapse: collapse; margin-top: 8px; }
     th { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 950; }
     td { font-size: 12px; }
@@ -280,6 +296,13 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
       </div>
     </div>
 
+    <div class="pillbar" id="periodTabs">
+      <div class="pill" data-period="2w">Last 2 Weeks</div>
+      <div class="pill" data-period="yesterday">Yesterday</div>
+      <div class="pill" data-period="thiswk">This Week</div>
+      <div class="pill" data-period="custom">Custom</div>
+    </div>
+
     <div class="card">
       <div style="display:flex; align-items:flex-end; justify-content: space-between; gap: 10px; flex-wrap:wrap">
         <div>
@@ -317,20 +340,101 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
   document.getElementById('startDate').value = start;
   document.getElementById('endDate').value = end;
 
+  // ---- helpers: compute YYYY-MM-DD in America/New_York ----
+  function nyYmd(d = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(d);
+    const get = (t) => parts.find(p => p.type === t)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+
+  function ymdAddDays(ymd, deltaDays) {
+    // ymd is YYYY-MM-DD (interpreted as date-only); do math in UTC to avoid DST issues
+    const [y,m,d] = ymd.split('-').map(x=>parseInt(x,10));
+    const dt = new Date(Date.UTC(y, m-1, d));
+    dt.setUTCDate(dt.getUTCDate() + deltaDays);
+    const y2 = dt.getUTCFullYear();
+    const m2 = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const d2 = String(dt.getUTCDate()).padStart(2,'0');
+    return `${y2}-${m2}-${d2}`;
+  }
+
+  function setRange(s, e) {
+    url.searchParams.set('start', s);
+    url.searchParams.set('end', e);
+    window.location.href = url.toString();
+  }
+
+  function clearRange() {
+    url.searchParams.delete('start');
+    url.searchParams.delete('end');
+    window.location.href = url.toString();
+  }
+
+  // ---- period tabs ----
+  const pills = Array.from(document.querySelectorAll('#periodTabs .pill'));
+  function setActive(period) {
+    for (const p of pills) p.classList.toggle('active', p.dataset.period === period);
+  }
+
+  // Determine active tab
+  if (!start || !end) {
+    setActive('2w');
+  } else {
+    setActive('custom');
+  }
+
+  for (const p of pills) {
+    p.addEventListener('click', () => {
+      const per = p.dataset.period;
+      if (per === 'custom') {
+        setActive('custom');
+        return;
+      }
+
+      const todayNy = nyYmd(new Date());
+
+      if (per === '2w') {
+        // last 14 days date-only window (inclusive end)
+        const s = ymdAddDays(todayNy, -13);
+        const e = todayNy;
+        setRange(s, e);
+      }
+
+      if (per === 'yesterday') {
+        const y = ymdAddDays(todayNy, -1);
+        setRange(y, y);
+      }
+
+      if (per === 'thiswk') {
+        // week starts Monday in business context
+        const dt = new Date();
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(dt);
+        const map = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+        const dow = map[parts] ?? 0;
+        // convert to Monday-start offset
+        const offsetFromMon = dow;
+        const monday = ymdAddDays(todayNy, -offsetFromMon);
+        setRange(monday, todayNy);
+      }
+    });
+  }
+
+  // ---- custom apply/clear ----
   document.getElementById('apply').addEventListener('click', () => {
     const s = document.getElementById('startDate').value;
     const e = document.getElementById('endDate').value;
     if (s && e) {
-      url.searchParams.set('start', s);
-      url.searchParams.set('end', e);
-      window.location.href = url.toString();
+      setRange(s, e);
     }
   });
 
   document.getElementById('clear').addEventListener('click', () => {
-    url.searchParams.delete('start');
-    url.searchParams.delete('end');
-    window.location.href = url.toString();
+    clearRange();
   });
 </script>
 </body>
@@ -362,9 +466,9 @@ class handler(BaseHTTPRequestHandler):
                 start_local, end_local = date_range_window(start, end, tz)
                 subtitle_window = f"Custom range: {start} → {end} (date-only)"
             else:
-                # Default: last 14 days (date-only) in business timezone
+                # Default: last 2 weeks (14 days) (date-only) in business timezone
                 start_local, end_local = last_n_days_window(days=14, tz_name=tz)
-                subtitle_window = "Default: last 14 days (date-only)"
+                subtitle_window = "Default: last 2 weeks (date-only)"
 
             start_utc = start_local.astimezone(timezone.utc)
             end_utc = end_local.astimezone(timezone.utc)

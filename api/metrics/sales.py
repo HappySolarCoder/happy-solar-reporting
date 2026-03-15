@@ -25,10 +25,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any
-from datetime import timezone
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -448,12 +447,15 @@ class Handler(BaseHTTPRequestHandler):
             now = datetime.utcnow()
             year = int(qs.get("year", [str(now.year)])[0])
             month = int(qs.get("month", [str(now.month)])[0])
+            start = (qs.get("start", [""])[0] or "").strip() or None
+            end = (qs.get("end", [""])[0] or "").strip() or None
+
             # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
             tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()
-            payload = compute_sales(db, contract, year=year, month=month, tz=tz)
+            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

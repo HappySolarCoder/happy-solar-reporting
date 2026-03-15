@@ -297,11 +297,13 @@ def render_html() -> str:
     document.getElementById('kpiAppts').textContent = '…';
 
     const kixieUrl = `/api/metrics/kixie_calls_summary?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
-    const oppCreatedUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
+    const oppCreatedPhonesUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('Phones')}`;
+    const oppCreated3plUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('3PL')}`;
 
-    const [kixieRes, createdRes] = await Promise.all([
+    const [kixieRes, createdPhonesRes, created3plRes] = await Promise.all([
       fetch(kixieUrl, { cache:'no-store' }),
-      fetch(oppCreatedUrl, { cache:'no-store' })
+      fetch(oppCreatedPhonesUrl, { cache:'no-store' }),
+      fetch(oppCreated3plUrl, { cache:'no-store' })
     ]);
 
     if (!kixieRes.ok) {
@@ -467,25 +469,35 @@ def render_html() -> str:
 
     setChartMode(chartMode);
 
-    // Appointments: sum created_by_setter_last_name for last names seen in Kixie agent list
-    if (createdRes.ok) {
-      const created = await createdRes.json();
-      const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
-      const kAgents = new Set((k.by_agent || []).map(x => {
-        const nm = (x.agent || '').trim();
-        const parts = nm.split(/\s+/);
-        return (parts.length ? parts[parts.length-1].toLowerCase() : '');
-      }).filter(Boolean));
+    // Appointments: opps created where lead gen source is Phones or 3PL,
+    // limited to setters whose last name matches Kixie agents.
+    const kAgents = new Set((k.by_agent || []).map(x => {
+      const nm = (x.agent || '').trim();
+      const parts = nm.split(/\s+/);
+      return (parts.length ? parts[parts.length-1].toLowerCase() : '');
+    }).filter(Boolean));
 
-      let appts = 0;
+    let appts = 0;
+    if (createdPhonesRes.ok) {
+      const created = await createdPhonesRes.json();
+      const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
       for (const [setterLast, cnt] of Object.entries(breakdown || {})) {
         const key = String(setterLast||'').trim().toLowerCase();
         if (kAgents.has(key)) appts += Number(cnt||0);
       }
-      document.getElementById('kpiAppts').textContent = String(appts);
-    } else {
-      document.getElementById('kpiAppts').textContent = '—';
     }
+
+    if (created3plRes.ok) {
+      const created = await created3plRes.json();
+      const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
+      for (const [setterLast, cnt] of Object.entries(breakdown || {})) {
+        const key = String(setterLast||'').trim().toLowerCase();
+        if (kAgents.has(key)) appts += Number(cnt||0);
+      }
+    }
+
+    document.getElementById('kpiAppts').textContent = String(appts);
+    document.getElementById('kpiApptsMeta').textContent = 'Lead Gen Source: Phones + 3PL';
   }
 
   // If we defaulted values but URL had no params, set them once

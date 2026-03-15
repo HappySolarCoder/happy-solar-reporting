@@ -173,11 +173,15 @@ def normalize_channel(v: Any) -> str:
     return str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
         start_local, end_local, start_iso, end_iso = month_window(year, month, c.timezone)
+
+    lead_source_norm = normalize_channel(lead_source) if lead_source else None
+    if lead_source_norm and lead_source_norm.lower() == 'virtual':
+        lead_source_norm = 'Phones'
 
     pipe_names = pipeline_name_lookup(db, c)
     user_names = user_name_lookup(db, c)
@@ -245,6 +249,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
 
         lead_norm = normalize_channel(lead)
+        if lead_source_norm and str(lead_norm).strip().lower() != str(lead_source_norm).strip().lower():
+            continue
 
         # record once, keyed so result always matches list
         matching_rows[opp_id] = {
@@ -373,10 +379,11 @@ class Handler(BaseHTTPRequestHandler):
             month = int(qs.get("month", [str(now.month)])[0])
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
+            lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

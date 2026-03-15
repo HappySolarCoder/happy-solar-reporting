@@ -201,6 +201,22 @@ def render_html(year: int, month: int) -> str:
       min-height: 120px;
     }
 
+    /* Demo rate row: 5 cards on one line */
+    .demoRow {
+      grid-column: span 12;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .demoCard { padding: 14px 14px; min-height: 104px; }
+    .demoCard .kpi { font-size: 38px; }
+    @media (max-width: 1180px) {
+      .demoRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .demoRow { grid-template-columns: 1fr; }
+    }
+
     .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
 
     .gear {
@@ -386,49 +402,51 @@ def render_html(year: int, month: int) -> str:
       </div>
 
       <!-- Demo Rate KPI row -->
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Demo Rate (Company)</div>
-          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+      <div class="demoRow">
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Demo Rate (Company)</div>
+            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="demoRateCompany">—</div>
+          <div class="meta" id="demoRateCompanyCounts">Demos: — • Ran: —</div>
         </div>
-        <div class="kpi" id="demoRateCompany">—</div>
-        <div class="meta" id="demoRateCompanyCounts">Demos: — • Ran: —</div>
-      </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Demo Rate — Doors</div>
-          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Demo Rate — Doors</div>
+            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="demoRateDoors">—</div>
+          <div class="meta" id="demoRateDoorsCounts">Demos: — • Ran: —</div>
         </div>
-        <div class="kpi" id="demoRateDoors">—</div>
-        <div class="meta" id="demoRateDoorsCounts">Demos: — • Ran: —</div>
-      </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Demo Rate — Self Gen</div>
-          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Demo Rate — Self Gen</div>
+            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="demoRateSelfGen">—</div>
+          <div class="meta" id="demoRateSelfGenCounts">Demos: — • Ran: —</div>
         </div>
-        <div class="kpi" id="demoRateSelfGen">—</div>
-        <div class="meta" id="demoRateSelfGenCounts">Demos: — • Ran: —</div>
-      </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Demo Rate — Phones</div>
-          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Demo Rate — Phones</div>
+            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="demoRateVirtual">—</div>
+          <div class="meta" id="demoRateVirtualCounts">Demos: — • Ran: —</div>
         </div>
-        <div class="kpi" id="demoRateVirtual">—</div>
-        <div class="meta" id="demoRateVirtualCounts">Demos: — • Ran: —</div>
-      </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Demo Rate — 3PL</div>
-          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Demo Rate — 3PL</div>
+            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="demoRate3pl">—</div>
+          <div class="meta" id="demoRate3plCounts">Demos: — • Ran: —</div>
         </div>
-        <div class="kpi" id="demoRate3pl">—</div>
-        <div class="meta" id="demoRate3plCounts">Demos: — • Ran: —</div>
       </div>
 
       <!-- Row 2: Sales per Team full width -->

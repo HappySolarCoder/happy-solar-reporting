@@ -811,6 +811,32 @@ def render_html(year: int, month: int) -> str:
         const knocksByClaimed = ray && ray.breakdowns && ray.breakdowns.knocks_by_claimed_by ? ray.breakdowns.knocks_by_claimed_by : {};
         const apptsByClaimed = ray && ray.breakdowns && ray.breakdowns.appointments_set_by_claimed_by ? ray.breakdowns.appointments_set_by_claimed_by : {};
 
+        // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
+        let oppUrl = '';
+        if (sr && sr.start && sr.end) {
+          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`;
+        } else {
+          oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+        }
+        const ls = (setterLs && setterLs.value) ? String(setterLs.value) : '';
+        if (ls) oppUrl += `&lead_source=${encodeURIComponent(ls)}`;
+
+        const oppRes = await fetch(oppUrl, { cache: 'no-store' });
+        const opp = oppRes.ok ? await oppRes.json() : null;
+        const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
+
+        function normSetterLast(x) {
+          return String(x || '').trim().toLowerCase();
+        }
+
+        const apptsBySetterNorm = {};
+        for (const [k,v] of Object.entries(apptsBySetter || {})) {
+          const kk = normSetterLast(k);
+          if (!kk) continue;
+          apptsBySetterNorm[kk] = (apptsBySetterNorm[kk] || 0) + Number(v || 0);
+        }
+
+
         // Build row list
         const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}) ]);
         const rows = Array.from(keys).map(k => {
@@ -823,7 +849,7 @@ def render_html(year: int, month: int) -> str:
           const rayId = setterToRaydar[setter] || '';
 
           const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
-          const appts = rayId ? Number(apptsByClaimed[rayId] || 0) : 0;
+          const appts = Number(apptsBySetterNorm[normSetterLast(setter)] || 0);
 
           const g = pk ? (goalsByPerson[pk] || {}) : {};
           const knocksGoal = (typeof g.doors_goal !== 'undefined') ? Number(g.doors_goal) : null;

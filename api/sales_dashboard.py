@@ -404,6 +404,17 @@ def render_html(year: int, month: int) -> str:
     return (s / r) * 100;
   }
 
+  function canonicalOwner(name) {
+    const raw = (name || '').toString().trim();
+    if (!raw) return '—';
+    const low = raw.toLowerCase();
+
+    // Combine owners for dashboard reporting
+    if (low === 'jeff salas' || low === 'ollie calabrese') return 'Ollie Calabrese / Jeff Salas';
+
+    return raw;
+  }
+
   function rangeParams() {
     const s = (document.getElementById('startDate').value || '').trim();
     const e = (document.getElementById('endDate').value || '').trim();
@@ -447,12 +458,19 @@ def render_html(year: int, month: int) -> str:
 
     // union of owners
     const owners = new Set([...Object.keys(salesByOwner||{}), ...Object.keys(ranByOwner||{})]);
-    const rows = [];
+
+    // Aggregate by canonical owner label (merged reps)
+    const agg = {};
     for (const owner of owners) {
+      const key = canonicalOwner(owner);
       const s = Number(salesByOwner[owner] || 0);
       const r = Number(ranByOwner[owner] || 0);
-      rows.push({ owner, ran: r, sales: s, opp2: pct(s, r) });
+      if (!agg[key]) agg[key] = { owner: key, ran: 0, sales: 0 };
+      agg[key].sales += s;
+      agg[key].ran += r;
     }
+
+    const rows = Object.values(agg).map(x => ({ ...x, opp2: pct(x.sales, x.ran) }));
 
     rows.sort((a,b)=> (b.sales - a.sales) || (b.ran - a.ran) || a.owner.localeCompare(b.owner));
 

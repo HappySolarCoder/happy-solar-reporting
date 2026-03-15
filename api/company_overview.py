@@ -528,17 +528,28 @@ def render_html(year: int, month: int) -> str:
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
 
     const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
-    const demoSelfGenUrl = demoBase + `&lead_source=${encodeURIComponent('Self Gen')}`;
-    const demoDoorsUrl = demoBase + `&lead_source=${encodeURIComponent('Doors')}`;
-    const demoPhonesUrl = demoBase + `&lead_source=${encodeURIComponent('Phones')}`;
-    const demo3plUrl = demoBase + `&lead_source=${encodeURIComponent('3PL')}`;
 
 
 
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('totalCreated').textContent = '…';
     document.getElementById('opp2prelim').textContent = '…';
-    document.getElementById('demoRateCompany').textContent = '…';
+    
+    function pickLeadSource(d, leadSource) {
+      if (!d) return { ran: 0, sit: 0, pct: null };
+      const ranMap = (d.breakdowns && d.breakdowns.ran_by_lead_source) ? d.breakdowns.ran_by_lead_source : {};
+      const sitMap = (d.breakdowns && d.breakdowns.sit_by_lead_source) ? d.breakdowns.sit_by_lead_source : {};
+      const ran = Number(ranMap[leadSource] || 0);
+      const sit = Number(sitMap[leadSource] || 0);
+      const pct = ran > 0 ? (sit / ran) * 100 : null;
+      return { ran, sit, pct };
+    }
+
+    const selfGen = pickLeadSource(demoData, 'Self Gen');
+    const doors = pickLeadSource(demoData, 'Doors');
+    const phones = pickLeadSource(demoData, 'Phones');
+    const pl3 = pickLeadSource(demoData, '3PL');
+document.getElementById('demoRateCompany').textContent = '…';
     document.getElementById('demoRateDoors').textContent = '…';
     document.getElementById('demoRateVirtual').textContent = '…';
     document.getElementById('demoRate3pl').textContent = '…';
@@ -608,14 +619,14 @@ def render_html(year: int, month: int) -> str:
     };
 
     document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
-    document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
+    document.getElementById('demoRateDoors').textContent = (doors.pct === null ? '—' : `${doors.pct.toFixed(1)}%`);
     document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
-    document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
+    document.getElementById('demoRate3pl').textContent = (pl3.pct === null ? '—' : `${pl3.pct.toFixed(1)}%`);
 
     document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
-    document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
+    document.getElementById('demoRateDoorsCounts').textContent = `Demos: ${doors.sit} • Ran: ${doors.ran}`;
     document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
-    document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
+    document.getElementById('demoRate3plCounts').textContent = `Demos: ${pl3.sit} • Ran: ${pl3.ran}`;
 
     // Opp2Prelim = Sales / Opportunities Ran
     if (!ranData) {

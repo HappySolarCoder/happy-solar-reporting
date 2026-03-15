@@ -406,6 +406,15 @@ def render_html(year: int, month: int) -> str:
 
       <div class="card span-3">
         <div class="card-header">
+          <div class="card-title">Demo Rate — Self Gen</div>
+          <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
+        </div>
+        <div class="kpi" id="demoRateSelfGen">—</div>
+        <div class="meta" id="demoRateSelfGenCounts">Demos: — • Ran: —</div>
+      </div>
+
+      <div class="card span-3">
+        <div class="card-header">
           <div class="card-title">Demo Rate — Phones</div>
           <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
         </div>
@@ -664,6 +673,7 @@ def render_html(year: int, month: int) -> str:
     const demoBase = `/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
 
     const demoDoorsUrl = `${demoBase}&lead_source=Doors`;
+    const demoSelfGenUrl = `${demoBase}&lead_source=Self%20Gen`;
     const demoVirtualUrl = `${demoBase}&lead_source=Phones`;
     const demo3plUrl = `${demoBase}&lead_source=3PL`;
 
@@ -680,13 +690,15 @@ def render_html(year: int, month: int) -> str:
       const pct = ran > 0 ? (sit / ran) * 100 : null;
       return { ran, sit, pct };
     }
-document.getElementById('demoRateCompany').textContent = '…';
+    document.getElementById('demoRateCompany').textContent = '…';
     document.getElementById('demoRateDoors').textContent = '…';
+    document.getElementById('demoRateSelfGen').textContent = '…';
     document.getElementById('demoRateVirtual').textContent = '…';
     document.getElementById('demoRate3pl').textContent = '…';
 
     document.getElementById('demoRateCompanyCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('demoRateDoorsCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('demoRateSelfGenCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('demoRateVirtualCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('demoRate3plCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('opp2prelimMeta').textContent = '';
@@ -698,12 +710,13 @@ document.getElementById('demoRateCompany').textContent = '…';
 
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoVirtualRes, demo3plRes] = await Promise.all([
+    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes] = await Promise.all([
       fetch(salesUrl, { cache: 'no-store' }),
       fetch(createdUrl, { cache: 'no-store' }),
       fetch(ranUrl, { cache: 'no-store' }),
       fetch(demoBase, { cache: 'no-store' }),
       fetch(demoDoorsUrl, { cache: 'no-store' }),
+      fetch(demoSelfGenUrl, { cache: 'no-store' }),
       fetch(demoVirtualUrl, { cache: 'no-store' }),
       fetch(demo3plUrl, { cache: 'no-store' })
     ]);
@@ -719,6 +732,7 @@ document.getElementById('demoRateCompany').textContent = '…';
     const ranData = ranRes.ok ? await ranRes.json() : null;
     const demoData = demoRes.ok ? await demoRes.json() : null;
     const demoDoorsData = demoDoorsRes.ok ? await demoDoorsRes.json() : null;
+    const demoSelfGenData = demoSelfGenRes.ok ? await demoSelfGenRes.json() : null;
     const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
     const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
 
@@ -751,11 +765,13 @@ document.getElementById('demoRateCompany').textContent = '…';
 
     document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
     document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
+    document.getElementById('demoRateSelfGen').textContent = fmtPct(demoSelfGenData);
     document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
     document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
 
     document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
     document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
+    document.getElementById('demoRateSelfGenCounts').textContent = fmtCounts(demoSelfGenData);
     document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
     document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
 

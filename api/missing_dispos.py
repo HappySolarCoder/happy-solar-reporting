@@ -6,22 +6,24 @@ Missing Dispos Dashboard
 
 Definition:
 - List GHL opportunities where:
-  - appointmentOccurredAt has already occurred (<= now UTC)
-  - opportunity is still in pipeline stage named "New Appointment"
+  - Opportunity is still in pipeline stage named "New Appointment"
+  - The scheduled appointment datetime (contact field) is in the past (<= now)
+  - And the scheduled appointment datetime is within the selected window
 
 Purpose:
-- Identify sales reps who have not dispositioned opportunities after the appointment.
+- Identify appointments that have passed but are still sitting in "New Appointment" (missing disposition / stage move).
 
 Ordering:
-- appointmentOccurredAt ASC (oldest first)
+- Scheduled appointment ASC (oldest first)
 
 Time windows:
-- Default: current month in America/New_York
-- Optional: start/end date-only range (inclusive end)
+- Default: last 14 days (America/New_York)
+- Optional: start/end date-only range (inclusive end) applied to scheduled appointment datetime
 
 Collections:
 - ghl_opportunities_v2
-- ghl_pipelines_v2 (resolve stage name)
+- ghl_contacts_v2 (scheduled appointment datetime)
+- ghl_pipelines_v2 (resolve stage name / pipeline)
 - ghl_users_v2 (resolve owner)
 """
 
@@ -30,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -75,8 +78,6 @@ def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
 
 
 def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetime]:
-    from zoneinfo import ZoneInfo
-
     tz = ZoneInfo(tz_name)
     start_local = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
     if month == 12:
@@ -87,8 +88,6 @@ def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetim
 
 
 def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datetime, datetime]:
-    from zoneinfo import ZoneInfo
-
     tz = ZoneInfo(tz_name)
     sp = parse_date_ymd(start_ymd)
     ep = parse_date_ymd(end_ymd)
@@ -101,6 +100,36 @@ def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datet
     start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
     end_local = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
     return start_local, end_local
+
+
+def last_n_days_window(*, days: int, tz_name: str) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(tz_name)
+    now_local = datetime.now(tz)
+    # date-only window: start at midnight N days ago, end at next midnight after today
+    end_local = datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
+    start_local = end_local - timedelta(days=days)
+    return start_local, end_local
+
+
+def parse_appt_dt_local(s: Any, tz_name: str) -> datetime | None:
+    """Parse GHL 'Appointment Date and Time' contact field.
+
+    Expected example: 'Wednesday, March 11, 2026 6:00 PM'
+    """
+
+    if s is None:
+        return None
+    txt = str(s).strip()
+    if not txt:
+        return None
+
+    try:
+        # Allow a few minor variations in spacing
+        dt_naive = datetime.strptime(txt, "%A, %B %d, %Y %I:%M %p")
+    except Exception:
+        return None
+
+    return dt_naive.replace(tzinfo=ZoneInfo(tz_name))
 
 
 def pipelines_stage_lookup(db: firestore.Client) -> dict[str, str]:
@@ -235,7 +264,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
       </div>
       <div style="min-width:320px">
         <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
-        <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Appointment Occurred)</div>
+        <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Scheduled Appointment)</div>
         <div class="filters">
           <div>
             <label>Start</label><br />
@@ -257,7 +286,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Opportunities</div>
           <div style="font-size: 34px; font-weight: 950;">__COUNT__</div>
         </div>
-        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">Stage = New Appointment, appointmentOccurredAt <= now</div>
+        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">Stage = New Appointment, scheduled appointment <= now</div>
       </div>
 
       <div style="margin-top:10px; overflow:auto">
@@ -330,60 +359,118 @@ class handler(BaseHTTPRequestHandler):
         try:
             if start and end:
                 start_local, end_local = date_range_window(start, end, tz)
+                subtitle_window = f"Custom range: {start} → {end} (date-only)"
             else:
-                start_local, end_local = month_window(year, month, tz)
+                # Default: last 14 days (date-only) in business timezone
+                start_local, end_local = last_n_days_window(days=14, tz_name=tz)
+                subtitle_window = "Default: last 14 days (date-only)"
 
             start_utc = start_local.astimezone(timezone.utc)
             end_utc = end_local.astimezone(timezone.utc)
-            if end_utc > now_utc:
-                end_utc = now_utc
 
             db = get_db()
             stage_lookup = pipelines_stage_lookup(db)
             pipelines = pipeline_name_lookup(db)
             users = users_lookup(db)
 
-            q = (
-                db.collection("ghl_opportunities_v2")
-                .where("appointmentOccurredAt", ">=", start_utc)
-                .where("appointmentOccurredAt", "<", end_utc)
-                .order_by("appointmentOccurredAt")
-            )
+            # Build set of stageIds whose stage name is "New Appointment"
+            new_appt_stage_ids = {sid for sid, nm in stage_lookup.items() if str(nm).strip().lower() == 'new appointment'}
 
-            trs = []
-            rows_count = 0
+            # Contact lookup cache (NOTE: doc_id may not equal GHL contact id)
+            contact_cache: dict[str, dict | None] = {}
+
+            def get_contact(contact_id: str) -> dict | None:
+                if not contact_id:
+                    return None
+                if contact_id in contact_cache:
+                    return contact_cache[contact_id]
+
+                snap = db.collection('ghl_contacts_v2').document(str(contact_id)).get()
+                if snap.exists:
+                    contact_cache[contact_id] = snap.to_dict() or {}
+                    return contact_cache[contact_id]
+
+                snaps = list(db.collection('ghl_contacts_v2').where('id', '==', str(contact_id)).limit(1).stream())
+                contact_cache[contact_id] = (snaps[0].to_dict() or {}) if snaps else None
+                return contact_cache[contact_id]
+
+            # Scheduled appointment custom field id on contact
+            APPT_CF_ID = 'e3udzXVTyqrMqICpyqjF'
+
+            def contact_appt_dt_local(contact: dict | None) -> datetime | None:
+                if not isinstance(contact, dict):
+                    return None
+                for cf in (contact.get('customFields') or []):
+                    if isinstance(cf, dict) and cf.get('id') == APPT_CF_ID:
+                        return parse_appt_dt_local(cf.get('value'), tz)
+                return None
+
+            # Query only opportunities in New Appointment stages (small-ish set). If there are >30 ids,
+            # fall back to streaming and filtering.
+            opp_col = db.collection('ghl_opportunities_v2')
+            stage_ids_list = sorted(list(new_appt_stage_ids))
+
+            if 0 < len(stage_ids_list) <= 30:
+                q = opp_col.where('pipelineStageId', 'in', stage_ids_list)
+            else:
+                q = opp_col
+
+            rows = []
 
             for snap in q.stream():
                 opp = snap.to_dict() or {}
 
-                occ = opp.get("appointmentOccurredAt")
-                if not isinstance(occ, datetime):
-                    continue
-                occ_utc = occ if occ.tzinfo else occ.replace(tzinfo=timezone.utc)
-                if occ_utc > now_utc:
+                stage_id = str(opp.get('pipelineStageId') or '')
+                stage_name = stage_lookup.get(stage_id, '')
+                if str(stage_name).strip().lower() != 'new appointment':
                     continue
 
-                stage_id = str(opp.get("pipelineStageId") or "")
-                stage_name = stage_lookup.get(stage_id, "")
-                if stage_name.strip().lower() != "new appointment":
+                cid = str(opp.get('contactId') or '')
+                contact = get_contact(cid)
+                appt_local = contact_appt_dt_local(contact)
+                if not appt_local:
                     continue
 
-                assigned_to = str(opp.get("assignedTo") or "")
+                appt_utc = appt_local.astimezone(timezone.utc)
+
+                # Must have passed
+                if appt_utc > now_utc:
+                    continue
+
+                # Window filter (scheduled appointment)
+                if not (start_utc <= appt_utc < end_utc):
+                    continue
+
+                assigned_to = str(opp.get('assignedTo') or '')
                 owner_name = users.get(assigned_to, assigned_to)
 
-                pid = str(opp.get("pipelineId") or "")
+                pid = str(opp.get('pipelineId') or '')
                 pname = pipelines.get(pid, pid)
 
-                days_since = int((now_utc - occ_utc).total_seconds() // 86400)
+                days_since = int((now_utc - appt_utc).total_seconds() // 86400)
 
+                rows.append({
+                    'owner': owner_name,
+                    'pipeline': pname,
+                    'stage': stage_name,
+                    'appt_utc': appt_utc,
+                    'days_since': days_since,
+                    'opportunity_id': str(opp.get('id') or snap.id),
+                })
+
+            rows.sort(key=lambda r: r['appt_utc'])
+
+            trs = []
+            rows_count = 0
+            for r in rows:
                 trs.append(
                     "<tr>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-weight:900'>{html_escape(owner_name)}</td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(pname)}</td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(stage_name)}</td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-variant-numeric:tabular-nums;'><code>{html_escape(occ_utc.isoformat())}</code></td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; text-align:right; font-variant-numeric:tabular-nums;'>{days_since}</td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'><code>{html_escape(str(opp.get('id') or snap.id))}</code></td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-weight:900'>{html_escape(r['owner'])}</td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(r['pipeline'])}</td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(r['stage'])}</td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-variant-numeric:tabular-nums;'><code>{html_escape(r['appt_utc'].isoformat())}</code></td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; text-align:right; font-variant-numeric:tabular-nums;'>{r['days_since']}</td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'><code>{html_escape(r['opportunity_id'])}</code></td>"
                     "</tr>"
                 )
                 rows_count += 1
@@ -393,7 +480,7 @@ class handler(BaseHTTPRequestHandler):
             body = render_page(
                 rows_html=rows_html,
                 count=rows_count,
-                subtitle="Appointment occurred but still in stage 'New Appointment' (oldest first)",
+                subtitle=f"Scheduled appointment passed but still in stage 'New Appointment' (oldest first). {subtitle_window}",
             ).encode("utf-8")
 
             self.send_response(200)

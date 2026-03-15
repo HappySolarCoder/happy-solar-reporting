@@ -47,13 +47,33 @@ def get_db() -> firestore.Client:
 
 
 def coerce_dt(v) -> datetime | None:
+    # Firestore Timestamp often comes through as datetime (or DatetimeWithNanoseconds)
     if isinstance(v, datetime):
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+    # Some exports store as ISO string
     if isinstance(v, str) and v:
         try:
             return datetime.fromisoformat(v.replace("Z", "+00:00"))
         except Exception:
             return None
+
+    # Some payloads store {seconds, nanos}
+    if isinstance(v, dict) and ("seconds" in v or "_seconds" in v):
+        try:
+            sec = int(v.get("seconds") or v.get("_seconds") or 0)
+            ns = int(v.get("nanos") or v.get("_nanoseconds") or 0)
+            return datetime.fromtimestamp(sec + ns / 1e9, tz=timezone.utc)
+        except Exception:
+            return None
+
+    # numeric epoch seconds
+    if isinstance(v, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(v), tz=timezone.utc)
+        except Exception:
+            return None
+
     return None
 
 
@@ -101,9 +121,12 @@ class Handler(BaseHTTPRequestHandler):
             by_day_utc: dict[str, int] = {}
             by_day_ny: dict[str, int] = {}
             latest_dt = None
+            sample_receivedAt_type = None
 
             for d in docs:
                 data = d.to_dict() or {}
+                if sample_receivedAt_type is None and field in data:
+                    sample_receivedAt_type = type(data.get(field)).__name__
                 dt = coerce_dt(data.get(field))
                 if not dt:
                     continue
@@ -133,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = {
                 "collection": "kixie_calls",
                 "timestamp_field": field,
+                "sample_receivedAt_type": sample_receivedAt_type,
                 "days": days,
                 "latest_utc": (latest_dt.astimezone(timezone.utc).isoformat() if latest_dt else None),
                 "series_utc": series_utc,

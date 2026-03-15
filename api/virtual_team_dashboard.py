@@ -52,6 +52,7 @@ def render_html() -> str:
     }
 
     .adminSettings { position:absolute; top:16px; right:18px; }
+    .missingDisposTop { position:absolute; top:16px; right:158px; }
 
     .title { font-size: 22px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
@@ -124,12 +125,12 @@ def render_html() -> str:
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMA dashboard</a>
-          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn active" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>
       </div>
 
       <div style="min-width:320px">
+        <a class="navbtn missingDisposTop" href="/api/missing_dispos">Missing Dispos</a>
         <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Date Range</div>
         <div class="filters">

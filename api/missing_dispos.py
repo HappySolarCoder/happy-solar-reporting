@@ -217,6 +217,12 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
       right: 18px;
     }
 
+    .missingDisposTop {
+      position: absolute;
+      top: 16px;
+      right: 158px;
+    }
+
     .title { font-size: 22px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
 
@@ -274,11 +280,11 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMS dashboard</a>
-          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>
       </div>
       <div style="min-width:320px">
+        <a class="navbtn missingDisposTop active" href="/api/missing_dispos">Missing Dispos</a>
         <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Scheduled Appointment)</div>
         <div class="filters">

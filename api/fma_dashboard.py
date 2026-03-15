@@ -128,6 +128,12 @@ def render_html(year: int, month: int) -> str:
       right: 18px;
     }
 
+    .missingDisposTop {
+      position: absolute;
+      top: 16px;
+      right: 158px;
+    }
+
     .grid {
       display:grid;
       grid-template-columns: repeat(12, 1fr);
@@ -341,11 +347,11 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
           <a class="navbtn active" href="/api/fma_dashboard">FMS dashboard</a>
-          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>
       </div>
       <div style="min-width:320px">
+        <a class="navbtn missingDisposTop" href="/api/missing_dispos">Missing Dispos</a>
         <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div class="card-title">Custom Range (date-only)</div>
         <div class="meta">Overrides tabs when set</div>

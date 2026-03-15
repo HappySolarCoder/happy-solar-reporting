@@ -296,7 +296,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
               <th>Owner</th>
               <th>Pipeline</th>
               <th>Stage</th>
-              <th>appointmentOccurredAt</th>
+              <th>scheduledAppointmentAt</th>
               <th style="text-align:right">Days Since</th>
               <th>opportunityId</th>
             </tr>

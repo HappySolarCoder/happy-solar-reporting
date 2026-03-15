@@ -588,9 +588,6 @@ document.getElementById('demoRateCompany').textContent = '…';
     const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
     const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
 
-    const doors = pickLeadSource(demoData, 'Doors');
-    const pl3 = pickLeadSource(demoData, '3PL');
-
     document.getElementById('totalSales').textContent = salesData.result;
     document.getElementById('salesMeta').textContent = '';
 
@@ -619,14 +616,14 @@ document.getElementById('demoRateCompany').textContent = '…';
     };
 
     document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
-    document.getElementById('demoRateDoors').textContent = (doors.pct === null ? '—' : `${doors.pct.toFixed(1)}%`);
+    document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
     document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
-    document.getElementById('demoRate3pl').textContent = (pl3.pct === null ? '—' : `${pl3.pct.toFixed(1)}%`);
+    document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
 
     document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
-    document.getElementById('demoRateDoorsCounts').textContent = `Demos: ${doors.sit} • Ran: ${doors.ran}`;
+    document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
     document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
-    document.getElementById('demoRate3plCounts').textContent = `Demos: ${pl3.sit} • Ran: ${pl3.ran}`;
+    document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
 
     // Opp2Prelim = Sales / Opportunities Ran
     if (!ranData) {

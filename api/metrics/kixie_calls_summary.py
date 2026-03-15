@@ -143,9 +143,14 @@ class handler(BaseHTTPRequestHandler):
 
             by_agent_calls: dict[str, int] = {}
             by_agent_connections: dict[str, int] = {}
+            by_agent_userid: dict[str, str] = {}
 
             by_day_calls: dict[str, int] = {}
             by_day_connections: dict[str, int] = {}
+
+            # agent -> day -> counts
+            by_agent_day_calls: dict[str, dict[str, int]] = {}
+            by_agent_day_connections: dict[str, dict[str, int]] = {}
 
             scanned = 0
 
@@ -162,15 +167,25 @@ class handler(BaseHTTPRequestHandler):
                 total_calls += 1
 
                 agent = str(d.get("agent") or d.get("agentName") or (str(d.get("fname") or "") + " " + str(d.get("lname") or "")).strip() or "—").strip() or "—"
+                user_id = str(d.get("userId") or "").strip()
+                if user_id and agent and agent != "—":
+                    by_agent_userid[agent] = user_id
+
                 day_ny = dt_utc.astimezone(ny).date().isoformat()
 
                 by_agent_calls[agent] = by_agent_calls.get(agent, 0) + 1
                 by_day_calls[day_ny] = by_day_calls.get(day_ny, 0) + 1
 
+                by_agent_day_calls.setdefault(agent, {})
+                by_agent_day_calls[agent][day_ny] = by_agent_day_calls[agent].get(day_ny, 0) + 1
+
                 if is_connection(d):
                     total_connections += 1
                     by_agent_connections[agent] = by_agent_connections.get(agent, 0) + 1
                     by_day_connections[day_ny] = by_day_connections.get(day_ny, 0) + 1
+
+                    by_agent_day_connections.setdefault(agent, {})
+                    by_agent_day_connections[agent][day_ny] = by_agent_day_connections[agent].get(day_ny, 0) + 1
 
             # Series across the requested days (NY)
             series = []
@@ -188,8 +203,29 @@ class handler(BaseHTTPRequestHandler):
                 c = int(by_agent_calls.get(agent, 0))
                 conn = int(by_agent_connections.get(agent, 0))
                 rate = (conn / c * 100) if c > 0 else None
-                by_agent.append({"agent": agent, "calls": c, "connections": conn, "connection_rate": rate})
+                by_agent.append({
+                    "agent": agent,
+                    "userId": by_agent_userid.get(agent) or None,
+                    "calls": c,
+                    "connections": conn,
+                    "connection_rate": rate,
+                })
             by_agent.sort(key=lambda x: (-x["calls"], x["agent"]))
+
+            # Per-agent daily series (for charting)
+            by_agent_day = {}
+            for row in by_agent[:10]:  # cap to top 10 by calls
+                agent = row["agent"]
+                series_agent = []
+                cur = start_local
+                while cur < end_local:
+                    day = cur.date().isoformat()
+                    c = int((by_agent_day_calls.get(agent) or {}).get(day, 0))
+                    conn = int((by_agent_day_connections.get(agent) or {}).get(day, 0))
+                    rate = (conn / c * 100) if c > 0 else None
+                    series_agent.append({"day": day, "calls": c, "connections": conn, "connection_rate": rate})
+                    cur = cur + timedelta(days=1)
+                by_agent_day[agent] = series_agent
 
             payload = {
                 "metric": "Kixie Calls",
@@ -202,6 +238,7 @@ class handler(BaseHTTPRequestHandler):
                 "connection_rate": (total_connections / total_calls * 100) if total_calls > 0 else None,
                 "by_agent": by_agent,
                 "by_day": series,
+                "by_agent_day": by_agent_day,
                 "debug": {"scanned_limit": 5000, "docs_streamed": scanned},
             }
 

@@ -97,6 +97,7 @@ def render_html() -> str:
     .pathLine { stroke: var(--pink); stroke-width: 3; fill: none; }
     .dot { fill: var(--pink); opacity: 0.9; }
     .dot:hover { opacity: 1; }
+    .dotLabel { font-size: 10px; fill: #334155; font-weight: 900; }
 
     table { width:100%; border-collapse: collapse; margin-top: 8px; }
     th { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 950; }
@@ -164,8 +165,19 @@ def render_html() -> str:
       </div>
 
       <div class="card span-12">
-        <div class="card-title">Connection Rate by Day</div>
-        <div class="meta">Connections / Calls • daily points</div>
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap">
+          <div>
+            <div class="card-title">Connection Rate by Day</div>
+            <div class="meta">Connections / Calls • daily points</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+            <div class="pillbar" style="margin-top:0" id="chartMode">
+              <div class="pill" data-mode="team">Team</div>
+              <div class="pill" data-mode="agent">By Agent</div>
+            </div>
+            <select id="agentSelect" style="display:none; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-weight:900"></select>
+          </div>
+        </div>
         <div class="chartWrap" id="chart"></div>
       </div>
 
@@ -314,19 +326,52 @@ def render_html() -> str:
     document.getElementById('agentRows').innerHTML = html || '<tr><td colspan="4" style="color: var(--muted2)">No rows</td></tr>';
 
     // Chart: connection rate line (daily points)
-    const series = (k.by_day || []);
+    const teamSeries = (k.by_day || []);
+    const byAgentDay = (k.by_agent_day || {});
 
-    // Build normalized points
-    const pts = series.map(d => ({
-      day: String(d.day || ''),
-      rate: (d.connection_rate === null || typeof d.connection_rate === 'undefined') ? null : Number(d.connection_rate),
-      calls: Number(d.calls || 0),
-      connections: Number(d.connections || 0)
-    })).filter(p => p.day);
+    // Fill agent dropdown
+    const agentSel = document.getElementById('agentSelect');
+    agentSel.innerHTML = '';
+    for (const r of (k.by_agent || [])) {
+      const opt = document.createElement('option');
+      opt.value = r.agent;
+      opt.textContent = r.userId ? `${r.agent} (${r.userId})` : r.agent;
+      agentSel.appendChild(opt);
+    }
 
-    if (!pts.length) {
-      document.getElementById('chart').innerHTML = '<div class="meta">No data.</div>';
-    } else {
+    let chartMode = 'team';
+    if (url.searchParams.get('chart') === 'agent') chartMode = 'agent';
+
+    function setChartMode(mode) {
+      chartMode = mode;
+      document.querySelectorAll('#chartMode .pill').forEach(p => p.classList.toggle('active', p.dataset.mode === mode));
+      agentSel.style.display = (mode === 'agent') ? 'inline-flex' : 'none';
+      const u = new URL(window.location.href);
+      u.searchParams.set('chart', mode);
+      if (mode === 'agent') u.searchParams.set('agent', agentSel.value || '');
+      else { u.searchParams.delete('agent'); }
+      window.history.replaceState({}, '', u.toString());
+      renderChart();
+    }
+
+    function ptsFromSeries(series) {
+      return (series || []).map(d => ({
+        day: String(d.day || ''),
+        rate: (d.connection_rate === null || typeof d.connection_rate === 'undefined') ? null : Number(d.connection_rate),
+        calls: Number(d.calls || 0),
+        connections: Number(d.connections || 0)
+      })).filter(p => p.day);
+    }
+
+    function renderChart() {
+      const series = (chartMode === 'agent') ? (byAgentDay[agentSel.value] || []) : teamSeries;
+      const pts = ptsFromSeries(series);
+
+      if (!pts.length) {
+        document.getElementById('chart').innerHTML = '<div class="meta">No data.</div>';
+        return;
+      }
+
       const W = 1120;
       const H = 260;
       const padL = 44, padR = 16, padT = 12, padB = 36;
@@ -336,15 +381,18 @@ def render_html() -> str:
       const minX = 0;
       const maxX = Math.max(1, pts.length - 1);
 
-      // y-domain 0..100
+      // y-domain 0..50 (per request)
       const minY = 0;
-      const maxY = 100;
+      const maxY = 50;
 
       const x = (i) => padL + (i - minX) / (maxX - minX) * iw;
-      const y = (v) => padT + (1 - ((v - minY) / (maxY - minY))) * ih;
+      const y = (v) => {
+        const vv = Math.max(minY, Math.min(maxY, v));
+        return padT + (1 - ((vv - minY) / (maxY - minY))) * ih;
+      };
 
-      // gridlines (0, 25, 50, 75, 100)
-      const yTicks = [0,25,50,75,100];
+      // gridlines (0, 10, 20, 30, 40, 50)
+      const yTicks = [0,10,20,30,40,50];
       let grid = '';
       for (const t of yTicks) {
         grid += `<line class="tickLine" x1="${padL}" x2="${W-padR}" y1="${y(t)}" y2="${y(t)}" />`;
@@ -373,13 +421,17 @@ def render_html() -> str:
         xlabels += `<text class="axisLabel" x="${x(i)}" y="${H-14}" text-anchor="middle">${pts[i].day.slice(5)}</text>`;
       }
 
-      // dots
+      // dots + labels
       let dots = '';
+      let labels = '';
       for (let i=0;i<pts.length;i++) {
         const p = pts[i];
         if (p.rate === null || Number.isNaN(p.rate)) continue;
         const title = `${p.day} — ${fmtPct(p.rate)} (${p.connections}/${p.calls})`;
-        dots += `<circle class="dot" cx="${x(i)}" cy="${y(p.rate)}" r="3.5"><title>${title}</title></circle>`;
+        const cx = x(i);
+        const cy = y(p.rate);
+        dots += `<circle class="dot" cx="${cx}" cy="${cy}" r="3.5"><title>${title}</title></circle>`;
+        labels += `<text class="dotLabel" x="${cx}" y="${Math.max(10, cy-8)}" text-anchor="middle">${fmtPct(p.rate)}</text>`;
       }
 
       const svg = `
@@ -387,11 +439,29 @@ def render_html() -> str:
           ${grid}
           <path class="pathLine" d="${dpath}" />
           ${dots}
+          ${labels}
           ${xlabels}
         </svg>
       `;
       document.getElementById('chart').innerHTML = svg;
     }
+
+    document.querySelectorAll('#chartMode .pill').forEach(p => {
+      p.addEventListener('click', () => setChartMode(p.dataset.mode));
+    });
+
+    agentSel.addEventListener('change', () => {
+      const u = new URL(window.location.href);
+      u.searchParams.set('agent', agentSel.value || '');
+      window.history.replaceState({}, '', u.toString());
+      renderChart();
+    });
+
+    // init
+    const urlAgent = url.searchParams.get('agent');
+    if (urlAgent) agentSel.value = urlAgent;
+
+    setChartMode(chartMode);
 
     // Appointments: sum created_by_setter_last_name for last names seen in Kixie agent list
     if (createdRes.ok) {

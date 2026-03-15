@@ -65,6 +65,7 @@ def render_html(year: int, month: int) -> str:
     .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
 
     .topbar {
+      position: relative;
       display:flex;
       align-items:flex-start;
       justify-content: space-between;
@@ -123,6 +124,12 @@ def render_html(year: int, month: int) -> str:
       background: rgba(0,200,83,0.10);
       border-color: rgba(0,200,83,0.45);
       color: #0a7a34;
+    }
+
+    .adminSettings {
+      position: absolute;
+      top: 16px;
+      right: 18px;
     }
 
     .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -281,7 +288,7 @@ def render_html(year: int, month: int) -> str:
       </div>
 
       <div class="filters">
-        <a class="navbtn" href="/api/settings" style="margin-left:auto">Admin Settings</a>
+        <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div class="filter">
           <div class="filter-label">Year</div>
           <select id="year"></select>

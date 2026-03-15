@@ -61,6 +61,7 @@ def render_html(year: int, month: int) -> str:
     .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
 
     .topbar {
+      position: relative;
       display:flex;
       align-items:flex-start;
       justify-content: space-between;
@@ -119,6 +120,12 @@ def render_html(year: int, month: int) -> str:
       background: rgba(236,72,153,0.10);
       border-color: rgba(236,72,153,0.45);
       color: #b80b66;
+    }
+
+    .adminSettings {
+      position: absolute;
+      top: 16px;
+      right: 18px;
     }
 
     .grid {
@@ -339,9 +346,7 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
       <div style="min-width:320px">
-        <div style="display:flex; justify-content:flex-end; margin-bottom:10px">
-          <a class="navbtn" href="/api/settings">Admin Settings</a>
-        </div>
+        <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div class="card-title">Custom Range (date-only)</div>
         <div class="meta">Overrides tabs when set</div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center">

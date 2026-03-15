@@ -176,9 +176,16 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
     .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
 
     .topbar {
+      position: relative;
       display:flex; align-items:flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap;
       padding: 18px 20px; border-radius: 14px; background: var(--card);
       border: 1px solid var(--border); box-shadow: var(--shadow);
+    }
+
+    .adminSettings {
+      position: absolute;
+      top: 16px;
+      right: 18px;
     }
 
     .title { font-size: 22px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
@@ -227,9 +234,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
         </div>
       </div>
       <div style="min-width:320px">
-        <div style="display:flex; justify-content:flex-end; margin-bottom:10px">
-          <a class="navbtn" href="/api/settings">Admin Settings</a>
-        </div>
+        <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Appointment Occurred)</div>
         <div class="filters">
           <div>

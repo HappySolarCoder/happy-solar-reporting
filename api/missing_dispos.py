@@ -224,10 +224,12 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <a class="navbtn" href="/api/fma_dashboard">FMS dashboard</a>
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
-          <a class="navbtn" href="/api/settings">Settings</a>
         </div>
       </div>
       <div style="min-width:320px">
+        <div style="display:flex; justify-content:flex-end; margin-bottom:10px">
+          <a class="navbtn" href="/api/settings">Admin Settings</a>
+        </div>
         <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Appointment Occurred)</div>
         <div class="filters">
           <div>

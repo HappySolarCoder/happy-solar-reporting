@@ -277,11 +277,11 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn" href="/api/fma_dashboard">FMA dashboard</a>
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
-          <a class="navbtn" href="/api/settings">Settings</a>
         </div>
       </div>
 
       <div class="filters">
+        <a class="navbtn" href="/api/settings" style="margin-left:auto">Admin Settings</a>
         <div class="filter">
           <div class="filter-label">Year</div>
           <select id="year"></select>

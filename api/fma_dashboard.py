@@ -336,12 +336,12 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn active" href="/api/fma_dashboard">FMS dashboard</a>
           <a class="navbtn" href="/api/leadership_dashboard">Leadership dashboard</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
-          <a class="navbtn" href="/api/settings">Settings</a>
-          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
-          <a class="navbtn" href="/api/settings">Settings</a>
         </div>
       </div>
       <div style="min-width:320px">
+        <div style="display:flex; justify-content:flex-end; margin-bottom:10px">
+          <a class="navbtn" href="/api/settings">Admin Settings</a>
+        </div>
         <div class="card-title">Custom Range (date-only)</div>
         <div class="meta">Overrides tabs when set</div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center">

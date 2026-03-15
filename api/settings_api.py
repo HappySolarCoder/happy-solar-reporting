@@ -427,13 +427,16 @@ def upsert_roster_and_goals(db: firestore.Client, payload: dict) -> dict:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if not _check_auth(self):
-            return _unauthorized(self)
-
+        # Public read actions are allowed without auth to avoid login popups on dashboards.
+        # Mutating actions remain Basic-Auth protected.
         try:
             db = get_db()
             payload = read_json(self)
             action = str(payload.get("action") or "").strip()
+
+            public_actions = {"bootstrap", "setter_last_names"}
+            if action not in public_actions and not _check_auth(self):
+                return _unauthorized(self)
 
             if action == "bootstrap":
                 month = str(payload.get("month") or "").strip()

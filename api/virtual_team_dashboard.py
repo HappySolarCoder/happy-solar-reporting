@@ -92,6 +92,14 @@ def render_html() -> str:
 
     /* Lightweight line chart */
     .lineChart { width:100%; height: 260px; }
+
+    .bars { margin-top: 8px; }
+    .barRow { display:flex; align-items:center; gap:12px; margin-top:10px; }
+    .barName { width: 220px; font-size:12px; color: var(--muted); font-weight: 950; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .barTrack { flex:1; height: 10px; border-radius: 999px; background: #f1f5f9; overflow:hidden; }
+    .barFill { height:100%; background: var(--pink); width: 0%; }
+    .barVal { width: 70px; text-align:right; font-variant-numeric: tabular-nums; font-weight: 950; }
+
     .axisLabel { font-size: 11px; fill: #94a3b8; }
     .tickLine { stroke: #eef2f7; stroke-width: 1; }
     .pathLine { stroke: var(--pink); stroke-width: 3; fill: none; }
@@ -181,6 +189,16 @@ def render_html() -> str:
           </div>
         </div>
         <div class="chartWrap" id="chart"></div>
+      </div>
+
+      <div class="card span-12">
+        <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap">
+          <div>
+            <div class="card-title">Opportunities Created by Setter (Phones + 3PL)</div>
+            <div class="meta">Setter last name breakdown • filtered to Phones + 3PL</div>
+          </div>
+        </div>
+        <div class="chartWrap" id="apptsChart"></div>
       </div>
 
       <div class="card span-12">
@@ -498,6 +516,36 @@ def render_html() -> str:
 
     document.getElementById('kpiAppts').textContent = String(appts);
     document.getElementById('kpiApptsMeta').textContent = 'Lead Gen Source: Phones + 3PL';
+
+    // Render setter breakdown chart (top 12) for Phones + 3PL (not limited to Kixie names)
+    const setterCounts = {};
+    function addBreakdown(resJson) {
+      const bd = (resJson.breakdowns && resJson.breakdowns.created_by_setter_last_name) ? resJson.breakdowns.created_by_setter_last_name : {};
+      for (const [setterLast, cnt] of Object.entries(bd || {})) {
+        const key = (String(setterLast || '—').trim() || '—');
+        setterCounts[key] = (setterCounts[key] || 0) + Number(cnt || 0);
+      }
+    }
+
+    if (createdPhonesRes.ok) addBreakdown(await createdPhonesRes.clone().json());
+    if (created3plRes.ok) addBreakdown(await created3plRes.clone().json());
+
+    const sorted = Object.entries(setterCounts).sort((a,b) => (Number(b[1]||0) - Number(a[1]||0))).slice(0, 12);
+    const maxv = Math.max(1, ...sorted.map(x => Number(x[1]||0)));
+
+    let apHtml = '<div class="bars">';
+    for (const [name, v0] of sorted) {
+      const v = Number(v0||0);
+      const pct = Math.max(0, Math.min(100, (v / maxv) * 100));
+      apHtml += `<div class="barRow">
+        <div class="barName" title="${name}">${name}</div>
+        <div class="barTrack"><div class="barFill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="barVal">${v}</div>
+      </div>`;
+    }
+    apHtml += '</div>';
+    document.getElementById('apptsChart').innerHTML = sorted.length ? apHtml : '<div class="meta">No data.</div>';
+
   }
 
   // If we defaulted values but URL had no params, set them once

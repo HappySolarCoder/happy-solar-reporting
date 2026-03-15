@@ -244,26 +244,6 @@ def render_html(year: int, month: int) -> str:
     .kpi { font-size: 46px; font-weight: 950; margin-top: 8px; letter-spacing: -0.02em; }
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
-    /* Lead-source segmented buttons inside KPI cards */
-    .segbar { margin-top: 12px; display:flex; gap: 8px; flex-wrap: wrap; }
-    .segbtn {
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      padding: 7px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: #fff;
-      color: #334155;
-      font-size: 12px;
-      font-weight: 950;
-      line-height: 1;
-      cursor:pointer;
-      user-select: none;
-    }
-    .segbtn:hover { border-color: rgba(0,200,83,0.45); box-shadow: 0 1px 2px rgba(17,24,39,0.06); }
-    .segbtn.active { background: rgba(0,200,83,0.10); border-color: rgba(0,200,83,0.45); color: #0a7a34; }
-
     .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
     .span-6 { grid-column: span 6; }
@@ -401,13 +381,6 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="kpi" id="totalSales">—</div>
         <div class="meta" id="salesMeta">—</div>
-        <div class="segbar" data-kpi="sales">
-          <button class="segbtn" data-lead="all">All</button>
-          <button class="segbtn" data-lead="doors">Doors</button>
-          <button class="segbtn" data-lead="phones">Phones</button>
-          <button class="segbtn" data-lead="3pl">3PL</button>
-          <button class="segbtn" data-lead="self gen">Self Gen</button>
-        </div>
       </div>
 
       <div class="card span-4">
@@ -417,13 +390,6 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="kpi" id="totalCreated">—</div>
         <div class="meta" id="createdMeta">—</div>
-        <div class="segbar" data-kpi="created">
-          <button class="segbtn" data-lead="all">All</button>
-          <button class="segbtn" data-lead="doors">Doors</button>
-          <button class="segbtn" data-lead="phones">Phones</button>
-          <button class="segbtn" data-lead="3pl">3PL</button>
-          <button class="segbtn" data-lead="self gen">Self Gen</button>
-        </div>
       </div>
 
       <div class="card span-4">
@@ -433,13 +399,6 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="kpi" id="opp2prelim">—</div>
         <div class="meta" id="opp2prelimMeta">—</div>
-        <div class="segbar" data-kpi="opp2prelim">
-          <button class="segbtn" data-lead="all">All</button>
-          <button class="segbtn" data-lead="doors">Doors</button>
-          <button class="segbtn" data-lead="phones">Phones</button>
-          <button class="segbtn" data-lead="3pl">3PL</button>
-          <button class="segbtn" data-lead="self gen">Self Gen</button>
-        </div>
       </div>
 
       <!-- Demo Rate KPI row -->
@@ -834,74 +793,17 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
     document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
 
-    // ---- Lead gen source filter buttons (Sales / Created / Opp2Prelim) ----
-    function normLeadKey(k) {
-      const raw = (k || '').toString().trim();
-      if (!raw) return 'none';
-      const low = raw.toLowerCase();
-      if (low === 'virtual' || low === 'phone' || low === 'phones') return 'phones';
-      if (low === 'doors' || low === 'door') return 'doors';
-      if (low === '3pl' || low === '3-pl') return '3pl';
-      if (low === 'self gen' || low === 'selfgen' || low === 'self-gen') return 'self gen';
-      if (low === 'crm ui' || low === 'hand' || low === 'none') return 'none';
-      return raw;
-    }
-
-    function remapBreakdown(obj) {
-      const out = {};
-      for (const [k,v] of Object.entries(obj || {})) {
-        const kk = normLeadKey(k);
-        out[kk] = (out[kk] || 0) + (Number(v) || 0);
-      }
-      return out;
-    }
-
-    const salesByLead = remapBreakdown((salesData.breakdowns || {}).sales_by_lead_gen_source || {});
-    const createdByLead = remapBreakdown((createdData.breakdowns || {}).created_by_lead_gen_source || {});
-    const ranByLead = remapBreakdown((ranData && ranData.breakdowns ? (ranData.breakdowns.ran_by_lead_gen_source || {}) : {}) || {});
-
-    function setActiveSeg(kpiKey, leadKey) {
-      document.querySelectorAll(`.segbar[data-kpi='${kpiKey}'] .segbtn`).forEach(b => {
-        b.classList.toggle('active', b.dataset.lead === leadKey);
-      });
-    }
-
-    function updateKpisForLead(leadKey) {
-      // SALES
-      const s = (leadKey === 'all') ? Number(salesData.result || 0) : Number(salesByLead[normLeadKey(leadKey)] || 0);
-      document.getElementById('totalSales').textContent = String(s);
-
-      // CREATED
-      const c = (leadKey === 'all') ? Number(createdData.result || 0) : Number(createdByLead[normLeadKey(leadKey)] || 0);
-      document.getElementById('totalCreated').textContent = String(c);
-
-      // OPP2PRELIM
-      if (!ranData) {
-        document.getElementById('opp2prelim').textContent = '—';
-      } else {
-        const r = (leadKey === 'all') ? Number(ranData.result || 0) : Number(ranByLead[normLeadKey(leadKey)] || 0);
-        const pct = r > 0 ? (s / r) * 100 : null;
-        document.getElementById('opp2prelim').textContent = (pct === null) ? '—' : `${pct.toFixed(1)}%`;
-      }
-
-      const label = (leadKey === 'all') ? 'All' : leadKey;
-      document.getElementById('salesMeta').textContent = `Lead Gen Source: ${label}`;
-      document.getElementById('createdMeta').textContent = `Lead Gen Source: ${label}`;
+    // Opp2Prelim = Sales / Opportunities Ran (totals)
+    if (!ranData) {
+      document.getElementById('opp2prelim').textContent = '—';
       document.getElementById('opp2prelimMeta').textContent = '';
-
-      setActiveSeg('sales', leadKey);
-      setActiveSeg('created', leadKey);
-      setActiveSeg('opp2prelim', leadKey);
+    } else {
+      const sales = Number(salesData.result || 0);
+      const ran = Number(ranData.result || 0);
+      const pct = ran > 0 ? (sales / ran) * 100 : null;
+      document.getElementById('opp2prelim').textContent = pct === null ? '—' : `${pct.toFixed(1)}%`;
+      document.getElementById('opp2prelimMeta').textContent = '';
     }
-
-    // default: All
-    updateKpisForLead('all');
-
-    document.querySelectorAll('.segbar .segbtn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        updateKpisForLead(btn.dataset.lead);
-      });
-    });
 
     // ---- Demo KPI cards ----
     const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';

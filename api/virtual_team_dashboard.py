@@ -141,9 +141,11 @@ def render_html() -> str:
     </div>
 
     <div class="pillbar" id="periodTabs">
-      <div class="pill" data-period="2w">Last 2 Weeks</div>
+      <div class="pill" data-period="today">Today</div>
       <div class="pill" data-period="yesterday">Yesterday</div>
+      <div class="pill" data-period="thismo">This Month</div>
       <div class="pill" data-period="thiswk">This Week</div>
+      <div class="pill" data-period="2w">Last 2 Weeks</div>
       <div class="pill" data-period="custom">Custom</div>
     </div>
 
@@ -242,11 +244,11 @@ def render_html() -> str:
   }
 
   if (!start || !end) {
-    // default last 2 weeks
+    // default this month
     const today = nyYmd(new Date());
-    const s = ymdAddDays(today, -13);
-    setActive('2w');
-    startEl.value = s;
+    const monthStart = today.slice(0,8) + '01';
+    setActive('thismo');
+    startEl.value = monthStart;
     endEl.value = today;
   } else {
     startEl.value = start;
@@ -259,8 +261,9 @@ def render_html() -> str:
       const per = p.dataset.period;
       if (per === 'custom') { setActive('custom'); return; }
       const today = nyYmd(new Date());
-      if (per === '2w') return setRange(ymdAddDays(today,-13), today);
+      if (per === 'today') return setRange(today, today);
       if (per === 'yesterday') { const y = ymdAddDays(today,-1); return setRange(y,y); }
+      if (per === 'thismo') return setRange(today.slice(0,8) + '01', today);
       if (per === 'thiswk') {
         const dt = new Date();
         const wd = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short' }).format(dt);
@@ -268,6 +271,7 @@ def render_html() -> str:
         const off = map[wd] ?? 0;
         return setRange(ymdAddDays(today, -off), today);
       }
+      if (per === '2w') return setRange(ymdAddDays(today,-13), today);
     });
   });
 

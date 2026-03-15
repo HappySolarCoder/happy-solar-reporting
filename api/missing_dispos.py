@@ -294,6 +294,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <thead>
             <tr>
               <th>Owner</th>
+              <th>Contact</th>
               <th>Pipeline</th>
               <th>Stage</th>
               <th>scheduledAppointmentAt</th>
@@ -449,8 +450,22 @@ class handler(BaseHTTPRequestHandler):
 
                 days_since = int((now_utc - appt_utc).total_seconds() // 86400)
 
+                contact_first = (contact.get('firstName') if isinstance(contact, dict) else None)
+                contact_last = (contact.get('lastName') if isinstance(contact, dict) else None)
+                location_id = (
+                    str(opp.get('locationId') or '')
+                    or (str(contact.get('locationId') or '') if isinstance(contact, dict) else '')
+                )
+                contact_url = None
+                if location_id and cid:
+                    contact_url = f"https://app.gohighlevel.com/v2/location/{location_id}/contacts/detail/{cid}"
+
                 rows.append({
                     'owner': owner_name,
+                    'contact_first': contact_first,
+                    'contact_last': contact_last,
+                    'contact_id': cid,
+                    'contact_url': contact_url,
                     'pipeline': pname,
                     'stage': stage_name,
                     'appt_utc': appt_utc,
@@ -463,9 +478,16 @@ class handler(BaseHTTPRequestHandler):
             trs = []
             rows_count = 0
             for r in rows:
+                contact_name = (f"{(r.get('contact_first') or '').strip()} {(r.get('contact_last') or '').strip()}".strip() or '—')
+                if r.get('contact_url'):
+                    contact_cell = f"<a href='{html_escape(r['contact_url'])}' target='_blank' rel='noreferrer'>{html_escape(contact_name)}</a>"
+                else:
+                    contact_cell = html_escape(contact_name)
+
                 trs.append(
                     "<tr>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-weight:900'>{html_escape(r['owner'])}</td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-weight:900'>{contact_cell}</td>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(r['pipeline'])}</td>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(r['stage'])}</td>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-variant-numeric:tabular-nums;'><code>{html_escape(r['appt_utc'].isoformat())}</code></td>"
@@ -475,7 +497,7 @@ class handler(BaseHTTPRequestHandler):
                 )
                 rows_count += 1
 
-            rows_html = "\n".join(trs) if trs else "<tr><td colspan='6' style='padding:12px 8px; color:#9ca3af'>No rows</td></tr>"
+            rows_html = "\n".join(trs) if trs else "<tr><td colspan='7' style='padding:12px 8px; color:#9ca3af'>No rows</td></tr>"
 
             body = render_page(
                 rows_html=rows_html,

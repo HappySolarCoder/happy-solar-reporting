@@ -496,8 +496,11 @@ def render_html() -> str:
     }).filter(Boolean));
 
     let appts = 0;
-    if (createdPhonesRes.ok) {
-      const created = await createdPhonesRes.json();
+    const createdPhones = createdPhonesRes.ok ? await createdPhonesRes.json() : null;
+    const created3pl = created3plRes.ok ? await created3plRes.json() : null;
+
+    if (createdPhones) {
+      const created = createdPhones;
       const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
       for (const [setterLast, cnt] of Object.entries(breakdown || {})) {
         const key = String(setterLast||'').trim().toLowerCase();
@@ -505,8 +508,8 @@ def render_html() -> str:
       }
     }
 
-    if (created3plRes.ok) {
-      const created = await created3plRes.json();
+    if (created3pl) {
+      const created = created3pl;
       const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
       for (const [setterLast, cnt] of Object.entries(breakdown || {})) {
         const key = String(setterLast||'').trim().toLowerCase();
@@ -527,8 +530,8 @@ def render_html() -> str:
       }
     }
 
-    if (createdPhonesRes.ok) addBreakdown(await createdPhonesRes.clone().json());
-    if (created3plRes.ok) addBreakdown(await created3plRes.clone().json());
+    if (createdPhones) addBreakdown(createdPhones);
+    if (created3pl) addBreakdown(created3pl);
 
     const sorted = Object.entries(setterCounts).sort((a,b) => (Number(b[1]||0) - Number(a[1]||0))).slice(0, 12);
     const maxv = Math.max(1, ...sorted.map(x => Number(x[1]||0)));

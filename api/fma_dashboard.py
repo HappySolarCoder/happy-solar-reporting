@@ -838,7 +838,8 @@ def render_html(year: int, month: int) -> str:
 
 
         // Build row list
-        const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}) ]);
+        // IMPORTANT: include setters who only have "appointments created" but no ran/sit yet
+        const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}), ...Object.keys(apptsBySetterNorm || {}) ]);
         const rows = Array.from(keys).map(k => {
           const setter = String(k);
           const ran = Number(ranBy[setter] || 0);

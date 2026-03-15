@@ -140,6 +140,24 @@ def render_html(year: int, month: int) -> str:
 
     .filters { display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
     .filter { display:flex; align-items:center; gap: 8px; }
+
+    /* Period pills (shared dashboard behavior) */
+    .pillbar { margin-top: 12px; display:flex; gap: 10px; flex-wrap: wrap; }
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 950;
+      cursor: pointer;
+      user-select: none;
+    }
+    .pill:hover { border-color: rgba(0,200,83,0.45); box-shadow: 0 1px 2px rgba(17,24,39,0.06); }
+    .pill.active { background: rgba(0,200,83,0.10); border-color: rgba(0,200,83,0.45); color: #0a7a34; }
     .filter-label {
       font-size: 12px;
       color: var(--muted);
@@ -325,6 +343,16 @@ def render_html(year: int, month: int) -> str:
           <input id="endDate" type="date" />
         </div>
         <button id="clearRange" style="background:#fff;color:#1f2937;border-color:var(--border);font-weight:900">Clear</button>
+        <div class="meta" id="rangeMeta" style="margin-left:auto"></div>
+      </div>
+
+      <div class="pillbar" id="periodTabs">
+        <div class="pill" data-period="thismo">This Month</div>
+        <div class="pill" data-period="lastmo">Last Month</div>
+        <div class="pill" data-period="thiswk">This Week</div>
+        <div class="pill" data-period="yesterday">Yesterday</div>
+        <div class="pill" data-period="2w">Last 2 Weeks</div>
+        <div class="pill" data-period="custom">Custom</div>
       </div>
     </div>
 
@@ -529,10 +557,100 @@ def render_html(year: int, month: int) -> str:
   const pageUrl = new URL(window.location.href);
   const urlStart = pageUrl.searchParams.get('start') || '';
   const urlEnd = pageUrl.searchParams.get('end') || '';
+
+  const rangeMetaEl = document.getElementById('rangeMeta');
+
+  function daysInMonth(y, m) {
+    return new Date(Number(y), Number(m), 0).getDate();
+  }
+
+  function setActive(period) {
+    document.querySelectorAll('#periodTabs .pill').forEach(x => x.classList.toggle('active', x.dataset.period === period));
+  }
+
+  function setUrlRange(s, e) {
+    const u = new URL(window.location.href);
+    if (s && e) {
+      u.searchParams.set('start', s);
+      u.searchParams.set('end', e);
+    } else {
+      u.searchParams.delete('start');
+      u.searchParams.delete('end');
+    }
+    window.location.href = u.toString();
+  }
+
+  function ymd(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
   if (urlStart && urlEnd) {
     document.getElementById('startDate').value = urlStart;
     document.getElementById('endDate').value = urlEnd;
+    if (rangeMetaEl) rangeMetaEl.textContent = `${urlStart} → ${urlEnd}`;
+    setActive('custom');
+  } else {
+    // Default to month window shown by the Year/Month selectors
+    const y0 = yearSel.value;
+    const m0 = monthSel.value;
+    const s0 = `${y0}-${String(m0).padStart(2,'0')}-01`;
+    const e0 = `${y0}-${String(m0).padStart(2,'0')}-${String(daysInMonth(y0, m0)).padStart(2,'0')}`;
+    document.getElementById('startDate').value = s0;
+    document.getElementById('endDate').value = e0;
+    if (rangeMetaEl) rangeMetaEl.textContent = `Month: ${s0} → ${e0}`;
+    setActive('thismo');
   }
+
+  // Period tab click behavior (sets URL start/end)
+  document.querySelectorAll('#periodTabs .pill').forEach(p => {
+    p.addEventListener('click', () => {
+      const per = p.dataset.period;
+      const y = Number(yearSel.value);
+      const m = Number(monthSel.value);
+      const today = new Date();
+
+      if (per === 'custom') {
+        setActive('custom');
+        return;
+      }
+
+      if (per === 'thismo') {
+        const s = `${y}-${String(m).padStart(2,'0')}-01`;
+        const e = `${y}-${String(m).padStart(2,'0')}-${String(daysInMonth(y,m)).padStart(2,'0')}`;
+        setUrlRange(s, e);
+      }
+
+      if (per === 'lastmo') {
+        const dt = new Date(y, m-2, 1);
+        const y2 = dt.getFullYear();
+        const m2 = dt.getMonth()+1;
+        const s = `${y2}-${String(m2).padStart(2,'0')}-01`;
+        const e = `${y2}-${String(m2).padStart(2,'0')}-${String(daysInMonth(y2,m2)).padStart(2,'0')}`;
+        setUrlRange(s, e);
+      }
+
+      if (per === 'yesterday') {
+        const d = new Date(today.getFullYear(), today.getMonth(), today.getDate()-1);
+        const s = ymd(d);
+        setUrlRange(s, s);
+      }
+
+      if (per === '2w') {
+        const d0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()-13);
+        setUrlRange(ymd(d0), ymd(today));
+      }
+
+      if (per === 'thiswk') {
+        // Monday-start
+        const dow = (today.getDay() + 6) % 7; // Mon=0
+        const mon = new Date(today.getFullYear(), today.getMonth(), today.getDate()-dow);
+        setUrlRange(ymd(mon), ymd(today));
+      }
+    });
+  });
 
   async function load() {
     const y = yearSel.value;

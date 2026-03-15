@@ -818,8 +818,8 @@ def render_html(year: int, month: int) -> str:
         } else {
           oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
         }
-        const ls = (setterLs && setterLs.value) ? String(setterLs.value) : '';
-        if (ls) oppUrl += `&lead_source=${encodeURIComponent(ls)}`;
+        const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
+        if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
         const oppRes = await fetch(oppUrl, { cache: 'no-store' });
         const opp = oppRes.ok ? await oppRes.json() : null;

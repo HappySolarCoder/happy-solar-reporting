@@ -400,7 +400,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "opportunityId": str(opp.get("id") or snap.id),
                 "pipeline": pname,
                 "disposition": dispo,
-                "dispositionDate": local_dt.isoformat(),
+                "appointmentOccurredAt": local_dt.isoformat(),
                 "setter": setter_s,
                 "lead_source": lead,
             }

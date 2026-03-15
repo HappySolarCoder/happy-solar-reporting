@@ -919,9 +919,9 @@ def render_html(year: int, month: int) -> str:
   }
 
   // Setter demo table filter (Lead Gen Source)
-  const setterLs = document.getElementById('setterTableLeadSource');
-  if (setterLs) {
-    setterLs.addEventListener('change', () => {
+  const setterLs2 = document.getElementById('setterTableLeadSource');
+  if (setterLs2) {
+    setterLs2.addEventListener('change', () => {
       load();
     });
   }

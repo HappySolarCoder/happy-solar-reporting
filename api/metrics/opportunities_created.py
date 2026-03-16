@@ -399,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
+                self.send_header("Cache-Control", "public, s-maxage=120, stale-while-revalidate=300")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -407,7 +407,7 @@ class Handler(BaseHTTPRequestHandler):
             body = render_html(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "public, s-maxage=120, stale-while-revalidate=300")
             self.end_headers()
             self.wfile.write(body)
 
@@ -415,6 +415,6 @@ class Handler(BaseHTTPRequestHandler):
             body = ("ERROR: " + str(e)).encode("utf-8")
             self.send_response(500)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "public, s-maxage=120, stale-while-revalidate=300")
             self.end_headers()
             self.wfile.write(body)

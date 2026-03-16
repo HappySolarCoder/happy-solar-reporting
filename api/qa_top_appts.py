@@ -101,17 +101,30 @@ def coerce_dt(v: Any) -> datetime | None:
     if isinstance(v, datetime):
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
+    # ISO string
     if isinstance(v, str) and v:
         try:
             return datetime.fromisoformat(v.replace("Z", "+00:00"))
         except Exception:
             return None
 
+    # {seconds,nanos}
     if isinstance(v, dict) and ("seconds" in v or "_seconds" in v):
         try:
             sec = int(v.get("seconds") or v.get("_seconds") or 0)
             ns = int(v.get("nanos") or v.get("_nanoseconds") or 0)
             return datetime.fromtimestamp(sec + ns / 1e9, tz=timezone.utc)
+        except Exception:
+            return None
+
+    # epoch seconds / ms
+    if isinstance(v, (int, float)):
+        try:
+            x = float(v)
+            # heuristically treat > 1e12 as ms
+            if x > 1e12:
+                x = x / 1000.0
+            return datetime.fromtimestamp(x, tz=timezone.utc)
         except Exception:
             return None
 
@@ -191,17 +204,30 @@ class handler(BaseHTTPRequestHandler):
                     col.where("createdAt", ">=", start_utc)
                     .where("createdAt", "<", end_utc)
                     .order_by("createdAt")
-                    .limit(2000)
+                    .limit(3000)
                     .stream()
                 )
             except Exception as e:
                 last_error = str(e)
-                # fallback: scan recent 2000 by createdAt desc, filter in code
+
+            # If typed range query fails (createdAt stored as string/mixed), fall back to bounded stream
+            if not docs:
                 try:
-                    docs = list(col.order_by("createdAt", direction=firestore.Query.DESCENDING).limit(2000).stream())
+                    docs = list(col.order_by("createdAt", direction=firestore.Query.DESCENDING).limit(6000).stream())
                 except Exception as e2:
                     last_error = (last_error or "") + " | " + str(e2)
                     docs = []
+
+            if not docs:
+                # Last resort: stream without ordering (bounded) and filter in code.
+                last_error = (last_error or "") + " | fallback_stream"
+                docs = []
+                i = 0
+                for snap in col.stream():
+                    docs.append(snap)
+                    i += 1
+                    if i >= 8000:
+                        break
 
             rows = []
             scanned = 0

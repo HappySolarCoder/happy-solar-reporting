@@ -293,7 +293,28 @@ def render_html(year: int, month: int) -> str:
 
     a { color: var(--green); text-decoration: none; }
     a:hover { text-decoration: underline; }
-  </style>
+  
+
+    /* Mobile optimizations */
+    @media (max-width: 820px) {
+      .wrap { padding: 14px; }
+      .topbar { padding: 14px 14px; }
+      .title { font-size: 18px; }
+      .navbtn { padding: 8px 10px; font-size: 12px; }
+      .filters { gap: 8px; }
+      .filter-label { font-size: 11px; }
+      .kpi { font-size: 38px; }
+      .card { padding: 14px 14px; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+
+    @media (max-width: 520px) {
+      .grid { grid-template-columns: 1fr; }
+      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }
+      .adminSettings { top: 12px; right: 12px; }
+      .missingDisposTop { top: 12px; right: 134px; }
+    }
+</style>
 </head>
 <body>
   <div class="wrap">

@@ -2,7 +2,7 @@
 
 """Vercel Python function: /api/fma_dashboard
 
-FMS Dashboard (production)
+FMA Dashboard (production)
 
 Intent: mirror the Raydar "Team Performance" layout for canvassing/FMA lead gen.
 Metric wiring will be added after schema is confirmed.

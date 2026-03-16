@@ -194,8 +194,8 @@ def render_html() -> str:
       <div class="card span-12">
         <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap">
           <div>
-            <div class="card-title">Opportunities Created by Setter (Phones + 3PL)</div>
-            <div class="meta">Setter last name breakdown • filtered to Phones + 3PL</div>
+            <div class="card-title">Opportunities Created by Setter (Phones + 3PL + Inbound)</div>
+            <div class="meta">Setter last name breakdown • filtered to Phones + 3PL + Inbound</div>
           </div>
         </div>
         <div class="chartWrap" id="apptsChart"></div>
@@ -317,11 +317,13 @@ def render_html() -> str:
     const kixieUrl = `/api/metrics/kixie_calls_summary?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
     const oppCreatedPhonesUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('Phones')}`;
     const oppCreated3plUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('3PL')}`;
+    const oppCreatedInboundUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('Inbound')}`;
 
-    const [kixieRes, createdPhonesRes, created3plRes] = await Promise.all([
+    const [kixieRes, createdPhonesRes, created3plRes, createdInboundRes] = await Promise.all([
       fetch(kixieUrl, { cache:'no-store' }),
       fetch(oppCreatedPhonesUrl, { cache:'no-store' }),
-      fetch(oppCreated3plUrl, { cache:'no-store' })
+      fetch(oppCreated3plUrl, { cache:'no-store' }),
+      fetch(oppCreatedInboundUrl, { cache:'no-store' })
     ]);
 
     if (!kixieRes.ok) {
@@ -498,6 +500,7 @@ def render_html() -> str:
     let appts = 0;
     const createdPhones = createdPhonesRes.ok ? await createdPhonesRes.json() : null;
     const created3pl = created3plRes.ok ? await created3plRes.json() : null;
+    const createdInbound = createdInboundRes.ok ? await createdInboundRes.json() : null;
 
     if (createdPhones) {
       const created = createdPhones;
@@ -517,8 +520,17 @@ def render_html() -> str:
       }
     }
 
+    if (createdInbound) {
+      const created = createdInbound;
+      const breakdown = (created.breakdowns && created.breakdowns.created_by_setter_last_name) ? created.breakdowns.created_by_setter_last_name : {};
+      for (const [setterLast, cnt] of Object.entries(breakdown || {})) {
+        const key = String(setterLast||'').trim().toLowerCase();
+        if (kAgents.has(key)) appts += Number(cnt||0);
+      }
+    }
+
     document.getElementById('kpiAppts').textContent = String(appts);
-    document.getElementById('kpiApptsMeta').textContent = 'Lead Gen Source: Phones + 3PL';
+    document.getElementById('kpiApptsMeta').textContent = 'Lead Gen Source: Phones + 3PL + Inbound';
 
     // Render setter breakdown chart (top 12) for Phones + 3PL (not limited to Kixie names)
     const setterCounts = {};
@@ -532,6 +544,7 @@ def render_html() -> str:
 
     if (createdPhones) addBreakdown(createdPhones);
     if (created3pl) addBreakdown(created3pl);
+    if (createdInbound) addBreakdown(createdInbound);
 
     const sorted = Object.entries(setterCounts).sort((a,b) => (Number(b[1]||0) - Number(a[1]||0))).slice(0, 12);
     const maxv = Math.max(1, ...sorted.map(x => Number(x[1]||0)));

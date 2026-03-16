@@ -42,11 +42,18 @@ class handler(BaseHTTPRequestHandler):
 
         # Warm: this month views (dashboards typically request year/month)
         # Keep list small to avoid long cron runs.
+        # Compute current business month in America/New_York
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        now_ny = datetime.now(ny)
+        y = now_ny.year
+        m = now_ny.month
+
         urls = [
-            f"{base}/api/metrics/sales?format=json&year=2026&month=3",
-            f"{base}/api/metrics/opportunities_created?format=json&year=2026&month=3&pipeline_scope=all",
-            f"{base}/api/metrics/opportunities_ran?format=json&year=2026&month=3",
-            f"{base}/api/metrics/demo_rate?format=json&year=2026&month=3",
+            f"{base}/api/metrics/sales?format=json&year={y}&month={m}",
+            f"{base}/api/metrics/opportunities_created?format=json&year={y}&month={m}&pipeline_scope=all",
+            f"{base}/api/metrics/opportunities_ran?format=json&year={y}&month={m}",
+            f"{base}/api/metrics/demo_rate?format=json&year={y}&month={m}",
         ]
 
         results = []

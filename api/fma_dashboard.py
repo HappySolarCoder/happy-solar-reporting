@@ -862,18 +862,44 @@ def render_html(year: int, month: int) -> str:
 
         // Build row list
         // IMPORTANT: include setters who only have "appointments created" but no ran/sit yet
+        // Canonicalize setter key to avoid duplicate rows (e.g., Calabrese vs calabrese)
+        const canSetter = (s) => {
+          const raw = String(s || '').trim();
+          if (!raw) return 'none';
+          const low = raw.toLowerCase();
+          if (low === 'none' || low === 'null' || low === 'n/a' || low === 'crm ui' || low === 'hand') return low; // keep explicit
+          // Title-case for display
+          return low.charAt(0).toUpperCase() + low.slice(1);
+        };
+
         const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}), ...Object.keys(apptsBySetterNorm || {}) ]);
-        const rows = Array.from(keys).map(k => {
-          const setter = String(k);
-          const ran = Number(ranBy[setter] || 0);
-          const sit = Number(sitBy[setter] || 0);
+        const agg = {};
+
+        for (const k of keys) {
+          const key = canSetter(k);
+          if (!agg[key]) agg[key] = { setter: key, ran: 0, sit: 0 };
+          agg[key].ran += Number(ranBy[k] || 0);
+          agg[key].sit += Number(sitBy[k] || 0);
+        }
+
+        // Add appointments created by setter (already normalized to lowercase keys)
+        for (const [ln, cnt] of Object.entries(apptsBySetterNorm || {})) {
+          const key = canSetter(ln);
+          if (!agg[key]) agg[key] = { setter: key, ran: 0, sit: 0 };
+          agg[key].appts = (agg[key].appts || 0) + Number(cnt || 0);
+        }
+
+        const rows = Object.values(agg).map(r => {
+          const setter = r.setter;
+          const ran = Number(r.ran || 0);
+          const sit = Number(r.sit || 0);
           const pct = ran > 0 ? (sit / ran) * 100 : 0;
 
-          const pk = setterToPerson[setter] || '';
-          const rayId = setterToRaydar[setter] || '';
+          const pk = setterToPerson[setter] || setterToPerson[setter.toLowerCase()] || '';
+          const rayId = setterToRaydar[setter] || setterToRaydar[setter.toLowerCase()] || '';
 
           const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
-          const appts = Number(apptsBySetterNorm[normSetterLast(setter)] || 0);
+          const appts = Number(r.appts || 0);
 
           const g = pk ? (goalsByPerson[pk] || {}) : {};
           const knocksGoal = (typeof g.doors_goal !== 'undefined') ? Number(g.doors_goal) : null;

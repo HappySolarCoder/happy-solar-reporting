@@ -173,7 +173,9 @@ class handler(BaseHTTPRequestHandler):
                 if pid:
                     pipes[pid] = nm
 
-            included = {"buffalo", "syracuse", "rochester", "virtual"}
+            # NOTE (2026-03-15): QA page should not filter by Team/Pipeline name.
+            # Only exclude the inbound/lead locker pipeline.
+            included = set()
             excluded = {"inbound/lead locker"}
 
             contact_cache: dict[str, dict | None] = {}
@@ -249,8 +251,7 @@ class handler(BaseHTTPRequestHandler):
                 if pname:
                     if pname in excluded:
                         continue
-                    if pname not in included:
-                        continue
+                # No pipeline/team include filtering for QA page
 
                 cid = str(opp.get("contactId") or "")
                 contact = get_contact(cid)

@@ -54,7 +54,8 @@ class MetricContract:
 
     # pipeline scoping
     included_pipeline_names: tuple[str, ...] = ("buffalo", "syracuse", "rochester", "virtual")  # pipeline name; not lead source
-    excluded_pipeline_names: tuple[str, ...] = ("rehash", "sweeper", "inbound/lead locker")
+    # NOTE (2026-03-15): rehash + sweeper are INCLUDED for "opportunities created" counts.
+    excluded_pipeline_names: tuple[str, ...] = ("inbound/lead locker",)
 
     # breakdown fields (already used in Sales)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"

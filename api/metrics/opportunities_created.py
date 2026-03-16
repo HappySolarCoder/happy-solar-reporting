@@ -174,7 +174,7 @@ def normalize_channel(v: Any) -> str:
     return str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -186,6 +186,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
     pipe_names = pipeline_name_lookup(db, c)
     user_names = user_name_lookup(db, c)
+
+    pipeline_scope_norm = str(pipeline_scope or "core").strip().lower()
 
     included = {x.strip().lower() for x in c.included_pipeline_names}
     excluded = {x.strip().lower() for x in c.excluded_pipeline_names}
@@ -235,8 +237,14 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         if pname_norm in excluded:
             continue
-        if included and pname_norm not in included:
-            continue
+
+        # pipeline scope
+        # - core: restrict to included pipeline names (default)
+        # - all: do not restrict by pipeline name
+        if pipeline_scope_norm != "all":
+            if included and pname_norm not in included:
+                continue
+
         in_pipeline += 1
 
         # owner
@@ -381,10 +389,11 @@ class Handler(BaseHTTPRequestHandler):
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
+            pipeline_scope = (qs.get("pipeline_scope", [""])[0] or "").strip() or None
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

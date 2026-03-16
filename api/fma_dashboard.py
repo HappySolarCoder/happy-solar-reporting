@@ -817,9 +817,9 @@ def render_html(year: int, month: int) -> str:
         // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
         let oppUrl = '';
         if (sr && sr.start && sr.end) {
-          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`;
+          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}&pipeline_scope=all`;
         } else {
-          oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+          oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
         }
         const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
         if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;

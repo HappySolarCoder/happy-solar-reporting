@@ -734,7 +734,7 @@ def render_html(year: int, month: int) -> str:
             ? `/api/metrics/raydar_doors_knocked?format=json&period=${encodeURIComponent(period)}`
             : `/api/metrics/raydar_doors_knocked?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`);
 
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url;
       const data = res.ok ? await res.json() : null;
 
       const knocks = data && typeof data.result !== 'undefined' ? Number(data.result) : null;
@@ -793,7 +793,7 @@ def render_html(year: int, month: int) -> str:
           : '';
 
         // 1) GHL demo rate counts (opps ran + sit demos)
-        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}${rangeParam}`, { cache: 'no-store' });
+        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}${rangeParam}`;
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
@@ -837,7 +837,7 @@ def render_html(year: int, month: int) -> str:
         } else {
           rayUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
         }
-        const rayRes = await fetch(rayUrl, { cache: 'no-store' });
+        const rayRes = await fetch(rayUrl;
         const ray = rayRes.ok ? await rayRes.json() : null;
         const knocksByClaimed = ray && ray.breakdowns && ray.breakdowns.knocks_by_claimed_by ? ray.breakdowns.knocks_by_claimed_by : {};
         const apptsByClaimed = ray && ray.breakdowns && ray.breakdowns.appointments_set_by_claimed_by ? ray.breakdowns.appointments_set_by_claimed_by : {};
@@ -852,7 +852,7 @@ def render_html(year: int, month: int) -> str:
         const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
         if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
-        const oppRes = await fetch(oppUrl, { cache: 'no-store' });
+        const oppRes = await fetch(oppUrl;
         const opp = oppRes.ok ? await oppRes.json() : null;
         const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
 

@@ -610,8 +610,8 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('ownerRows').innerHTML = '<tr><td colspan="4" class="skeleton">Loading…</td></tr>';
 
     const [salesRes, ranRes] = await Promise.all([
-      fetch(salesUrl,
-      fetch(ranUrl
+      fetch(salesUrl),
+      fetch(ranUrl)
     ]);
 
     if (!salesRes.ok) {

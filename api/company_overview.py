@@ -765,14 +765,14 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
     const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes] = await Promise.all([
-      fetch(salesUrl,
-      fetch(createdUrl,
-      fetch(ranUrl,
-      fetch(demoBase,
-      fetch(demoDoorsUrl,
-      fetch(demoSelfGenUrl,
-      fetch(demoVirtualUrl,
-      fetch(demo3plUrl
+      fetch(salesUrl),
+      fetch(createdUrl),
+      fetch(ranUrl),
+      fetch(demoBase),
+      fetch(demoDoorsUrl),
+      fetch(demoSelfGenUrl),
+      fetch(demoVirtualUrl),
+      fetch(demo3plUrl)
     ]);
 
     if (!salesRes.ok) {

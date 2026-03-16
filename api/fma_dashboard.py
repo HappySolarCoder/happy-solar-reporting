@@ -747,8 +747,11 @@ def render_html(year: int, month: int) -> str:
       const top = (data && Array.isArray(data.top_knockers)) ? data.top_knockers : [];
       renderTopList('topKnocks', top.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.knocks })));
 
-      const topAp = (data && Array.isArray(data.top_appt_setters)) ? data.top_appt_setters : [];
-      renderTopList('topAppts', topAp.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.appointments })));
+      // Top Performers — Appointments (GHL Opportunities Created by Setter Last Name)
+      // NOTE: scope matches /api/metrics/opportunities_created (pipeline include/exclude rules).
+      // Uses same window + lead source filter as the setter demo table.
+      // Rendered later once opp-created breakdown is loaded.
+      renderTopList('topAppts', [{ name: 'Loading…', value: '' }]);
 
       // --- GHL Demo Rate by Setter (current month) ---
       try {
@@ -835,6 +838,26 @@ def render_html(year: int, month: int) -> str:
           if (!kk) continue;
           apptsBySetterNorm[kk] = (apptsBySetterNorm[kk] || 0) + Number(v || 0);
         }
+
+        // Top Performers — Appointments (map setter last name -> roster display_name)
+        const setterDisplayByLast = {};
+        for (const r of roster) {
+          const sln = normSetterLast(r.ghl_setter_last_name);
+          if (!sln) continue;
+          const dn = String(r.display_name || r.ghl_user_name || r.raydar_user_name || r.ghl_setter_last_name || '').trim();
+          if (dn) setterDisplayByLast[sln] = dn;
+        }
+
+        const topAppts = Object.entries(apptsBySetterNorm)
+          .map(([ln, cnt]) => ({
+            last: ln,
+            name: setterDisplayByLast[ln] || (ln ? (ln[0].toUpperCase() + ln.slice(1)) : '—'),
+            value: Number(cnt || 0),
+          }))
+          .sort((a,b) => (b.value - a.value) || a.name.localeCompare(b.name))
+          .slice(0, 10);
+
+        renderTopList('topAppts', topAppts.map(r => ({ name: r.name, value: r.value })));
 
 
         // Build row list

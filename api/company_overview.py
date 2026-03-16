@@ -342,6 +342,15 @@ def render_html(year: int, month: int) -> str:
       table { display: block; overflow-x: auto; white-space: nowrap; }
     }
 
+    @media (max-width: 820px) {
+      /* allow compact KPI cards to tile 2-up on mobile */
+      .grid { grid-template-columns: repeat(2, 1fr); }
+      .card { min-height: 100px; }
+      .kpi { font-size: 34px; }
+      .span-12 { grid-column: span 2; }
+      .demoRow { grid-column: span 2; }
+    }
+
     @media (max-width: 520px) {
       .grid { grid-template-columns: 1fr; }
       .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }

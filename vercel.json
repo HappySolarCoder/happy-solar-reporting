@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/warm_cache",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

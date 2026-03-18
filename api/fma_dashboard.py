@@ -787,7 +787,8 @@ def render_html(year: int, month: int) -> str:
         const ls = lsEl ? String(lsEl.value || '') : '';
         const lsParam = ls ? `&lead_source=${encodeURIComponent(ls)}` : '';
 
-        const sr = getSetterRange();
+        // Use table-only range if set, otherwise fall back to the top page date range
+        const sr = getSetterRange() || getRange();
         const rangeParam = (sr && sr.start && sr.end)
           ? `&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`
           : '';

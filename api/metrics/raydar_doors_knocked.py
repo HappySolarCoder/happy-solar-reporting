@@ -245,6 +245,7 @@ def build_payload(
 
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
+    by_dispositioned: dict[str, int] = {}
 
     streamed = 0
     dispo_names = disposition_name_map(db)
@@ -273,6 +274,7 @@ def build_payload(
         d = snap.to_dict() or {}
         cb = d.get("claimedBy")
         at = d.get("assignedTo")
+        dbu = d.get("dispositionedBy")
 
         # Disposition key:
         # - Raydar leads usually store the disposition under `status` (e.g. "not-home", "appointment")
@@ -306,6 +308,9 @@ def build_payload(
         if at not in (None, ""):
             k = str(at)
             by_assigned[k] = by_assigned.get(k, 0) + 1
+        if dbu not in (None, ""):
+            k = str(dbu)
+            by_dispositioned[k] = by_dispositioned.get(k, 0) + 1
 
     result = streamed
     count_method = "stream_len"
@@ -328,6 +333,8 @@ def build_payload(
                 "claimedByName": users.get(str(claimed_by), claimed_by),
                 "assignedTo": assigned_to,
                 "assignedToName": users.get(str(assigned_to), assigned_to),
+                "dispositionedBy": dbu,
+                "dispositionedByName": users.get(str(dbu), dbu),
                 "city": dd.get("city"),
                 "state": dd.get("state"),
                 "zip": dd.get("zip"),
@@ -357,6 +364,7 @@ def build_payload(
         "breakdowns": {
             "knocks_by_claimed_by": by_claimed,
             "knocks_by_assigned_to": by_assigned,
+            "knocks_by_dispositioned_by": by_dispositioned,
             "appointments_set_total": appts_total,
             "appointments_set_by_claimed_by": appts_by_claimed,
             "convos_total": convos_total,
@@ -364,7 +372,7 @@ def build_payload(
         },
         "top_knockers": [
             {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
-            for uid, cnt in sorted(by_claimed.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+            for uid, cnt in sorted(by_dispositioned.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
         "top_convo_knockers": [
             {"userId": uid, "name": users.get(uid, uid), "convos": cnt}
@@ -390,7 +398,7 @@ def html_page(payload: dict) -> str:
 
     rows = payload.get("sample_rows") or []
     table_rows = "".join(
-        f"<tr><td>{esc(r.get('leadId'))}</td><td>{esc(r.get('dispositionedAt'))}</td><td>{esc(r.get('claimedByName'))}</td><td>{esc(r.get('assignedToName'))}</td><td>{esc(r.get('city'))}</td><td>{esc(r.get('state'))}</td><td>{esc(r.get('zip'))}</td></tr>"
+        f"<tr><td>{esc(r.get('leadId'))}</td><td>{esc(r.get('dispositionedAt'))}</td><td>{esc(r.get('claimedByName'))}</td><td>{esc(r.get('assignedToName'))}</td><td>{esc(r.get('dispositionedByName'))}</td><td>{esc(r.get('city'))}</td><td>{esc(r.get('state'))}</td><td>{esc(r.get('zip'))}</td></tr>"
         for r in rows
     )
 
@@ -451,6 +459,7 @@ def html_page(payload: dict) -> str:
               <th>dispositionedAt</th>
               <th>claimedBy</th>
               <th>assignedTo</th>
+              <th>dispositionedBy</th>
               <th>city</th>
               <th>state</th>
               <th>zip</th>

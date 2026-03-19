@@ -482,7 +482,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta">Total knocks per user (claimedBy) for selected range</div>
+          <div class="meta">Total knocks per user (dispositionedBy) for selected range</div>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>

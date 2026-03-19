@@ -787,10 +787,10 @@ def render_html(year: int, month: int) -> str:
         const ls = lsEl ? String(lsEl.value || '') : '';
         const lsParam = ls ? `&lead_source=${encodeURIComponent(ls)}` : '';
 
-        // Use table-only range if set, otherwise fall back to the top page date range
-        const sr = getSetterRange() || getRange();
-        const rangeParam = (sr && sr.start && sr.end)
-          ? `&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`
+        // Table-only custom date range (applies ONLY to the demo-rate-by-setter table)
+        const srTable = getSetterRange();
+        const rangeParam = (srTable && srTable.start && srTable.end)
+          ? `&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`
           : '';
 
         // 1) GHL demo rate counts (opps ran + sit demos)
@@ -831,10 +831,31 @@ def render_html(year: int, month: int) -> str:
           goalsByPerson[pk][metric] = value;
         }
 
-        // 3) Raydar knocks/appts set for the *same window* (use thismo or date range)
+        // Top Performers — Appointments should follow the TOP page date range (not the table-only range)
+        const srTop = getRange();
+        let oppTopUrl = '';
+        if (srTop && srTop.start && srTop.end) {
+          oppTopUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}&pipeline_scope=all`;
+        } else {
+          oppTopUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
+        }
+        if (lsParam) oppTopUrl += lsParam;
+
+        const oppTopRes = await fetch(oppTopUrl);
+        const oppTop = oppTopRes.ok ? await oppTopRes.json() : null;
+        const apptsTopBySetter = (oppTop && oppTop.breakdowns && oppTop.breakdowns.created_by_setter_last_name) ? oppTop.breakdowns.created_by_setter_last_name : {};
+        const apptsBySetterNormTop = {};
+        for (const [k,v] of Object.entries(apptsTopBySetter || {})) {
+          const kk = normSetterLast(k);
+          if (!kk) continue;
+          apptsBySetterNormTop[kk] = (apptsBySetterNormTop[kk] || 0) + Number(v || 0);
+        }
+
+        // 3) Raydar knocks/appts set for the SAME window as the demo-rate table
+        // (table-only range if set; otherwise default to this month)
         let rayUrl = '';
-        if (sr && sr.start && sr.end) {
-          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}`;
+        if (srTable && srTable.start && srTable.end) {
+          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
         } else {
           rayUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
         }
@@ -845,8 +866,8 @@ def render_html(year: int, month: int) -> str:
 
         // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
         let oppUrl = '';
-        if (sr && sr.start && sr.end) {
-          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(sr.start)}&end=${encodeURIComponent(sr.end)}&pipeline_scope=all`;
+        if (srTable && srTable.start && srTable.end) {
+          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}&pipeline_scope=all`;
         } else {
           oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
         }
@@ -877,7 +898,7 @@ def render_html(year: int, month: int) -> str:
           if (dn) setterDisplayByLast[sln] = dn;
         }
 
-        const topAppts = Object.entries(apptsBySetterNorm)
+        const topAppts = Object.entries(apptsBySetterNormTop)
           .map(([ln, cnt]) => ({
             last: ln,
             name: setterDisplayByLast[ln] || (ln ? (ln[0].toUpperCase() + ln.slice(1)) : '—'),

@@ -422,8 +422,8 @@ def build_payload(
             "convos_total": convos_total,
             "convos_by_actor": convos_by_claimed,
         },
-        "top_knockers": [
-            {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
+        "users": users,
+        "top_knockers": [            {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
             for uid, cnt in sorted(by_actor.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
         "top_convo_knockers": [

@@ -1036,8 +1036,8 @@ def render_html(year: int, month: int) -> str:
           .map(([uid, cnt]) => ({
             uid,
             name: raydarNameById[uid]
-              || ((rayTop && rayTop.users && rayTop.users[uid] && rayTop.users[uid].name) ? rayTop.users[uid].name : '')
-              || uid,
+              || ((rayTop && rayTop.users && rayTop.users[uid]) ? rayTop.users[uid] : '')
+              || `Unknown (${String(uid).slice(0,8)}…)`,
             value: Number(cnt||0)
           }))
           .sort((a,b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)))

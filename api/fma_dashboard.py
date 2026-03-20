@@ -532,13 +532,13 @@ def render_html(year: int, month: int) -> str:
           <table style="width:100%; border-collapse: collapse;">
             <thead>
               <tr>
-                <th style="text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Setter Last Name</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Knocks / Goal</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Appts Set / Goal</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos / Goal</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
-                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Sales</th>
+                <th data-sort-key="setter" style="cursor:pointer; text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Setter Last Name</th>
+                <th data-sort-key="knocks" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Knocks / Goal</th>
+                <th data-sort-key="appts" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Appts Set / Goal</th>
+                <th data-sort-key="ran" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
+                <th data-sort-key="sit" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos / Goal</th>
+                <th data-sort-key="pct" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
+                <th data-sort-key="sales" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Sales</th>
               </tr>
             </thead>
             <tbody id="setterDemoRows">
@@ -785,9 +785,41 @@ def render_html(year: int, month: int) -> str:
     });
   });
 
+  // Demo table sort state
+  let setterTableSort = { key: 'ran', dir: 'desc' };
+
   function setText(id, v) {
     const el = document.getElementById(id);
     if (el) el.textContent = v;
+  }
+
+  function sortSetterRows(rows) {
+    const key = setterTableSort.key;
+    const dir = setterTableSort.dir === 'asc' ? 1 : -1;
+    const numericKeys = new Set(['knocks', 'appts', 'ran', 'sit', 'pct', 'sales']);
+    return [...rows].sort((a,b) => {
+      if (numericKeys.has(key)) {
+        const av = Number(a[key] || 0);
+        const bv = Number(b[key] || 0);
+        if (av !== bv) return (av - bv) * dir;
+        return String(a.setter || '').localeCompare(String(b.setter || ''));
+      }
+      const cmp = String(a[key] || '').localeCompare(String(b[key] || ''));
+      if (cmp !== 0) return cmp * dir;
+      return (Number(b.ran || 0) - Number(a.ran || 0));
+    });
+  }
+
+  function updateSetterHeaderSortIndicators() {
+    document.querySelectorAll('th[data-sort-key]').forEach(th => {
+      const k = th.getAttribute('data-sort-key');
+      const base = String(th.textContent || '').replace(/[\s▲▼]+$/g, '');
+      if (k === setterTableSort.key) {
+        th.textContent = `${base} ${setterTableSort.dir === 'asc' ? '▲' : '▼'}`;
+      } else {
+        th.textContent = base;
+      }
+    });
   }
 
   function renderTopList(containerId, rows) {
@@ -1128,7 +1160,9 @@ def render_html(year: int, month: int) -> str:
           const demosGoal = (typeof g.demos_goal !== 'undefined') ? Number(g.demos_goal) : null;
 
           return { setter, ran, sit, pct, knocks, appts, sales, knocksGoal, apptsGoal, demosGoal };
-        }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || (b.sales - a.sales) || a.setter.localeCompare(b.setter));
+        });
+
+        const sortedRows = sortSetterRows(rows);
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
@@ -1142,7 +1176,8 @@ def render_html(year: int, month: int) -> str:
           if (!rows.length) {
             tbody.innerHTML = `<tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
           } else {
-            tbody.innerHTML = rows.map(r => `
+            updateSetterHeaderSortIndicators();
+            tbody.innerHTML = sortedRows.map(r => `
               <tr>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.knocks || 0)} / ${(r.knocksGoal === null || Number.isNaN(r.knocksGoal)) ? 'X' : r.knocksGoal}</td>
@@ -1233,6 +1268,22 @@ def render_html(year: int, month: int) -> str:
     });
   }
 
+  // Click-to-sort for GHL demo-by-setter table headers
+  document.querySelectorAll('th[data-sort-key]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.getAttribute('data-sort-key');
+      if (!key) return;
+      if (setterTableSort.key === key) {
+        setterTableSort.dir = setterTableSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        setterTableSort.key = key;
+        // Default behavior: numeric columns sort high->low; name sorts A->Z
+        setterTableSort.dir = (key === 'setter') ? 'asc' : 'desc';
+      }
+      load();
+    });
+  });
+  updateSetterHeaderSortIndicators();
 
   load();
 </script>

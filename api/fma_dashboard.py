@@ -665,12 +665,79 @@ def render_html(year: int, month: int) -> str:
     });
   }
 
-  // Period tabs: UI only (metric wiring comes after schema confirmation)
+  // Period tabs: set the TOP page date range (start/end) and reload so every widget stays in sync.
+  function nyYmd(d = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(d);
+    const get = (t) => parts.find(p => p.type === t)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  }
+
+  function ymdAddDays(ymd, deltaDays) {
+    const [y,m,d] = ymd.split('-').map(x=>parseInt(x,10));
+    const dt = new Date(Date.UTC(y, m-1, d));
+    dt.setUTCDate(dt.getUTCDate() + deltaDays);
+    const y2 = dt.getUTCFullYear();
+    const m2 = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const d2 = String(dt.getUTCDate()).padStart(2,'0');
+    return `${y2}-${m2}-${d2}`;
+  }
+
+  function setTopRange(s, e) {
+    setRange({ start: s, end: e });
+    setUrlRange(s, e);
+  }
+
   document.querySelectorAll('#periodTabs .pill').forEach(p => {
     p.addEventListener('click', () => {
-      document.querySelectorAll('#periodTabs .pill').forEach(x => x.classList.remove('active'));
-      p.classList.add('active');
-      // placeholder; will call metrics endpoint once defined
+      const per = String(p.getAttribute('data-period') || '').toLowerCase();
+      const today = nyYmd(new Date());
+
+      if (per === 'all') {
+        clearRange();
+        setUrlRange('', '');
+        return;
+      }
+
+      if (per === 'today') return setTopRange(today, today);
+      if (per === 'yesterday') { const y = ymdAddDays(today, -1); return setTopRange(y, y); }
+      if (per === '7d' || per === '7days' || per === '7') return setTopRange(ymdAddDays(today, -6), today);
+
+      if (per === 'thiswk') {
+        const wd = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short' }).format(new Date());
+        const map = { Mon:0, Tue:1, Wed:2, Thu:3, Fri:4, Sat:5, Sun:6 };
+        const off = map[wd] ?? 0;
+        return setTopRange(ymdAddDays(today, -off), today);
+      }
+
+      if (per === 'lastwk') {
+        const wd = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short' }).format(new Date());
+        const map = { Mon:0, Tue:1, Wed:2, Thu:3, Fri:4, Sat:5, Sun:6 };
+        const off = map[wd] ?? 0;
+        const thisMon = ymdAddDays(today, -off);
+        const lastMon = ymdAddDays(thisMon, -7);
+        const lastSun = ymdAddDays(thisMon, -1);
+        return setTopRange(lastMon, lastSun);
+      }
+
+      if (per === 'thismo') return setTopRange(today.slice(0,8) + '01', today);
+
+      if (per === 'lastmo') {
+        const y = parseInt(today.slice(0,4),10);
+        const m = parseInt(today.slice(5,7),10);
+        const dt = new Date(Date.UTC(y, m-2, 1));
+        const y2 = dt.getUTCFullYear();
+        const m2 = String(dt.getUTCMonth()+1).padStart(2,'0');
+        const first = `${y2}-${m2}-01`;
+        const end = ymdAddDays(`${y2}-${m2}-01`, new Date(Date.UTC(y2, parseInt(m2,10), 0)).getUTCDate()-1);
+        return setTopRange(first, end);
+      }
+
+      // fallback: just reload
       load();
     });
   });
@@ -880,8 +947,22 @@ def render_html(year: int, month: int) -> str:
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
         // Top Performers — Knocks (Raydar actor attribution)
+        const raydarNameById = {};
+        for (const r of roster) {
+          const rid = String(r.raydar_user_id || '').trim();
+          if (!rid) continue;
+          const nm = String(r.display_name || r.raydar_user_name || r.ghl_user_name || '').trim();
+          if (nm) raydarNameById[rid] = nm;
+        }
+
         const topKnocks = Object.entries(knocksByActorTop)
-          .map(([uid, cnt]) => ({ uid, name: (rayTop && rayTop.users && rayTop.users[uid] && rayTop.users[uid].name) ? rayTop.users[uid].name : uid, value: Number(cnt||0) }))
+          .map(([uid, cnt]) => ({
+            uid,
+            name: raydarNameById[uid]
+              || ((rayTop && rayTop.users && rayTop.users[uid] && rayTop.users[uid].name) ? rayTop.users[uid].name : '')
+              || uid,
+            value: Number(cnt||0)
+          }))
           .sort((a,b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)))
           .slice(0, 10);
         renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));

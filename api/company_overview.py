@@ -273,18 +273,20 @@ def render_html(year: int, month: int) -> str:
     .vwrap {
       display:flex;
       align-items:stretch;
-      justify-content:center;
-      gap: 10px;
+      justify-content:space-evenly;
+      gap: 8px;
       height: 260px;
       padding: 12px 12px;
       background:#fafbfc;
       border:1px solid var(--border);
       border-radius:12px;
-      overflow-x:auto;
+      overflow-x:hidden; /* avoid cut-off scroll; we will auto-fit */
     }
     .vcol {
-      width: 86px;
-      flex: 0 0 86px;
+      width: auto;
+      flex: 1 1 0;
+      min-width: 60px;
+      max-width: 110px;
       height: 100%;
       display:flex;
       flex-direction:column;
@@ -577,32 +579,49 @@ def render_html(year: int, month: int) -> str:
 
   function renderVertical(container, obj) {
     container.innerHTML = '';
-    const entries = Object.entries(obj || {});
+    const entries0 = Object.entries(obj || {});
+    if (!entries0.length) {
+      container.innerHTML = '<div class="skeleton">No data.</div>';
+      return;
+    }
+
+    // Keep only non-zero and sort desc
+    const entries = entries0
+      .map(([k,v]) => [String(k), Number(v)||0])
+      .filter(([,v]) => v > 0)
+      .sort((a,b) => (b[1]-a[1]) || a[0].localeCompare(b[0]));
+
     if (!entries.length) {
       container.innerHTML = '<div class="skeleton">No data.</div>';
       return;
     }
-    entries.sort((a,b) => (Number(b[1]||0) - Number(a[1]||0)) || String(a[0]).localeCompare(String(b[0])));
-    const maxVal = Math.max(...entries.map(([,v]) => Number(v)||0), 1);
+
+    const maxVal = Math.max(...entries.map(([,v]) => v), 1);
+
+    // If too many categories, show top N and group the rest as "Other" so it fits without cutting off.
+    const MAX_COLS = 10;
+    let list = entries;
+    if (entries.length > MAX_COLS) {
+      const top = entries.slice(0, MAX_COLS-1);
+      const other = entries.slice(MAX_COLS-1).reduce((s,[,v]) => s + (Number(v)||0), 0);
+      list = [...top, ['Other', other]];
+    }
 
     let html = '<div class="vwrap">';
     let i = 0;
-    for (const [name, val] of entries) {
-      const n = String(name);
-      const v = Number(val) || 0;
-      if (v === 0) continue;
+    for (const [name, v] of list) {
       const scale = Math.max(0.02, v / maxVal);
       const color = palette[i % palette.length];
       i++;
       html += `
-        <div class="vcol" title="${n}">
+        <div class="vcol" title="${name}">
           <div class="vbarArea">
             <div class="vbarStack">
               <div class="vval">${v}</div>
               <div class="vbar" style="background:${color}; height:${(scale*100).toFixed(2)}%"></div>
             </div>
           </div>
-          <div class="vlabel">${n}</div>
+          <div class="vlabel">${name}</div>
         </div>`;
     }
     html += '</div>';

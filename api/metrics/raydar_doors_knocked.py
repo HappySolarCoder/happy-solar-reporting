@@ -199,10 +199,29 @@ def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datet
 
 
 def user_name_map(db: firestore.Client) -> dict[str, str]:
+    """Map Raydar user ids to display names.
+
+    Raydar leads often reference users via `dispositionHistory[0].userId`, which may not match
+    the Firestore document id. So we index by:
+    - doc id
+    - d.id
+    - d.userId
+    """
+
     out: dict[str, str] = {}
     for snap in db.collection(MetricContract.users_collection).stream():
         d = snap.to_dict() or {}
-        out[str(snap.id)] = str(d.get("name") or snap.id)
+        name = str(d.get("name") or d.get("fullName") or d.get("displayName") or snap.id).strip()
+        keys = {str(snap.id).strip()}
+        if d.get("id"):
+            keys.add(str(d.get("id")).strip())
+        if d.get("userId"):
+            keys.add(str(d.get("userId")).strip())
+
+        for k in keys:
+            if k:
+                out[k] = name
+
     return out
 
 

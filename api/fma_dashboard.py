@@ -839,7 +839,7 @@ def render_html(year: int, month: int) -> str:
         } else {
           oppTopUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
         }
-        if (lsParam) oppTopUrl += lsParam;
+        // IMPORTANT: Top Performers — Appointments should not be affected by the demo table lead-source filter
 
         const oppTopRes = await fetch(oppTopUrl);
         const oppTop = oppTopRes.ok ? await oppTopRes.json() : null;

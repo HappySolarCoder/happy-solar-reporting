@@ -281,8 +281,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                 if isinstance(cf, dict) and cf.get("id") == contract.setter_last_name_custom_field_id:
                     setter_name = cf.get("value")
                     break
-        if setter_name:
-            setter_counts[str(setter_name)] = setter_counts.get(str(setter_name), 0) + 1
+        setter_bucket = str(setter_name).strip() if setter_name not in (None, "") else "none"
+        setter_counts[setter_bucket] = setter_counts.get(setter_bucket, 0) + 1
 
         # Breakdown by Lead Gen Source (custom field on contact, fallback to attributionSource)
         lead_src = None

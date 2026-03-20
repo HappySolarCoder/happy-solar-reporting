@@ -722,6 +722,14 @@ def render_html(year: int, month: int) -> str:
     return `${y2}-${m2}-${d2}`;
   }
 
+  function currentNyMonthToDateRange() {
+    const today = nyYmd(new Date());
+    return {
+      start: today.slice(0,8) + '01',
+      end: today,
+    };
+  }
+
   function setTopRange(s, e) {
     setRange({ start: s, end: e });
     setUrlRange(s, e);
@@ -891,12 +899,14 @@ def render_html(year: int, month: int) -> str:
 
         // Table-only custom date range (applies ONLY to the demo-rate-by-setter table)
         const srTable = getSetterRange();
-        const rangeParam = (srTable && srTable.start && srTable.end)
-          ? `&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`
-          : '';
+        const tableRange = (srTable && srTable.start && srTable.end)
+          ? { start: srTable.start, end: srTable.end }
+          : currentNyMonthToDateRange();
+        const rangeParam = `&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
 
         // 1) GHL demo rate counts (opps ran + sit demos)
-        const demoRes = await fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${lsParam}${rangeParam}`);
+        // IMPORTANT: table is isolated from top-page filters; it always uses tableRange only.
+        const demoRes = await fetch(`/api/metrics/demo_rate?format=json${lsParam}${rangeParam}`);
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
@@ -1006,12 +1016,7 @@ def render_html(year: int, month: int) -> str:
         const apptsByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.appointments_set_by_actor ? rayTable.breakdowns.appointments_set_by_actor : {};
 
         // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
-        let oppUrl = '';
-        if (srTable && srTable.start && srTable.end) {
-          oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}&pipeline_scope=all`;
-        } else {
-          oppUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
-        }
+        let oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}&pipeline_scope=all`;
         const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
         if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
@@ -1020,12 +1025,7 @@ def render_html(year: int, month: int) -> str:
         const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
 
         // 3c) GHL sales by setter last name for the same table window (sold date filter)
-        let salesUrl = '';
-        if (srTable && srTable.start && srTable.end) {
-          salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
-        } else {
-          salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
-        }
+        let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
         if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
         const salesRes = await fetch(salesUrl);

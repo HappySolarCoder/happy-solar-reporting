@@ -538,14 +538,16 @@ def render_html(year: int, month: int) -> str:
                 <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
                 <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos / Goal</th>
                 <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
+                <th style="text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Sales</th>
               </tr>
             </thead>
             <tbody id="setterDemoRows">
-              <tr><td colspan="6" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
+              <tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
             </tbody>
             <tfoot id="setterDemoTotals">
               <tr>
                 <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+                <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
                 <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
@@ -1017,6 +1019,21 @@ def render_html(year: int, month: int) -> str:
         const opp = oppRes.ok ? await oppRes.json() : null;
         const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
 
+        // 3c) GHL sales by setter last name for the same table window (sold date filter)
+        let salesUrl = '';
+        if (srTable && srTable.start && srTable.end) {
+          salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
+        } else {
+          salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`;
+        }
+        if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
+
+        const salesRes = await fetch(salesUrl);
+        const salesData = salesRes.ok ? await salesRes.json() : null;
+        const salesBySetter = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_setter_last_name)
+          ? salesData.breakdowns.sales_by_setter_last_name
+          : {};
+
         function normSetterLast(x) {
           return String(x || '').trim().toLowerCase();
         }
@@ -1026,6 +1043,13 @@ def render_html(year: int, month: int) -> str:
           const kk = normSetterLast(k);
           if (!kk) continue;
           apptsBySetterNorm[kk] = (apptsBySetterNorm[kk] || 0) + Number(v || 0);
+        }
+
+        const salesBySetterNorm = {};
+        for (const [k,v] of Object.entries(salesBySetter || {})) {
+          const kk = normSetterLast(k);
+          if (!kk) continue;
+          salesBySetterNorm[kk] = (salesBySetterNorm[kk] || 0) + Number(v || 0);
         }
 
         // Top Performers — Appointments (map setter last name -> roster display_name)
@@ -1061,7 +1085,7 @@ def render_html(year: int, month: int) -> str:
           return low.charAt(0).toUpperCase() + low.slice(1);
         };
 
-        const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}), ...Object.keys(apptsBySetterNorm || {}) ]);
+        const keys = new Set([ ...Object.keys(ranBy || {}), ...Object.keys(sitBy || {}), ...Object.keys(apptsBySetterNorm || {}), ...Object.keys(salesBySetterNorm || {}) ]);
         const agg = {};
 
         for (const k of keys) {
@@ -1078,6 +1102,13 @@ def render_html(year: int, month: int) -> str:
           agg[key].appts = (agg[key].appts || 0) + Number(cnt || 0);
         }
 
+        // Add sales by setter last name (sold date window)
+        for (const [ln, cnt] of Object.entries(salesBySetterNorm || {})) {
+          const key = canSetter(ln);
+          if (!agg[key]) agg[key] = { setter: key, ran: 0, sit: 0 };
+          agg[key].sales = (agg[key].sales || 0) + Number(cnt || 0);
+        }
+
         const rows = Object.values(agg).map(r => {
           const setter = r.setter;
           const ran = Number(r.ran || 0);
@@ -1089,17 +1120,19 @@ def render_html(year: int, month: int) -> str:
 
           const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
           const appts = Number(r.appts || 0);
+          const sales = Number(r.sales || 0);
 
           const g = pk ? (goalsByPerson[pk] || {}) : {};
           const knocksGoal = (typeof g.doors_goal !== 'undefined') ? Number(g.doors_goal) : null;
           const apptsGoal = (typeof g.appts_goal !== 'undefined') ? Number(g.appts_goal) : null;
           const demosGoal = (typeof g.demos_goal !== 'undefined') ? Number(g.demos_goal) : null;
 
-          return { setter, ran, sit, pct, knocks, appts, knocksGoal, apptsGoal, demosGoal };
-        }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || a.setter.localeCompare(b.setter));
+          return { setter, ran, sit, pct, knocks, appts, sales, knocksGoal, apptsGoal, demosGoal };
+        }).sort((a,b) => (b.ran - a.ran) || (b.sit - a.sit) || (b.sales - a.sales) || a.setter.localeCompare(b.setter));
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
+        const totalSales = rows.reduce((acc, r) => acc + (Number(r.sales) || 0), 0);
         const totalPct = totalRan > 0 ? (totalSit / totalRan) * 100 : 0;
 
         const tbody = document.getElementById('setterDemoRows');
@@ -1107,7 +1140,7 @@ def render_html(year: int, month: int) -> str:
 
         if (tbody) {
           if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="6" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
           } else {
             tbody.innerHTML = rows.map(r => `
               <tr>
@@ -1117,6 +1150,7 @@ def render_html(year: int, month: int) -> str:
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.ran || 0)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.sit || 0)} / ${(r.demosGoal === null || Number.isNaN(r.demosGoal)) ? 'X' : r.demosGoal}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.sales || 0)}</td>
               </tr>`).join('');
           }
         }
@@ -1130,17 +1164,21 @@ def render_html(year: int, month: int) -> str:
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSales}</td>
             </tr>`;
         }
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
         const tfoot = document.getElementById('setterDemoTotals');
         if (tfoot) {
           tfoot.innerHTML = `
             <tr>
               <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>

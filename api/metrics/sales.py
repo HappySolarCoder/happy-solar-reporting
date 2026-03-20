@@ -135,7 +135,7 @@ def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[in
 
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
     if start and end:
         start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
     else:
@@ -306,6 +306,12 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             else:
                 lead_src = norm
 
+        # Optional lead source filter (normalized comparison)
+        if lead_source is not None and str(lead_source).strip() != "":
+            want = str(lead_source).strip()
+            if str(lead_src).strip().lower() != want.lower():
+                continue
+
         if lead_src:
             lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1
 
@@ -357,6 +363,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "sold_date_field": f"ghl_contacts_v2.customFields[{contract.sold_date_custom_field_id}] (ISO)",
             "included_stage_ids": list(contract.stage_ids),
+        },
+        "filters": {
+            "lead_source": lead_source,
         },
         "breakdowns": {
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -449,13 +458,14 @@ class Handler(BaseHTTPRequestHandler):
             month = int(qs.get("month", [str(now.month)])[0])
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
+            lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
 
             # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
             tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()
-            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end)
+            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

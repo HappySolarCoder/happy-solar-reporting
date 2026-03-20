@@ -206,11 +206,16 @@ def user_name_map(db: firestore.Client) -> dict[str, str]:
     return out
 
 
-def disposition_name_map(db: firestore.Client) -> dict[str, str]:
-    out: dict[str, str] = {}
+def disposition_map(db: firestore.Client) -> dict[str, dict[str, Any]]:
+    """Map disposition id -> {name, countsAsDoorKnock}."""
+
+    out: dict[str, dict[str, Any]] = {}
     for snap in db.collection(MetricContract.dispositions_collection).stream():
         d = snap.to_dict() or {}
-        out[str(snap.id)] = str(d.get("name") or snap.id)
+        out[str(snap.id)] = {
+            "name": str(d.get("name") or snap.id),
+            "countsAsDoorKnock": bool(d.get("countsAsDoorKnock") is True),
+        }
     return out
 
 
@@ -243,12 +248,12 @@ def build_payload(
         .order_by(MetricContract.time_field)
     )
 
+    by_actor: dict[str, int] = {}
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
-    by_dispositioned: dict[str, int] = {}
 
     streamed = 0
-    dispo_names = disposition_name_map(db)
+    dispo = disposition_map(db)
 
     appt_name = "appointment set"
     convo_allow = {
@@ -274,7 +279,17 @@ def build_payload(
         d = snap.to_dict() or {}
         cb = d.get("claimedBy")
         at = d.get("assignedTo")
-        dbu = d.get("dispositionedBy")
+
+        # Primary actor attribution (per dev schema): dispositionHistory[0].userId, fallback claimedBy
+        actor = None
+        try:
+            hist0 = (d.get("dispositionHistory") or [None])[0]
+            if isinstance(hist0, dict):
+                actor = hist0.get("userId")
+        except Exception:
+            actor = None
+        if actor in (None, ""):
+            actor = cb
 
         # Disposition key:
         # - Raydar leads usually store the disposition under `status` (e.g. "not-home", "appointment")
@@ -283,37 +298,44 @@ def build_payload(
         if dispo_key in (None, ""):
             dispo_key = d.get("status")
 
-        dispo_name = dispo_names.get(str(dispo_key), "") if dispo_key not in (None, "") else ""
+        dispo_rec = dispo.get(str(dispo_key), {}) if dispo_key not in (None, "") else {}
+        dispo_name = str(dispo_rec.get("name") or "")
         dispo_low = dispo_name.strip().lower() if isinstance(dispo_name, str) else ""
+        counts_as_knock = bool(dispo_rec.get("countsAsDoorKnock") is True)
 
         # Convos: disposition indicates homeowner conversation
         # Explicit exclusion handled by allowlist (Shade DQ + Not Home are not included)
         if dispo_low in convo_allow:
             convos_total += 1
-            if cb not in (None, ""):
-                k = str(cb)
+            if actor not in (None, ""):
+                k = str(actor)
                 convos_by_claimed[k] = convos_by_claimed.get(k, 0) + 1
 
         # Appointments Set
         if dispo_low == appt_name:
             appts_total += 1
-            if cb not in (None, ""):
-                k = str(cb)
+            if actor not in (None, ""):
+                k = str(actor)
                 appts_by_claimed[k] = appts_by_claimed.get(k, 0) + 1
 
-        # Knocks by user
+        # Door knocks are disposition-based
+        if not counts_as_knock:
+            continue
+
+        if actor not in (None, ""):
+            k = str(actor)
+            by_actor[k] = by_actor.get(k, 0) + 1
+
+        # Keep these breakdowns for debugging / reconciliation
         if cb not in (None, ""):
             k = str(cb)
             by_claimed[k] = by_claimed.get(k, 0) + 1
         if at not in (None, ""):
             k = str(at)
             by_assigned[k] = by_assigned.get(k, 0) + 1
-        if dbu not in (None, ""):
-            k = str(dbu)
-            by_dispositioned[k] = by_dispositioned.get(k, 0) + 1
 
-    result = streamed
-    count_method = "stream_len"
+    result = sum(int(v) for v in by_actor.values())
+    count_method = "SUM(knocks_by_actor)"
 
     docs = list(q.limit(25).stream())
     users = user_name_map(db)
@@ -325,16 +347,27 @@ def build_payload(
         ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else None
         claimed_by = dd.get("claimedBy")
         assigned_to = dd.get("assignedTo")
+
+        actor2 = None
+        try:
+            hist0 = (dd.get("dispositionHistory") or [None])[0]
+            if isinstance(hist0, dict):
+                actor2 = hist0.get("userId")
+        except Exception:
+            actor2 = None
+        if actor2 in (None, ""):
+            actor2 = claimed_by
+
         sample_rows.append(
             {
                 "leadId": snap.id,
                 "dispositionedAt": ts_iso,
+                "actor": actor2,
+                "actorName": users.get(str(actor2), actor2),
                 "claimedBy": claimed_by,
                 "claimedByName": users.get(str(claimed_by), claimed_by),
                 "assignedTo": assigned_to,
                 "assignedToName": users.get(str(assigned_to), assigned_to),
-                "dispositionedBy": dbu,
-                "dispositionedByName": users.get(str(dbu), dbu),
                 "city": dd.get("city"),
                 "state": dd.get("state"),
                 "zip": dd.get("zip"),
@@ -362,17 +395,17 @@ def build_payload(
             "inclusion": "dispositionedAt is non-null (enforced by >= start)",
         },
         "breakdowns": {
+            "knocks_by_actor": by_actor,
             "knocks_by_claimed_by": by_claimed,
             "knocks_by_assigned_to": by_assigned,
-            "knocks_by_dispositioned_by": by_dispositioned,
             "appointments_set_total": appts_total,
-            "appointments_set_by_claimed_by": appts_by_claimed,
+            "appointments_set_by_actor": appts_by_claimed,
             "convos_total": convos_total,
-            "convos_by_claimed_by": convos_by_claimed,
+            "convos_by_actor": convos_by_claimed,
         },
         "top_knockers": [
             {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
-            for uid, cnt in sorted(by_dispositioned.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+            for uid, cnt in sorted(by_actor.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         ],
         "top_convo_knockers": [
             {"userId": uid, "name": users.get(uid, uid), "convos": cnt}
@@ -398,7 +431,7 @@ def html_page(payload: dict) -> str:
 
     rows = payload.get("sample_rows") or []
     table_rows = "".join(
-        f"<tr><td>{esc(r.get('leadId'))}</td><td>{esc(r.get('dispositionedAt'))}</td><td>{esc(r.get('claimedByName'))}</td><td>{esc(r.get('assignedToName'))}</td><td>{esc(r.get('dispositionedByName'))}</td><td>{esc(r.get('city'))}</td><td>{esc(r.get('state'))}</td><td>{esc(r.get('zip'))}</td></tr>"
+        f"<tr><td>{esc(r.get('leadId'))}</td><td>{esc(r.get('dispositionedAt'))}</td><td>{esc(r.get('actorName'))}</td><td>{esc(r.get('claimedByName'))}</td><td>{esc(r.get('assignedToName'))}</td><td>{esc(r.get('city'))}</td><td>{esc(r.get('state'))}</td><td>{esc(r.get('zip'))}</td></tr>"
         for r in rows
     )
 
@@ -457,9 +490,9 @@ def html_page(payload: dict) -> str:
             <tr>
               <th>leadId</th>
               <th>dispositionedAt</th>
+              <th>actor</th>
               <th>claimedBy</th>
               <th>assignedTo</th>
-              <th>dispositionedBy</th>
               <th>city</th>
               <th>state</th>
               <th>zip</th>

@@ -482,7 +482,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta">Total knocks per user (dispositionedBy) for selected range</div>
+          <div class="meta">Total knocks per user (Raydar: dispositionHistory[0].userId; fallback claimedBy) for selected top-page date range</div>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -772,8 +772,8 @@ def render_html(year: int, month: int) -> str:
       setText('segConvos', `${convos === null ? '—' : convos} Convos`);
       setText('segAppts', `${appts === null ? '—' : appts} Appts`);
 
-      const top = (data && Array.isArray(data.top_knockers)) ? data.top_knockers : [];
-      renderTopList('topKnocks', top.slice(0, 10).map(r => ({ name: r.name || r.userId || '—', value: r.knocks })));
+      // Rendered later after we load Raydar knock attribution (actor) for the top-page date range
+      renderTopList('topKnocks', [{ name: 'Loading…', value: '' }]);
 
       // Top Performers — Appointments (GHL Opportunities Created by Setter Last Name)
       // NOTE: scope matches /api/metrics/opportunities_created (pipeline include/exclude rules).
@@ -851,18 +851,43 @@ def render_html(year: int, month: int) -> str:
           apptsBySetterNormTop[kk] = (apptsBySetterNormTop[kk] || 0) + Number(v || 0);
         }
 
-        // 3) Raydar knocks/appts set for the SAME window as the demo-rate table
-        // (table-only range if set; otherwise default to this month)
-        let rayUrl = '';
-        if (srTable && srTable.start && srTable.end) {
-          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
+        // 3) Raydar knocks
+        // - TOP performers (knocks card) should follow the TOP page date range
+        // - Demo-rate-by-setter table knocks column follows the table-only range
+
+        let rayTopUrl = '';
+        if (srTop && srTop.start && srTop.end) {
+          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}`;
         } else {
-          rayUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
+          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
         }
-        const rayRes = await fetch(rayUrl);
-        const ray = rayRes.ok ? await rayRes.json() : null;
-        const knocksByClaimed = ray && ray.breakdowns && ray.breakdowns.knocks_by_claimed_by ? ray.breakdowns.knocks_by_claimed_by : {};
-        const apptsByClaimed = ray && ray.breakdowns && ray.breakdowns.appointments_set_by_claimed_by ? ray.breakdowns.appointments_set_by_claimed_by : {};
+
+        let rayTableUrl = '';
+        if (srTable && srTable.start && srTable.end) {
+          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
+        } else {
+          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
+        }
+
+        const [rayTopRes, rayTableRes] = await Promise.all([
+          fetch(rayTopUrl),
+          fetch(rayTableUrl)
+        ]);
+
+        const rayTop = rayTopRes.ok ? await rayTopRes.json() : null;
+        const rayTable = rayTableRes.ok ? await rayTableRes.json() : null;
+
+        const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
+
+        // Top Performers — Knocks (Raydar actor attribution)
+        const topKnocks = Object.entries(knocksByActorTop)
+          .map(([uid, cnt]) => ({ uid, name: (rayTop && rayTop.users && rayTop.users[uid] && rayTop.users[uid].name) ? rayTop.users[uid].name : uid, value: Number(cnt||0) }))
+          .sort((a,b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)))
+          .slice(0, 10);
+        renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));
+
+        const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_claimed_by ? rayTable.breakdowns.knocks_by_claimed_by : {};
+        const apptsByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.appointments_set_by_actor ? rayTable.breakdowns.appointments_set_by_actor : {};
 
         // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
         let oppUrl = '';

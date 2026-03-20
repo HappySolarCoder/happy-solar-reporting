@@ -28,7 +28,7 @@ def render_html(year: int, month: int) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Happy Solar — FMS Dashboard</title>
+  <title>Happy Solar — FMA Dashboard</title>
   <style>
     :root {
       --bg: #f5f7fa;
@@ -368,13 +368,13 @@ def render_html(year: int, month: int) -> str:
   <div class="wrap">
     <div class="topbar">
       <div>
-        <div class="title">FMS Dashboard</div>
+        <div class="title">FMA Dashboard</div>
         <div class="subtitle">Team Performance — real-time setter metrics (Raydar-style cards)</div>
         <div class="pinkline"></div>
         <div class="nav">
           <a class="navbtn" href="/api/company_overview">Company overview</a>
           <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
-          <a class="navbtn active" href="/api/fma_dashboard">FMS dashboard</a>
+          <a class="navbtn active" href="/api/fma_dashboard">FMA Dashboard</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>
       </div>
@@ -610,6 +610,34 @@ def render_html(year: int, month: int) -> str:
     try { localStorage.removeItem(rangeKey); } catch {}
   }
 
+  function setActivePeriod(per) {
+    document.querySelectorAll('#periodTabs .pill').forEach(x => {
+      x.classList.toggle('active', String(x.getAttribute('data-period') || '').toLowerCase() === per);
+    });
+  }
+
+  function inferActivePeriod(start, end) {
+    if (!start || !end) return 'all';
+    const today = nyYmd(new Date());
+    if (start === today && end === today) return 'today';
+    const y = ymdAddDays(today, -1);
+    if (start === y && end === y) return 'yesterday';
+    if (start === ymdAddDays(today, -6) && end === today) return '7d';
+
+    const wd = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short' }).format(new Date());
+    const map = { Mon:0, Tue:1, Wed:2, Thu:3, Fri:4, Sat:5, Sun:6 };
+    const off = map[wd] ?? 0;
+    const thisMon = ymdAddDays(today, -off);
+    const lastMon = ymdAddDays(thisMon, -7);
+    const lastSun = ymdAddDays(thisMon, -1);
+
+    if (start === thisMon && end === today) return 'thiswk';
+    if (start === lastMon && end === lastSun) return 'lastwk';
+    if (start === (today.slice(0,8) + '01') && end === today) return 'thismo';
+
+    return 'custom';
+  }
+
   // Sync date inputs from URL/localStorage and wire Apply/Clear buttons
   (function initRangeUI() {
     const startEl = document.getElementById('startDate');
@@ -622,6 +650,7 @@ def render_html(year: int, month: int) -> str:
       if (endEl) endEl.value = urlEnd;
       setRange({ start: urlStart, end: urlEnd });
       if (metaEl) metaEl.textContent = `Custom range: ${urlStart} → ${urlEnd}`;
+      setActivePeriod(inferActivePeriod(urlStart, urlEnd));
       return;
     }
 
@@ -630,7 +659,11 @@ def render_html(year: int, month: int) -> str:
       if (startEl) startEl.value = r.start;
       if (endEl) endEl.value = r.end;
       if (metaEl) metaEl.textContent = `Custom range: ${r.start} → ${r.end}`;
+      setActivePeriod(inferActivePeriod(r.start, r.end));
+      return;
     }
+
+    setActivePeriod('all');
   })();
 
   function setUrlRange(s, e) {

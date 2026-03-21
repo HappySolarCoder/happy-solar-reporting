@@ -944,12 +944,13 @@ def render_html(year: int, month: int) -> str:
         let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
         if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
-        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, oppRes, salesRes] = await Promise.all([
+        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, rayMonthRes, oppRes, salesRes] = await Promise.all([
           fetch(demoUrl),
           fetch('/api/settings_api', settingsReq),
           fetch(oppTopUrl),
           fetch(rayTopUrl),
           fetch(rayTableUrl),
+          fetch('/api/metrics/raydar_doors_knocked?format=json&period=thismo'),
           fetch(oppUrl),
           fetch(salesUrl),
         ]);
@@ -992,6 +993,7 @@ def render_html(year: int, month: int) -> str:
 
         const rayTop = rayTopRes.ok ? await rayTopRes.json() : null;
         const rayTable = rayTableRes.ok ? await rayTableRes.json() : null;
+        const rayMonth = rayMonthRes.ok ? await rayMonthRes.json() : null;
 
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
@@ -1017,6 +1019,8 @@ def render_html(year: int, month: int) -> str:
 
         // Use same attribution model as Top Performers — Knocks so numbers align
         const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_actor ? rayTable.breakdowns.knocks_by_actor : {};
+        // Static month filter for row inclusion (independent of table/top date filters)
+        const knocksByActorMonth = rayMonth && rayMonth.breakdowns && rayMonth.breakdowns.knocks_by_actor ? rayMonth.breakdowns.knocks_by_actor : {};
 
         const opp = oppRes.ok ? await oppRes.json() : null;
         const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
@@ -1111,6 +1115,7 @@ def render_html(year: int, month: int) -> str:
           const rayId = setterToRaydar[setter] || setterToRaydar[setter.toLowerCase()] || '';
 
           const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
+          const knocksMonth = rayId ? Number(knocksByActorMonth[rayId] || 0) : 0;
           const appts = Number(r.appts || 0);
           const sales = Number(r.sales || 0);
 
@@ -1124,8 +1129,8 @@ def render_html(year: int, month: int) -> str:
           const dAtt = att(sit, demosGoal);
           const parts = [kAtt, aAtt, dAtt].filter(v => v !== null);
           const score = parts.length ? (parts.reduce((x,y)=>x+y,0)/parts.length) : 0;
-          return { setter, ran, sit, pct, knocks, appts, sales, knocksGoal, apptsGoal, demosGoal, score };
-        });
+          return { setter, ran, sit, pct, knocks, knocksMonth, appts, sales, knocksGoal, apptsGoal, demosGoal, score };
+        }).filter(r => Number(r.knocksMonth || 0) > 0);
 
         const sortedRows = sortSetterRows(rows);
 

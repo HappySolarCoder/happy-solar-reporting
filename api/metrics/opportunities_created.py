@@ -174,7 +174,7 @@ def normalize_channel(v: Any) -> str:
     return str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -183,6 +183,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     lead_source_norm = normalize_channel(lead_source) if lead_source else None
     if lead_source_norm and lead_source_norm.lower() == 'virtual':
         lead_source_norm = 'Phones'
+
+    setter_filter_norm = (str(setter_last_name).strip().lower() if setter_last_name else None)
 
     pipe_names = pipeline_name_lookup(db, c)
     user_names = user_name_lookup(db, c)
@@ -257,6 +259,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         setter = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
 
+        setter_norm = str(setter).strip() if setter not in (None, "") else "none"
+        if setter_filter_norm and setter_norm.lower() != setter_filter_norm:
+            continue
+
         lead_norm = normalize_channel(lead)
         if lead_source_norm and str(lead_norm).strip().lower() != str(lead_source_norm).strip().lower():
             continue
@@ -269,15 +275,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "contactId": cid,
             "contactLastName": (contact.get("lastName") if isinstance(contact, dict) else None),
             "createdAt": opp.get(c.created_at_field),
-            "setterLastName": setter,
+            "setterLastName": setter_norm,
             "leadGenSource": lead_norm,
         }
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_owner[oname] = by_owner.get(oname, 0) + 1
-        if setter:
-            key = str(setter).strip()
-            by_setter[key] = by_setter.get(key, 0) + 1
+        by_setter[setter_norm] = by_setter.get(setter_norm, 0) + 1
         by_lead[lead_norm] = by_lead.get(lead_norm, 0) + 1
 
     return {
@@ -309,6 +313,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "owner_field": f"{c.opp_collection}.assignedTo -> {c.users_collection}.name",
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
+            "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},
         },
         "breakdowns": {
             "created_by_pipeline": {k: v for k, v in sorted(by_pipeline.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -390,10 +395,11 @@ class Handler(BaseHTTPRequestHandler):
             end = (qs.get("end", [""])[0] or "").strip() or None
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
             pipeline_scope = (qs.get("pipeline_scope", [""])[0] or "").strip() or None
+            setter_last_name = (qs.get("setter_last_name", [""])[0] or "").strip() or None
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope, setter_last_name=setter_last_name)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

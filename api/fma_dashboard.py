@@ -486,6 +486,14 @@ def render_html(year: int, month: int) -> str:
               <option value="none">none</option>
             </select>
 
+            <div class="meta" style="margin-top:0">Team</div>
+            <select id="setterRoleFilter" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
+              <option value="fma" selected>FMA</option>
+              <option value="selfgen">Self Gen</option>
+              <option value="manager">Manager</option>
+              <option value="all">All</option>
+            </select>
+
             <div class="meta" style="margin-top:0">Start</div>
             <input id="setterTableStart" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;" />
             <div class="meta" style="margin-top:0">End</div>
@@ -887,6 +895,8 @@ def render_html(year: int, month: int) -> str:
         const lsEl = document.getElementById('setterTableLeadSource');
         const ls = lsEl ? String(lsEl.value || '') : '';
         const lsParam = ls ? `&lead_source=${encodeURIComponent(ls)}` : '';
+        const roleEl = document.getElementById('setterRoleFilter');
+        const selectedRole = roleEl ? String(roleEl.value || 'fma') : 'fma';
 
         // Table-only custom date range (applies ONLY to the demo-rate-by-setter table)
         const srTable = getSetterRange();
@@ -944,13 +954,14 @@ def render_html(year: int, month: int) -> str:
         let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
         if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
-        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, rayMonthRes, oppRes, salesRes] = await Promise.all([
+        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, rayMonthRes, roleRes, oppRes, salesRes] = await Promise.all([
           fetch(demoUrl),
           fetch('/api/settings_api', settingsReq),
           fetch(oppTopUrl),
           fetch(rayTopUrl),
           fetch(rayTableUrl),
           fetch('/api/metrics/raydar_doors_knocked?format=json&period=thismo'),
+          fetch('/api/metrics/raydar_user_roles?format=json'),
           fetch(oppUrl),
           fetch(salesUrl),
         ]);
@@ -994,6 +1005,8 @@ def render_html(year: int, month: int) -> str:
         const rayTop = rayTopRes.ok ? await rayTopRes.json() : null;
         const rayTable = rayTableRes.ok ? await rayTableRes.json() : null;
         const rayMonth = rayMonthRes.ok ? await rayMonthRes.json() : null;
+        const roleData = roleRes.ok ? await roleRes.json() : null;
+        const roleByUser = (roleData && roleData.users) ? roleData.users : {};
 
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
@@ -1129,8 +1142,13 @@ def render_html(year: int, month: int) -> str:
           const dAtt = att(sit, demosGoal);
           const parts = [kAtt, aAtt, dAtt].filter(v => v !== null);
           const score = parts.length ? (parts.reduce((x,y)=>x+y,0)/parts.length) : 0;
-          return { setter, ran, sit, pct, knocks, knocksMonth, appts, sales, knocksGoal, apptsGoal, demosGoal, score };
-        }).filter(r => Number(r.knocksMonth || 0) > 0);
+          const cats = (rayId && roleByUser[rayId] && Array.isArray(roleByUser[rayId].categories)) ? roleByUser[rayId].categories : [];
+          return { setter, ran, sit, pct, knocks, knocksMonth, appts, sales, knocksGoal, apptsGoal, demosGoal, score, rayId, cats };
+        }).filter(r => {
+          if (Number(r.knocksMonth || 0) <= 0) return false;
+          if (selectedRole === 'all') return true;
+          return Array.isArray(r.cats) && r.cats.includes(selectedRole);
+        });
 
         const sortedRows = sortSetterRows(rows);
 
@@ -1235,6 +1253,12 @@ def render_html(year: int, month: int) -> str:
   const setterLs2 = document.getElementById('setterTableLeadSource');
   if (setterLs2) {
     setterLs2.addEventListener('change', () => {
+      load();
+    });
+  }
+  const setterRoleEl = document.getElementById('setterRoleFilter');
+  if (setterRoleEl) {
+    setterRoleEl.addEventListener('change', () => {
       load();
     });
   }

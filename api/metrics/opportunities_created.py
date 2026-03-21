@@ -59,6 +59,7 @@ class MetricContract:
 
     # breakdown fields (already used in Sales)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
+    setter_last_name_opportunity_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
 
 
@@ -256,7 +257,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         # join to contact
         cid = str(opp.get("contactId") or "")
         contact = get_contact(cid) if cid else None
-        setter = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
+        setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        setter = setter_opp if setter_opp not in (None, "") else setter_contact
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
 
         setter_norm = str(setter).strip() if setter not in (None, "") else "none"
@@ -311,7 +314,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "included_pipeline_names": list(c.included_pipeline_names),
             "excluded_pipeline_names": list(c.excluded_pipeline_names),
             "owner_field": f"{c.opp_collection}.assignedTo -> {c.users_collection}.name",
-            "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
+            "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},
         },

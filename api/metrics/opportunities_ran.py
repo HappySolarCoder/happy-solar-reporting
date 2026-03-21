@@ -58,6 +58,7 @@ class MetricContract:
 
     # breakdown fields (reuse contact custom fields we already identified)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
+    setter_last_name_opportunity_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
 
 
@@ -269,7 +270,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         cid = str(opp.get("contactId") or "")
         contact = get_contact(cid) if cid else None
 
-        setter = contact_custom_field(contact, c.setter_last_name_contact_cf_id) if contact else None
+        setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
+        setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        setter = setter_opp if setter_opp not in (None, "") else setter_contact if contact else None
 
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id) if contact else None
         if isinstance(lead, str):
@@ -330,7 +333,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "time_field": f"{c.opp_collection}.{c.appointment_occurred_at_field} (Timestamp)",
             "time_handling": "Convert Timestamp -> America/New_York -> compare to month window (appointmentOccurredAt)",
             "excluded_pipelines": list(c.excluded_pipeline_names),
-            "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
+            "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm},
         },

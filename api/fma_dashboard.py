@@ -407,71 +407,40 @@ def render_html(year: int, month: int) -> str:
 
     <div class="grid">
       <!-- KPI row (Raydar-style cards) -->
-      <div class="card span-3">
+      <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Total Knocks</div>
-          <div class="meta">(Dispositioned leads)</div>
         </div>
         <div class="kpiRow">
           <div class="kpiVal" id="kpiKnocks">—</div>
         </div>
-        <div class="kpiSub" id="kpiKnocksSub">—</div>
+        <div class="kpiSub" id="kpiKnocksSub"></div>
       </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Convos</div>
-          <div class="meta">(Metric schema pending)</div>
-        </div>
-        <div class="kpiRow">
-          <div class="kpiVal blue" id="kpiConvos">—</div>
-        </div>
-        <div class="kpiSub" id="kpiConvosSub">—</div>
-      </div>
-
-      <div class="card span-3">
+      <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Appts</div>
-          <div class="meta">(Metric schema pending)</div>
         </div>
         <div class="kpiRow">
           <div class="kpiVal purple" id="kpiAppts">—</div>
         </div>
-        <div class="kpiSub" id="kpiApptsSub">—</div>
+        <div class="kpiSub" id="kpiApptsSub"></div>
       </div>
 
-      <div class="card span-3">
+      <div class="card span-4">
         <div class="card-header">
           <div class="card-title">Appt % Knocks</div>
-          <div class="meta">Appts / Knocks</div>
         </div>
         <div class="kpiRow">
           <div class="kpiVal amber" id="kpiApptPct">—</div>
         </div>
-        <div class="kpiSub" id="kpiApptPctSub">—</div>
-      </div>
-
-      <div class="card span-12">
-        <div class="card-header">
-          <div class="card-title">Conversion Funnel</div>
-          <div class="meta">Knocks → Convos → Appts</div>
-        </div>
-        <div class="funnelWrap">
-          <div class="funnelBar">
-            <div class="seg blue" id="segKnocks">— Knocks</div>
-            <div class="arrow">→</div>
-            <div class="seg purple" id="segConvos">— Convos</div>
-            <div class="arrow">→</div>
-            <div class="seg green" id="segAppts">— Appts</div>
-          </div>
-          <div class="note" id="funnelNote">Metric schema pending for Convos/Appts. Knocks currently backed by Raydar dispositioned leads.</div>
-        </div>
+        <div class="kpiSub" id="kpiApptPctSub"></div>
       </div>
 
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta">Total knocks per user (Raydar: dispositionHistory[0].userId; fallback claimedBy) for selected top-page date range</div>
+          <div class="meta"></div>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -483,7 +452,7 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Appointments</div>
-          <div class="meta">(Placeholder until schema is finalized)</div>
+          <div class="meta"></div>
         </div>
         <div class="list" id="topAppts">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -834,20 +803,12 @@ def render_html(year: int, month: int) -> str:
     // We'll wire the rest after metric schema is confirmed.
 
     setText('kpiKnocks', '…');
-    setText('kpiConvos', '—');
     setText('kpiAppts', '—');
     setText('kpiApptPct', '—');
-    setText('kpiGobacks', '—');
 
-    setText('kpiKnocksSub', 'Loading…');
-    setText('kpiConvosSub', 'Schema pending');
-    setText('kpiApptsSub', 'Schema pending');
-    setText('kpiApptPctSub', 'Schema pending');
-    setText('kpiGobacksSub', 'Schema pending');
-
-    setText('segKnocks', '… Knocks');
-    setText('segConvos', '— Convos');
-    setText('segAppts', '— Appts');
+    setText('kpiKnocksSub', '');
+    setText('kpiApptsSub', '');
+    setText('kpiApptPctSub', '');
 
     try {
       // Knocks (Doors Knocked) date filter is raydar_leads_v1.dispositionedAt (canonical).
@@ -871,19 +832,7 @@ def render_html(year: int, month: int) -> str:
       const knocks = data && typeof data.result !== 'undefined' ? Number(data.result) : null;
       setText('kpiKnocks', knocks === null ? '—' : String(knocks));
 
-      const sub = data && data.window_start_local && data.window_end_local
-        ? `Dispositioned leads (${data.window_start_local} → ${data.window_end_local})`
-        : 'Dispositioned leads (dispositionedAt)';
-      setText('kpiKnocksSub', sub);
-
-      setText('segKnocks', `${knocks === null ? '—' : knocks} Knocks`);
-
-      // Convos = homeowner conversations (Raydar disposition allowlist; Shade DQ excluded)
-      const convos = (data && data.breakdowns && typeof data.breakdowns.convos_total !== 'undefined')
-        ? Number(data.breakdowns.convos_total)
-        : null;
-      setText('kpiConvos', convos === null ? '—' : String(convos));
-      setText('kpiConvosSub', 'Disposition allowlist (Shade DQ excluded)');
+      setText('kpiKnocksSub', '');
 
 
 
@@ -893,15 +842,11 @@ def render_html(year: int, month: int) -> str:
         : null;
 
       setText('kpiAppts', appts === null ? '—' : String(appts));
-      setText('kpiApptsSub', 'Disposition = Appointment Set');
+      setText('kpiApptsSub', '');
 
       const pct = (appts !== null && knocks !== null && knocks > 0) ? (appts / knocks) * 100 : null;
       setText('kpiApptPct', pct === null ? '—' : `${pct.toFixed(1)}%`);
-      setText('kpiApptPctSub', 'Appointments / Knocks');
-
-      // Funnel (Convos still pending)
-      setText('segConvos', `${convos === null ? '—' : convos} Convos`);
-      setText('segAppts', `${appts === null ? '—' : appts} Appts`);
+      setText('kpiApptPctSub', '');
 
       // Rendered later after we load Raydar knock attribution (actor) for the top-page date range
       renderTopList('topKnocks', [{ name: 'Loading…', value: '' }]);
@@ -1215,7 +1160,6 @@ def render_html(year: int, month: int) -> str:
     } catch (e) {
       setText('kpiKnocks', 'ERR');
       setText('kpiKnocksSub', String(e));
-      setText('segKnocks', 'ERR Knocks');
     }
   }
 

@@ -451,17 +451,6 @@ def render_html(year: int, month: int) -> str:
         <div class="kpiSub" id="kpiApptPctSub">—</div>
       </div>
 
-      <div class="card span-3">
-        <div class="card-header">
-          <div class="card-title">Go-Backs</div>
-          <div class="meta">(Metric schema pending)</div>
-        </div>
-        <div class="kpiRow">
-          <div class="kpiVal green" id="kpiGobacks">—</div>
-        </div>
-        <div class="kpiSub" id="kpiGobacksSub">—</div>
-      </div>
-
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Conversion Funnel</div>

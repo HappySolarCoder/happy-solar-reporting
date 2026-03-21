@@ -668,6 +668,14 @@ def render_html(year: int, month: int) -> str:
     const sy = (v) => m.t + ih - (v / yMax) * ih;
     const path = vals.map((v,i)=>`${i===0?'M':'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
 
+    let pointMarks = '';
+    for (let i=0;i<vals.length;i++) {
+      const x = sx(i), y = sy(vals[i]);
+      const valTxt = (key === 'opp2prelim') ? `${Number(vals[i]).toFixed(1)}%` : `${Math.round(vals[i])}`;
+      pointMarks += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.2" />`;
+      pointMarks += `<text x="${x.toFixed(1)}" y="${(y-7).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">${valTxt}</text>`;
+    }
+
     let xTicks = '';
     for (let i=0;i<labels.length;i++) {
       xTicks += `<text x="${sx(i).toFixed(1)}" y="${(H-10)}" text-anchor="middle" font-size="10" fill="#64748b">${labels[i].slice(2)}</text>`;
@@ -681,7 +689,7 @@ def render_html(year: int, month: int) -> str:
       yGrid += `<text x="${m.l-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${Math.round(v)}${ySuffix}</text>`;
     }
 
-    container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%">${yGrid}<path d="${path}" fill="none" stroke="${color}" stroke-width="3"/>${xTicks}</svg>`;
+    container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%">${yGrid}<path d="${path}" fill="none" stroke="${color}" stroke-width="3"/>${pointMarks}${xTicks}</svg>`;
   }
 
   function rangeParams() {

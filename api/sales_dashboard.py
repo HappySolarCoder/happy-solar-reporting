@@ -392,8 +392,21 @@ def render_html(year: int, month: int) -> str:
 
       <div class="card span-12">
         <div class="card-header">
-          <div class="card-title">Owner Performance</div>
-          <div class="meta">Opp2Prelim = Sales / Opps Ran (Opps Ran uses appointmentOccurredAt month window)</div>
+          <div>
+            <div class="card-title">Owner Performance</div>
+            <div class="meta">Opp2Prelim = Sales / Opps Ran (Opps Ran uses appointmentOccurredAt month window)</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div class="meta" style="margin-top:0">Lead Gen Source</div>
+            <select id="ownerLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
+              <option value="">All</option>
+              <option value="Doors">Doors</option>
+              <option value="Phones">Phones</option>
+              <option value="3PL">3PL</option>
+              <option value="Self Gen">Self Gen</option>
+              <option value="none">none</option>
+            </select>
+          </div>
         </div>
         <div class="tablewrap">
           <table>
@@ -605,6 +618,10 @@ def render_html(year: int, month: int) -> str:
     const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`; // now filtered by appointmentOccurredAt
 
+    const ownerLeadSel = document.getElementById('ownerLeadSource');
+    const ownerLead = ownerLeadSel ? String(ownerLeadSel.value || '') : '';
+    const ownerLeadParam = ownerLead ? `&lead_source=${encodeURIComponent(ownerLead)}` : '';
+
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('ownerRows').innerHTML = '<tr><td colspan="4" class="skeleton">Loading…</td></tr>';
@@ -628,8 +645,17 @@ def render_html(year: int, month: int) -> str:
     const sbp = (salesData.breakdowns || {}).sales_by_pipeline || {};
     renderVertical(document.getElementById('salesByPipelineV'), sbp);
 
-    const salesByOwner = (salesData.breakdowns || {}).sales_by_owner || {};
-    const ranByOwner = (ranData && ranData.breakdowns ? (ranData.breakdowns.ran_by_owner || {}) : {}) || {};
+    // Owner table uses optional Lead Gen Source filter
+    const [ownerSalesRes, ownerRanRes] = await Promise.all([
+      fetch(`/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`),
+      fetch(`/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`)
+    ]);
+
+    const ownerSalesData = ownerSalesRes.ok ? await ownerSalesRes.json() : { breakdowns: {} };
+    const ownerRanData = ownerRanRes.ok ? await ownerRanRes.json() : { breakdowns: {} };
+
+    const salesByOwner = (ownerSalesData.breakdowns || {}).sales_by_owner || {};
+    const ranByOwner = (ownerRanData && ownerRanData.breakdowns ? (ownerRanData.breakdowns.ran_by_owner || {}) : {}) || {};
 
     // union of owners
     const owners = new Set([...Object.keys(salesByOwner||{}), ...Object.keys(ranByOwner||{})]);
@@ -706,6 +732,9 @@ def render_html(year: int, month: int) -> str:
     u.searchParams.delete('end');
     window.location.href = u.toString();
   });
+
+  const ownerLeadSel = document.getElementById('ownerLeadSource');
+  if (ownerLeadSel) ownerLeadSel.addEventListener('change', () => load());
 
   load();
 </script>

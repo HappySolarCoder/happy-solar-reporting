@@ -186,11 +186,16 @@ def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     return m
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
         start_local, end_local, start_iso, end_iso = month_window(year, month, c.timezone)
+
+    lead_source_norm = None
+    if lead_source is not None and str(lead_source).strip() != "":
+        v = str(lead_source).strip()
+        lead_source_norm = "none" if v.lower() in {"crm ui", "hand", "", "none", "null", "n/a"} else v
 
     # lookup maps (small; ok for QA)
     pipe_names = pipeline_name_lookup(db)
@@ -284,6 +289,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             lead = "none" if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"} else norm
         if lead is None:
             lead = "none"
+
+        if lead_source_norm and str(lead).strip().lower() != str(lead_source_norm).strip().lower():
+            continue
+
         by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
 
         # Capture matching row keyed by opportunityId so result and list cannot diverge
@@ -322,6 +331,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"{c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
+            "filters": {"lead_source": lead_source_norm},
         },
         "breakdowns": {
             "ran_by_pipeline": {k: v for k, v in sorted(by_pipeline.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -428,10 +438,11 @@ class Handler(BaseHTTPRequestHandler):
             month = int(qs.get("month", [str(now.month)])[0])
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
+            lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source)
 
             if want_json:
                 body = json.dumps(json_safe(payload)).encode("utf-8")

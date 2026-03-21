@@ -225,9 +225,9 @@ def render_html(year: int, month: int) -> str:
       color:#fff;
       text-align:center;
       box-shadow: inset 0 -6px 12px rgba(0,0,0,.10), 0 1px 2px rgba(17,24,39,.08);
-      /* Rounded trapezoid (single shape, no backing layer) */
-      clip-path: path('M 8 0 Q 0 0 0 8 L 10 92 Q 11 100 19 100 L 81 100 Q 89 100 90 92 L 100 8 Q 100 0 92 0 Z');
-      -webkit-clip-path: path('M 8 0 Q 0 0 0 8 L 10 92 Q 11 100 19 100 L 81 100 Q 89 100 90 92 L 100 8 Q 100 0 92 0 Z');
+      /* Stable full-size trapezoid geometry */
+      clip-path: polygon(0% 0%, 100% 0%, 90% 100%, 10% 100%);
+      -webkit-clip-path: polygon(0% 0%, 100% 0%, 90% 100%, 10% 100%);
     }
     /* Match dashboard palette */
     .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#00C853 0%, #16a34a 100%); }

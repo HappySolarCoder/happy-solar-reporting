@@ -375,19 +375,18 @@ def render_html(year: int, month: int) -> str:
     </div>
 
     <div class="grid">
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Total Sales</div>
-          <div class="meta"><a href="/api/metrics/sales">QA</a></div>
-        </div>
-        <div class="kpi" id="totalSales">—</div>
-        <div class="meta" id="salesMeta"></div>
-      </div>
-
-      <div class="card span-8">
-        <div class="card-header">
-          <div class="card-title">Sales by Pipeline</div>
-          <div class="meta">Vertical bars</div>
+      <div class="card span-12">
+        <div class="card-header" style="display:grid; grid-template-columns:1fr auto 1fr; align-items:start; margin-bottom:4px;">
+          <div style="justify-self:start;">
+            <div class="card-title">Sales by Pipeline</div>
+            <div class="meta">Vertical bars</div>
+          </div>
+          <div style="text-align:center; line-height:1; justify-self:center;">
+            <div class="meta" style="margin-top:0; font-size:12px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
+            <div id="totalSales" style="font-size:44px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
+            <div class="meta" id="salesMeta" style="margin-top:2px"></div>
+          </div>
+          <div></div>
         </div>
         <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>
@@ -421,6 +420,28 @@ def render_html(year: int, month: int) -> str:
               </tr>
             </thead>
             <tbody id="ownerRows">
+              <tr><td colspan="4" class="skeleton">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-12">
+        <div class="card-header">
+          <div class="card-title">Self Gen Opps</div>
+          <div class="meta">By Setter Last Name</div>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Setter Last Name</th>
+                <th style="text-align:right">Opps Created</th>
+                <th style="text-align:right">Opps Ran</th>
+                <th style="text-align:right">Demo %</th>
+              </tr>
+            </thead>
+            <tbody id="selfGenRows">
               <tr><td colspan="4" class="skeleton">Loading…</td></tr>
             </tbody>
           </table>
@@ -627,6 +648,7 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('ownerRows').innerHTML = '<tr><td colspan="4" class="skeleton">Loading…</td></tr>';
+    document.getElementById('selfGenRows').innerHTML = '<tr><td colspan="4" class="skeleton">Loading…</td></tr>';
 
     const [salesRes, ranRes] = await Promise.all([
       fetch(salesUrl),
@@ -705,6 +727,41 @@ def render_html(year: int, month: int) -> str:
       </tr>`;
 
     document.getElementById('ownerRows').innerHTML = html;
+
+    // Self Gen Opps by Setter Last Name
+    const [sgCreatedRes, sgDemoRes] = await Promise.all([
+      fetch(`/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
+      fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=${encodeURIComponent('Self Gen')}`)
+    ]);
+
+    const sgCreated = sgCreatedRes.ok ? await sgCreatedRes.json() : null;
+    const sgDemo = sgDemoRes.ok ? await sgDemoRes.json() : null;
+
+    const createdBySetter = (sgCreated && sgCreated.breakdowns && sgCreated.breakdowns.created_by_setter_last_name) ? sgCreated.breakdowns.created_by_setter_last_name : {};
+    const ranBySetter = (sgDemo && sgDemo.breakdowns && sgDemo.breakdowns.ran_by_setter_last_name) ? sgDemo.breakdowns.ran_by_setter_last_name : {};
+    const sitBySetter = (sgDemo && sgDemo.breakdowns && sgDemo.breakdowns.sit_by_setter_last_name) ? sgDemo.breakdowns.sit_by_setter_last_name : {};
+
+    const setters = new Set([...Object.keys(createdBySetter||{}), ...Object.keys(ranBySetter||{}), ...Object.keys(sitBySetter||{})]);
+    const sgRows = [...setters].map((setter) => {
+      const created = Number(createdBySetter[setter] || 0);
+      const ran = Number(ranBySetter[setter] || 0);
+      const sit = Number(sitBySetter[setter] || 0);
+      const demoPct = ran > 0 ? (sit / ran) * 100 : null;
+      return { setter, created, ran, demoPct };
+    }).sort((a,b) => (b.created - a.created) || (b.ran - a.ran) || a.setter.localeCompare(b.setter));
+
+    let sgHtml = '';
+    for (const r of sgRows) {
+      sgHtml += `
+        <tr>
+          <td>${r.setter || '—'}</td>
+          <td class="num">${r.created}</td>
+          <td class="num">${r.ran}</td>
+          <td class="num">${r.demoPct === null ? '—' : `${r.demoPct.toFixed(1)}%`}</td>
+        </tr>`;
+    }
+    if (!sgHtml) sgHtml = '<tr><td colspan="4" class="skeleton">No Self Gen data</td></tr>';
+    document.getElementById('selfGenRows').innerHTML = sgHtml;
   }
 
   const years = [];

@@ -223,7 +223,7 @@ def render_html(year: int, month: int) -> str:
       margin-top:8px;
       color:#fff;
       text-align:center;
-      clip-path: polygon(8% 0%, 92% 0%, 100% 100%, 0% 100%);
+      clip-path: polygon(0% 0%, 100% 0%, 92% 100%, 8% 100%);
       box-shadow: inset 0 -6px 12px rgba(0,0,0,.12);
     }
     .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#0b4f8a 0%, #0f6bb2 100%); }

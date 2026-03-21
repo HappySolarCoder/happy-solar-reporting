@@ -1145,10 +1145,10 @@ def render_html(year: int, month: int) -> str:
           const p = g > 0 ? Math.max(0, Math.min(160, (a / g) * 100)) : null;
           const tone = (p === null) ? '#94a3b8' : (p >= 100 ? '#10b981' : (p >= 80 ? '#f59e0b' : '#ef4444'));
           return `<div style="text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${a} / ${g || '—'}</div>
-                  <div style="margin-top:3px; height:7px; background:#eef2f7; border-radius:999px; overflow:hidden;">
+                  <div style="margin-top:2px; height:5px; background:#eef2f7; border-radius:999px; overflow:hidden;">
                     <div style="height:100%; width:${p===null?0:p}%; background:${tone};"></div>
                   </div>
-                  <div style="margin-top:2px; font-size:10px; color:#64748b; text-align:right;">${p===null?'No goal':p.toFixed(0)+'%'}</div>`;
+                  <div style="margin-top:2px; font-size:9px; color:#64748b; text-align:right;">${p===null?'No goal':p.toFixed(0)+'%'}</div>`;
         }
 
         const tbody = document.getElementById('setterDemoRows');

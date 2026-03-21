@@ -487,6 +487,54 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
+      <!-- Opp2Prelim KPI row by Lead Gen Source -->
+      <div class="demoRow">
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Opp2Prelim (Company)</div>
+            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="opp2prelimCompany">—</div>
+          <div class="meta" id="opp2prelimCompanyCounts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Opp2Prelim — Doors</div>
+            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="opp2prelimDoors">—</div>
+          <div class="meta" id="opp2prelimDoorsCounts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Opp2Prelim — Self Gen</div>
+            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="opp2prelimSelfGen">—</div>
+          <div class="meta" id="opp2prelimSelfGenCounts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Opp2Prelim — Phones</div>
+            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="opp2prelimPhones">—</div>
+          <div class="meta" id="opp2prelimPhonesCounts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Opp2Prelim — 3PL</div>
+            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+          </div>
+          <div class="kpi" id="opp2prelim3pl">—</div>
+          <div class="meta" id="opp2prelim3plCounts">Sales: — • Ran: —</div>
+        </div>
+      </div>
+
       <!-- Row 2: Sales per Team full width -->
       <div class="card span-12">
         <div class="card-header">
@@ -750,6 +798,16 @@ def render_html(year: int, month: int) -> str:
     const demoVirtualUrl = `${demoBase}&lead_source=Phones`;
     const demo3plUrl = `${demoBase}&lead_source=3PL`;
 
+    const salesDoorsUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Doors`;
+    const salesSelfGenUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Self%20Gen`;
+    const salesPhonesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Phones`;
+    const sales3plUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=3PL`;
+
+    const ranDoorsUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Doors`;
+    const ranSelfGenUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Self%20Gen`;
+    const ranPhonesUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Phones`;
+    const ran3plUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=3PL`;
+
     document.getElementById('totalSales').textContent = '…';
     document.getElementById('totalCreated').textContent = '…';
     document.getElementById('opp2prelim').textContent = '…';
@@ -776,6 +834,17 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('demoRate3plCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('opp2prelimMeta').textContent = '';
 
+    document.getElementById('opp2prelimCompany').textContent = '…';
+    document.getElementById('opp2prelimDoors').textContent = '…';
+    document.getElementById('opp2prelimSelfGen').textContent = '…';
+    document.getElementById('opp2prelimPhones').textContent = '…';
+    document.getElementById('opp2prelim3pl').textContent = '…';
+    document.getElementById('opp2prelimCompanyCounts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('opp2prelimDoorsCounts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('opp2prelimSelfGenCounts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('opp2prelimPhonesCounts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('opp2prelim3plCounts').textContent = 'Sales: … • Ran: …';
+
     document.getElementById('createdMeta').textContent = '';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('salesByChannelV').innerHTML = '<div class="skeleton">Loading…</div>';
@@ -783,7 +852,9 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes] = await Promise.all([
+    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes,
+      salesDoorsRes, salesSelfGenRes, salesPhonesRes, sales3plRes,
+      ranDoorsRes, ranSelfGenRes, ranPhonesRes, ran3plRes] = await Promise.all([
       fetch(salesUrl),
       fetch(createdUrl),
       fetch(ranUrl),
@@ -791,7 +862,15 @@ def render_html(year: int, month: int) -> str:
       fetch(demoDoorsUrl),
       fetch(demoSelfGenUrl),
       fetch(demoVirtualUrl),
-      fetch(demo3plUrl)
+      fetch(demo3plUrl),
+      fetch(salesDoorsUrl),
+      fetch(salesSelfGenUrl),
+      fetch(salesPhonesUrl),
+      fetch(sales3plUrl),
+      fetch(ranDoorsUrl),
+      fetch(ranSelfGenUrl),
+      fetch(ranPhonesUrl),
+      fetch(ran3plUrl)
     ]);
 
     if (!salesRes.ok) {
@@ -808,6 +887,16 @@ def render_html(year: int, month: int) -> str:
     const demoSelfGenData = demoSelfGenRes.ok ? await demoSelfGenRes.json() : null;
     const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
     const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
+
+    const salesDoorsData = salesDoorsRes.ok ? await salesDoorsRes.json() : null;
+    const salesSelfGenData = salesSelfGenRes.ok ? await salesSelfGenRes.json() : null;
+    const salesPhonesData = salesPhonesRes.ok ? await salesPhonesRes.json() : null;
+    const sales3plData = sales3plRes.ok ? await sales3plRes.json() : null;
+
+    const ranDoorsData = ranDoorsRes.ok ? await ranDoorsRes.json() : null;
+    const ranSelfGenData = ranSelfGenRes.ok ? await ranSelfGenRes.json() : null;
+    const ranPhonesData = ranPhonesRes.ok ? await ranPhonesRes.json() : null;
+    const ran3plData = ran3plRes.ok ? await ran3plRes.json() : null;
 
     document.getElementById('totalSales').textContent = salesData.result;
     document.getElementById('salesMeta').textContent = '';
@@ -859,6 +948,20 @@ def render_html(year: int, month: int) -> str:
       document.getElementById('opp2prelim').textContent = pct === null ? '—' : `${pct.toFixed(1)}%`;
       document.getElementById('opp2prelimMeta').textContent = '';
     }
+
+    function setOpp2PrelimCard(kpiId, countsId, sData, rData) {
+      const s = Number((sData && sData.result) || 0);
+      const r = Number((rData && rData.result) || 0);
+      const p = r > 0 ? (s / r) * 100 : null;
+      document.getElementById(kpiId).textContent = p === null ? '—' : `${p.toFixed(1)}%`;
+      document.getElementById(countsId).textContent = `Sales: ${s} • Ran: ${r}`;
+    }
+
+    setOpp2PrelimCard('opp2prelimCompany', 'opp2prelimCompanyCounts', salesData, ranData);
+    setOpp2PrelimCard('opp2prelimDoors', 'opp2prelimDoorsCounts', salesDoorsData, ranDoorsData);
+    setOpp2PrelimCard('opp2prelimSelfGen', 'opp2prelimSelfGenCounts', salesSelfGenData, ranSelfGenData);
+    setOpp2PrelimCard('opp2prelimPhones', 'opp2prelimPhonesCounts', salesPhonesData, ranPhonesData);
+    setOpp2PrelimCard('opp2prelim3pl', 'opp2prelim3plCounts', sales3plData, ran3plData);
 
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});

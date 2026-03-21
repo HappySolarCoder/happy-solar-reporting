@@ -262,28 +262,6 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         # For display/debug, store dateSold as the YYYY-MM-DD string.
         date_sold_ms = sold_date_str
 
-        opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
-        unique_opp_ids.add(str(opp_id))
-
-        # Breakdown by pipeline (human name)
-        pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
-        pipeline_counts[pname] = pipeline_counts.get(pname, 0) + 1
-
-        # Breakdown by opportunity owner (assignedTo)
-        owner_id = opp.get("assignedTo")
-        oname = user_name_from_id(owner_id) or str(owner_id or "unassigned")
-        owner_counts[oname] = owner_counts.get(oname, 0) + 1
-
-        # Breakdown by Setter Last Name (custom field on contact)
-        setter_name = None
-        if contract.setter_last_name_custom_field_id:
-            for cf in (contact.get("customFields") or []):
-                if isinstance(cf, dict) and cf.get("id") == contract.setter_last_name_custom_field_id:
-                    setter_name = cf.get("value")
-                    break
-        setter_bucket = str(setter_name).strip() if setter_name not in (None, "") else "none"
-        setter_counts[setter_bucket] = setter_counts.get(setter_bucket, 0) + 1
-
         # Breakdown by Lead Gen Source (custom field on contact, fallback to attributionSource)
         lead_src = None
         if contract.lead_gen_source_custom_field_id:
@@ -311,6 +289,28 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             want = str(lead_source).strip()
             if str(lead_src).strip().lower() != want.lower():
                 continue
+
+        opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
+        unique_opp_ids.add(str(opp_id))
+
+        # Breakdown by pipeline (human name)
+        pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
+        pipeline_counts[pname] = pipeline_counts.get(pname, 0) + 1
+
+        # Breakdown by opportunity owner (assignedTo)
+        owner_id = opp.get("assignedTo")
+        oname = user_name_from_id(owner_id) or str(owner_id or "unassigned")
+        owner_counts[oname] = owner_counts.get(oname, 0) + 1
+
+        # Breakdown by Setter Last Name (custom field on contact)
+        setter_name = None
+        if contract.setter_last_name_custom_field_id:
+            for cf in (contact.get("customFields") or []):
+                if isinstance(cf, dict) and cf.get("id") == contract.setter_last_name_custom_field_id:
+                    setter_name = cf.get("value")
+                    break
+        setter_bucket = str(setter_name).strip() if setter_name not in (None, "") else "none"
+        setter_counts[setter_bucket] = setter_counts.get(setter_bucket, 0) + 1
 
         if lead_src:
             lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1

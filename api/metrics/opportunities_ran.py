@@ -265,23 +265,11 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         if isinstance(pname, str) and pname.strip().lower() in set(c.excluded_pipeline_names):
             continue
 
-        # distinct count (after exclusions)
-        distinct_opp_ids.add(opp_id)
-
-        by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
-
-        # owner
-        owner_id = str(opp.get("assignedTo") or "")
-        oname = user_names.get(owner_id) or owner_id or "unassigned"
-        by_owner[oname] = by_owner.get(oname, 0) + 1
-
         # join to contact for setter + lead source
         cid = str(opp.get("contactId") or "")
         contact = get_contact(cid) if cid else None
 
         setter = contact_custom_field(contact, c.setter_last_name_contact_cf_id) if contact else None
-        if setter:
-            by_setter[str(setter).strip()] = by_setter.get(str(setter).strip(), 0) + 1
 
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id) if contact else None
         if isinstance(lead, str):
@@ -292,6 +280,19 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         if lead_source_norm and str(lead).strip().lower() != str(lead_source_norm).strip().lower():
             continue
+
+        # distinct count (after all filters)
+        distinct_opp_ids.add(opp_id)
+
+        by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
+
+        # owner
+        owner_id = str(opp.get("assignedTo") or "")
+        oname = user_names.get(owner_id) or owner_id or "unassigned"
+        by_owner[oname] = by_owner.get(oname, 0) + 1
+
+        if setter:
+            by_setter[str(setter).strip()] = by_setter.get(str(setter).strip(), 0) + 1
 
         by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
 

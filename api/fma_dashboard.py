@@ -987,8 +987,8 @@ def render_html(year: int, month: int) -> str:
           .slice(0, 10);
         renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));
 
-        const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_claimed_by ? rayTable.breakdowns.knocks_by_claimed_by : {};
-        const apptsByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.appointments_set_by_actor ? rayTable.breakdowns.appointments_set_by_actor : {};
+        // Use same attribution model as Top Performers — Knocks so numbers align
+        const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_actor ? rayTable.breakdowns.knocks_by_actor : {};
 
         // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
         let oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}&pipeline_scope=all`;

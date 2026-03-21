@@ -433,15 +433,6 @@ def render_html(year: int, month: int) -> str:
     </div>
 
     <div class="grid">
-      <!-- Top KPI row -->
-      <div class="card span-12" style="text-align:center; max-width:420px; margin:0 auto;">
-        <div class="card-header" style="justify-content:center;">
-          <div class="card-title" style="font-size:14px;">Total Sales</div>
-        </div>
-        <div class="kpi" id="totalSales" style="text-align:center;">—</div>
-        <div class="meta" id="salesMeta" style="text-align:center;">—</div>
-      </div>
-
       <!-- Lead Gen Performance (stacked funnel cards) -->
       <div class="demoRow">
         <div class="card demoCard funnelCard">
@@ -489,8 +480,15 @@ def render_html(year: int, month: int) -> str:
       <!-- Row 2: Sales per Team full width -->
       <div class="card span-12">
         <div class="card-header">
-          <div class="card-title">Sales per Team (Pipeline)</div>
-          <div class="meta">Vertical bars</div>
+          <div>
+            <div class="card-title">Sales per Team (Pipeline)</div>
+            <div class="meta">Vertical bars</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="meta" style="margin-top:0">Total Sales</div>
+            <div style="font-size:32px; font-weight:950; line-height:1;" id="totalSales">—</div>
+            <div class="meta" id="salesMeta" style="margin-top:4px"></div>
+          </div>
         </div>
         <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>

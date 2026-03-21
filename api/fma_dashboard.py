@@ -488,6 +488,12 @@ def render_html(year: int, month: int) -> str:
             <button id="setterTableClear" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
           </div>
         </div>
+        <div id="setterSummary" style="display:grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap:10px; margin-top:10px;">
+          <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Setters With Goals</div><div id="sumSetters" style="font-size:22px; font-weight:900;">—</div></div>
+          <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Avg Knocks Attainment</div><div id="sumKnocksAtt" style="font-size:22px; font-weight:900;">—</div></div>
+          <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Avg Appts Attainment</div><div id="sumApptsAtt" style="font-size:22px; font-weight:900;">—</div></div>
+          <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Total Sales</div><div id="sumSales" style="font-size:22px; font-weight:900;">—</div></div>
+        </div>
         <div style="margin-top:10px; overflow:auto">
           <table style="width:100%; border-collapse: collapse;">
             <thead>
@@ -1105,6 +1111,23 @@ def render_html(year: int, month: int) -> str:
         const totalSales = rows.reduce((acc, r) => acc + (Number(r.sales) || 0), 0);
         const totalPct = totalRan > 0 ? (totalSit / totalRan) * 100 : 0;
 
+        function att(actual, goal) {
+          const g = Number(goal || 0);
+          if (!g) return null;
+          return (Number(actual || 0) / g) * 100;
+        }
+        function progressCell(actual, goal) {
+          const a = Number(actual || 0);
+          const g = Number(goal || 0);
+          const p = g > 0 ? Math.max(0, Math.min(160, (a / g) * 100)) : null;
+          const tone = (p === null) ? '#94a3b8' : (p >= 100 ? '#10b981' : (p >= 80 ? '#f59e0b' : '#ef4444'));
+          return `<div style="text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${a} / ${g || '—'}</div>
+                  <div style="margin-top:4px; height:8px; background:#eef2f7; border-radius:999px; overflow:hidden;">
+                    <div style="height:100%; width:${p===null?0:p}%; background:${tone};"></div>
+                  </div>
+                  <div style="margin-top:3px; font-size:11px; color:#64748b; text-align:right;">${p===null?'No goal':p.toFixed(0)+'%'}</div>`;
+        }
+
         const tbody = document.getElementById('setterDemoRows');
         const tfoot = document.getElementById('setterDemoTotals');
 
@@ -1116,15 +1139,23 @@ def render_html(year: int, month: int) -> str:
             tbody.innerHTML = sortedRows.map(r => `
               <tr>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.knocks || 0)} / ${(r.knocksGoal === null || Number.isNaN(r.knocksGoal)) ? 'X' : r.knocksGoal}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.appts || 0)} / ${(r.apptsGoal === null || Number.isNaN(r.apptsGoal)) ? 'X' : r.apptsGoal}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.knocks, r.knocksGoal)}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.appts, r.apptsGoal)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.ran || 0)}</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.sit || 0)} / ${(r.demosGoal === null || Number.isNaN(r.demosGoal)) ? 'X' : r.demosGoal}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.sit, r.demosGoal)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.sales || 0)}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.sales || 0)}</td>
               </tr>`).join('');
           }
         }
+
+        const withGoals = rows.filter(r => (Number(r.knocksGoal||0)>0) || (Number(r.apptsGoal||0)>0));
+        const avgKnocksAtt = withGoals.length ? (withGoals.reduce((a,r)=>a + (att(r.knocks,r.knocksGoal)||0),0)/withGoals.length) : null;
+        const avgApptsAtt = withGoals.length ? (withGoals.reduce((a,r)=>a + (att(r.appts,r.apptsGoal)||0),0)/withGoals.length) : null;
+        setText('sumSetters', String(withGoals.length));
+        setText('sumKnocksAtt', avgKnocksAtt===null ? '—' : `${avgKnocksAtt.toFixed(0)}%`);
+        setText('sumApptsAtt', avgApptsAtt===null ? '—' : `${avgApptsAtt.toFixed(0)}%`);
+        setText('sumSales', String(totalSales));
 
         if (tfoot) {
           tfoot.innerHTML = `

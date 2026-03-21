@@ -361,9 +361,9 @@ def render_html() -> str:
     document.getElementById('kpiAppts').textContent = '…';
 
     const kixieUrl = `/api/metrics/kixie_calls_summary?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
-    const oppCreatedPhonesUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('Phones')}`;
-    const oppCreated3plUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('3PL')}`;
-    const oppCreatedInboundUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&lead_source=${encodeURIComponent('Inbound')}`;
+    const oppCreatedPhonesUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`;
+    const oppCreated3plUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('3PL')}`;
+    const oppCreatedInboundUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('Inbound')}`;
 
     const [kixieRes, createdPhonesRes, created3plRes, createdInboundRes] = await Promise.all([
       fetch(kixieUrl, { cache:'no-store' }),

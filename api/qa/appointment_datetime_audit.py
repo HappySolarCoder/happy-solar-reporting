@@ -67,26 +67,41 @@ def custom_datetime_candidates(opportunity: dict[str, Any]) -> list[dict[str, st
 
 
 def related_event_hits(db: firestore.Client, opp_id: str, contact_id: str) -> dict[str, Any]:
-    cols = ["ghl_calendar_events_v2", "ghl_appointments_v2", "ghl_events_v2", "ghl_calendar_events", "ghl_appointments"]
+    cols = [
+        "ghl_calendar_events_v2",
+        "ghl_appointments_v2",
+        "ghl_events_v2",
+        "ghl_calendar_events",
+        "ghl_appointments",
+        "ghl_tasks_v2",
+        "ghl_notes_v2",
+    ]
     hits: dict[str, Any] = {}
+
+    def pick_datetime_fields(doc: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for k, v in doc.items():
+            lk = str(k).lower()
+            if any(t in lk for t in ["date", "time", "start", "end", "sched", "appoint", "occurred"]):
+                out[k] = to_iso_utc(v) if isinstance(v, datetime) else v
+        return out
+
     for col in cols:
         try:
             docs = []
             if contact_id:
-                docs = list(db.collection(col).where("contactId", "==", contact_id).limit(2).stream())
+                docs = list(db.collection(col).where("contactId", "==", contact_id).limit(3).stream())
             if (not docs) and opp_id:
-                docs = list(db.collection(col).where("opportunityId", "==", opp_id).limit(2).stream())
+                docs = list(db.collection(col).where("opportunityId", "==", opp_id).limit(3).stream())
             if docs:
                 rows = []
                 for d in docs:
                     x = d.to_dict() or {}
                     rows.append({
                         "id": str(x.get("id") or d.id),
-                        "startTime": to_iso_utc(x.get("startTime")),
-                        "endTime": to_iso_utc(x.get("endTime")),
-                        "date": to_iso_utc(x.get("date")),
                         "status": str(x.get("status") or ""),
                         "calendarId": str(x.get("calendarId") or ""),
+                        "datetimeFields": pick_datetime_fields(x),
                     })
                 hits[col] = rows
         except Exception as e:
@@ -106,7 +121,8 @@ class handler(BaseHTTPRequestHandler):
             year = int((qs.get("year", [str(datetime.utcnow().year)])[0] or datetime.utcnow().year))
             month = int((qs.get("month", [str(datetime.utcnow().month)])[0] or datetime.utcnow().month))
             setter = (qs.get("setter_last_name", [""])[0] or "").strip() or None
-            limit = int((qs.get("limit", ["60"])[0] or "60"))
+            limit = int((qs.get("limit", ["500"])[0] or "500"))
+            include_all = (qs.get("all", [""])[0] or "").lower() in {"1", "true", "yes", "all"}
 
             db = get_db()
             rows = []
@@ -138,12 +154,12 @@ class handler(BaseHTTPRequestHandler):
                     "customDateCandidates": custom_datetime_candidates(o),
                     "relatedEventHits": related_event_hits(db, opp_id, cid),
                 })
-                if len(rows) >= max(1, min(limit, 250)):
+                if (not include_all) and len(rows) >= max(1, min(limit, 5000)):
                     break
 
             payload = {
                 "metric": "QA — Appointment Datetime Audit",
-                "query": {"year": year, "month": month, "setter_last_name": setter, "limit": limit},
+                "query": {"year": year, "month": month, "setter_last_name": setter, "limit": limit, "all": include_all},
                 "count": len(rows),
                 "rows": rows,
                 "generated_at": datetime.utcnow().isoformat() + "Z",

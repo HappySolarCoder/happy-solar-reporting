@@ -303,7 +303,7 @@ def render_html(year: int, month: int) -> str:
       display:flex;
       align-items:stretch;
       justify-content:center;
-      gap: 4px;
+      gap: 10px;
       height: 260px;
       padding: 8px 8px 0;
       background:#fafbfc;

@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse, urlencode
 from urllib.request import Request, urlopen
 
 _CACHE: dict[str, tuple[float, dict]] = {}
-_TTL_SECONDS = 90
+_TTL_SECONDS = 1800
 
 
 def _base_url(handler: BaseHTTPRequestHandler) -> str:
@@ -56,7 +56,7 @@ class handler(BaseHTTPRequestHandler):
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "public, s-maxage=60, stale-while-revalidate=120")
+                self.send_header("Cache-Control", "public, s-maxage=300, stale-while-revalidate=3600")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -92,7 +92,7 @@ class handler(BaseHTTPRequestHandler):
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "public, s-maxage=60, stale-while-revalidate=120")
+            self.send_header("Cache-Control", "public, s-maxage=300, stale-while-revalidate=3600")
             self.end_headers()
             self.wfile.write(body)
         except Exception as e:

@@ -303,7 +303,7 @@ def render_html(year: int, month: int) -> str:
       display:flex;
       align-items:stretch;
       justify-content:center;
-      gap: 10px;
+      gap: 12px;
       height: 260px;
       padding: 8px 8px 0;
       background:#fafbfc;
@@ -817,10 +817,23 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    const [salesRes, createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes,
+    // Fetch total sales first so top KPI + bars render fast.
+    const salesRes = await fetch(salesUrl);
+    if (!salesRes.ok) {
+      document.getElementById('totalSales').textContent = 'ERR';
+      document.getElementById('salesMeta').textContent = `Sales HTTP ${salesRes.status}`;
+      return;
+    }
+    const salesData = await salesRes.json();
+    document.getElementById('totalSales').textContent = salesData.result;
+    document.getElementById('salesMeta').textContent = '';
+    const b = (salesData.breakdowns || {});
+    renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
+    renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
+
+    const [createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes,
       salesDoorsRes, salesSelfGenRes, salesPhonesRes, sales3plRes,
       ranDoorsRes, ranSelfGenRes, ranPhonesRes, ran3plRes] = await Promise.all([
-      fetch(salesUrl),
       fetch(createdUrl),
       fetch(ranUrl),
       fetch(demoBase),
@@ -838,13 +851,6 @@ def render_html(year: int, month: int) -> str:
       fetch(ran3plUrl)
     ]);
 
-    if (!salesRes.ok) {
-      document.getElementById('totalSales').textContent = 'ERR';
-      document.getElementById('salesMeta').textContent = `Sales HTTP ${salesRes.status}`;
-      return;
-    }
-
-    const salesData = await salesRes.json();
     const createdData = createdRes.ok ? await createdRes.json() : null;
     const ranData = ranRes.ok ? await ranRes.json() : null;
     const demoData = demoRes.ok ? await demoRes.json() : null;
@@ -868,13 +874,6 @@ def render_html(year: int, month: int) -> str:
     const ranSelfGenData = ranSelfGenRes.ok ? await ranSelfGenRes.json() : null;
     const ranPhonesData = ranPhonesRes.ok ? await ranPhonesRes.json() : null;
     const ran3plData = ran3plRes.ok ? await ran3plRes.json() : null;
-
-    document.getElementById('totalSales').textContent = salesData.result;
-    document.getElementById('salesMeta').textContent = '';
-
-    const b = (salesData.breakdowns || {});
-    renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
-    renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
 
     if (!createdData) {
       return;

@@ -439,99 +439,49 @@ def render_html(year: int, month: int) -> str:
         <div class="meta" id="opp2prelimMeta">—</div>
       </div>
 
-      <!-- Demo Rate KPI row -->
-      <div class="demoRow">
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Demo Rate (Company)</div>
-            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="demoRateCompany">—</div>
-          <div class="meta" id="demoRateCompanyCounts">Demos: — • Ran: —</div>
+      <!-- Lead Gen Performance (combined metrics by source) -->
+      <div class="card span-12">
+        <div class="card-header">
+          <div class="card-title">Lead Gen Performance</div>
+          <div class="meta">Demo Rate + Opp2Prelim by source</div>
         </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Demo Rate — Doors</div>
-            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="demoRateDoors">—</div>
-          <div class="meta" id="demoRateDoorsCounts">Demos: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Demo Rate — Self Gen</div>
-            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="demoRateSelfGen">—</div>
-          <div class="meta" id="demoRateSelfGenCounts">Demos: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Demo Rate — Phones</div>
-            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="demoRateVirtual">—</div>
-          <div class="meta" id="demoRateVirtualCounts">Demos: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Demo Rate — 3PL</div>
-            <div class="meta"><a class="gear" href="/api/metrics/demo_rate" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="demoRate3pl">—</div>
-          <div class="meta" id="demoRate3plCounts">Demos: — • Ran: —</div>
-        </div>
-      </div>
-
-      <!-- Opp2Prelim KPI row by Lead Gen Source -->
-      <div class="demoRow">
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Opp2Prelim (Company)</div>
-            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="opp2prelimCompany">—</div>
-          <div class="meta" id="opp2prelimCompanyCounts">Sales: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Opp2Prelim — Doors</div>
-            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="opp2prelimDoors">—</div>
-          <div class="meta" id="opp2prelimDoorsCounts">Sales: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Opp2Prelim — Self Gen</div>
-            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="opp2prelimSelfGen">—</div>
-          <div class="meta" id="opp2prelimSelfGenCounts">Sales: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Opp2Prelim — Phones</div>
-            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="opp2prelimPhones">—</div>
-          <div class="meta" id="opp2prelimPhonesCounts">Sales: — • Ran: —</div>
-        </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Opp2Prelim — 3PL</div>
-            <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
-          </div>
-          <div class="kpi" id="opp2prelim3pl">—</div>
-          <div class="meta" id="opp2prelim3plCounts">Sales: — • Ran: —</div>
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Lead Gen Source</th>
+                <th style="text-align:right">Demo Rate</th>
+                <th style="text-align:right">Opp2Prelim</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Company</td>
+                <td style="text-align:right"><div id="lgCompanyDemo">—</div><div class="meta" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></td>
+                <td style="text-align:right"><div id="lgCompanyOpp2">—</div><div class="meta" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></td>
+              </tr>
+              <tr>
+                <td>Doors</td>
+                <td style="text-align:right"><div id="lgDoorsDemo">—</div><div class="meta" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></td>
+                <td style="text-align:right"><div id="lgDoorsOpp2">—</div><div class="meta" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></td>
+              </tr>
+              <tr>
+                <td>Self Gen</td>
+                <td style="text-align:right"><div id="lgSelfGenDemo">—</div><div class="meta" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></td>
+                <td style="text-align:right"><div id="lgSelfGenOpp2">—</div><div class="meta" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></td>
+              </tr>
+              <tr>
+                <td>Phones</td>
+                <td style="text-align:right"><div id="lgPhonesDemo">—</div><div class="meta" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></td>
+                <td style="text-align:right"><div id="lgPhonesOpp2">—</div><div class="meta" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></td>
+              </tr>
+              <tr>
+                <td>3PL</td>
+                <td style="text-align:right"><div id="lg3plDemo">—</div><div class="meta" id="lg3plDemoCounts">Demos: — • Ran: —</div></td>
+                <td style="text-align:right"><div id="lg3plOpp2">—</div><div class="meta" id="lg3plOpp2Counts">Sales: — • Ran: —</div></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -821,29 +771,29 @@ def render_html(year: int, month: int) -> str:
       const pct = ran > 0 ? (sit / ran) * 100 : null;
       return { ran, sit, pct };
     }
-    document.getElementById('demoRateCompany').textContent = '…';
-    document.getElementById('demoRateDoors').textContent = '…';
-    document.getElementById('demoRateSelfGen').textContent = '…';
-    document.getElementById('demoRateVirtual').textContent = '…';
-    document.getElementById('demoRate3pl').textContent = '…';
+    document.getElementById('lgCompanyDemo').textContent = '…';
+    document.getElementById('lgDoorsDemo').textContent = '…';
+    document.getElementById('lgSelfGenDemo').textContent = '…';
+    document.getElementById('lgPhonesDemo').textContent = '…';
+    document.getElementById('lg3plDemo').textContent = '…';
 
-    document.getElementById('demoRateCompanyCounts').textContent = 'Demos: … • Ran: …';
-    document.getElementById('demoRateDoorsCounts').textContent = 'Demos: … • Ran: …';
-    document.getElementById('demoRateSelfGenCounts').textContent = 'Demos: … • Ran: …';
-    document.getElementById('demoRateVirtualCounts').textContent = 'Demos: … • Ran: …';
-    document.getElementById('demoRate3plCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lgCompanyDemoCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lgDoorsDemoCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lgSelfGenDemoCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lgPhonesDemoCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lg3plDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('opp2prelimMeta').textContent = '';
 
-    document.getElementById('opp2prelimCompany').textContent = '…';
-    document.getElementById('opp2prelimDoors').textContent = '…';
-    document.getElementById('opp2prelimSelfGen').textContent = '…';
-    document.getElementById('opp2prelimPhones').textContent = '…';
-    document.getElementById('opp2prelim3pl').textContent = '…';
-    document.getElementById('opp2prelimCompanyCounts').textContent = 'Sales: … • Ran: …';
-    document.getElementById('opp2prelimDoorsCounts').textContent = 'Sales: … • Ran: …';
-    document.getElementById('opp2prelimSelfGenCounts').textContent = 'Sales: … • Ran: …';
-    document.getElementById('opp2prelimPhonesCounts').textContent = 'Sales: … • Ran: …';
-    document.getElementById('opp2prelim3plCounts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgCompanyOpp2').textContent = '…';
+    document.getElementById('lgDoorsOpp2').textContent = '…';
+    document.getElementById('lgSelfGenOpp2').textContent = '…';
+    document.getElementById('lgPhonesOpp2').textContent = '…';
+    document.getElementById('lg3plOpp2').textContent = '…';
+    document.getElementById('lgCompanyOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgDoorsOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgSelfGenOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgPhonesOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lg3plOpp2Counts').textContent = 'Sales: … • Ran: …';
 
     document.getElementById('createdMeta').textContent = '';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
@@ -925,17 +875,17 @@ def render_html(year: int, month: int) -> str:
       return `Demos: ${demosTxt} • Ran: ${ranTxt}`;
     };
 
-    document.getElementById('demoRateCompany').textContent = fmtPct(demoData);
-    document.getElementById('demoRateDoors').textContent = fmtPct(demoDoorsData);
-    document.getElementById('demoRateSelfGen').textContent = fmtPct(demoSelfGenData);
-    document.getElementById('demoRateVirtual').textContent = fmtPct(demoVirtualData);
-    document.getElementById('demoRate3pl').textContent = fmtPct(demo3plData);
+    document.getElementById('lgCompanyDemo').textContent = fmtPct(demoData);
+    document.getElementById('lgDoorsDemo').textContent = fmtPct(demoDoorsData);
+    document.getElementById('lgSelfGenDemo').textContent = fmtPct(demoSelfGenData);
+    document.getElementById('lgPhonesDemo').textContent = fmtPct(demoVirtualData);
+    document.getElementById('lg3plDemo').textContent = fmtPct(demo3plData);
 
-    document.getElementById('demoRateCompanyCounts').textContent = fmtCounts(demoData);
-    document.getElementById('demoRateDoorsCounts').textContent = fmtCounts(demoDoorsData);
-    document.getElementById('demoRateSelfGenCounts').textContent = fmtCounts(demoSelfGenData);
-    document.getElementById('demoRateVirtualCounts').textContent = fmtCounts(demoVirtualData);
-    document.getElementById('demoRate3plCounts').textContent = fmtCounts(demo3plData);
+    document.getElementById('lgCompanyDemoCounts').textContent = fmtCounts(demoData);
+    document.getElementById('lgDoorsDemoCounts').textContent = fmtCounts(demoDoorsData);
+    document.getElementById('lgSelfGenDemoCounts').textContent = fmtCounts(demoSelfGenData);
+    document.getElementById('lgPhonesDemoCounts').textContent = fmtCounts(demoVirtualData);
+    document.getElementById('lg3plDemoCounts').textContent = fmtCounts(demo3plData);
 
     // Opp2Prelim = Sales / Opportunities Ran (totals)
     if (!ranData) {
@@ -957,11 +907,11 @@ def render_html(year: int, month: int) -> str:
       document.getElementById(countsId).textContent = `Sales: ${s} • Ran: ${r}`;
     }
 
-    setOpp2PrelimCard('opp2prelimCompany', 'opp2prelimCompanyCounts', salesData, ranData);
-    setOpp2PrelimCard('opp2prelimDoors', 'opp2prelimDoorsCounts', salesDoorsData, ranDoorsData);
-    setOpp2PrelimCard('opp2prelimSelfGen', 'opp2prelimSelfGenCounts', salesSelfGenData, ranSelfGenData);
-    setOpp2PrelimCard('opp2prelimPhones', 'opp2prelimPhonesCounts', salesPhonesData, ranPhonesData);
-    setOpp2PrelimCard('opp2prelim3pl', 'opp2prelim3plCounts', sales3plData, ran3plData);
+    setOpp2PrelimCard('lgCompanyOpp2', 'lgCompanyOpp2Counts', salesData, ranData);
+    setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', salesDoorsData, ranDoorsData);
+    setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', salesSelfGenData, ranSelfGenData);
+    setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', salesPhonesData, ranPhonesData);
+    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', sales3plData, ran3plData);
 
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});

@@ -80,8 +80,8 @@ def render_html(year: int, month: int) -> str:
       padding: 18px 20px;
       border-radius: 14px;
       background: var(--card);
-      border: 1px solid var(--border);
-      box-shadow: 0 1px 3px rgba(17,24,39,0.05);
+      border: 2px solid var(--border);
+      box-shadow: 0 2px 6px rgba(17,24,39,0.06);
     }
 
     .title {
@@ -106,6 +106,8 @@ def render_html(year: int, month: int) -> str:
       display:flex;
       gap: 10px;
       flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
     }
 
     .navbtn {
@@ -426,7 +428,7 @@ def render_html(year: int, month: int) -> str:
           <input id="endDate" type="date" />
         </div>
         <button id="clearRange" style="background:#fff;color:#1f2937;border-color:var(--border);font-weight:900">Clear</button>
-        <div class="meta" id="rangeMeta" style="margin-left:auto"></div>
+        
       </div>
 
       <div class="pillbar" id="periodTabs">

@@ -70,7 +70,7 @@ def render_html(year: int, month: int) -> str:
       padding: 18px 20px;
       border-radius: 14px;
       background: var(--card);
-      border: 1px solid var(--border);
+      border: 2px solid var(--border);
       box-shadow: var(--shadow);
     }
 
@@ -96,6 +96,8 @@ def render_html(year: int, month: int) -> str:
       display:flex;
       gap: 10px;
       flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
     }
 
     .navbtn {
@@ -389,7 +391,7 @@ def render_html(year: int, month: int) -> str:
           <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
           <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
         </div>
-        <div class="meta" id="rangeMeta">Month view: __YEAR__-__MONTH__</div>
+        
       </div>
     </div>
 

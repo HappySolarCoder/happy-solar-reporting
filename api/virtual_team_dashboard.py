@@ -61,7 +61,7 @@ def render_html() -> str:
       margin-top:10px;
     }
 
-    .nav { margin-top: 12px; display:flex; gap:10px; flex-wrap:wrap; }
+    .nav { margin-top: 12px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center; width:100%; }
     .navbtn { display:inline-flex; align-items:center; padding:9px 12px; border-radius:12px; border:1px solid var(--border);
       background:#fff; color:#1f2937; font-size:13px; font-weight:800; text-decoration:none;
     }
@@ -72,7 +72,7 @@ def render_html() -> str:
     .filters label { font-size: 12px; font-weight: 900; color: var(--muted); }
     .filters input { border:1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-weight: 900; }
     .btn { background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding: 8px 10px; font-size: 13px; font-weight: 950; cursor:pointer; }
-    .btn.secondary { background:#fff; border: 1px solid var(--border); color:#334155; }
+    .btn.secondary { background:#fff; border: 2px solid var(--border); color:#334155; }
 
     .pillbar { margin-top: 14px; display:flex; gap: 10px; flex-wrap: wrap; }
     .pill { display:inline-flex; align-items:center; padding: 8px 12px; border-radius: 999px; border:1px solid var(--border);

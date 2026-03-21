@@ -817,29 +817,31 @@ def render_html(year: int, month: int) -> str:
 
     document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
 
-    // Fetch total sales first so top KPI + bars render fast.
-    const salesRes = await fetch(salesUrl);
-    if (!salesRes.ok) {
+    // Single aggregated snapshot endpoint (cached) for faster dashboard load.
+    const snapUrl = `/api/metrics/company_snapshot?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
+    const snapRes = await fetch(snapUrl);
+    if (!snapRes.ok) {
       document.getElementById('totalSales').textContent = 'ERR';
-      document.getElementById('salesMeta').textContent = `Sales HTTP ${salesRes.status}`;
+      document.getElementById('salesMeta').textContent = `Snapshot HTTP ${snapRes.status}`;
       return;
     }
-    const salesData = await salesRes.json();
+    const snap = await snapRes.json();
+    const salesData = (snap && snap.data && snap.data.sales) ? snap.data.sales : null;
+    const createdData = (snap && snap.data && snap.data.created) ? snap.data.created : null;
+    const ranData = (snap && snap.data && snap.data.ran) ? snap.data.ran : null;
+    const demoData = (snap && snap.data && snap.data.demo) ? snap.data.demo : null;
+
+    if (!salesData) {
+      document.getElementById('totalSales').textContent = 'ERR';
+      document.getElementById('salesMeta').textContent = 'No sales payload';
+      return;
+    }
+
     document.getElementById('totalSales').textContent = salesData.result;
-    document.getElementById('salesMeta').textContent = '';
+    document.getElementById('salesMeta').textContent = (snap && snap.cache && snap.cache.hit) ? 'cached' : '';
     const b = (salesData.breakdowns || {});
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
     renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
-
-    const [createdRes, ranRes, demoRes] = await Promise.all([
-      fetch(createdUrl),
-      fetch(ranUrl),
-      fetch(demoBase)
-    ]);
-
-    const createdData = createdRes.ok ? await createdRes.json() : null;
-    const ranData = ranRes.ok ? await ranRes.json() : null;
-    const demoData = demoRes.ok ? await demoRes.json() : null;
 
     const salesByLead = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_lead_gen_source) ? salesData.breakdowns.sales_by_lead_gen_source : {};
     document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));

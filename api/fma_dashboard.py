@@ -504,11 +504,12 @@ def render_html(year: int, month: int) -> str:
                 <th data-sort-key="ran" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Opps Ran</th>
                 <th data-sort-key="sit" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demos / Goal</th>
                 <th data-sort-key="pct" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Demo %</th>
+                <th data-sort-key="score" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Goal Score</th>
                 <th data-sort-key="sales" style="cursor:pointer; text-align:right; padding:10px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Sales</th>
               </tr>
             </thead>
             <tbody id="setterDemoRows">
-              <tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
+              <tr><td colspan="8" style="padding:12px 8px; color:var(--muted2);">Loading…</td></tr>
             </tbody>
             <tfoot id="setterDemoTotals">
               <tr>
@@ -752,7 +753,7 @@ def render_html(year: int, month: int) -> str:
   });
 
   // Demo table sort state
-  let setterTableSort = { key: 'ran', dir: 'desc' };
+  let setterTableSort = { key: 'score', dir: 'desc' };
 
   function setText(id, v) {
     const el = document.getElementById(id);
@@ -762,7 +763,7 @@ def render_html(year: int, month: int) -> str:
   function sortSetterRows(rows) {
     const key = setterTableSort.key;
     const dir = setterTableSort.dir === 'asc' ? 1 : -1;
-    const numericKeys = new Set(['knocks', 'appts', 'ran', 'sit', 'pct', 'sales']);
+    const numericKeys = new Set(['knocks', 'appts', 'ran', 'sit', 'pct', 'sales', 'score']);
     return [...rows].sort((a,b) => {
       if (numericKeys.has(key)) {
         const av = Number(a[key] || 0);
@@ -1101,7 +1102,12 @@ def render_html(year: int, month: int) -> str:
           const apptsGoal = (typeof g.appts_goal !== 'undefined') ? Number(g.appts_goal) : null;
           const demosGoal = (typeof g.demos_goal !== 'undefined') ? Number(g.demos_goal) : null;
 
-          return { setter, ran, sit, pct, knocks, appts, sales, knocksGoal, apptsGoal, demosGoal };
+          const kAtt = att(knocks, knocksGoal);
+          const aAtt = att(appts, apptsGoal);
+          const dAtt = att(sit, demosGoal);
+          const parts = [kAtt, aAtt, dAtt].filter(v => v !== null);
+          const score = parts.length ? (parts.reduce((x,y)=>x+y,0)/parts.length) : 0;
+          return { setter, ran, sit, pct, knocks, appts, sales, knocksGoal, apptsGoal, demosGoal, score };
         });
 
         const sortedRows = sortSetterRows(rows);
@@ -1133,17 +1139,18 @@ def render_html(year: int, month: int) -> str:
 
         if (tbody) {
           if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="padding:12px 8px; color:var(--muted2);">No data</td></tr>`;
           } else {
             updateSetterHeaderSortIndicators();
             tbody.innerHTML = sortedRows.map(r => `
               <tr>
-                <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a;">${r.setter}</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.knocks, r.knocksGoal)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.appts, r.apptsGoal)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.ran || 0)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border);">${progressCell(r.sit, r.demosGoal)}</td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
+                <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right;"><span style="display:inline-block; min-width:54px; text-align:center; border-radius:999px; padding:4px 8px; font-weight:900; font-size:12px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score? r.score.toFixed(0)+'%':'—'}</span></td>
                 <td style="padding:10px 8px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.sales || 0)}</td>
               </tr>`).join('');
           }
@@ -1166,18 +1173,21 @@ def render_html(year: int, month: int) -> str:
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSales}</td>
             </tr>`;
         }
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
         const tfoot = document.getElementById('setterDemoTotals');
         if (tfoot) {
           tfoot.innerHTML = `
             <tr>
               <td style="padding:10px 8px; font-weight:950;">TOTAL</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:10px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>

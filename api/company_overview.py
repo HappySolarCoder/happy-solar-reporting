@@ -258,7 +258,7 @@ def render_html(year: int, month: int) -> str:
     .funnelConnector { height:10px; margin:0; position:relative; }
     .funnelConnector:before { content:''; position:absolute; left:50%; transform:translateX(-50%); top:0; width:2px; height:10px; background:linear-gradient(180deg,#1d4ed8,#f59e0b); opacity:.65; }
     .funnelCard .card-header { justify-content:center; text-align:center; }
-    .funnelCard .card-title { font-size:14px; text-transform:uppercase; letter-spacing:.03em; }
+    .funnelCard .card-title { font-size:16px; text-transform:uppercase; letter-spacing:.03em; }
     @media (max-width: 1180px) {
       .demoRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -288,7 +288,7 @@ def render_html(year: int, month: int) -> str:
       color: #0a7a34;
       box-shadow: 0 1px 2px rgba(17,24,39,0.06);
     }
-    .card-title { font-size: 13px; font-weight: 800; color: var(--muted); }
+    .card-title { font-size: 16px; font-weight: 900; color: #334155; }
 
     .kpi { font-size: 46px; font-weight: 950; margin-top: 8px; letter-spacing: -0.02em; }
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
@@ -481,9 +481,8 @@ def render_html(year: int, month: int) -> str:
       </div>
 
 
-      <div class="card span-12" style="min-height:0; padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">
-        <div style="font-size:16px; font-weight:900; color:#1f2937;">Lead Gen Pipelines</div>
-        <div style="flex:1; height:1px; background:linear-gradient(90deg,#e5e7eb,transparent); margin-left:12px;"></div>
+      <div class="span-12" style="min-height:0; padding:2px 2px 8px; display:flex; align-items:center; justify-content:flex-start;">
+        <div class="card-title" style="font-size:16px;">Lead Gen Pipelines</div>
       </div>
 
       <!-- Lead Gen Performance (stacked funnel cards) -->

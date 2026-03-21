@@ -504,21 +504,15 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
-      <!-- Row 3: vertical sales by lead gen source + vertical created by lead gen source -->
-      <div class="card span-6">
+      <!-- Row 3: monthly company trends -->
+      <div class="card span-12">
         <div class="card-header">
-          <div class="card-title">Sales per Lead Gen Source</div>
-          <div class="meta">Vertical bars</div>
+          <div class="card-title">Company Monthly Trends (since Aug 2025)</div>
+          <div class="meta">Sales, Opp2Prelim %, Opportunities Created</div>
         </div>
-        <div class="vchart" id="salesByChannelV"><div class="skeleton">Loading…</div></div>
-      </div>
-
-      <div class="card span-6">
-        <div class="card-header">
-          <div class="card-title">Opportunities Created by Lead Gen Source</div>
-          <div class="meta">Vertical bars</div>
+        <div id="monthlyTrendChart" style="height:320px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px;">
+          <div class="skeleton">Loading…</div>
         </div>
-        <div class="vchart" id="createdByLead"><div class="skeleton">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -634,6 +628,63 @@ def render_html(year: int, month: int) -> str:
     }
     html += '</div>';
     container.innerHTML = html;
+  }
+
+  function renderMonthlyTrends(container, rows) {
+    container.innerHTML = '';
+    if (!rows || !rows.length) {
+      container.innerHTML = '<div class="skeleton">No trend data.</div>';
+      return;
+    }
+
+    const W = Math.max(760, container.clientWidth - 8);
+    const H = 300;
+    const m = { l: 56, r: 20, t: 12, b: 44 };
+    const iw = W - m.l - m.r;
+    const ih = H - m.t - m.b;
+
+    const labels = rows.map(r => String(r.month || ''));
+    const sales = rows.map(r => Number(r.sales || 0));
+    const opp2 = rows.map(r => Number(r.opp2prelim || 0));
+    const created = rows.map(r => Number(r.opps_created || 0));
+    const yMax = Math.max(1, ...sales, ...opp2, ...created);
+
+    const sx = (i) => m.l + (labels.length <= 1 ? 0 : (i/(labels.length-1))*iw);
+    const sy = (v) => m.t + ih - (v / yMax) * ih;
+
+    const line = (arr) => arr.map((v,i)=>`${i===0?'M':'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
+    const salesPath = line(sales);
+    const opp2Path = line(opp2);
+    const createdPath = line(created);
+
+    let xTicks = '';
+    for (let i=0;i<labels.length;i++) {
+      const lbl = labels[i].slice(2);
+      xTicks += `<text x="${sx(i).toFixed(1)}" y="${(H-14)}" text-anchor="middle" font-size="11" fill="#64748b">${lbl}</text>`;
+    }
+
+    let yGrid = '';
+    const steps = 4;
+    for (let i=0;i<=steps;i++) {
+      const v = (yMax/steps)*i;
+      const y = sy(v);
+      yGrid += `<line x1="${m.l}" y1="${y.toFixed(1)}" x2="${(W-m.r)}" y2="${y.toFixed(1)}" stroke="#e5e7eb" />`;
+      yGrid += `<text x="${m.l-8}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="11" fill="#94a3b8">${Math.round(v)}</text>`;
+    }
+
+    container.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Monthly trends line chart">
+        ${yGrid}
+        <path d="${salesPath}" fill="none" stroke="#22c55e" stroke-width="3" />
+        <path d="${opp2Path}" fill="none" stroke="#7c5ce6" stroke-width="3" />
+        <path d="${createdPath}" fill="none" stroke="#2196F3" stroke-width="3" />
+        ${xTicks}
+      </svg>
+      <div style="display:flex; gap:14px; justify-content:center; margin-top:6px; font-size:12px; color:#475569;">
+        <span><span style="display:inline-block;width:10px;height:10px;background:#22c55e;border-radius:2px;margin-right:6px"></span>Sales / mo</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#7c5ce6;border-radius:2px;margin-right:6px"></span>Opp2Prelim % / mo</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#2196F3;border-radius:2px;margin-right:6px"></span>Opps Created / mo</span>
+      </div>`;
   }
 
   function rangeParams() {
@@ -812,10 +863,7 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lg3plOpp2Counts').textContent = 'Sales: … • Ran: …';
 
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
-    document.getElementById('salesByChannelV').innerHTML = '<div class="skeleton">Loading…</div>';
-
-
-    document.getElementById('createdByLead').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('monthlyTrendChart').innerHTML = '<div class="skeleton">Loading…</div>';
 
     // Single aggregated snapshot endpoint (cached) for faster dashboard load.
     const snapUrl = `/api/metrics/company_snapshot?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
@@ -841,7 +889,6 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('salesMeta').textContent = (snap && snap.cache && snap.cache.hit) ? 'cached' : '';
     const b = (salesData.breakdowns || {});
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
-    renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
 
     const salesByLead = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_lead_gen_source) ? salesData.breakdowns.sales_by_lead_gen_source : {};
     document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));
@@ -916,8 +963,10 @@ def render_html(year: int, month: int) -> str:
     setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', mkSalesObj('Phones'), mkRanObj('Phones'));
     setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj('3PL'), mkRanObj('3PL'));
 
-    const cb = (createdData.breakdowns || {});
-    renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});
+    // Monthly trend chart (Aug 2025 onward)
+    const trendRes = await fetch(`/api/metrics/company_trends?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&start_year=2025&start_month=8`);
+    const trendData = trendRes.ok ? await trendRes.json() : null;
+    renderMonthlyTrends(document.getElementById('monthlyTrendChart'), trendData && Array.isArray(trendData.rows) ? trendData.rows : []);
   }
 
   document.getElementById('apply').addEventListener('click', () => {

@@ -439,49 +439,76 @@ def render_html(year: int, month: int) -> str:
         <div class="meta" id="opp2prelimMeta">—</div>
       </div>
 
-      <!-- Lead Gen Performance (combined metrics by source) -->
-      <div class="card span-12">
-        <div class="card-header">
-          <div class="card-title">Lead Gen Performance</div>
-          <div class="meta">Demo Rate + Opp2Prelim by source</div>
+      <!-- Lead Gen Performance (stacked cards by source) -->
+      <div class="demoRow">
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Company</div>
+            <div class="meta">Lead Gen Performance</div>
+          </div>
+          <div class="meta" style="font-weight:900">Demo Rate</div>
+          <div class="kpi" id="lgCompanyDemo">—</div>
+          <div class="meta" id="lgCompanyDemoCounts">Demos: — • Ran: —</div>
+          <div style="height:10px"></div>
+          <div class="meta" style="font-weight:900">Opp2Prelim</div>
+          <div class="kpi" id="lgCompanyOpp2">—</div>
+          <div class="meta" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div>
         </div>
-        <div class="tablewrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Lead Gen Source</th>
-                <th style="text-align:right">Demo Rate</th>
-                <th style="text-align:right">Opp2Prelim</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Company</td>
-                <td style="text-align:right"><div id="lgCompanyDemo">—</div><div class="meta" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></td>
-                <td style="text-align:right"><div id="lgCompanyOpp2">—</div><div class="meta" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></td>
-              </tr>
-              <tr>
-                <td>Doors</td>
-                <td style="text-align:right"><div id="lgDoorsDemo">—</div><div class="meta" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></td>
-                <td style="text-align:right"><div id="lgDoorsOpp2">—</div><div class="meta" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></td>
-              </tr>
-              <tr>
-                <td>Self Gen</td>
-                <td style="text-align:right"><div id="lgSelfGenDemo">—</div><div class="meta" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></td>
-                <td style="text-align:right"><div id="lgSelfGenOpp2">—</div><div class="meta" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></td>
-              </tr>
-              <tr>
-                <td>Phones</td>
-                <td style="text-align:right"><div id="lgPhonesDemo">—</div><div class="meta" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></td>
-                <td style="text-align:right"><div id="lgPhonesOpp2">—</div><div class="meta" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></td>
-              </tr>
-              <tr>
-                <td>3PL</td>
-                <td style="text-align:right"><div id="lg3plDemo">—</div><div class="meta" id="lg3plDemoCounts">Demos: — • Ran: —</div></td>
-                <td style="text-align:right"><div id="lg3plOpp2">—</div><div class="meta" id="lg3plOpp2Counts">Sales: — • Ran: —</div></td>
-              </tr>
-            </tbody>
-          </table>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Doors</div>
+            <div class="meta">Lead Gen Performance</div>
+          </div>
+          <div class="meta" style="font-weight:900">Demo Rate</div>
+          <div class="kpi" id="lgDoorsDemo">—</div>
+          <div class="meta" id="lgDoorsDemoCounts">Demos: — • Ran: —</div>
+          <div style="height:10px"></div>
+          <div class="meta" style="font-weight:900">Opp2Prelim</div>
+          <div class="kpi" id="lgDoorsOpp2">—</div>
+          <div class="meta" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Self Gen</div>
+            <div class="meta">Lead Gen Performance</div>
+          </div>
+          <div class="meta" style="font-weight:900">Demo Rate</div>
+          <div class="kpi" id="lgSelfGenDemo">—</div>
+          <div class="meta" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div>
+          <div style="height:10px"></div>
+          <div class="meta" style="font-weight:900">Opp2Prelim</div>
+          <div class="kpi" id="lgSelfGenOpp2">—</div>
+          <div class="meta" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">Phones</div>
+            <div class="meta">Lead Gen Performance</div>
+          </div>
+          <div class="meta" style="font-weight:900">Demo Rate</div>
+          <div class="kpi" id="lgPhonesDemo">—</div>
+          <div class="meta" id="lgPhonesDemoCounts">Demos: — • Ran: —</div>
+          <div style="height:10px"></div>
+          <div class="meta" style="font-weight:900">Opp2Prelim</div>
+          <div class="kpi" id="lgPhonesOpp2">—</div>
+          <div class="meta" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div>
+        </div>
+
+        <div class="card demoCard">
+          <div class="card-header">
+            <div class="card-title">3PL</div>
+            <div class="meta">Lead Gen Performance</div>
+          </div>
+          <div class="meta" style="font-weight:900">Demo Rate</div>
+          <div class="kpi" id="lg3plDemo">—</div>
+          <div class="meta" id="lg3plDemoCounts">Demos: — • Ran: —</div>
+          <div style="height:10px"></div>
+          <div class="meta" style="font-weight:900">Opp2Prelim</div>
+          <div class="kpi" id="lg3plOpp2">—</div>
+          <div class="meta" id="lg3plOpp2Counts">Sales: — • Ran: —</div>
         </div>
       </div>
 

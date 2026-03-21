@@ -434,31 +434,12 @@ def render_html(year: int, month: int) -> str:
 
     <div class="grid">
       <!-- Top KPI row -->
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Total Sales</div>
-          <div class="meta"><a class="gear" href="/api/metrics/sales" title="QA debug">⚙</a></div>
+      <div class="card span-12" style="text-align:center; max-width:420px; margin:0 auto;">
+        <div class="card-header" style="justify-content:center;">
+          <div class="card-title" style="font-size:14px;">Total Sales</div>
         </div>
-        <div class="kpi" id="totalSales">—</div>
-        <div class="meta" id="salesMeta">—</div>
-      </div>
-
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Total Opportunities Created</div>
-          <div class="meta"><a class="gear" href="/api/metrics/opportunities_created" title="QA debug">⚙</a></div>
-        </div>
-        <div class="kpi" id="totalCreated">—</div>
-        <div class="meta" id="createdMeta">—</div>
-      </div>
-
-      <div class="card span-4">
-        <div class="card-header">
-          <div class="card-title">Opp2Prelim %</div>
-          <div class="meta">Sales / Opps Ran</div>
-        </div>
-        <div class="kpi" id="opp2prelim">—</div>
-        <div class="meta" id="opp2prelimMeta">—</div>
+        <div class="kpi" id="totalSales" style="text-align:center;">—</div>
+        <div class="meta" id="salesMeta" style="text-align:center;">—</div>
       </div>
 
       <!-- Lead Gen Performance (stacked funnel cards) -->
@@ -779,8 +760,6 @@ def render_html(year: int, month: int) -> str:
     const ran3plUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=3PL`;
 
     document.getElementById('totalSales').textContent = '…';
-    document.getElementById('totalCreated').textContent = '…';
-    document.getElementById('opp2prelim').textContent = '…';
     
     function pickLeadSource(d, leadSource) {
       if (!d) return { ran: 0, sit: 0, pct: null };
@@ -802,8 +781,6 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lgSelfGenDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lgPhonesDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lg3plDemoCounts').textContent = 'Demos: … • Ran: …';
-    document.getElementById('opp2prelimMeta').textContent = '';
-
     document.getElementById('lgCompanyOpp2').textContent = '…';
     document.getElementById('lgDoorsOpp2').textContent = '…';
     document.getElementById('lgSelfGenOpp2').textContent = '…';
@@ -820,7 +797,6 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lgPhonesOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lg3plOpp2Counts').textContent = 'Sales: … • Ran: …';
 
-    document.getElementById('createdMeta').textContent = '';
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
     document.getElementById('salesByChannelV').innerHTML = '<div class="skeleton">Loading…</div>';
 
@@ -881,14 +857,8 @@ def render_html(year: int, month: int) -> str:
     renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
 
     if (!createdData) {
-      document.getElementById('createdMeta').textContent = `Opportunities Created HTTP ${createdRes.status}`;
       return;
     }
-
-    document.getElementById('createdMeta').textContent = '';
-
-
-    document.getElementById('totalCreated').textContent = createdData.result;
     const createdByLead = (createdData.breakdowns || {}).created_by_lead_gen_source || {};
     document.getElementById('lgCompanyCreated').textContent = String(Number(createdData.result || 0));
     document.getElementById('lgDoorsCreated').textContent = String(Number(createdByLead['Doors'] || 0));
@@ -917,18 +887,6 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lgSelfGenDemoCounts').textContent = fmtCounts(demoSelfGenData);
     document.getElementById('lgPhonesDemoCounts').textContent = fmtCounts(demoVirtualData);
     document.getElementById('lg3plDemoCounts').textContent = fmtCounts(demo3plData);
-
-    // Opp2Prelim = Sales / Opportunities Ran (totals)
-    if (!ranData) {
-      document.getElementById('opp2prelim').textContent = '—';
-      document.getElementById('opp2prelimMeta').textContent = '';
-    } else {
-      const sales = Number(salesData.result || 0);
-      const ran = Number(ranData.result || 0);
-      const pct = ran > 0 ? (sales / ran) * 100 : null;
-      document.getElementById('opp2prelim').textContent = pct === null ? '—' : `${pct.toFixed(1)}%`;
-      document.getElementById('opp2prelimMeta').textContent = '';
-    }
 
     function setOpp2PrelimCard(kpiId, countsId, sData, rData) {
       const s = Number((sData && sData.result) || 0);

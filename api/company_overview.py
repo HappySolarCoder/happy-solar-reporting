@@ -437,8 +437,8 @@ def render_html(year: int, month: int) -> str:
 
     <div class="grid">
       <!-- Row 2: Sales per Team full width -->
-      <div class="card span-12">
-        <div class="card-header" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:start; margin-bottom:4px;">
+      <div class="card span-12" style="background:transparent; border:none; box-shadow:none; min-height:0; padding:0; display:flex; flex-direction:column; justify-content:flex-end;">
+        <div class="card-header" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:end; margin:0 0 4px 0;">
           <div style="justify-self:start;">
             <div class="card-title">Sales per Team (Pipeline)</div>
             <div class="meta">Vertical bars</div>
@@ -450,7 +450,7 @@ def render_html(year: int, month: int) -> str:
           </div>
           <div></div>
         </div>
-        <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
+        <div class="vchart" id="salesByPipelineV" style="margin-top:0;"><div class="skeleton">Loading…</div></div>
       </div>
 
 

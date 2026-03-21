@@ -220,20 +220,21 @@ def render_html(year: int, month: int) -> str:
     .funnelStage {
       box-sizing: border-box;
       display:block;
-      border-radius: 0;
+      border-radius: 12px;
       padding:10px 10px 8px;
       margin-top:8px;
       color:#fff;
       text-align:center;
-      clip-path: polygon(0% 0%, 100% 0%, 92% 100%, 8% 100%);
-      box-shadow: inset 0 -6px 12px rgba(0,0,0,.12);
+      clip-path: polygon(3% 0%, 97% 0%, 90% 100%, 10% 100%);
+      box-shadow: inset 0 -6px 12px rgba(0,0,0,.10), 0 1px 2px rgba(17,24,39,.08);
     }
-    .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#0b4f8a 0%, #0f6bb2 100%); }
-    .funnelStage.stage-mid { width: 82%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#20a4f3 0%, #2b86c5 100%); }
-    .funnelStage.stage-bottom { width: 68%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#f59e0b 0%, #fbbf24 100%); }
-    .funnelLabel { font-size:11px; color:rgba(255,255,255,.9); font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
+    /* Match dashboard palette */
+    .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#00C853 0%, #16a34a 100%); }
+    .funnelStage.stage-mid { width: 82%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#2196F3 0%, #1d4ed8 100%); }
+    .funnelStage.stage-bottom { width: 68%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#7c5ce6 0%, #6d28d9 100%); }
+    .funnelLabel { font-size:11px; color:rgba(255,255,255,.92); font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
     .funnelValue { font-size:28px; font-weight:950; color:#fff; line-height:1.1; }
-    .funnelSub { font-size:11px; color:rgba(255,255,255,.9); }
+    .funnelSub { font-size:11px; color:rgba(255,255,255,.92); }
     .funnelConnector { height:10px; margin:0; position:relative; }
     .funnelConnector:before { content:''; position:absolute; left:50%; transform:translateX(-50%); top:0; width:2px; height:10px; background:linear-gradient(180deg,#1d4ed8,#f59e0b); opacity:.65; }
     .funnelCard .card-header { justify-content:center; text-align:center; }

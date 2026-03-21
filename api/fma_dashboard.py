@@ -199,6 +199,11 @@ def render_html(year: int, month: int) -> str:
       font-weight: 800;
     }
 
+    .kpiTop { min-height: 96px; padding: 12px 14px; }
+    .kpiTop .card-title { font-size: 15px; font-weight: 900; }
+    .kpiTop .kpiRow { justify-content: center; margin-top: 6px; }
+    .kpiTop .kpiVal { text-align: center; }
+
     .pillbar {
       display:flex;
       gap: 8px;
@@ -415,7 +420,7 @@ def render_html(year: int, month: int) -> str:
 
     <div class="grid">
       <!-- KPI row (Raydar-style cards) -->
-      <div class="card span-4">
+      <div class="card span-4 kpiTop">
         <div class="card-header">
           <div class="card-title">Total Knocks</div>
         </div>
@@ -425,9 +430,9 @@ def render_html(year: int, month: int) -> str:
         <div class="kpiSub" id="kpiKnocksSub"></div>
       </div>
 
-      <div class="card span-4">
+      <div class="card span-4 kpiTop">
         <div class="card-header">
-          <div class="card-title">Appts</div>
+          <div class="card-title">Appointments</div>
         </div>
         <div class="kpiRow">
           <div class="kpiVal purple" id="kpiAppts">—</div>
@@ -435,7 +440,7 @@ def render_html(year: int, month: int) -> str:
         <div class="kpiSub" id="kpiApptsSub"></div>
       </div>
 
-      <div class="card span-4">
+      <div class="card span-4 kpiTop">
         <div class="card-header">
           <div class="card-title">Appt % Knocks</div>
         </div>

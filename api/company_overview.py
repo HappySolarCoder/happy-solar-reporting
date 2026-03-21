@@ -466,34 +466,37 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgCompanyDemo">—</div><div class="funnelSub" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgCompanyOpp2">—</div><div class="funnelSub" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></div>
           <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgCompanySales">—</div><div class="funnelSub">Sales in range</div></div>
-          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgDoorsSales">—</div><div class="funnelSub">Sales in range</div></div>
-          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgSelfGenSales">—</div><div class="funnelSub">Sales in range</div></div>
-          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgPhonesSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
+
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Doors Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgDoorsCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgDoorsDemo">—</div><div class="funnelSub" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgDoorsOpp2">—</div><div class="funnelSub" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgDoorsSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
+
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Self Gen Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgSelfGenCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgSelfGenDemo">—</div><div class="funnelSub" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgSelfGenOpp2">—</div><div class="funnelSub" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgSelfGenSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
+
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Phones Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgPhonesCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgPhonesDemo">—</div><div class="funnelSub" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgPhonesOpp2">—</div><div class="funnelSub" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgPhonesSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
+
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">3PL Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
-        </div>
           <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lg3plSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
       </div>

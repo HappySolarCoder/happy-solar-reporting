@@ -504,13 +504,30 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
-      <!-- Row 3: monthly company trends -->
-      <div class="card span-12">
+      <!-- Row 3: monthly company trends (split cards) -->
+      <div class="card span-4">
         <div class="card-header">
-          <div class="card-title">Company Monthly Trends (since Aug 2025)</div>
-          <div class="meta">Sales, Opp2Prelim %, Opportunities Created</div>
+          <div class="card-title">Sales Monthly Trend (since Aug 2025)</div>
         </div>
-        <div id="monthlyTrendChart" style="height:320px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px;">
+        <div id="trendSales" style="height:260px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px;">
+          <div class="skeleton">Loading…</div>
+        </div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Opp2Prelim % Monthly Trend</div>
+        </div>
+        <div id="trendOpp2" style="height:260px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px;">
+          <div class="skeleton">Loading…</div>
+        </div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-header">
+          <div class="card-title">Opps Created Monthly Trend</div>
+        </div>
+        <div id="trendCreated" style="height:260px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px;">
           <div class="skeleton">Loading…</div>
         </div>
       </div>
@@ -630,61 +647,41 @@ def render_html(year: int, month: int) -> str:
     container.innerHTML = html;
   }
 
-  function renderMonthlyTrends(container, rows) {
+  function renderSingleTrend(container, rows, key, color, ySuffix='') {
     container.innerHTML = '';
     if (!rows || !rows.length) {
       container.innerHTML = '<div class="skeleton">No trend data.</div>';
       return;
     }
 
-    const W = Math.max(760, container.clientWidth - 8);
-    const H = 300;
-    const m = { l: 56, r: 20, t: 12, b: 44 };
+    const W = Math.max(280, container.clientWidth - 8);
+    const H = 240;
+    const m = { l: 42, r: 12, t: 10, b: 34 };
     const iw = W - m.l - m.r;
     const ih = H - m.t - m.b;
 
     const labels = rows.map(r => String(r.month || ''));
-    const sales = rows.map(r => Number(r.sales || 0));
-    const opp2 = rows.map(r => Number(r.opp2prelim || 0));
-    const created = rows.map(r => Number(r.opps_created || 0));
-    const yMax = Math.max(1, ...sales, ...opp2, ...created);
+    const vals = rows.map(r => Number(r[key] || 0));
+    const yMax = Math.max(1, ...vals);
 
     const sx = (i) => m.l + (labels.length <= 1 ? 0 : (i/(labels.length-1))*iw);
     const sy = (v) => m.t + ih - (v / yMax) * ih;
-
-    const line = (arr) => arr.map((v,i)=>`${i===0?'M':'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
-    const salesPath = line(sales);
-    const opp2Path = line(opp2);
-    const createdPath = line(created);
+    const path = vals.map((v,i)=>`${i===0?'M':'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
 
     let xTicks = '';
     for (let i=0;i<labels.length;i++) {
-      const lbl = labels[i].slice(2);
-      xTicks += `<text x="${sx(i).toFixed(1)}" y="${(H-14)}" text-anchor="middle" font-size="11" fill="#64748b">${lbl}</text>`;
+      xTicks += `<text x="${sx(i).toFixed(1)}" y="${(H-10)}" text-anchor="middle" font-size="10" fill="#64748b">${labels[i].slice(2)}</text>`;
     }
 
     let yGrid = '';
-    const steps = 4;
-    for (let i=0;i<=steps;i++) {
-      const v = (yMax/steps)*i;
+    for (let i=0;i<=4;i++) {
+      const v = (yMax/4)*i;
       const y = sy(v);
-      yGrid += `<line x1="${m.l}" y1="${y.toFixed(1)}" x2="${(W-m.r)}" y2="${y.toFixed(1)}" stroke="#e5e7eb" />`;
-      yGrid += `<text x="${m.l-8}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="11" fill="#94a3b8">${Math.round(v)}</text>`;
+      yGrid += `<line x1="${m.l}" y1="${y.toFixed(1)}" x2="${(W-m.r)}" y2="${y.toFixed(1)}" stroke="#eef2f7" />`;
+      yGrid += `<text x="${m.l-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${Math.round(v)}${ySuffix}</text>`;
     }
 
-    container.innerHTML = `
-      <svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Monthly trends line chart">
-        ${yGrid}
-        <path d="${salesPath}" fill="none" stroke="#22c55e" stroke-width="3" />
-        <path d="${opp2Path}" fill="none" stroke="#7c5ce6" stroke-width="3" />
-        <path d="${createdPath}" fill="none" stroke="#2196F3" stroke-width="3" />
-        ${xTicks}
-      </svg>
-      <div style="display:flex; gap:14px; justify-content:center; margin-top:6px; font-size:12px; color:#475569;">
-        <span><span style="display:inline-block;width:10px;height:10px;background:#22c55e;border-radius:2px;margin-right:6px"></span>Sales / mo</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:#7c5ce6;border-radius:2px;margin-right:6px"></span>Opp2Prelim % / mo</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:#2196F3;border-radius:2px;margin-right:6px"></span>Opps Created / mo</span>
-      </div>`;
+    container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%">${yGrid}<path d="${path}" fill="none" stroke="${color}" stroke-width="3"/>${xTicks}</svg>`;
   }
 
   function rangeParams() {
@@ -863,7 +860,9 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lg3plOpp2Counts').textContent = 'Sales: … • Ran: …';
 
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
-    document.getElementById('monthlyTrendChart').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('trendSales').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('trendOpp2').innerHTML = '<div class="skeleton">Loading…</div>';
+    document.getElementById('trendCreated').innerHTML = '<div class="skeleton">Loading…</div>';
 
     // Single aggregated snapshot endpoint (cached) for faster dashboard load.
     const snapUrl = `/api/metrics/company_snapshot?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
@@ -966,7 +965,10 @@ def render_html(year: int, month: int) -> str:
     // Monthly trend chart (Aug 2025 onward)
     const trendRes = await fetch(`/api/metrics/company_trends?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&start_year=2025&start_month=8`);
     const trendData = trendRes.ok ? await trendRes.json() : null;
-    renderMonthlyTrends(document.getElementById('monthlyTrendChart'), trendData && Array.isArray(trendData.rows) ? trendData.rows : []);
+    const trendRows = trendData && Array.isArray(trendData.rows) ? trendData.rows : [];
+    renderSingleTrend(document.getElementById('trendSales'), trendRows, 'sales', '#22c55e', '');
+    renderSingleTrend(document.getElementById('trendOpp2'), trendRows, 'opp2prelim', '#7c5ce6', '%');
+    renderSingleTrend(document.getElementById('trendCreated'), trendRows, 'opps_created', '#2196F3', '');
   }
 
   document.getElementById('apply').addEventListener('click', () => {

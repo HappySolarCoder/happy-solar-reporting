@@ -336,6 +336,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     sit_by_setter: dict[str, int] = {}
     by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
+    sit_by_lead: dict[str, int] = {}
 
     for snap in opp_query.stream():
         opp = snap.to_dict() or {}
@@ -396,6 +397,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             sit_by_setter[setter_s] = sit_by_setter.get(setter_s, 0) + 1
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_lead[lead] = by_lead.get(lead, 0) + 1
+        if dispo == "Sit":
+            sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
 
         matching.append(
             {
@@ -430,7 +433,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "demo_rate_by_setter_last_name": ran_by_setter,  # legacy: was misnamed; kept for backward-compat
 
             "demo_rate_by_pipeline": by_pipeline,
-            "demo_rate_by_lead_gen_source": by_lead,
+            "ran_by_lead_gen_source": by_lead,
+            "sit_by_lead_gen_source": sit_by_lead,
+            "demo_rate_by_lead_gen_source": {k: (round((sit_by_lead.get(k,0)/v)*100,1) if v else 0.0) for k,v in by_lead.items()},
         },
         "rows": matching,
     }

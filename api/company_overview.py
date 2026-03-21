@@ -831,49 +831,24 @@ def render_html(year: int, month: int) -> str:
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
     renderVertical(document.getElementById('salesByChannelV'), b.sales_by_lead_gen_source || {});
 
-    const [createdRes, ranRes, demoRes, demoDoorsRes, demoSelfGenRes, demoVirtualRes, demo3plRes,
-      salesDoorsRes, salesSelfGenRes, salesPhonesRes, sales3plRes,
-      ranDoorsRes, ranSelfGenRes, ranPhonesRes, ran3plRes] = await Promise.all([
+    const [createdRes, ranRes, demoRes] = await Promise.all([
       fetch(createdUrl),
       fetch(ranUrl),
-      fetch(demoBase),
-      fetch(demoDoorsUrl),
-      fetch(demoSelfGenUrl),
-      fetch(demoVirtualUrl),
-      fetch(demo3plUrl),
-      fetch(salesDoorsUrl),
-      fetch(salesSelfGenUrl),
-      fetch(salesPhonesUrl),
-      fetch(sales3plUrl),
-      fetch(ranDoorsUrl),
-      fetch(ranSelfGenUrl),
-      fetch(ranPhonesUrl),
-      fetch(ran3plUrl)
+      fetch(demoBase)
     ]);
 
     const createdData = createdRes.ok ? await createdRes.json() : null;
     const ranData = ranRes.ok ? await ranRes.json() : null;
     const demoData = demoRes.ok ? await demoRes.json() : null;
-    const demoDoorsData = demoDoorsRes.ok ? await demoDoorsRes.json() : null;
-    const demoSelfGenData = demoSelfGenRes.ok ? await demoSelfGenRes.json() : null;
-    const demoVirtualData = demoVirtualRes.ok ? await demoVirtualRes.json() : null;
-    const demo3plData = demo3plRes.ok ? await demo3plRes.json() : null;
 
-    const salesDoorsData = salesDoorsRes.ok ? await salesDoorsRes.json() : null;
-    const salesSelfGenData = salesSelfGenRes.ok ? await salesSelfGenRes.json() : null;
-    const salesPhonesData = salesPhonesRes.ok ? await salesPhonesRes.json() : null;
-    const sales3plData = sales3plRes.ok ? await sales3plRes.json() : null;
-
+    const salesByLead = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_lead_gen_source) ? salesData.breakdowns.sales_by_lead_gen_source : {};
     document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));
-    document.getElementById('lgDoorsSales').textContent = String(Number((salesDoorsData && salesDoorsData.result) || 0));
-    document.getElementById('lgSelfGenSales').textContent = String(Number((salesSelfGenData && salesSelfGenData.result) || 0));
-    document.getElementById('lgPhonesSales').textContent = String(Number((salesPhonesData && salesPhonesData.result) || 0));
-    document.getElementById('lg3plSales').textContent = String(Number((sales3plData && sales3plData.result) || 0));
+    document.getElementById('lgDoorsSales').textContent = String(Number(salesByLead['Doors'] || 0));
+    document.getElementById('lgSelfGenSales').textContent = String(Number(salesByLead['Self Gen'] || 0));
+    document.getElementById('lgPhonesSales').textContent = String(Number(salesByLead['Phones'] || salesByLead['Virtual'] || 0));
+    document.getElementById('lg3plSales').textContent = String(Number(salesByLead['3PL'] || 0));
 
-    const ranDoorsData = ranDoorsRes.ok ? await ranDoorsRes.json() : null;
-    const ranSelfGenData = ranSelfGenRes.ok ? await ranSelfGenRes.json() : null;
-    const ranPhonesData = ranPhonesRes.ok ? await ranPhonesRes.json() : null;
-    const ran3plData = ran3plRes.ok ? await ran3plRes.json() : null;
+    const ranByLead = (ranData && ranData.breakdowns && ranData.breakdowns.ran_by_lead_gen_source) ? ranData.breakdowns.ran_by_lead_gen_source : {};
 
     if (!createdData) {
       return;
@@ -895,16 +870,31 @@ def render_html(year: int, month: int) -> str:
       return `Demos: ${demosTxt} • Ran: ${ranTxt}`;
     };
 
+    const demoPctByLead = (demoData && demoData.breakdowns && demoData.breakdowns.demo_rate_by_lead_gen_source) ? demoData.breakdowns.demo_rate_by_lead_gen_source : {};
+    const ranLead = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_lead_gen_source) ? demoData.breakdowns.ran_by_lead_gen_source : {};
+    const sitLead = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_lead_gen_source) ? demoData.breakdowns.sit_by_lead_gen_source : {};
+
+    const mkDemoObj = (lead) => ({
+      result: Number(demoPctByLead[lead] || 0),
+      ran_count: Number(ranLead[lead] || 0),
+      sit_count: Number(sitLead[lead] || 0),
+    });
+
+    const demoDoorsData = mkDemoObj('Doors');
+    const demoSelfGenData = mkDemoObj('Self Gen');
+    const demoPhonesData = mkDemoObj('Phones');
+    const demo3plData = mkDemoObj('3PL');
+
     document.getElementById('lgCompanyDemo').textContent = fmtPct(demoData);
     document.getElementById('lgDoorsDemo').textContent = fmtPct(demoDoorsData);
     document.getElementById('lgSelfGenDemo').textContent = fmtPct(demoSelfGenData);
-    document.getElementById('lgPhonesDemo').textContent = fmtPct(demoVirtualData);
+    document.getElementById('lgPhonesDemo').textContent = fmtPct(demoPhonesData);
     document.getElementById('lg3plDemo').textContent = fmtPct(demo3plData);
 
     document.getElementById('lgCompanyDemoCounts').textContent = fmtCounts(demoData);
     document.getElementById('lgDoorsDemoCounts').textContent = fmtCounts(demoDoorsData);
     document.getElementById('lgSelfGenDemoCounts').textContent = fmtCounts(demoSelfGenData);
-    document.getElementById('lgPhonesDemoCounts').textContent = fmtCounts(demoVirtualData);
+    document.getElementById('lgPhonesDemoCounts').textContent = fmtCounts(demoPhonesData);
     document.getElementById('lg3plDemoCounts').textContent = fmtCounts(demo3plData);
 
     function setOpp2PrelimCard(kpiId, countsId, sData, rData) {
@@ -915,11 +905,14 @@ def render_html(year: int, month: int) -> str:
       document.getElementById(countsId).textContent = `Sales: ${s} • Ran: ${r}`;
     }
 
+    const mkSalesObj = (lead) => ({ result: Number(salesByLead[lead] || 0) });
+    const mkRanObj = (lead) => ({ result: Number(ranByLead[lead] || 0) });
+
     setOpp2PrelimCard('lgCompanyOpp2', 'lgCompanyOpp2Counts', salesData, ranData);
-    setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', salesDoorsData, ranDoorsData);
-    setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', salesSelfGenData, ranSelfGenData);
-    setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', salesPhonesData, ranPhonesData);
-    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', sales3plData, ran3plData);
+    setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', mkSalesObj('Doors'), mkRanObj('Doors'));
+    setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', mkSalesObj('Self Gen'), mkRanObj('Self Gen'));
+    setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', mkSalesObj('Phones'), mkRanObj('Phones'));
+    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj('3PL'), mkRanObj('3PL'));
 
     const cb = (createdData.breakdowns || {});
     renderVertical(document.getElementById('createdByLead'), cb.created_by_lead_gen_source || {});

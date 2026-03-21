@@ -218,6 +218,8 @@ def render_html(year: int, month: int) -> str:
     .demoCard .kpi { font-size: 38px; }
     .funnelCard { min-height: 320px; }
     .funnelStage {
+      box-sizing: border-box;
+      display:block;
       border-radius: 0;
       padding:10px 10px 8px;
       margin-top:8px;
@@ -234,6 +236,8 @@ def render_html(year: int, month: int) -> str:
     .funnelSub { font-size:11px; color:rgba(255,255,255,.9); }
     .funnelConnector { height:10px; margin:0; position:relative; }
     .funnelConnector:before { content:''; position:absolute; left:50%; transform:translateX(-50%); top:0; width:2px; height:10px; background:linear-gradient(180deg,#1d4ed8,#f59e0b); opacity:.65; }
+    .funnelCard .card-header { justify-content:center; text-align:center; }
+    .funnelCard .card-title { font-size:14px; text-transform:uppercase; letter-spacing:.03em; }
     @media (max-width: 1180px) {
       .demoRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -460,7 +464,7 @@ def render_html(year: int, month: int) -> str:
       <!-- Lead Gen Performance (stacked funnel cards) -->
       <div class="demoRow">
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">Company Funnel</div><div class="meta">All Lead Sources</div></div>
+          <div class="card-header"><div class="card-title">Company Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgCompanyCreated">—</div><div class="funnelSub" id="lgCompanyCreatedSub">Created in range</div></div>
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgCompanyDemo">—</div><div class="funnelSub" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></div>
@@ -468,7 +472,7 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgCompanyOpp2">—</div><div class="funnelSub" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">Doors Funnel</div><div class="meta">Lead Source: Doors</div></div>
+          <div class="card-header"><div class="card-title">Doors Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgDoorsCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgDoorsDemo">—</div><div class="funnelSub" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></div>
@@ -476,7 +480,7 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgDoorsOpp2">—</div><div class="funnelSub" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">Self Gen Funnel</div><div class="meta">Lead Source: Self Gen</div></div>
+          <div class="card-header"><div class="card-title">Self Gen Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgSelfGenCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgSelfGenDemo">—</div><div class="funnelSub" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></div>
@@ -484,7 +488,7 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgSelfGenOpp2">—</div><div class="funnelSub" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">Phones Funnel</div><div class="meta">Lead Source: Phones</div></div>
+          <div class="card-header"><div class="card-title">Phones Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgPhonesCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgPhonesDemo">—</div><div class="funnelSub" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></div>
@@ -492,7 +496,7 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgPhonesOpp2">—</div><div class="funnelSub" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">3PL Funnel</div><div class="meta">Lead Source: 3PL</div></div>
+          <div class="card-header"><div class="card-title">3PL Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>

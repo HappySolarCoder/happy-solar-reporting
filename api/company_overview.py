@@ -438,16 +438,17 @@ def render_html(year: int, month: int) -> str:
     <div class="grid">
       <!-- Row 2: Sales per Team full width -->
       <div class="card span-12">
-        <div class="card-header" style="justify-content:flex-start; margin-bottom:2px;">
-          <div>
+        <div class="card-header" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:start; margin-bottom:4px;">
+          <div style="justify-self:start;">
             <div class="card-title">Sales per Team (Pipeline)</div>
             <div class="meta">Vertical bars</div>
           </div>
-        </div>
-        <div style="text-align:center; line-height:1; margin:2px 0 8px;">
-          <div class="meta" style="margin-top:0; font-size:12px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
-          <div id="totalSales" style="font-size:52px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
-          <div class="meta" id="salesMeta" style="margin-top:4px"></div>
+          <div style="text-align:center; line-height:1; justify-self:center;">
+            <div class="meta" style="margin-top:0; font-size:12px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
+            <div id="totalSales" style="font-size:46px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
+            <div class="meta" id="salesMeta" style="margin-top:2px"></div>
+          </div>
+          <div></div>
         </div>
         <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>

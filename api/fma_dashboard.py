@@ -1149,7 +1149,11 @@ def render_html(year: int, month: int) -> str:
           const g = Number(goal || 0);
           const p = g > 0 ? Math.max(0, Math.min(160, (a / g) * 100)) : null;
           const tone = (p === null) ? '#94a3b8' : (p >= 100 ? '#10b981' : (p >= 80 ? '#f59e0b' : '#ef4444'));
-          return `<div style="text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${a} / ${g || '—'}</div>
+          return `<div style="text-align:right; font-variant-numeric:tabular-nums;">
+                    <span style="font-weight:800; color:#0f172a;">${a}</span>
+                    <span style="color:#94a3b8;"> / </span>
+                    <span style="font-weight:500; color:#475569;">${g || '—'}</span>
+                  </div>
                   <div style="margin-top:2px; height:5px; background:#eef2f7; border-radius:999px; overflow:hidden;">
                     <div style="height:100%; width:${p===null?0:p}%; background:${tone};"></div>
                   </div>

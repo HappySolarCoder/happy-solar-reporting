@@ -433,6 +433,23 @@ def render_html(year: int, month: int) -> str:
     </div>
 
     <div class="grid">
+      <!-- Row 2: Sales per Team full width -->
+      <div class="card span-12">
+        <div class="card-header" style="justify-content:flex-start;">
+          <div>
+            <div class="card-title">Sales per Team (Pipeline)</div>
+            <div class="meta">Vertical bars</div>
+          </div>
+        </div>
+        <div style="text-align:center; padding:6px 0 10px;">
+          <div class="meta" style="margin-top:0; font-size:14px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
+          <div id="totalSales" style="font-size:58px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
+          <div class="meta" id="salesMeta" style="margin-top:6px"></div>
+        </div>
+        <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
+      </div>
+
+
       <!-- Lead Gen Performance (stacked funnel cards) -->
       <div class="demoRow">
         <div class="card demoCard funnelCard">
@@ -475,22 +492,6 @@ def render_html(year: int, month: int) -> str:
           <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
-      </div>
-
-      <!-- Row 2: Sales per Team full width -->
-      <div class="card span-12">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Sales per Team (Pipeline)</div>
-            <div class="meta">Vertical bars</div>
-          </div>
-          <div style="text-align:right;">
-            <div class="meta" style="margin-top:0">Total Sales</div>
-            <div style="font-size:32px; font-weight:950; line-height:1;" id="totalSales">—</div>
-            <div class="meta" id="salesMeta" style="margin-top:4px"></div>
-          </div>
-        </div>
-        <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>
 
       <!-- Row 3: vertical sales by lead gen source + vertical created by lead gen source -->

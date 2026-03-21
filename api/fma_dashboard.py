@@ -514,14 +514,14 @@ def render_html(year: int, month: int) -> str:
             </colgroup>
             <thead>
               <tr>
-                <th data-sort-key="setter" style="cursor:pointer; text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Setter Last Name</th>
-                <th data-sort-key="knocks" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Knocks / Goal</th>
-                <th data-sort-key="appts" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Appts Set / Goal</th>
-                <th data-sort-key="ran" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Opps Ran</th>
-                <th data-sort-key="sit" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Demos / Goal</th>
-                <th data-sort-key="pct" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Demo %</th>
-                <th data-sort-key="score" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Goal Score</th>
-                <th data-sort-key="sales" style="cursor:pointer; text-align:right; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Sales</th>
+                <th data-sort-key="setter" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Setter Last Name</th>
+                <th data-sort-key="knocks" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Knocks / Goal</th>
+                <th data-sort-key="appts" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Appts Set / Goal</th>
+                <th data-sort-key="ran" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Opps Ran</th>
+                <th data-sort-key="sit" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Demos / Goal</th>
+                <th data-sort-key="pct" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Demo %</th>
+                <th data-sort-key="score" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Goal Score</th>
+                <th data-sort-key="sales" style="cursor:pointer; text-align:center; padding:10px 12px; border-bottom:1px solid var(--border); color:var(--muted); font-size:13px; font-weight:900;">Sales</th>
               </tr>
             </thead>
             <tbody id="setterDemoRows">
@@ -1169,9 +1169,9 @@ def render_html(year: int, month: int) -> str:
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border);">${progressCell(r.knocks, r.knocksGoal)}</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border);">${progressCell(r.appts, r.apptsGoal)}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${Number(r.ran || 0)}</td>
+                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.ran || 0)}</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border);">${progressCell(r.sit, r.demosGoal)}</td>
-                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums;">${r.pct.toFixed(1)}%</td>
+                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric: tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score? r.score.toFixed(0)+'%':'—'}</span></td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.sales || 0)}</td>
               </tr>`).join('');
@@ -1192,9 +1192,9 @@ def render_html(year: int, month: int) -> str:
               <td style="padding:8px 12px; font-weight:950;">TOTAL</td>
               <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;" style="padding:8px 12px; text-align:center; font-weight:950; font-variant-numeric: tabular-nums;">${totalRan}</td>
               <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSit}</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;" style="padding:8px 12px; text-align:center; font-weight:950; font-variant-numeric: tabular-nums;">${totalPct.toFixed(1)}%</td>
               <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">${totalSales}</td>
             </tr>`;

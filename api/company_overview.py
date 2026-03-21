@@ -481,6 +481,11 @@ def render_html(year: int, month: int) -> str:
       </div>
 
 
+      <div class="card span-12" style="min-height:0; padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">
+        <div style="font-size:16px; font-weight:900; color:#1f2937;">Lead Gen Pipelines</div>
+        <div style="flex:1; height:1px; background:linear-gradient(90deg,#e5e7eb,transparent); margin-left:12px;"></div>
+      </div>
+
       <!-- Lead Gen Performance (stacked funnel cards) -->
       <div class="demoRow">
         <div class="card demoCard funnelCard">

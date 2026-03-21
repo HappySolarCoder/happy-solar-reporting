@@ -294,14 +294,14 @@ def render_html(year: int, month: int) -> str:
     .barval { width: 54px; text-align:right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
 
     /* Vertical bars */
-    .vchart { margin-top: 10px; }
+    .vchart { margin-top: 4px; }
     .vwrap {
       display:flex;
       align-items:stretch;
-      justify-content:space-evenly;
-      gap: 8px;
+      justify-content:center;
+      gap: 4px;
       height: 260px;
-      padding: 12px 12px;
+      padding: 8px 8px 0;
       background:#fafbfc;
       border:1px solid var(--border);
       border-radius:12px;
@@ -310,15 +310,16 @@ def render_html(year: int, month: int) -> str:
     .vcol {
       width: auto;
       flex: 1 1 0;
-      min-width: 60px;
-      max-width: 110px;
+      min-width: 64px;
+      max-width: 120px;
       height: 100%;
       display:flex;
       flex-direction:column;
       align-items:center;
-      gap: 8px;
+      justify-content:flex-end;
+      gap: 4px;
     }
-    .vval { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align:center; width:100%; }
+    .vval { font-size: 15px; color: var(--text); font-weight:800; font-variant-numeric: tabular-nums; text-align:center; width:100%; }
     .vbarArea {
       width: 100%;
       flex: 1;
@@ -334,20 +335,22 @@ def render_html(year: int, month: int) -> str:
       flex-direction:column;
       justify-content:flex-end;
       align-items:stretch;
-      gap: 6px;
+      gap: 3px;
     }
     .vbar {
       width: 100%;
       border-radius: 14px 14px 6px 6px;
     }
     .vlabel {
-      font-size: 11px;
-      color: var(--muted);
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 700;
       text-align:center;
       width: 100%;
       overflow:hidden;
       text-overflow:ellipsis;
       white-space:nowrap;
+      margin-bottom: 0;
     }
 
     a { color: var(--green); text-decoration: none; }
@@ -440,8 +443,8 @@ def render_html(year: int, month: int) -> str:
       <div class="card span-12" style="background:transparent; border:none; box-shadow:none; min-height:0; padding:0; display:flex; flex-direction:column; justify-content:flex-end;">
         <div class="card-header" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:end; margin:0 0 4px 0;">
           <div style="justify-self:start;">
-            <div class="card-title">Sales per Team (Pipeline)</div>
-            <div class="meta">Vertical bars</div>
+            <div class="card-title">Sales</div>
+            <div class="meta"></div>
           </div>
           <div style="text-align:center; line-height:1; justify-self:center;">
             <div class="meta" style="margin-top:0; font-size:12px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>

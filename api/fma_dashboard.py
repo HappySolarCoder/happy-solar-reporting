@@ -1010,7 +1010,6 @@ def render_html(year: int, month: int) -> str:
         const roleIds = new Set(Object.entries(roleByUser)
           .filter(([,v]) => v && Array.isArray(v.categories) && v.categories.includes(selectedRole))
           .map(([k]) => String(k)));
-        const roleFilterActive = (selectedRole !== 'all' && roleIds.size > 0);
 
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
@@ -1152,8 +1151,8 @@ def render_html(year: int, month: int) -> str:
           // Always anchor row inclusion to Raydar knock activity this month
           if (Number(r.knocksMonth || 0) <= 0) return false;
 
-          // Team filter should be Raydar-based only; never block all rows if role tags are missing.
-          if (!roleFilterActive) return true;
+          // Team filter should be Raydar-based only (strict)
+          if (selectedRole === 'all') return true;
 
           const rid = String(r.rayId || '');
           if (!rid) return false;

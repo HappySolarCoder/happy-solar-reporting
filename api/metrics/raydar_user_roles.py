@@ -53,7 +53,10 @@ def flatten_tokens(v: Any) -> list[str]:
             out.extend(flatten_tokens(x))
         return out
     if isinstance(v, dict):
-        for x in v.values():
+        # Include BOTH keys and values so permission maps like
+        # {"Setter (FMA)": true, "Closer": false} are classifiable.
+        for k, x in v.items():
+            out.extend(flatten_tokens(k))
             out.extend(flatten_tokens(x))
         return out
     return out
@@ -62,9 +65,13 @@ def flatten_tokens(v: Any) -> list[str]:
 def classify(tokens: list[str]) -> list[str]:
     low = " | ".join(t.lower() for t in tokens)
     cats: list[str] = []
-    if ("setter" in low and "fma" in low) or "setter (fma)" in low:
+
+    # Requested mapping:
+    # Setter => FMA
+    # Closer => Self Gen
+    if "setter" in low:
         cats.append("fma")
-    if "self gen" in low or "closer" in low or "selfgen" in low:
+    if "closer" in low or "self gen" in low or "selfgen" in low:
         cats.append("selfgen")
     if "manager" in low:
         cats.append("manager")

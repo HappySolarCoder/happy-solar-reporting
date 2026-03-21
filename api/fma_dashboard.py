@@ -387,18 +387,17 @@ def render_html(year: int, month: int) -> str:
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
         </div>
       </div>
-      <div style="min-width:320px">
-        <a class="navbtn missingDisposTop" href="/api/missing_dispos">Missing Dispos</a>
-        <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
-        <div class="card-title">Custom Range (date-only)</div>
-        <div class="meta">Overrides tabs when set</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center">
+      <div style="min-width:320px; display:flex; flex-direction:column; justify-content:flex-end; gap:12px; padding-top:4px;">
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
+          <a class="navbtn" href="/api/settings">Admin Settings</a>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; margin-top:6px;">
           <input id="startDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
           <input id="endDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
           <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
           <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
         </div>
-        
       </div>
     </div>
 
@@ -896,20 +895,69 @@ def render_html(year: int, month: int) -> str:
           : currentNyMonthToDateRange();
         const rangeParam = `&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
 
+        // Build all URLs first, then fetch in parallel for speed.
+        const monthStr = `${y}-${String(m).padStart(2,'0')}`;
+
         // 1) GHL demo rate counts (opps ran + sit demos)
         // IMPORTANT: table is isolated from top-page filters; it always uses tableRange only.
-        const demoRes = await fetch(`/api/metrics/demo_rate?format=json${lsParam}${rangeParam}`);
+        const demoUrl = `/api/metrics/demo_rate?format=json${lsParam}${rangeParam}`;
+
+        // 2) Roster + goals for month (to pull goal values)
+        const settingsReq = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'bootstrap', month: monthStr }),
+        };
+
+        // Top Performers — Appointments should follow the TOP page date range (not the table-only range)
+        const srTop = getRange();
+        let oppTopUrl = '';
+        if (srTop && srTop.start && srTop.end) {
+          oppTopUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}&pipeline_scope=all`;
+        } else {
+          oppTopUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
+        }
+
+        // 3) Raydar knocks
+        // - TOP performers (knocks card) should follow the TOP page date range
+        // - Demo-rate-by-setter table knocks column follows the table-only range
+        let rayTopUrl = '';
+        if (srTop && srTop.start && srTop.end) {
+          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}`;
+        } else {
+          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
+        }
+
+        let rayTableUrl = '';
+        if (srTable && srTable.start && srTable.end) {
+          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
+        } else {
+          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
+        }
+
+        // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
+        let oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}&pipeline_scope=all`;
+        const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
+        if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
+
+        // 3c) GHL sales by setter last name for the same table window (sold date filter)
+        let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
+        if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
+
+        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, oppRes, salesRes] = await Promise.all([
+          fetch(demoUrl),
+          fetch('/api/settings_api', settingsReq),
+          fetch(oppTopUrl),
+          fetch(rayTopUrl),
+          fetch(rayTableUrl),
+          fetch(oppUrl),
+          fetch(salesUrl),
+        ]);
+
         const demoData = demoRes.ok ? await demoRes.json() : null;
         const ranBy = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_setter_last_name) ? demoData.breakdowns.ran_by_setter_last_name : {};
         const sitBy = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) ? demoData.breakdowns.sit_by_setter_last_name : {};
 
-        // 2) Roster + goals for month (to pull goal values)
-        const monthStr = `${y}-${String(m).padStart(2,'0')}`;
-        const settingsRes = await fetch('/api/settings_api', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'bootstrap', month: monthStr }),
-        });
         const settings = settingsRes.ok ? await settingsRes.json() : null;
         const roster = settings && Array.isArray(settings.roster_people) ? settings.roster_people : [];
         const goalsRows = settings && Array.isArray(settings.goals_for_month) ? settings.goals_for_month : [];
@@ -917,8 +965,6 @@ def render_html(year: int, month: int) -> str:
         const setterToPerson = {};
         const setterToRaydar = {};
         for (const r of roster) {
-          // Do not filter by role here. If someone has a GHL setter last name mapping,
-          // we should apply goals + Raydar actuals regardless of their role label.
           const sln = String(r.ghl_setter_last_name || '').trim();
           if (!sln) continue;
           setterToPerson[sln] = String(r.person_key || '');
@@ -935,17 +981,6 @@ def render_html(year: int, month: int) -> str:
           goalsByPerson[pk][metric] = value;
         }
 
-        // Top Performers — Appointments should follow the TOP page date range (not the table-only range)
-        const srTop = getRange();
-        let oppTopUrl = '';
-        if (srTop && srTop.start && srTop.end) {
-          oppTopUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}&pipeline_scope=all`;
-        } else {
-          oppTopUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&pipeline_scope=all`;
-        }
-        // IMPORTANT: Top Performers — Appointments should not be affected by the demo table lead-source filter
-
-        const oppTopRes = await fetch(oppTopUrl);
         const oppTop = oppTopRes.ok ? await oppTopRes.json() : null;
         const apptsTopBySetter = (oppTop && oppTop.breakdowns && oppTop.breakdowns.created_by_setter_last_name) ? oppTop.breakdowns.created_by_setter_last_name : {};
         const apptsBySetterNormTop = {};
@@ -955,35 +990,11 @@ def render_html(year: int, month: int) -> str:
           apptsBySetterNormTop[kk] = (apptsBySetterNormTop[kk] || 0) + Number(v || 0);
         }
 
-        // 3) Raydar knocks
-        // - TOP performers (knocks card) should follow the TOP page date range
-        // - Demo-rate-by-setter table knocks column follows the table-only range
-
-        let rayTopUrl = '';
-        if (srTop && srTop.start && srTop.end) {
-          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTop.start)}&end=${encodeURIComponent(srTop.end)}`;
-        } else {
-          rayTopUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
-        }
-
-        let rayTableUrl = '';
-        if (srTable && srTable.start && srTable.end) {
-          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(srTable.start)}&end=${encodeURIComponent(srTable.end)}`;
-        } else {
-          rayTableUrl = `/api/metrics/raydar_doors_knocked?format=json&period=thismo`;
-        }
-
-        const [rayTopRes, rayTableRes] = await Promise.all([
-          fetch(rayTopUrl),
-          fetch(rayTableUrl)
-        ]);
-
         const rayTop = rayTopRes.ok ? await rayTopRes.json() : null;
         const rayTable = rayTableRes.ok ? await rayTableRes.json() : null;
 
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
-        // Top Performers — Knocks (Raydar actor attribution)
         const raydarNameById = {};
         for (const r of roster) {
           const rid = String(r.raydar_user_id || '').trim();
@@ -1007,20 +1018,9 @@ def render_html(year: int, month: int) -> str:
         // Use same attribution model as Top Performers — Knocks so numbers align
         const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_actor ? rayTable.breakdowns.knocks_by_actor : {};
 
-        // 3b) GHL opportunities created (appointments) by setter last name for the same window + lead source filter
-        let oppUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}&pipeline_scope=all`;
-        const oppLs = (lsEl && lsEl.value) ? String(lsEl.value) : '';
-        if (oppLs) oppUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
-
-        const oppRes = await fetch(oppUrl);
         const opp = oppRes.ok ? await oppRes.json() : null;
         const apptsBySetter = (opp && opp.breakdowns && opp.breakdowns.created_by_setter_last_name) ? opp.breakdowns.created_by_setter_last_name : {};
 
-        // 3c) GHL sales by setter last name for the same table window (sold date filter)
-        let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
-        if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
-
-        const salesRes = await fetch(salesUrl);
         const salesData = salesRes.ok ? await salesRes.json() : null;
         const salesBySetter = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_setter_last_name)
           ? salesData.breakdowns.sales_by_setter_last_name

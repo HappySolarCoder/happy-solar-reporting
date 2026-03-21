@@ -505,7 +505,7 @@ def render_html(year: int, month: int) -> str:
       </div>
 
       <!-- Row 3: monthly company trends (split cards) -->
-      <div class="card span-4">
+      <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Sales Monthly Trend (since Aug 2025)</div>
         </div>
@@ -514,7 +514,7 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
-      <div class="card span-4">
+      <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Opp2Prelim % Monthly Trend</div>
         </div>
@@ -523,7 +523,7 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
-      <div class="card span-4">
+      <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Opps Created Monthly Trend</div>
         </div>

@@ -338,6 +338,13 @@ def render_html(year: int, month: int) -> str:
     }
   
 
+    /* Setter performance table readability */
+    .setterTableWrap { margin-top:10px; overflow:auto; border:1px solid var(--border); border-radius:12px; width:100%; }
+    .setterTable { width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; }
+    .setterTable thead th { position:sticky; top:0; background:#f8fafc; z-index:1; }
+    .setterTable tbody tr:nth-child(even) { background:#fcfdff; }
+    .setterTable tbody td { vertical-align:top; }
+
     /* Mobile optimizations */
     @media (max-width: 820px) {
       .wrap { padding: 14px; }
@@ -496,6 +503,16 @@ def render_html(year: int, month: int) -> str:
         </div>
         <div class="setterTableWrap">
           <table class="setterTable">
+            <colgroup>
+              <col style="width:18%" />
+              <col style="width:16%" />
+              <col style="width:16%" />
+              <col style="width:8%" />
+              <col style="width:16%" />
+              <col style="width:8%" />
+              <col style="width:9%" />
+              <col style="width:9%" />
+            </colgroup>
             <thead>
               <tr>
                 <th data-sort-key="setter" style="cursor:pointer; text-align:left; padding:8px 8px; border-bottom:1px solid var(--border); color:var(--muted); font-size:12px; font-weight:900;">Setter Last Name</th>
@@ -1186,7 +1203,6 @@ def render_html(year: int, month: int) -> str:
           tfoot.innerHTML = `
             <tr>
               <td style="padding:8px 8px; font-weight:950;">TOTAL</td>
-              <td style="padding:8px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:8px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:8px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
               <td style="padding:8px 8px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>

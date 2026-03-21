@@ -1007,6 +1007,10 @@ def render_html(year: int, month: int) -> str:
         const rayMonth = rayMonthRes.ok ? await rayMonthRes.json() : null;
         const roleData = roleRes.ok ? await roleRes.json() : null;
         const roleByUser = (roleData && roleData.users) ? roleData.users : {};
+        const roleIds = new Set(Object.entries(roleByUser)
+          .filter(([,v]) => v && Array.isArray(v.categories) && v.categories.includes(selectedRole))
+          .map(([k]) => String(k)));
+        const roleFilterActive = (selectedRole !== 'all' && roleIds.size > 0);
 
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
@@ -1145,9 +1149,15 @@ def render_html(year: int, month: int) -> str:
           const cats = (rayId && roleByUser[rayId] && Array.isArray(roleByUser[rayId].categories)) ? roleByUser[rayId].categories : [];
           return { setter, ran, sit, pct, knocks, knocksMonth, appts, sales, knocksGoal, apptsGoal, demosGoal, score, rayId, cats };
         }).filter(r => {
+          // Always anchor row inclusion to Raydar knock activity this month
           if (Number(r.knocksMonth || 0) <= 0) return false;
-          if (selectedRole === 'all') return true;
-          return Array.isArray(r.cats) && r.cats.includes(selectedRole);
+
+          // Team filter should be Raydar-based only; never block all rows if role tags are missing.
+          if (!roleFilterActive) return true;
+
+          const rid = String(r.rayId || '');
+          if (!rid) return false;
+          return roleIds.has(rid);
         });
 
         const sortedRows = sortSetterRows(rows);

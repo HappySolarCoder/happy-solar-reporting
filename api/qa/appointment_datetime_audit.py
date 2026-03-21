@@ -123,6 +123,7 @@ class handler(BaseHTTPRequestHandler):
             setter = (qs.get("setter_last_name", [""])[0] or "").strip() or None
             limit = int((qs.get("limit", ["500"])[0] or "500"))
             include_all = (qs.get("all", [""])[0] or "").lower() in {"1", "true", "yes", "all"}
+            include_events = (qs.get("events", [""])[0] or "").lower() in {"1", "true", "yes", "all"}
 
             db = get_db()
             rows = []
@@ -152,14 +153,14 @@ class handler(BaseHTTPRequestHandler):
                     "scheduledAt": to_iso_utc(o.get("scheduledAt")),
                     "scheduledFor": to_iso_utc(o.get("scheduledFor")),
                     "customDateCandidates": custom_datetime_candidates(o),
-                    "relatedEventHits": related_event_hits(db, opp_id, cid),
+                    "relatedEventHits": related_event_hits(db, opp_id, cid) if include_events else {},
                 })
                 if (not include_all) and len(rows) >= max(1, min(limit, 5000)):
                     break
 
             payload = {
                 "metric": "QA — Appointment Datetime Audit",
-                "query": {"year": year, "month": month, "setter_last_name": setter, "limit": limit, "all": include_all},
+                "query": {"year": year, "month": month, "setter_last_name": setter, "limit": limit, "all": include_all, "events": include_events},
                 "count": len(rows),
                 "rows": rows,
                 "generated_at": datetime.utcnow().isoformat() + "Z",

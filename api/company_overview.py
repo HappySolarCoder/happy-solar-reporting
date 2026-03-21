@@ -233,10 +233,11 @@ def render_html(year: int, month: int) -> str:
       -webkit-clip-path: polygon(4% 0%, 96% 0%, 98% 2%, 100% 8%, 92% 98%, 90% 100%, 10% 100%, 8% 98%, 0% 8%, 2% 2%);
     }
     /* Match dashboard palette */
-    .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#00C853 0%, #16a34a 100%); }
-    .funnelStage.stage-mid { width: 82%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#2196F3 0%, #1d4ed8 100%); }
-    .funnelStage.stage-bottom { width: 68%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#7c5ce6 0%, #6d28d9 100%); }
-    .funnelStage.stage-sales { width: 56%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#ec4899 0%, #db2777 100%); }
+    /* Softer tones to match bar-chart palette */
+    .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#34b883 0%, #2ea870 100%); }
+    .funnelStage.stage-mid { width: 82%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#3b93d9 0%, #2f86cc 100%); }
+    .funnelStage.stage-bottom { width: 68%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#7b63d2 0%, #6f58c5 100%); }
+    .funnelStage.stage-sales { width: 56%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#d94b93 0%, #c93f84 100%); }
     .funnelLabel { font-size:11px; color:rgba(255,255,255,.92); font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
     .funnelValue { font-size:28px; font-weight:950; color:#fff; line-height:1.1; }
     .funnelSub { font-size:11px; color:rgba(255,255,255,.92); }

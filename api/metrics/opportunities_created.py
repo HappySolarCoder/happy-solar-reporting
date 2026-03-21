@@ -164,6 +164,15 @@ def user_name_lookup(db: firestore.Client, c: MetricContract) -> dict[str, str]:
     return m
 
 
+
+
+def opportunity_custom_field(opportunity: dict | None, custom_field_id: str) -> Any:
+    if not opportunity:
+        return None
+    for cf in (opportunity.get("customFields") or []):
+        if isinstance(cf, dict) and cf.get("id") == custom_field_id:
+            return cf.get("value") or cf.get("fieldValueString")
+    return None
 def normalize_channel(v: Any) -> str:
     if v is None:
         return "none"

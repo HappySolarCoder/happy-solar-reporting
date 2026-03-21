@@ -489,3 +489,12 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "public, s-maxage=120, stale-while-revalidate=300")
             self.end_headers()
             self.wfile.write(body)
+
+
+def opportunity_custom_field(opportunity: dict | None, custom_field_id: str) -> Any:
+    if not opportunity:
+        return None
+    for cf in (opportunity.get("customFields") or []):
+        if isinstance(cf, dict) and cf.get("id") == custom_field_id:
+            return cf.get("value") or cf.get("fieldValueString")
+    return None

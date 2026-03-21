@@ -226,8 +226,9 @@ def render_html(year: int, month: int) -> str:
       text-align:center;
       box-shadow: inset 0 -6px 12px rgba(0,0,0,.10), 0 1px 2px rgba(17,24,39,.08);
       /* Stable full-size trapezoid geometry */
-      clip-path: polygon(0% 0%, 100% 0%, 90% 100%, 10% 100%);
-      -webkit-clip-path: polygon(0% 0%, 100% 0%, 90% 100%, 10% 100%);
+      /* Soft-corner trapezoid (preserves full size, smooths all 4 corners) */
+      clip-path: polygon(4% 0%, 96% 0%, 98% 2%, 100% 8%, 92% 98%, 90% 100%, 10% 100%, 8% 98%, 0% 8%, 2% 2%);
+      -webkit-clip-path: polygon(4% 0%, 96% 0%, 98% 2%, 100% 8%, 92% 98%, 90% 100%, 10% 100%, 8% 98%, 0% 8%, 2% 2%);
     }
     /* Match dashboard palette */
     .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#00C853 0%, #16a34a 100%); }

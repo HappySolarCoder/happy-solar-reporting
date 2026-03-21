@@ -221,7 +221,7 @@ def render_html(year: int, month: int) -> str:
       box-sizing: border-box;
       display:block;
       padding:10px 10px 8px;
-      margin-top:8px;
+      margin-top:4px;
       color:#fff;
       text-align:center;
       box-shadow: inset 0 -6px 12px rgba(0,0,0,.10), 0 1px 2px rgba(17,24,39,.08);
@@ -234,6 +234,7 @@ def render_html(year: int, month: int) -> str:
     .funnelStage.stage-top { width: 96%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#00C853 0%, #16a34a 100%); }
     .funnelStage.stage-mid { width: 82%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#2196F3 0%, #1d4ed8 100%); }
     .funnelStage.stage-bottom { width: 68%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#7c5ce6 0%, #6d28d9 100%); }
+    .funnelStage.stage-sales { width: 56%; margin-left:auto; margin-right:auto; background: linear-gradient(135deg,#ec4899 0%, #db2777 100%); }
     .funnelLabel { font-size:11px; color:rgba(255,255,255,.92); font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
     .funnelValue { font-size:28px; font-weight:950; color:#fff; line-height:1.1; }
     .funnelSub { font-size:11px; color:rgba(255,255,255,.92); }
@@ -462,42 +463,38 @@ def render_html(year: int, month: int) -> str:
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Company Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgCompanyCreated">—</div><div class="funnelSub" id="lgCompanyCreatedSub">Created in range</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgCompanyDemo">—</div><div class="funnelSub" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgCompanyOpp2">—</div><div class="funnelSub" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgCompanySales">—</div><div class="funnelSub">Sales in range</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgDoorsSales">—</div><div class="funnelSub">Sales in range</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgSelfGenSales">—</div><div class="funnelSub">Sales in range</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgPhonesSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Doors Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgDoorsCreated">—</div><div class="funnelSub">Created in range</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgDoorsDemo">—</div><div class="funnelSub" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgDoorsOpp2">—</div><div class="funnelSub" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Self Gen Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgSelfGenCreated">—</div><div class="funnelSub">Created in range</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgSelfGenDemo">—</div><div class="funnelSub" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgSelfGenOpp2">—</div><div class="funnelSub" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">Phones Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgPhonesCreated">—</div><div class="funnelSub">Created in range</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgPhonesDemo">—</div><div class="funnelSub" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgPhonesOpp2">—</div><div class="funnelSub" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
         <div class="card demoCard funnelCard">
           <div class="card-header"><div class="card-title">3PL Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>
-          <div class="funnelConnector"></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
+        </div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lg3plSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
       </div>
 
@@ -798,6 +795,11 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lgSelfGenCreated').textContent = '…';
     document.getElementById('lgPhonesCreated').textContent = '…';
     document.getElementById('lg3plCreated').textContent = '…';
+    document.getElementById('lgCompanySales').textContent = '…';
+    document.getElementById('lgDoorsSales').textContent = '…';
+    document.getElementById('lgSelfGenSales').textContent = '…';
+    document.getElementById('lgPhonesSales').textContent = '…';
+    document.getElementById('lg3plSales').textContent = '…';
     document.getElementById('lgDoorsOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgSelfGenOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgPhonesOpp2Counts').textContent = 'Sales: … • Ran: …';
@@ -849,6 +851,12 @@ def render_html(year: int, month: int) -> str:
     const salesSelfGenData = salesSelfGenRes.ok ? await salesSelfGenRes.json() : null;
     const salesPhonesData = salesPhonesRes.ok ? await salesPhonesRes.json() : null;
     const sales3plData = sales3plRes.ok ? await sales3plRes.json() : null;
+
+    document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));
+    document.getElementById('lgDoorsSales').textContent = String(Number((salesDoorsData && salesDoorsData.result) || 0));
+    document.getElementById('lgSelfGenSales').textContent = String(Number((salesSelfGenData && salesSelfGenData.result) || 0));
+    document.getElementById('lgPhonesSales').textContent = String(Number((salesPhonesData && salesPhonesData.result) || 0));
+    document.getElementById('lg3plSales').textContent = String(Number((sales3plData && sales3plData.result) || 0));
 
     const ranDoorsData = ranDoorsRes.ok ? await ranDoorsRes.json() : null;
     const ranSelfGenData = ranSelfGenRes.ok ? await ranSelfGenRes.json() : null;

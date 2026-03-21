@@ -216,6 +216,13 @@ def render_html(year: int, month: int) -> str:
     }
     .demoCard { padding: 14px 14px; min-height: 104px; }
     .demoCard .kpi { font-size: 38px; }
+    .funnelCard { min-height: 280px; }
+    .funnelStage { background:#f8fafc; border:1px solid var(--border); border-radius:12px; padding:8px 10px; margin-top:8px; }
+    .funnelLabel { font-size:11px; color:var(--muted); font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
+    .funnelValue { font-size:26px; font-weight:950; color:#111827; line-height:1.1; }
+    .funnelSub { font-size:12px; color:var(--muted2); }
+    .funnelConnector { height:14px; margin:2px 0 0; position:relative; }
+    .funnelConnector:before { content:''; position:absolute; left:50%; transform:translateX(-50%); top:0; width:2px; height:14px; background:linear-gradient(180deg,#ec4899,#22c55e); opacity:.6; }
     @media (max-width: 1180px) {
       .demoRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -439,76 +446,47 @@ def render_html(year: int, month: int) -> str:
         <div class="meta" id="opp2prelimMeta">—</div>
       </div>
 
-      <!-- Lead Gen Performance (stacked cards by source) -->
+      <!-- Lead Gen Performance (stacked funnel cards) -->
       <div class="demoRow">
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Company</div>
-            <div class="meta">Lead Gen Performance</div>
-          </div>
-          <div class="meta" style="font-weight:900">Demo Rate</div>
-          <div class="kpi" id="lgCompanyDemo">—</div>
-          <div class="meta" id="lgCompanyDemoCounts">Demos: — • Ran: —</div>
-          <div style="height:10px"></div>
-          <div class="meta" style="font-weight:900">Opp2Prelim</div>
-          <div class="kpi" id="lgCompanyOpp2">—</div>
-          <div class="meta" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div>
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">Company Funnel</div><div class="meta">All Lead Sources</div></div>
+          <div class="funnelStage"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgCompanyCreated">—</div><div class="funnelSub" id="lgCompanyCreatedSub">Created in range</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgCompanyDemo">—</div><div class="funnelSub" id="lgCompanyDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgCompanyOpp2">—</div><div class="funnelSub" id="lgCompanyOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Doors</div>
-            <div class="meta">Lead Gen Performance</div>
-          </div>
-          <div class="meta" style="font-weight:900">Demo Rate</div>
-          <div class="kpi" id="lgDoorsDemo">—</div>
-          <div class="meta" id="lgDoorsDemoCounts">Demos: — • Ran: —</div>
-          <div style="height:10px"></div>
-          <div class="meta" style="font-weight:900">Opp2Prelim</div>
-          <div class="kpi" id="lgDoorsOpp2">—</div>
-          <div class="meta" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div>
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">Doors Funnel</div><div class="meta">Lead Source: Doors</div></div>
+          <div class="funnelStage"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgDoorsCreated">—</div><div class="funnelSub">Created in range</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgDoorsDemo">—</div><div class="funnelSub" id="lgDoorsDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgDoorsOpp2">—</div><div class="funnelSub" id="lgDoorsOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Self Gen</div>
-            <div class="meta">Lead Gen Performance</div>
-          </div>
-          <div class="meta" style="font-weight:900">Demo Rate</div>
-          <div class="kpi" id="lgSelfGenDemo">—</div>
-          <div class="meta" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div>
-          <div style="height:10px"></div>
-          <div class="meta" style="font-weight:900">Opp2Prelim</div>
-          <div class="kpi" id="lgSelfGenOpp2">—</div>
-          <div class="meta" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div>
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">Self Gen Funnel</div><div class="meta">Lead Source: Self Gen</div></div>
+          <div class="funnelStage"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgSelfGenCreated">—</div><div class="funnelSub">Created in range</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgSelfGenDemo">—</div><div class="funnelSub" id="lgSelfGenDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgSelfGenOpp2">—</div><div class="funnelSub" id="lgSelfGenOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">Phones</div>
-            <div class="meta">Lead Gen Performance</div>
-          </div>
-          <div class="meta" style="font-weight:900">Demo Rate</div>
-          <div class="kpi" id="lgPhonesDemo">—</div>
-          <div class="meta" id="lgPhonesDemoCounts">Demos: — • Ran: —</div>
-          <div style="height:10px"></div>
-          <div class="meta" style="font-weight:900">Opp2Prelim</div>
-          <div class="kpi" id="lgPhonesOpp2">—</div>
-          <div class="meta" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div>
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">Phones Funnel</div><div class="meta">Lead Source: Phones</div></div>
+          <div class="funnelStage"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgPhonesCreated">—</div><div class="funnelSub">Created in range</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgPhonesDemo">—</div><div class="funnelSub" id="lgPhonesDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgPhonesOpp2">—</div><div class="funnelSub" id="lgPhonesOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
-
-        <div class="card demoCard">
-          <div class="card-header">
-            <div class="card-title">3PL</div>
-            <div class="meta">Lead Gen Performance</div>
-          </div>
-          <div class="meta" style="font-weight:900">Demo Rate</div>
-          <div class="kpi" id="lg3plDemo">—</div>
-          <div class="meta" id="lg3plDemoCounts">Demos: — • Ran: —</div>
-          <div style="height:10px"></div>
-          <div class="meta" style="font-weight:900">Opp2Prelim</div>
-          <div class="kpi" id="lg3plOpp2">—</div>
-          <div class="meta" id="lg3plOpp2Counts">Sales: — • Ran: —</div>
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">3PL Funnel</div><div class="meta">Lead Source: 3PL</div></div>
+          <div class="funnelStage"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelConnector"></div>
+          <div class="funnelStage"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
         </div>
       </div>
 
@@ -817,6 +795,11 @@ def render_html(year: int, month: int) -> str:
     document.getElementById('lgPhonesOpp2').textContent = '…';
     document.getElementById('lg3plOpp2').textContent = '…';
     document.getElementById('lgCompanyOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgCompanyCreated').textContent = '…';
+    document.getElementById('lgDoorsCreated').textContent = '…';
+    document.getElementById('lgSelfGenCreated').textContent = '…';
+    document.getElementById('lgPhonesCreated').textContent = '…';
+    document.getElementById('lg3plCreated').textContent = '…';
     document.getElementById('lgDoorsOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgSelfGenOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgPhonesOpp2Counts').textContent = 'Sales: … • Ran: …';
@@ -891,6 +874,12 @@ def render_html(year: int, month: int) -> str:
 
 
     document.getElementById('totalCreated').textContent = createdData.result;
+    const createdByLead = (createdData.breakdowns || {}).created_by_lead_gen_source || {};
+    document.getElementById('lgCompanyCreated').textContent = String(Number(createdData.result || 0));
+    document.getElementById('lgDoorsCreated').textContent = String(Number(createdByLead['Doors'] || 0));
+    document.getElementById('lgSelfGenCreated').textContent = String(Number(createdByLead['Self Gen'] || 0));
+    document.getElementById('lgPhonesCreated').textContent = String(Number(createdByLead['Phones'] || createdByLead['Virtual'] || 0));
+    document.getElementById('lg3plCreated').textContent = String(Number(createdByLead['3PL'] || 0));
 
     const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
     const fmtCounts = (d) => {

@@ -435,16 +435,16 @@ def render_html(year: int, month: int) -> str:
     <div class="grid">
       <!-- Row 2: Sales per Team full width -->
       <div class="card span-12">
-        <div class="card-header" style="justify-content:flex-start;">
+        <div class="card-header" style="justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
           <div>
             <div class="card-title">Sales per Team (Pipeline)</div>
             <div class="meta">Vertical bars</div>
           </div>
-        </div>
-        <div style="text-align:center; padding:6px 0 10px;">
-          <div class="meta" style="margin-top:0; font-size:14px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
-          <div id="totalSales" style="font-size:58px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
-          <div class="meta" id="salesMeta" style="margin-top:6px"></div>
+          <div style="text-align:right; line-height:1;">
+            <div class="meta" style="margin-top:0; font-size:12px; font-weight:900; letter-spacing:.04em;">TOTAL SALES</div>
+            <div id="totalSales" style="font-size:52px; font-weight:950; line-height:1; letter-spacing:-.02em;">—</div>
+            <div class="meta" id="salesMeta" style="margin-top:4px"></div>
+          </div>
         </div>
         <div class="vchart" id="salesByPipelineV"><div class="skeleton">Loading…</div></div>
       </div>

@@ -108,6 +108,33 @@ HTML = """<!doctype html>
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
     .muted { color: var(--muted2); }
+
+    /* Spotlight mode for meeting walkthrough */
+    .card.focusable { cursor: zoom-in; transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease; }
+    .card.focusable:hover { transform: translateY(-1px); }
+    #spotlightBackdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.52);
+      z-index: 900;
+      backdrop-filter: blur(2px);
+    }
+    body.spotlight-on #spotlightBackdrop { display: block; }
+    body.spotlight-on .card { opacity: 0.20; }
+    .card.spotlight {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: min(94vw, 1280px);
+      max-height: 86vh;
+      overflow: auto;
+      transform: translate(-50%, -50%) scale(1.01);
+      z-index: 1000;
+      opacity: 1 !important;
+      cursor: zoom-out;
+      box-shadow: 0 24px 64px rgba(2, 6, 23, 0.35);
+    }
   </style>
 </head>
 <body>
@@ -142,6 +169,7 @@ HTML = """<!doctype html>
           <button class=\"btn\" id=\"todayBtn\">Today</button>
         </div>
         <div class=\"kpi-sub\" id=\"status\" style=\"margin-top:8px\">Loading…</div>
+        <div class=\"kpi-sub\" style=\"margin-top:4px\">Tip: click any card to spotlight it for discussion (Esc to close).</div>
       </div>
     </div>
 
@@ -199,6 +227,8 @@ HTML = """<!doctype html>
     </div>
   </div>
 
+  <div id=\"spotlightBackdrop\"></div>
+
 <script>
   const url = new URL(window.location.href);
 
@@ -237,6 +267,41 @@ HTML = """<!doctype html>
     const n = Number(v);
     if (!Number.isFinite(n)) return '—';
     return `${n.toFixed(1)}%`;
+  }
+
+  let spotlightCard = null;
+  function closeSpotlight() {
+    if (!spotlightCard) return;
+    spotlightCard.classList.remove('spotlight');
+    spotlightCard = null;
+    document.body.classList.remove('spotlight-on');
+  }
+
+  function openSpotlight(card) {
+    if (spotlightCard === card) {
+      closeSpotlight();
+      return;
+    }
+    if (spotlightCard) spotlightCard.classList.remove('spotlight');
+    spotlightCard = card;
+    card.classList.add('spotlight');
+    document.body.classList.add('spotlight-on');
+  }
+
+  function wireSpotlight() {
+    document.querySelectorAll('.card').forEach((card) => {
+      card.classList.add('focusable');
+      card.addEventListener('click', (ev) => {
+        if (ev.target.closest('a,button,input,select,label')) return;
+        openSpotlight(card);
+      });
+    });
+
+    const backdrop = document.getElementById('spotlightBackdrop');
+    if (backdrop) backdrop.addEventListener('click', closeSpotlight);
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') closeSpotlight();
+    });
   }
 
   function renderKVTable(containerId, obj, valueLabel = 'Count') {
@@ -370,6 +435,7 @@ HTML = """<!doctype html>
     setRange(today, today);
   });
 
+  wireSpotlight();
   load();
 </script>
 </body>

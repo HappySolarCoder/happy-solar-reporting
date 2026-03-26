@@ -16,10 +16,11 @@ from __future__ import annotations
 import base64
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from zoneinfo import ZoneInfo
+from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -108,7 +109,17 @@ def parse_appt_local(txt: str | None, tz_name: str = "America/New_York") -> date
         return None
 
 
-def render(rows_html: str, count: int, empty_count: int, team_count: int) -> str:
+def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        y, m, d = [int(x) for x in s.strip().split("-")]
+        return y, m, d
+    except Exception:
+        return None
+
+
+def render(rows_html: str, count: int, empty_count: int, team_count: int, start_date: str, end_date: str) -> str:
     return f"""<!doctype html>
 <html>
 <head>
@@ -135,6 +146,10 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int) -> str
     @media (max-width:980px) {{ .span-3 {{ grid-column: span 12; }} }}
     .label {{ color:var(--muted); font-size:12px; font-weight:900; }}
     .kpi {{ margin-top:4px; font-size:34px; font-weight:950; }}
+    .filters {{ display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; }}
+    .filters label {{ display:block; font-size:12px; color:var(--muted); font-weight:900; margin-bottom:4px; }}
+    .filters input[type=date] {{ border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:800; background:#fff; }}
+    .btn {{ display:inline-flex; align-items:center; padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; color:#1f2937; font-size:12px; font-weight:900; text-decoration:none; cursor:pointer; }}
     table {{ width:100%; border-collapse: collapse; margin-top:10px; }}
     th, td {{ border-bottom:1px solid var(--border); padding:9px 8px; text-align:left; font-size:12px; }}
     th {{ color:var(--muted); font-weight:950; }}
@@ -157,6 +172,21 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int) -> str
           <a class=\"navbtn\" href=\"/api/settings\">Settings</a>
           <a class=\"navbtn active\" href=\"/api/data_cleanup\">Data Cleanup</a>
         </div>
+      </div>
+      <div style=\"min-width:320px\">
+        <div class=\"label\">Appointment Date Filter</div>
+        <form method=\"GET\" class=\"filters\" style=\"margin-top:8px\">
+          <div>
+            <label>Start</label>
+            <input type=\"date\" name=\"start\" value=\"{html_escape(start_date)}\" />
+          </div>
+          <div>
+            <label>End</label>
+            <input type=\"date\" name=\"end\" value=\"{html_escape(end_date)}\" />
+          </div>
+          <button class=\"btn\" type=\"submit\">Apply</button>
+          <a class=\"btn\" href=\"/api/data_cleanup\">Reset</a>
+        </form>
       </div>
     </div>
 
@@ -195,6 +225,31 @@ class handler(BaseHTTPRequestHandler):
             return _unauthorized(self)
 
         try:
+            tz = ZoneInfo("America/New_York")
+            now_local = datetime.now(tz)
+            qs = parse_qs(urlparse(self.path).query)
+            start_q = (qs.get("start", [""])[0] or "").strip()
+            end_q = (qs.get("end", [""])[0] or "").strip()
+
+            if not (start_q and end_q):
+                # Default: current month (relative)
+                start_q = f"{now_local.year:04d}-{now_local.month:02d}-01"
+                if now_local.month == 12:
+                    end_dt = datetime(now_local.year + 1, 1, 1, tzinfo=tz)
+                else:
+                    end_dt = datetime(now_local.year, now_local.month + 1, 1, tzinfo=tz)
+                end_dt = end_dt.replace(day=1)
+                # inclusive end date for UI
+                end_q = (end_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+
+            sp = parse_date_ymd(start_q)
+            ep = parse_date_ymd(end_q)
+            if not (sp and ep):
+                raise ValueError("Invalid start/end date; expected YYYY-MM-DD")
+
+            start_local = datetime(sp[0], sp[1], sp[2], 0, 0, 0, tzinfo=tz)
+            end_local_excl = datetime(ep[0], ep[1], ep[2], 0, 0, 0, tzinfo=tz) + timedelta(days=1)
+
             db = get_db()
             rows = []
 
@@ -229,7 +284,13 @@ class handler(BaseHTTPRequestHandler):
                     contact_url = f"https://app.gohighlevel.com/v2/location/{location_id}/contacts/detail/{contact_id}"
 
                 appt_local = parse_appt_local(appt_raw)
-                appt_sort = appt_local.isoformat() if appt_local else f"9999-{appt_raw}"
+                if not appt_local:
+                    continue
+
+                if not (start_local <= appt_local < end_local_excl):
+                    continue
+
+                appt_sort = appt_local.isoformat()
 
                 rows.append({
                     "issue": issue,
@@ -269,7 +330,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 rows_html = "<tr><td colspan='5' style='color:#9ca3af'>No rows</td></tr>"
 
-            body = render(rows_html, len(rows), empty_count, team_count).encode("utf-8")
+            body = render(rows_html, len(rows), empty_count, team_count, start_q, end_q).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

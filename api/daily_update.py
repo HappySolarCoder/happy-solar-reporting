@@ -155,17 +155,21 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-4\">
+      <div class=\"card span-3\">
         <div class=\"card-title\">Sales by Owner</div>
         <div id=\"tblSalesOwner\"></div>
       </div>
-      <div class=\"card span-4\">
+      <div class=\"card span-3\">
         <div class=\"card-title\">Sales by Setter Last Name</div>
         <div id=\"tblSalesSetter\"></div>
       </div>
-      <div class=\"card span-4\">
+      <div class=\"card span-3\">
         <div class=\"card-title\">Sales by Lead Gen Source</div>
         <div id=\"tblSalesLead\"></div>
+      </div>
+      <div class=\"card span-3\">
+        <div class=\"card-title\">Opportunities Created by Lead Gen Source</div>
+        <div id=\"tblOppsLead\"></div>
       </div>
 
       <div class=\"card span-6\">
@@ -306,6 +310,7 @@ HTML = """<!doctype html>
       renderKVTable('tblSalesOwner', sales?.breakdowns?.sales_by_owner || {}, 'Sales');
       renderKVTable('tblSalesSetter', sales?.breakdowns?.sales_by_setter_last_name || {}, 'Sales');
       renderKVTable('tblSalesLead', sales?.breakdowns?.sales_by_lead_gen_source || {}, 'Sales');
+      renderKVTable('tblOppsLead', opps?.breakdowns?.created_by_lead_gen_source || {}, 'Opps');
 
       renderKVTable('tblOppsSetter', opps?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
 

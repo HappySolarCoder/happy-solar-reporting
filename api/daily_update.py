@@ -77,6 +77,17 @@ HTML = """<!doctype html>
 
     .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 14px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
+
+    /* Card accents for quick visual grouping */
+    .accent-sales { border-top: 4px solid #ef4444; background: linear-gradient(180deg, rgba(239,68,68,0.06), rgba(255,255,255,0)); }
+    .accent-opps { border-top: 4px solid #2563eb; background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0)); }
+    .accent-raydar { border-top: 4px solid #7c3aed; background: linear-gradient(180deg, rgba(124,58,237,0.06), rgba(255,255,255,0)); }
+    .accent-kixie { border-top: 4px solid #0ea5a4; background: linear-gradient(180deg, rgba(14,165,164,0.06), rgba(255,255,255,0)); }
+
+    .card-title.sales { color:#b91c1c; }
+    .card-title.opps { color:#1d4ed8; }
+    .card-title.raydar { color:#6d28d9; }
+    .card-title.kixie { color:#0f766e; }
     .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
     .span-6 { grid-column: span 6; }
@@ -135,19 +146,19 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-3\">
+      <div class=\"card span-3 accent-sales\">
         <div class=\"kpi-label\">Sales (GHL)</div>
         <div class=\"kpi\" id=\"kpiSales\">—</div>
       </div>
-      <div class=\"card span-3\">
+      <div class=\"card span-3 accent-opps\">
         <div class=\"kpi-label\">Opportunities Created (GHL)</div>
         <div class=\"kpi\" id=\"kpiOpps\">—</div>
       </div>
-      <div class=\"card span-3\">
+      <div class=\"card span-3 accent-raydar\">
         <div class=\"kpi-label\">Door Knocks (Raydar)</div>
         <div class=\"kpi\" id=\"kpiKnocks\">—</div>
       </div>
-      <div class=\"card span-3\">
+      <div class=\"card span-3 accent-kixie\">
         <div class=\"kpi-label\">Kixie Calls</div>
         <div class=\"kpi\" id=\"kpiCalls\">—</div>
         <div class=\"kpi-sub\" id=\"kpiConn\">Connections: —</div>
@@ -155,34 +166,34 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-3\">
-        <div class=\"card-title\">Sales by Owner</div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Owner</div>
         <div id=\"tblSalesOwner\"></div>
       </div>
-      <div class=\"card span-3\">
-        <div class=\"card-title\">Sales by Setter Last Name</div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Setter Last Name</div>
         <div id=\"tblSalesSetter\"></div>
       </div>
-      <div class=\"card span-3\">
-        <div class=\"card-title\">Sales by Lead Gen Source</div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Lead Gen Source</div>
         <div id=\"tblSalesLead\"></div>
       </div>
-      <div class=\"card span-3\">
-        <div class=\"card-title\">Opportunities Created by Lead Gen Source</div>
+      <div class=\"card span-3 accent-opps\">
+        <div class=\"card-title opps\">Opportunities Created by Lead Gen Source</div>
         <div id=\"tblOppsLead\"></div>
       </div>
 
-      <div class=\"card span-6\">
-        <div class=\"card-title\">Opportunities Created by Setter Last Name</div>
+      <div class=\"card span-6 accent-opps\">
+        <div class=\"card-title opps\">Opportunities Created by Setter Last Name</div>
         <div id=\"tblOppsSetter\"></div>
       </div>
-      <div class=\"card span-6\">
-        <div class=\"card-title\">Door Knocks by Raydar User</div>
+      <div class=\"card span-6 accent-raydar\">
+        <div class=\"card-title raydar\">Door Knocks by Raydar User</div>
         <div id=\"tblKnocks\"></div>
       </div>
 
-      <div class=\"card span-12\">
-        <div class=\"card-title\">Kixie Calls by User</div>
+      <div class=\"card span-12 accent-kixie\">
+        <div class=\"card-title kixie\">Kixie Calls by User</div>
         <div id=\"tblKixie\"></div>
       </div>
     </div>

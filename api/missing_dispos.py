@@ -356,7 +356,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
               <th>Stage</th>
               <th>scheduledAppointmentAt</th>
               <th style="text-align:right">Days Since</th>
-              <th>opportunityId</th>
+              <th>Opportunity</th>
             </tr>
           </thead>
           <tbody>
@@ -604,6 +604,11 @@ class handler(BaseHTTPRequestHandler):
                 if location_id and cid:
                     contact_url = f"https://app.gohighlevel.com/v2/location/{location_id}/contacts/detail/{cid}"
 
+                opp_id = str(opp.get('id') or snap.id)
+                opportunity_url = None
+                if location_id and opp_id:
+                    opportunity_url = f"https://app.gohighlevel.com/v2/location/{location_id}/opportunities/list/{opp_id}?tab=OpportunityDetails"
+
                 rows.append({
                     'owner': owner_name,
                     'contact_first': contact_first,
@@ -614,7 +619,8 @@ class handler(BaseHTTPRequestHandler):
                     'stage': stage_name,
                     'appt_utc': appt_utc,
                     'days_since': days_since,
-                    'opportunity_id': str(opp.get('id') or snap.id),
+                    'opportunity_id': opp_id,
+                    'opportunity_url': opportunity_url,
                 })
 
             rows.sort(key=lambda r: r['appt_utc'])
@@ -628,6 +634,10 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     contact_cell = html_escape(contact_name)
 
+                opportunity_cell = "—"
+                if r.get('opportunity_url'):
+                    opportunity_cell = f"<a href='{html_escape(r['opportunity_url'])}' target='_blank' rel='noreferrer'>Open Opportunity</a>"
+
                 trs.append(
                     "<tr>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-weight:900'>{html_escape(r['owner'])}</td>"
@@ -636,7 +646,7 @@ class handler(BaseHTTPRequestHandler):
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{html_escape(r['stage'])}</td>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; font-variant-numeric:tabular-nums;'><code>{html_escape(r['appt_utc'].isoformat())}</code></td>"
                     f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0; text-align:right; font-variant-numeric:tabular-nums;'>{r['days_since']}</td>"
-                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'><code>{html_escape(r['opportunity_id'])}</code></td>"
+                    f"<td style='padding:10px 8px; border-bottom:1px solid #e8ecf0;'>{opportunity_cell}</td>"
                     "</tr>"
                 )
                 rows_count += 1

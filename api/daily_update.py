@@ -110,8 +110,8 @@ HTML = """<!doctype html>
     .muted { color: var(--muted2); }
 
     /* Spotlight mode for meeting walkthrough */
-    .card.focusable { cursor: zoom-in; transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease; }
-    .card.focusable:hover { transform: translateY(-1px); }
+    .card.focusable { cursor: zoom-in; transition: box-shadow .18s ease, opacity .18s ease; }
+    .card.focusable:hover { box-shadow: 0 10px 26px rgba(2, 6, 23, 0.12); }
     #spotlightBackdrop {
       display: none;
       position: fixed;
@@ -126,20 +126,28 @@ HTML = """<!doctype html>
       position: fixed;
       left: 50%;
       top: 50%;
-      width: min(94vw, 1280px);
-      max-height: 86vh;
+      width: min(97vw, 1560px);
+      max-height: 92vh;
       overflow: auto;
-      transform: translate(-50%, -50%) scale(1.02);
+      transform: translate(-50%, -50%);
       z-index: 1000;
       opacity: 1 !important;
       cursor: zoom-out;
       background: #ffffff !important;
       border: 2px solid #0f172a !important;
       box-shadow: 0 28px 80px rgba(2, 6, 23, 0.55);
+      padding: 22px 24px;
     }
+    .card.spotlight .card-title { font-size: 18px !important; letter-spacing: 0 !important; text-transform: none !important; }
+    .card.spotlight .kpi-label { font-size: 16px !important; }
+    .card.spotlight .kpi { font-size: 64px !important; line-height: 1.05; }
+    .card.spotlight .kpi-sub { font-size: 16px !important; }
     .card.spotlight table th, .card.spotlight table td, .card.spotlight .card-title, .card.spotlight .kpi-label, .card.spotlight .kpi, .card.spotlight .kpi-sub {
       color: #0f172a !important;
     }
+    .card.spotlight table th { font-size: 16px !important; padding: 12px 10px !important; }
+    .card.spotlight table td { font-size: 20px !important; padding: 12px 10px !important; font-weight: 900 !important; }
+
   </style>
 </head>
 <body>

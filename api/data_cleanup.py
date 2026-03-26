@@ -28,6 +28,7 @@ from google.oauth2 import service_account
 APPT_CF_ID = "e3udzXVTyqrMqICpyqjF"
 SETTER_CF_ID = "Eq4NLTSkJ56KTxbxypuE"
 TEAM_LABELS = {"rochester", "buffalo", "syracuse", "virtual"}
+DEFAULT_LOCATION_ID = os.environ.get("GHL_LOCATION_ID") or "MMKRDviKggXzlcHQTnvZ"
 
 
 def _unauthorized(h: BaseHTTPRequestHandler):
@@ -174,7 +175,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int) -> str
               <th>Contact</th>
               <th>Setter Last Name</th>
               <th>Appointment Date</th>
-              <th>Contact ID</th>
+              <th>Open in GHL</th>
             </tr>
           </thead>
           <tbody>
@@ -200,7 +201,7 @@ class handler(BaseHTTPRequestHandler):
             for snap in db.collection("ghl_contacts_v2").stream():
                 c = snap.to_dict() or {}
                 contact_id = str(c.get("id") or snap.id)
-                location_id = str(c.get("locationId") or "")
+                location_id = str(c.get("locationId") or DEFAULT_LOCATION_ID or "")
 
                 appt_raw = cf_value(c.get("customFields") or [], APPT_CF_ID)
                 if not appt_raw:
@@ -251,13 +252,17 @@ class handler(BaseHTTPRequestHandler):
                     contact_cell = html_escape(r["contact_name"])
                     if r.get("contact_url"):
                         contact_cell = f"<a href='{html_escape(r['contact_url'])}' target='_blank' rel='noreferrer'>{contact_cell}</a>"
+                    open_cell = "—"
+                    if r.get("contact_url"):
+                        open_cell = f"<a href='{html_escape(r['contact_url'])}' target='_blank' rel='noreferrer'>Open Contact</a>"
+
                     row_html.append(
                         "<tr>"
                         f"<td><code>{html_escape(r['issue'])}</code></td>"
                         f"<td>{contact_cell}</td>"
                         f"<td>{html_escape(r['setter'] or '—')}</td>"
                         f"<td>{html_escape(r['appt'])}</td>"
-                        f"<td><code>{html_escape(r['contact_id'])}</code></td>"
+                        f"<td>{open_cell}</td>"
                         "</tr>"
                     )
                 rows_html = "\n".join(row_html)

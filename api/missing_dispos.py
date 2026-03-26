@@ -343,7 +343,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
           <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Opportunities</div>
           <div style="font-size: 34px; font-weight: 950;">__COUNT__</div>
         </div>
-        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">Stage = New Appointment, scheduled appointment <= now</div>
+        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">Stage = New Appointment, scheduled appointment before today (yesterday and older)</div>
       </div>
 
       <div style="margin-top:10px; overflow:auto">
@@ -488,10 +488,11 @@ class handler(BaseHTTPRequestHandler):
 
         tz = "America/New_York"
         now_utc = datetime.now(timezone.utc)
-        now = datetime.utcnow()
+        now_local = datetime.now(ZoneInfo(tz))
+        today_start_local = datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0, tzinfo=ZoneInfo(tz))
 
-        year = parse_int(qs, "year", now.year)
-        month = parse_int(qs, "month", now.month)
+        year = parse_int(qs, "year", now_local.year)
+        month = parse_int(qs, "month", now_local.month)
         start = (qs.get("start", [""])[0] or "").strip() or None
         end = (qs.get("end", [""])[0] or "").strip() or None
 
@@ -500,9 +501,10 @@ class handler(BaseHTTPRequestHandler):
                 start_local, end_local = date_range_window(start, end, tz)
                 subtitle_window = f"Custom range: {start} → {end} (date-only)"
             else:
-                # Default: last 2 weeks (14 days) (date-only) in business timezone
-                start_local, end_local = last_n_days_window(days=14, tz_name=tz)
-                subtitle_window = "Default: last 2 weeks (date-only)"
+                # Default: show yesterday and older (exclude today)
+                start_local = datetime(2000, 1, 1, 0, 0, 0, tzinfo=ZoneInfo(tz))
+                end_local = today_start_local
+                subtitle_window = "Default: yesterday and older (date-only)"
 
             start_utc = start_local.astimezone(timezone.utc)
             end_utc = end_local.astimezone(timezone.utc)
@@ -571,6 +573,11 @@ class handler(BaseHTTPRequestHandler):
                     continue
 
                 appt_utc = appt_local.astimezone(timezone.utc)
+
+                # Exclude anything scheduled today (business timezone).
+                # Missing dispos should be yesterday and older only.
+                if appt_local >= today_start_local:
+                    continue
 
                 # Must have passed
                 if appt_utc > now_utc:

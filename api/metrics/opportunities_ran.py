@@ -202,20 +202,16 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     pipe_names = pipeline_name_lookup(db)
     user_names = user_name_lookup(db)
 
-    # cache contacts
-    contact_cache: dict[str, dict | None] = {}
+    # preload contacts by canonical id for fast joins
+    contact_cache: dict[str, dict] = {}
+    for doc in db.collection(c.contact_collection).stream():
+        d = doc.to_dict() or {}
+        cid = str(d.get("id") or doc.id).strip()
+        if cid:
+            contact_cache[cid] = d
 
     def get_contact(cid: str) -> dict | None:
-        if cid in contact_cache:
-            return contact_cache[cid]
-        snap = db.collection(c.contact_collection).document(cid).get()
-        if snap.exists:
-            contact_cache[cid] = snap.to_dict() or {}
-            return contact_cache[cid]
-        # fallback
-        snaps = list(db.collection(c.contact_collection).where('id','==',cid).limit(1).stream())
-        contact_cache[cid] = (snaps[0].to_dict() or {}) if snaps else None
-        return contact_cache[cid]
+        return contact_cache.get(str(cid).strip())
 
     scanned = 0
     matched_dispo = 0

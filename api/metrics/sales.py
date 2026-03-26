@@ -164,45 +164,42 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     matched_stage = 0
     matched_date = 0
 
-    # We'll join to ghl_contacts to get canonical sold date.
-    contacts_col = db.collection("ghl_contacts_v2")
-    pipelines_col = db.collection("ghl_pipelines_v2")
-    users_col = db.collection("ghl_users_v2")
-    pipeline_name_cache = {}
-    user_name_cache = {}
+    # Preload joins once (much faster than per-row Firestore lookups)
+    contacts_map: dict[str, dict] = {}
+    for snap in db.collection("ghl_contacts_v2").stream():
+        d = snap.to_dict() or {}
+        cid = str(d.get("id") or snap.id).strip()
+        if cid:
+            contacts_map[cid] = d
+
+    pipeline_name_cache: dict[str, str | None] = {}
+    for snap in db.collection("ghl_pipelines_v2").stream():
+        d = snap.to_dict() or {}
+        pid = str(d.get("id") or snap.id).strip()
+        if pid:
+            pipeline_name_cache[pid] = d.get("name")
+
+    user_name_cache: dict[str, str | None] = {}
+    for snap in db.collection("ghl_users_v2").stream():
+        d = snap.to_dict() or {}
+        uid = str(d.get("id") or snap.id).strip()
+        name = d.get("name")
+        if not name:
+            fn = d.get("firstName") or ""
+            ln = d.get("lastName") or ""
+            name = (fn + " " + ln).strip() or None
+        if uid:
+            user_name_cache[uid] = name
 
     def user_name_from_id(user_id: str | None) -> str | None:
         if not user_id:
             return None
-        uid = str(user_id)
-        if uid in user_name_cache:
-            return user_name_cache[uid]
-        snaps = list(users_col.where('id', '==', uid).limit(1).stream())
-        if not snaps:
-            user_name_cache[uid] = None
-            return None
-        u = snaps[0].to_dict() or {}
-        name = u.get('name')
-        if not name:
-            fn = u.get('firstName') or ''
-            ln = u.get('lastName') or ''
-            name = (fn + ' ' + ln).strip() or None
-        user_name_cache[uid] = name
-        return name
+        return user_name_cache.get(str(user_id).strip())
 
     def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
         if not pipeline_id:
             return None
-        pid = str(pipeline_id)
-        if pid in pipeline_name_cache:
-            return pipeline_name_cache[pid]
-        snaps = list(pipelines_col.where('id', '==', pid).limit(1).stream())
-        if not snaps:
-            pipeline_name_cache[pid] = None
-            return None
-        name = (snaps[0].to_dict() or {}).get('name')
-        pipeline_name_cache[pid] = name
-        return name
+        return pipeline_name_cache.get(str(pipeline_id).strip())
 
 
     # Simple streaming approach for QA (optimize later with indexes/batching)
@@ -217,22 +214,12 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
         contact_id = opp.get("contactId")
         if not contact_id:
-            continue        # Fetch contact sold date (canonical field lives on contact)
-        # IMPORTANT: ghl_contacts Firestore doc_id is NOT the same as GHL contact id.
-        # So we must query by field `ghl_contacts.id == contactId`.
-        if 'contact_cache' not in locals():
-            contact_cache = {}
+            continue
 
-        cache_key = str(contact_id)
-        contact = contact_cache.get(cache_key)
-        if contact is None:
-            snaps = list(contacts_col.where('id', '==', cache_key).limit(1).stream())
-            if not snaps:
-                contact_cache[cache_key] = False
-                continue
-            contact = snaps[0].to_dict() or {}
-            contact_cache[cache_key] = contact
-        if contact is False:
+        # Join contact via preloaded id map
+        cache_key = str(contact_id).strip()
+        contact = contacts_map.get(cache_key)
+        if not contact:
             continue
 
         # Extract Sold Date from customFields (ISO string)

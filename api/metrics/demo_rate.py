@@ -313,6 +313,14 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
     pipelines = pipeline_name_lookup(db)
 
+    # preload contacts by canonical id for fast joins
+    contacts_map: dict[str, dict] = {}
+    for dref in db.collection(MetricContract.contact_collection).stream():
+        d = dref.to_dict() or {}
+        cid = str(d.get("id") or dref.id).strip()
+        if cid:
+            contacts_map[cid] = d
+
     # Firestore query: only scan opportunities in the month window (big speedup)
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
@@ -375,7 +383,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             continue
 
         # join contact for setter + lead source filters/breakdowns
-        contact = contact_lookup(db, str(opp.get("contactId") or "")) or {}
+        contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
         setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
         setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
         setter = setter_opp if setter_opp not in (None, "") else setter_contact

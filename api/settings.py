@@ -151,6 +151,7 @@ HTML = """<!doctype html>
           <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
           <a class=\"navbtn\" href=\"/api/leadership_dashboard\">Leadership dashboard</a>
           <a class=\"navbtn active\" href=\"/api/settings\">Settings</a>
+          <a class=\"navbtn\" href=\"/api/data_cleanup\">Data Cleanup</a>
         </div>
       </div>
       <div style=\"min-width:320px\">

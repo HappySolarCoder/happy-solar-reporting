@@ -245,13 +245,21 @@ HTML = """<!doctype html>
     </div>
 
     <div class="grid">
-      <div class="card span-6 accent-opps">
-        <div class="card-title opps">Opportunities Created by Setter Last Name</div>
-        <div id="tblOppsSetter"></div>
+      <div class="card span-3 accent-opps">
+        <div class="card-title opps">Doors Opps Created</div>
+        <div id="tblOppsDoorsSetter"></div>
       </div>
-      <div class="card span-6 accent-opps">
-        <div class="card-title opps">Opportunities Created by Lead Gen Source</div>
-        <div id="tblOppsLead"></div>
+      <div class="card span-3 accent-opps">
+        <div class="card-title opps">Self Gen Opps Created</div>
+        <div id="tblOppsSelfSetter"></div>
+      </div>
+      <div class="card span-3 accent-opps">
+        <div class="card-title opps">3PL Opps Created</div>
+        <div id="tblOpps3plSetter"></div>
+      </div>
+      <div class="card span-3 accent-opps">
+        <div class="card-title opps">Virtual Opps Created</div>
+        <div id="tblOppsVirtualSetter"></div>
       </div>
     </div>
 
@@ -414,9 +422,13 @@ HTML = """<!doctype html>
     fetch(`/api/warm_cache?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&include_daily=1`, { keepalive: true }).catch(()=>{});
 
     try {
-      const [sales, opps, knocks, kixie] = await Promise.all([
+      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsVirtual, knocks, kixie] = await Promise.all([
         fetchJson(`/api/metrics/sales?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}`),
+        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Doors')}`),
+        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
+        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('3PL')}`),
+        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
         fetchJson(`/api/metrics/kixie_calls_summary?${q}`),
       ]);
@@ -441,9 +453,11 @@ HTML = """<!doctype html>
       renderKVTable('tblSalesOwner', sales?.breakdowns?.sales_by_owner || {}, 'Sales');
       renderKVTable('tblSalesSetter', sales?.breakdowns?.sales_by_setter_last_name || {}, 'Sales');
       renderKVTable('tblSalesLead', sales?.breakdowns?.sales_by_lead_gen_source || {}, 'Sales');
-      renderKVTable('tblOppsLead', opps?.breakdowns?.created_by_lead_gen_source || {}, 'Opps');
 
-      renderKVTable('tblOppsSetter', opps?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable('tblOppsDoorsSetter', oppsDoors?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable('tblOppsSelfSetter', oppsSelf?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable('tblOpps3plSetter', opps3pl?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable('tblOppsVirtualSetter', oppsVirtual?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
 
       // Match FMA schema: use knocks_by_actor and map actor id -> Raydar user name.
       const knocksByActor = (knocks && knocks.breakdowns && knocks.breakdowns.knocks_by_actor) ? knocks.breakdowns.knocks_by_actor : {};

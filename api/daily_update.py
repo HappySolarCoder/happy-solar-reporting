@@ -116,9 +116,12 @@ HTML = """<!doctype html>
     }
 
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border-bottom: 1px solid var(--border); padding: 8px; font-size: 12px; text-align: left; }
+    th, td { border-bottom: 1px solid var(--border); padding: 8px; font-size: 13px; text-align: left; }
     th { color: var(--muted); font-weight: 950; }
     td { color: #0f172a; font-weight: 800; }
+    /* Increase readability of names in table first column */
+    th:first-child { font-size: 14px; }
+    td:first-child { font-size: 16px; font-weight: 900; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
     .muted { color: var(--muted2); }

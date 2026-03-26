@@ -308,7 +308,23 @@ HTML = """<!doctype html>
       renderKVTable('tblSalesLead', sales?.breakdowns?.sales_by_lead_gen_source || {}, 'Sales');
 
       renderKVTable('tblOppsSetter', opps?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
-      renderKVTable('tblKnocks', knocks?.breakdowns?.knocks_by_claimed_by || {}, 'Knocks');
+
+      // Match FMA schema: use knocks_by_actor and map actor id -> Raydar user name.
+      const knocksByActor = (knocks && knocks.breakdowns && knocks.breakdowns.knocks_by_actor) ? knocks.breakdowns.knocks_by_actor : {};
+      const topKnockers = Array.isArray(knocks?.top_knockers) ? knocks.top_knockers : [];
+      const actorNameMap = {};
+      for (const r of topKnockers) {
+        const id = String(r.userId || '').trim();
+        const nm = String(r.name || '').trim();
+        if (id) actorNameMap[id] = nm || id;
+      }
+      const knocksByName = {};
+      for (const [actorId, v] of Object.entries(knocksByActor || {})) {
+        const name = actorNameMap[String(actorId)] || String(actorId);
+        knocksByName[name] = (knocksByName[name] || 0) + Number(v || 0);
+      }
+      renderKVTable('tblKnocks', knocksByName, 'Knocks');
+
       renderKixieTable('tblKixie', kixie?.by_agent || []);
 
       document.getElementById('status').textContent = `Loaded daily update for ${start} → ${end}`;

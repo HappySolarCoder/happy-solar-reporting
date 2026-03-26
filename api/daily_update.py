@@ -207,33 +207,33 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-3 accent-sales\">
+      <div class=\"card span-4 accent-sales\">
         <div class=\"card-title sales\">Sales by Owner</div>
         <div id=\"tblSalesOwner\"></div>
       </div>
-      <div class=\"card span-3 accent-sales\">
+      <div class=\"card span-4 accent-sales\">
         <div class=\"card-title sales\">Sales by Setter Last Name</div>
         <div id=\"tblSalesSetter\"></div>
       </div>
-      <div class=\"card span-3 accent-sales\">
+      <div class=\"card span-4 accent-sales\">
         <div class=\"card-title sales\">Sales by Lead Gen Source</div>
         <div id=\"tblSalesLead\"></div>
-      </div>
-      <div class=\"card span-3 accent-opps\">
-        <div class=\"card-title opps\">Opportunities Created by Lead Gen Source</div>
-        <div id=\"tblOppsLead\"></div>
       </div>
 
       <div class=\"card span-6 accent-opps\">
         <div class=\"card-title opps\">Opportunities Created by Setter Last Name</div>
         <div id=\"tblOppsSetter\"></div>
       </div>
+      <div class=\"card span-6 accent-opps\">
+        <div class=\"card-title opps\">Opportunities Created by Lead Gen Source</div>
+        <div id=\"tblOppsLead\"></div>
+      </div>
+
       <div class=\"card span-6 accent-raydar\">
         <div class=\"card-title raydar\">Door Knocks by Raydar User</div>
         <div id=\"tblKnocks\"></div>
       </div>
-
-      <div class=\"card span-12 accent-kixie\">
+      <div class=\"card span-6 accent-kixie\">
         <div class=\"card-title kixie\">Kixie Calls by User</div>
         <div id=\"tblKixie\"></div>
       </div>

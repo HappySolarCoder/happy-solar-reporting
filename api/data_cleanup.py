@@ -166,8 +166,8 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, start_
         <div class=\"subtitle\">Appointment exists + Setter Last Name is empty OR team label (Rochester/Buffalo/Syracuse/Virtual)</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales dashboard</a>
+          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
+          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
           <a class=\"navbtn\" href=\"/api/missing_dispos\">Missing Dispos</a>
           <a class=\"navbtn\" href=\"/api/settings\">Settings</a>
           <a class=\"navbtn active\" href=\"/api/data_cleanup\">Data Cleanup</a>

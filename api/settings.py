@@ -146,11 +146,11 @@ HTML = """<!doctype html>
         <div class=\"subtitle\">Map person → add goals → save once</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales dashboard</a>
+          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
+          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
           <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/leadership_dashboard\">Leadership dashboard</a>
-          <a class=\"navbtn\" href=\"/api/daily_update\">Daily Update</a>
+          <a class=\"navbtn\" href=\"/api/leadership_dashboard\">Leadership Dashboard</a>
+          <a class=\"navbtn\" href=\"/api/daily_update\">Daily Dashboard</a>
           <a class=\"navbtn active\" href=\"/api/settings\">Settings</a>
           <a class=\"navbtn\" href=\"/api/data_cleanup\">Data Cleanup</a>
         </div>

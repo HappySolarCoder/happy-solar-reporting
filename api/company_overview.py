@@ -416,10 +416,11 @@ def render_html(year: int, month: int) -> str:
         <div class="subtitle">Happy Solar — Sales + created opportunities</div>
         <div class="pinkline"></div>
         <div class="nav">
-          <a class="navbtn active" href="/api/company_overview">Company overview</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
+          <a class="navbtn active" href="/api/company_overview">Company Overview</a>
+          <a class="navbtn" href="/api/sales_dashboard">Sales Dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
+          <a class="navbtn" href="/api/daily_update">Daily Dashboard</a>
         </div>
       </div>
 

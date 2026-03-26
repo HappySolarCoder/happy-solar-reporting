@@ -305,10 +305,11 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
         <div class="subtitle">__SUBTITLE__</div>
         <div class="pinkline"></div>
         <div class="nav">
-          <a class="navbtn" href="/api/company_overview">Company overview</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales dashboard</a>
+          <a class="navbtn" href="/api/company_overview">Company Overview</a>
+          <a class="navbtn" href="/api/sales_dashboard">Sales Dashboard</a>
           <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
           <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
+          <a class="navbtn" href="/api/daily_update">Daily Dashboard</a>
         </div>
       </div>
       <div style="min-width:320px">

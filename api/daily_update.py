@@ -244,7 +244,6 @@ HTML = """<!doctype html>
       </div>
     </div>
 
-    <div class="row-title">Lead Generation</div>
     <div class="grid">
       <div class="card span-6 accent-opps">
         <div class="card-title opps">Opportunities Created by Setter Last Name</div>

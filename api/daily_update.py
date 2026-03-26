@@ -106,6 +106,14 @@ HTML = """<!doctype html>
     .kpi-card-center .kpi { text-align:center; font-size: 56px; line-height: 1.0; margin-top: 8px; }
 
     .card-title { color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
+    .row-title {
+      margin-top: 18px;
+      text-align: center;
+      font-size: 20px;
+      font-weight: 900;
+      color: #1f2937;
+      letter-spacing: .01em;
+    }
 
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { border-bottom: 1px solid var(--border); padding: 8px; font-size: 12px; text-align: left; }
@@ -192,65 +200,71 @@ HTML = """<!doctype html>
       </div>
     </div>
 
-    <div class=\"grid\">
-      <div class=\"card span-3 accent-sales kpi-card-center\">
-        <div class=\"kpi-label\">Sales (GHL)</div>
-        <div class=\"kpi\" id=\"kpiSales\">—</div>
+    <div class="row-title">Sales Data</div>
+    <div class="grid">
+      <div class="card span-3 accent-sales kpi-card-center">
+        <div class="kpi-label">Sales (GHL)</div>
+        <div class="kpi" id="kpiSales">—</div>
       </div>
-      <div class=\"card span-3 accent-sales\">
-        <div class=\"card-title sales\">Sales by Owner</div>
-        <div id=\"tblSalesOwner\"></div>
+      <div class="card span-3 accent-sales">
+        <div class="card-title sales">Sales by Owner</div>
+        <div id="tblSalesOwner"></div>
       </div>
-      <div class=\"card span-3 accent-sales\">
-        <div class=\"card-title sales\">Sales by Setter Last Name</div>
-        <div id=\"tblSalesSetter\"></div>
+      <div class="card span-3 accent-sales">
+        <div class="card-title sales">Sales by Setter Last Name</div>
+        <div id="tblSalesSetter"></div>
       </div>
-      <div class=\"card span-3 accent-sales\">
-        <div class=\"card-title sales\">Sales by Lead Gen Source</div>
-        <div id=\"tblSalesLead\"></div>
-      </div>
-    </div>
-
-    <div class=\"grid-5\">
-      <div class=\"card accent-opps kpi-card-center\">
-        <div class=\"kpi-label\">Opportunities Created</div>
-        <div class=\"kpi\" id=\"kpiOpps\">—</div>
-      </div>
-      <div class=\"card accent-opps kpi-card-center\">
-        <div class=\"kpi-label\">Door Opportunities</div>
-        <div class=\"kpi\" id=\"kpiOppsDoors\">—</div>
-      </div>
-      <div class=\"card accent-opps kpi-card-center\">
-        <div class=\"kpi-label\">Self Gen Opportunities</div>
-        <div class=\"kpi\" id=\"kpiOppsSelfGen\">—</div>
-      </div>
-      <div class=\"card accent-opps kpi-card-center\">
-        <div class=\"kpi-label\">3PL Opportunities</div>
-        <div class=\"kpi\" id=\"kpiOpps3pl\">—</div>
-      </div>
-      <div class=\"card accent-opps kpi-card-center\">
-        <div class=\"kpi-label\">Virtual Opportunities</div>
-        <div class=\"kpi\" id=\"kpiOppsVirtual\">—</div>
+      <div class="card span-3 accent-sales">
+        <div class="card-title sales">Sales by Lead Gen Source</div>
+        <div id="tblSalesLead"></div>
       </div>
     </div>
 
-    <div class=\"grid\">
-      <div class=\"card span-6 accent-opps\">
-        <div class=\"card-title opps\">Opportunities Created by Setter Last Name</div>
-        <div id=\"tblOppsSetter\"></div>
+    <div class="row-title">Lead Generation</div>
+    <div class="grid-5">
+      <div class="card accent-opps kpi-card-center">
+        <div class="kpi-label">Opportunities Created</div>
+        <div class="kpi" id="kpiOpps">—</div>
       </div>
-      <div class=\"card span-6 accent-opps\">
-        <div class=\"card-title opps\">Opportunities Created by Lead Gen Source</div>
-        <div id=\"tblOppsLead\"></div>
+      <div class="card accent-opps kpi-card-center">
+        <div class="kpi-label">Door Opportunities</div>
+        <div class="kpi" id="kpiOppsDoors">—</div>
       </div>
+      <div class="card accent-opps kpi-card-center">
+        <div class="kpi-label">Self Gen Opportunities</div>
+        <div class="kpi" id="kpiOppsSelfGen">—</div>
+      </div>
+      <div class="card accent-opps kpi-card-center">
+        <div class="kpi-label">3PL Opportunities</div>
+        <div class="kpi" id="kpiOpps3pl">—</div>
+      </div>
+      <div class="card accent-opps kpi-card-center">
+        <div class="kpi-label">Virtual Opportunities</div>
+        <div class="kpi" id="kpiOppsVirtual">—</div>
+      </div>
+    </div>
 
-      <div class=\"card span-6 accent-raydar\">
-        <div class=\"card-title raydar\">Door Knocks by Raydar User</div>
-        <div id=\"tblKnocks\"></div>
+    <div class="row-title">Lead Generation</div>
+    <div class="grid">
+      <div class="card span-6 accent-opps">
+        <div class="card-title opps">Opportunities Created by Setter Last Name</div>
+        <div id="tblOppsSetter"></div>
       </div>
-      <div class=\"card span-6 accent-kixie\">
-        <div class=\"card-title kixie\">Kixie Calls by User</div>
-        <div id=\"tblKixie\"></div>
+      <div class="card span-6 accent-opps">
+        <div class="card-title opps">Opportunities Created by Lead Gen Source</div>
+        <div id="tblOppsLead"></div>
+      </div>
+    </div>
+
+    <div class="row-title">Activity</div>
+    <div class="grid">
+      <div class="card span-6 accent-raydar">
+        <div class="card-title raydar">Door Knocks by Raydar User</div>
+        <div id="tblKnocks"></div>
+      </div>
+      <div class="card span-6 accent-kixie">
+        <div class="card-title kixie">Kixie Calls by User</div>
+        <div id="tblKixie"></div>
       </div>
     </div>
   </div>

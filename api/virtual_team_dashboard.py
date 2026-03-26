@@ -367,10 +367,10 @@ def render_html() -> str:
     const oppCreatedInboundUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('Inbound')}`;
 
     const [kixieRes, createdPhonesRes, created3plRes, createdInboundRes] = await Promise.all([
-      fetch(kixieUrl, { cache:'no-store' }),
-      fetch(oppCreatedPhonesUrl, { cache:'no-store' }),
-      fetch(oppCreated3plUrl, { cache:'no-store' }),
-      fetch(oppCreatedInboundUrl, { cache:'no-store' })
+      fetch(kixieUrl),
+      fetch(oppCreatedPhonesUrl),
+      fetch(oppCreated3plUrl),
+      fetch(oppCreatedInboundUrl)
     ]);
 
     if (!kixieRes.ok) {

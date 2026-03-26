@@ -136,7 +136,7 @@ def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[in
 
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, dedupe_by: str | None = None) -> dict[str, Any]:
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
     if start and end:
         start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
     else:
@@ -154,7 +154,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     opp_q = db.collection(contract.collection)
 
     contrib_rows: list[dict[str, Any]] = []
-    unique_result_ids: set[str] = set()
+    unique_opp_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
     owner_counts: dict[str, int] = {}
     setter_counts: dict[str, int] = {}
@@ -292,17 +292,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                 continue
 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
-        dedupe_mode = str(dedupe_by or "opportunity").strip().lower()
-        if dedupe_mode == "contact":
-            result_key = str(contact_id or "").strip() or str(opp_id)
-        else:
-            result_key = str(opp_id)
-
-        # For optional contact-level dedupe (used by Daily Dashboard),
-        # count only the first matching record for each result_key.
-        if result_key in unique_result_ids:
-            continue
-        unique_result_ids.add(result_key)
+        unique_opp_ids.add(str(opp_id))
 
         # Breakdown by pipeline (human name)
         pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
@@ -380,14 +370,13 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "result": len(unique_result_ids),
-        "count_method": "COUNT_DISTINCT(key) where key=opportunityId (default) or contactId (dedupe_by=contact), stage in sold stages, and joined ghl_contacts_v2 Sold Date in window",
+        "result": len(unique_opp_ids),
+        "count_method": "COUNT_DISTINCT(ghl_opportunities_v2.id) where pipelineStageId in stage_ids AND joined ghl_contacts_v2 Sold Date (date-only, EST month) in window",
         "debug": {
             "opportunities_scanned": scanned,
             "opportunities_matched_stage": matched_stage,
             "opportunities_matched_stage_and_date": matched_date,
-            "distinct_result_ids": len(unique_result_ids),
-            "dedupe_by": (str(dedupe_by or "opportunity").strip().lower() or "opportunity"),
+            "distinct_opportunity_ids": len(unique_opp_ids),
             "join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
         },
         "contract": {
@@ -400,7 +389,6 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         },
         "filters": {
             "lead_source": lead_source,
-            "dedupe_by": (str(dedupe_by or "opportunity").strip().lower() or "opportunity"),
         },
         "breakdowns": {
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -494,14 +482,13 @@ class Handler(BaseHTTPRequestHandler):
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
-            dedupe_by = (qs.get("dedupe_by", [""])[0] or "").strip() or None
 
             # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
             tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()
-            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source, dedupe_by=dedupe_by)
+            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

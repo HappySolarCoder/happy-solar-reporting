@@ -295,7 +295,7 @@ HTML = """<!doctype html>
 
     try {
       const [sales, opps, knocks, kixie] = await Promise.all([
-        fetchJson(`/api/metrics/sales?${q}&dedupe_by=contact`),
+        fetchJson(`/api/metrics/sales?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
         fetchJson(`/api/metrics/kixie_calls_summary?${q}`),

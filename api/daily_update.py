@@ -293,6 +293,9 @@ HTML = """<!doctype html>
 
     const q = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&format=json`;
 
+    // Non-blocking warm trigger for this exact daily window
+    fetch(`/api/warm_cache?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&include_daily=1`, { keepalive: true }).catch(()=>{});
+
     try {
       const [sales, opps, knocks, kixie] = await Promise.all([
         fetchJson(`/api/metrics/sales?${q}`),

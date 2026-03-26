@@ -877,6 +877,14 @@ def render_html(year: int, month: int) -> str:
       const m = __MONTH__;
 
       const r = getRange();
+
+      // Non-blocking warm trigger (top-range aware)
+      if (r && r.start && r.end) {
+        fetch(`/api/warm_cache?start=${encodeURIComponent(r.start)}&end=${encodeURIComponent(r.end)}&include_daily=1`, { keepalive: true }).catch(()=>{});
+      } else {
+        fetch(`/api/warm_cache?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`, { keepalive: true }).catch(()=>{});
+      }
+
       const url = (r && r.start && r.end)
         ? `/api/metrics/raydar_doors_knocked?format=json&start=${encodeURIComponent(r.start)}&end=${encodeURIComponent(r.end)}`
         : (period

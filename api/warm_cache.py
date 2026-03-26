@@ -17,6 +17,7 @@ import json
 import os
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse, urlencode
 
 import urllib.request
 
@@ -40,21 +41,45 @@ class handler(BaseHTTPRequestHandler):
         # allow override domain for testing
         base = os.environ.get("WARM_CACHE_BASE_URL") or "https://database-migration-chi.vercel.app"
 
-        # Warm: this month views (dashboards typically request year/month)
-        # Keep list small to avoid long cron runs.
-        # Compute current business month in America/New_York
+        qs = parse_qs(urlparse(self.path).query)
+
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
         now_ny = datetime.now(ny)
-        y = now_ny.year
-        m = now_ny.month
+
+        # Optional query params:
+        # - year/month
+        # - start/end
+        # - include_daily=1 (adds raydar/kixie daily warm)
+        year = (qs.get("year", [str(now_ny.year)])[0] or str(now_ny.year)).strip()
+        month = (qs.get("month", [str(now_ny.month)])[0] or str(now_ny.month)).strip()
+        start = (qs.get("start", [""])[0] or "").strip()
+        end = (qs.get("end", [""])[0] or "").strip()
+        include_daily = (qs.get("include_daily", [""])[0] or "").strip() in {"1", "true", "yes"}
+
+        params = {"format": "json"}
+        if start and end:
+            params["start"] = start
+            params["end"] = end
+        else:
+            params["year"] = str(year)
+            params["month"] = str(month)
+
+        q = urlencode(params)
 
         urls = [
-            f"{base}/api/metrics/sales?format=json&year={y}&month={m}",
-            f"{base}/api/metrics/opportunities_created?format=json&year={y}&month={m}&pipeline_scope=all",
-            f"{base}/api/metrics/opportunities_ran?format=json&year={y}&month={m}",
-            f"{base}/api/metrics/demo_rate?format=json&year={y}&month={m}",
+            f"{base}/api/metrics/sales?{q}",
+            f"{base}/api/metrics/opportunities_created?{q}&pipeline_scope=all",
+            f"{base}/api/metrics/opportunities_ran?{q}",
+            f"{base}/api/metrics/demo_rate?{q}",
+            f"{base}/api/metrics/company_snapshot?{q}",
         ]
+
+        if include_daily and start and end:
+            urls.extend([
+                f"{base}/api/metrics/raydar_doors_knocked?{q}",
+                f"{base}/api/metrics/kixie_calls_summary?{q}",
+            ])
 
         results = []
         ok = 0
@@ -71,9 +96,10 @@ class handler(BaseHTTPRequestHandler):
             "base": base,
             "ok": ok,
             "total": len(urls),
+            "window": {"year": year, "month": month, "start": start or None, "end": end or None},
             "results": results,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "note": "If ok==0, cron is not effectively warming cache.",
+            "note": "Use for hourly baseline warm + non-blocking on-open warm.",
         }
 
         body = json.dumps(payload).encode("utf-8")

@@ -361,6 +361,9 @@ def render_html() -> str:
     document.getElementById('kpiConnections').textContent = '…';
     document.getElementById('kpiAppts').textContent = '…';
 
+    // Non-blocking warm trigger for this exact window
+    fetch(`/api/warm_cache?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&include_daily=1`, { keepalive: true }).catch(()=>{});
+
     const kixieUrl = `/api/metrics/kixie_calls_summary?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}`;
     const oppCreatedPhonesUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`;
     const oppCreated3plUrl = `/api/metrics/opportunities_created?format=json&start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&pipeline_scope=all&lead_source=${encodeURIComponent('3PL')}`;

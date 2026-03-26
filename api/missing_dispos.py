@@ -501,10 +501,9 @@ class handler(BaseHTTPRequestHandler):
                 start_local, end_local = date_range_window(start, end, tz)
                 subtitle_window = f"Custom range: {start} → {end} (date-only)"
             else:
-                # Default: show yesterday and older (exclude today)
-                start_local = datetime(2000, 1, 1, 0, 0, 0, tzinfo=ZoneInfo(tz))
-                end_local = today_start_local
-                subtitle_window = "Default: yesterday and older (date-only)"
+                # Default: last 2 weeks (date-only) in business timezone
+                start_local, end_local = last_n_days_window(days=14, tz_name=tz)
+                subtitle_window = "Default: last 2 weeks (date-only)"
 
             start_utc = start_local.astimezone(timezone.utc)
             end_utc = end_local.astimezone(timezone.utc)

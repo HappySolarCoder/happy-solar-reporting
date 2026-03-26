@@ -116,12 +116,12 @@ HTML = """<!doctype html>
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.52);
+      background: rgba(2, 6, 23, 0.68);
       z-index: 900;
-      backdrop-filter: blur(2px);
+      backdrop-filter: blur(3px);
     }
     body.spotlight-on #spotlightBackdrop { display: block; }
-    body.spotlight-on .card { opacity: 0.20; }
+    body.spotlight-on .card:not(.spotlight) { opacity: 0.10; filter: blur(1px); }
     .card.spotlight {
       position: fixed;
       left: 50%;
@@ -129,11 +129,16 @@ HTML = """<!doctype html>
       width: min(94vw, 1280px);
       max-height: 86vh;
       overflow: auto;
-      transform: translate(-50%, -50%) scale(1.01);
+      transform: translate(-50%, -50%) scale(1.02);
       z-index: 1000;
       opacity: 1 !important;
       cursor: zoom-out;
-      box-shadow: 0 24px 64px rgba(2, 6, 23, 0.35);
+      background: #ffffff !important;
+      border: 2px solid #0f172a !important;
+      box-shadow: 0 28px 80px rgba(2, 6, 23, 0.55);
+    }
+    .card.spotlight table th, .card.spotlight table td, .card.spotlight .card-title, .card.spotlight .kpi-label, .card.spotlight .kpi, .card.spotlight .kpi-sub {
+      color: #0f172a !important;
     }
   </style>
 </head>

@@ -46,7 +46,8 @@ class SalesMetricContract:
     sold_date_custom_field_id: str = "P9oBjgbZjJdeE0OkBj9T"  # Sold Date (ISO)
 
     # TODO: fill these in once we identify the exact custom field IDs in GHL
-    setter_last_name_custom_field_id: str = "Eq4NLTSkJ56KTxbxypuE"  # Setter Last Name
+    setter_last_name_custom_field_id: str = "Eq4NLTSkJ56KTxbxypuE"  # Setter Last Name (primary)
+    setter_last_name_fallback_custom_field_id: str = "Xhy6k4xfHRJ6s5IbfA5x"  # Setter Last Name (fallback)
     lead_gen_source_custom_field_id: str = "hd5QqHEOVSsPom5bJ32P"  # Lead Gen Source
     sold_date_field: str = "dateSold"  # legacy field name (not used in v2)
     stage_field: str = "pipelineStageId"
@@ -303,13 +304,35 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         owner_counts[oname] = owner_counts.get(oname, 0) + 1
 
         # Breakdown by Setter Last Name (custom field on contact)
-        setter_name = None
-        if contract.setter_last_name_custom_field_id:
+        # Primary field can sometimes contain team/channel labels (e.g., Rochester/Buffalo).
+        # In that case, fallback to secondary setter field to avoid mis-attribution.
+        setter_name_primary = None
+        setter_name_fallback = None
+        if contract.setter_last_name_custom_field_id or contract.setter_last_name_fallback_custom_field_id:
             for cf in (contact.get("customFields") or []):
-                if isinstance(cf, dict) and cf.get("id") == contract.setter_last_name_custom_field_id:
-                    setter_name = cf.get("value")
-                    break
-        setter_bucket = str(setter_name).strip() if setter_name not in (None, "") else "none"
+                if not isinstance(cf, dict):
+                    continue
+                cid = str(cf.get("id") or "")
+                val = cf.get("value")
+                if val in (None, ""):
+                    val = cf.get("fieldValueString")
+                if cid == contract.setter_last_name_custom_field_id:
+                    setter_name_primary = val
+                if cid == contract.setter_last_name_fallback_custom_field_id:
+                    setter_name_fallback = val
+
+        primary_s = str(setter_name_primary).strip() if setter_name_primary not in (None, "") else ""
+        fallback_s = str(setter_name_fallback).strip() if setter_name_fallback not in (None, "") else ""
+
+        invalid_primary_values = {
+            "rochester", "buffalo", "virtual", "syracuse", "doors", "phones", "3pl", "none"
+        }
+
+        setter_name = primary_s
+        if (not setter_name) or (setter_name.strip().lower() in invalid_primary_values and fallback_s):
+            setter_name = fallback_s or setter_name
+
+        setter_bucket = setter_name if setter_name else "none"
         setter_counts[setter_bucket] = setter_counts.get(setter_bucket, 0) + 1
 
         if lead_src:

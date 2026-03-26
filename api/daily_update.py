@@ -101,6 +101,10 @@ HTML = """<!doctype html>
     .kpi { margin-top: 4px; font-size: 36px; font-weight: 950; }
     .kpi-sub { margin-top: 6px; font-size: 12px; color: var(--muted2); }
 
+    .kpi-card-center { text-align: center; display:flex; flex-direction:column; justify-content:center; min-height: 118px; }
+    .kpi-card-center .kpi-label { text-align:center; }
+    .kpi-card-center .kpi { text-align:center; font-size: 56px; line-height: 1.0; margin-top: 8px; }
+
     .card-title { color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .03em; }
 
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -189,7 +193,7 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-3 accent-sales\">
+      <div class=\"card span-3 accent-sales kpi-card-center\">
         <div class=\"kpi-label\">Sales (GHL)</div>
         <div class=\"kpi\" id=\"kpiSales\">—</div>
       </div>
@@ -208,23 +212,23 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid-5\">
-      <div class=\"card accent-opps\">
+      <div class=\"card accent-opps kpi-card-center\">
         <div class=\"kpi-label\">Opportunities Created</div>
         <div class=\"kpi\" id=\"kpiOpps\">—</div>
       </div>
-      <div class=\"card accent-opps\">
+      <div class=\"card accent-opps kpi-card-center\">
         <div class=\"kpi-label\">Door Opportunities</div>
         <div class=\"kpi\" id=\"kpiOppsDoors\">—</div>
       </div>
-      <div class=\"card accent-opps\">
+      <div class=\"card accent-opps kpi-card-center\">
         <div class=\"kpi-label\">Self Gen Opportunities</div>
         <div class=\"kpi\" id=\"kpiOppsSelfGen\">—</div>
       </div>
-      <div class=\"card accent-opps\">
+      <div class=\"card accent-opps kpi-card-center\">
         <div class=\"kpi-label\">3PL Opportunities</div>
         <div class=\"kpi\" id=\"kpiOpps3pl\">—</div>
       </div>
-      <div class=\"card accent-opps\">
+      <div class=\"card accent-opps kpi-card-center\">
         <div class=\"kpi-label\">Virtual Opportunities</div>
         <div class=\"kpi\" id=\"kpiOppsVirtual\">—</div>
       </div>

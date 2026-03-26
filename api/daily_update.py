@@ -76,6 +76,7 @@ HTML = """<!doctype html>
     .btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
 
     .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 14px; }
+    .grid-5 { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 14px; margin-top: 14px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
 
     /* Card accents for quick visual grouping */
@@ -93,7 +94,8 @@ HTML = """<!doctype html>
     .span-6 { grid-column: span 6; }
     .span-12 { grid-column: span 12; }
 
-    @media (max-width: 1200px) { .span-3, .span-4, .span-6 { grid-column: span 12; } }
+    @media (max-width: 1200px) { .span-3, .span-4, .span-6 { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 760px) { .grid-5 { grid-template-columns: 1fr; } }
 
     .kpi-label { color: var(--muted); font-size: 12px; font-weight: 900; }
     .kpi { margin-top: 4px; font-size: 36px; font-weight: 950; }
@@ -191,35 +193,44 @@ HTML = """<!doctype html>
         <div class=\"kpi-label\">Sales (GHL)</div>
         <div class=\"kpi\" id=\"kpiSales\">—</div>
       </div>
-      <div class=\"card span-3 accent-opps\">
-        <div class=\"kpi-label\">Opportunities Created (GHL)</div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Owner</div>
+        <div id=\"tblSalesOwner\"></div>
+      </div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Setter Last Name</div>
+        <div id=\"tblSalesSetter\"></div>
+      </div>
+      <div class=\"card span-3 accent-sales\">
+        <div class=\"card-title sales\">Sales by Lead Gen Source</div>
+        <div id=\"tblSalesLead\"></div>
+      </div>
+    </div>
+
+    <div class=\"grid-5\">
+      <div class=\"card accent-opps\">
+        <div class=\"kpi-label\">Opportunities Created</div>
         <div class=\"kpi\" id=\"kpiOpps\">—</div>
       </div>
-      <div class=\"card span-3 accent-raydar\">
-        <div class=\"kpi-label\">Door Knocks (Raydar)</div>
-        <div class=\"kpi\" id=\"kpiKnocks\">—</div>
+      <div class=\"card accent-opps\">
+        <div class=\"kpi-label\">Door Opportunities</div>
+        <div class=\"kpi\" id=\"kpiOppsDoors\">—</div>
       </div>
-      <div class=\"card span-3 accent-kixie\">
-        <div class=\"kpi-label\">Kixie Calls</div>
-        <div class=\"kpi\" id=\"kpiCalls\">—</div>
-        <div class=\"kpi-sub\" id=\"kpiConn\">Connections: —</div>
+      <div class=\"card accent-opps\">
+        <div class=\"kpi-label\">Self Gen Opportunities</div>
+        <div class=\"kpi\" id=\"kpiOppsSelfGen\">—</div>
+      </div>
+      <div class=\"card accent-opps\">
+        <div class=\"kpi-label\">3PL Opportunities</div>
+        <div class=\"kpi\" id=\"kpiOpps3pl\">—</div>
+      </div>
+      <div class=\"card accent-opps\">
+        <div class=\"kpi-label\">Virtual Opportunities</div>
+        <div class=\"kpi\" id=\"kpiOppsVirtual\">—</div>
       </div>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-4 accent-sales\">
-        <div class=\"card-title sales\">Sales by Owner</div>
-        <div id=\"tblSalesOwner\"></div>
-      </div>
-      <div class=\"card span-4 accent-sales\">
-        <div class=\"card-title sales\">Sales by Setter Last Name</div>
-        <div id=\"tblSalesSetter\"></div>
-      </div>
-      <div class=\"card span-4 accent-sales\">
-        <div class=\"card-title sales\">Sales by Lead Gen Source</div>
-        <div id=\"tblSalesLead\"></div>
-      </div>
-
       <div class=\"card span-6 accent-opps\">
         <div class=\"card-title opps\">Opportunities Created by Setter Last Name</div>
         <div id=\"tblOppsSetter\"></div>
@@ -395,9 +406,20 @@ HTML = """<!doctype html>
 
       document.getElementById('kpiSales').textContent = numberFmt(sales.result);
       document.getElementById('kpiOpps').textContent = numberFmt(opps.result);
-      document.getElementById('kpiKnocks').textContent = numberFmt(knocks.result);
-      document.getElementById('kpiCalls').textContent = numberFmt(kixie.calls);
-      document.getElementById('kpiConn').textContent = `Connections: ${numberFmt(kixie.connections)} (${percentFmt(kixie.connection_rate)})`;
+
+      const oppLead = (opps && opps.breakdowns && opps.breakdowns.created_by_lead_gen_source) ? opps.breakdowns.created_by_lead_gen_source : {};
+      const leadVal = (keys) => {
+        let n = 0;
+        for (const [k,v] of Object.entries(oppLead || {})) {
+          const kn = String(k || '').trim().toLowerCase();
+          if (keys.includes(kn)) n += Number(v || 0);
+        }
+        return n;
+      };
+      document.getElementById('kpiOppsDoors').textContent = numberFmt(leadVal(['doors']));
+      document.getElementById('kpiOppsSelfGen').textContent = numberFmt(leadVal(['self gen','selfgen']));
+      document.getElementById('kpiOpps3pl').textContent = numberFmt(leadVal(['3pl']));
+      document.getElementById('kpiOppsVirtual').textContent = numberFmt(leadVal(['phones','virtual']));
 
       renderKVTable('tblSalesOwner', sales?.breakdowns?.sales_by_owner || {}, 'Sales');
       renderKVTable('tblSalesSetter', sales?.breakdowns?.sales_by_setter_last_name || {}, 'Sales');

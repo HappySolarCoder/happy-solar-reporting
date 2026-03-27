@@ -174,6 +174,19 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
+      <div class=\"card span-12\" style=\"border-style:dashed; border-color:#d1d5db;\">
+        <div class=\"card-header\">
+          <div>
+            <div class=\"card-title\">🔒 Secret Lab</div>
+            <div class=\"meta\">Experimental admin-only features.</div>
+          </div>
+          <div class=\"hgroup\">
+            <a class=\"btn secondary\" href=\"/api/secret_holographic_pipeline\">🪐 Holographic Pipeline</a>
+            <a class=\"btn secondary\" href=\"/api/secret_futurecast\">🔮 Futurecast Simulator</a>
+          </div>
+        </div>
+      </div>
+
       <div class=\"card span-12\">
         <div class=\"card-header\">
           <div>

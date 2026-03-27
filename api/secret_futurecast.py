@@ -252,8 +252,6 @@ HTML = """<!doctype html>
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if not _check_auth(self):
-            return _unauthorized(self)
         body = HTML.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')

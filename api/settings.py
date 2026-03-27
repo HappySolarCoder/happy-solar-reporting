@@ -174,7 +174,7 @@ HTML = """<!doctype html>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-12\" style=\"border-style:dashed; border-color:#d1d5db;\">
+      <div id=\"secret-lab\" class=\"card span-12\" style=\"border-style:dashed; border-color:#d1d5db;\">
         <div class=\"card-header\">
           <div>
             <div class=\"card-title\">🔒 Secret Lab</div>
@@ -609,6 +609,8 @@ HTML = """<!doctype html>
   renderPendingGoals();
   refreshAll();
 </script>
+
+  <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>
 </html>"""
 

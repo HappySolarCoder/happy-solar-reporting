@@ -6,9 +6,10 @@ Admin Data Cleanup dashboard.
 
 Shows contacts where:
 - Appointment Date/Time is present (contact custom field e3udzXVTyqrMqICpyqjF)
-- AND Setter Last Name needs cleanup:
-  - empty/missing (contact custom field Eq4NLTSkJ56KTxbxypuE)
-  - OR one of team labels: Rochester, Buffalo, Syracuse, Virtual
+- AND one of:
+  - Setter Last Name is empty/missing (contact custom field Eq4NLTSkJ56KTxbxypuE)
+  - Setter Last Name is a team label (Rochester, Buffalo, Syracuse, Virtual)
+  - Contact is missing assigned owner
 """
 
 from __future__ import annotations
@@ -174,7 +175,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
     <div class=\"topbar\">
       <div>
         <div class=\"title\">Data Cleanup</div>
-        <div class=\"subtitle\">Appointment exists + (Setter Last Name empty/team label OR contact has Assigned Owner)</div>
+        <div class=\"subtitle\">Appointment exists + (Setter Last Name empty/team label OR contact missing Assigned Owner)</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">
           <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
@@ -205,7 +206,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
       <div class=\"card span-3\"><div class=\"label\">Contacts in Cleanup</div><div class=\"kpi\">{count}</div></div>
       <div class=\"card span-3\"><div class=\"label\">Missing Setter Last Name</div><div class=\"kpi\">{empty_count}</div></div>
       <div class=\"card span-3\"><div class=\"label\">Setter = Team Label</div><div class=\"kpi\">{team_count}</div></div>
-      <div class=\"card span-3\"><div class=\"label\">Has Assigned Owner</div><div class=\"kpi\">{assigned_count}</div></div>
+      <div class=\"card span-3\"><div class=\"label\">Missing Assigned Owner</div><div class=\"kpi\">{assigned_count}</div></div>
     </div>
 
     <div class=\"grid\">
@@ -290,8 +291,8 @@ class handler(BaseHTTPRequestHandler):
                     issue = "missing_setter_last_name"
                 elif setter_norm in TEAM_LABELS:
                     issue = "setter_is_team_label"
-                elif assigned_owner:
-                    issue = "has_assigned_owner"
+                elif not assigned_owner:
+                    issue = "missing_assigned_owner"
                 else:
                     continue
 
@@ -329,7 +330,7 @@ class handler(BaseHTTPRequestHandler):
 
             empty_count = sum(1 for r in rows if r["issue"] == "missing_setter_last_name")
             team_count = sum(1 for r in rows if r["issue"] == "setter_is_team_label")
-            assigned_count = sum(1 for r in rows if r["issue"] == "has_assigned_owner")
+            assigned_count = sum(1 for r in rows if r["issue"] == "missing_assigned_owner")
 
             if rows:
                 row_html = []

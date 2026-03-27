@@ -47,7 +47,9 @@ HTML = """<!doctype html>
 
     .topbar > div { min-width: 0; }
 
-    .title { font-size: 24px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
+    .title { font-size: 24px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; display:flex; align-items:center; gap:8px; }
+    .sunLink { text-decoration:none; font-size:20px; line-height:1; }
+    .sunLink:hover { transform: translateY(-1px); }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
 
     .pinkline {
@@ -187,7 +189,7 @@ HTML = """<!doctype html>
   <div class=\"wrap\">
     <div class=\"topbar\">
       <div>
-        <div class=\"title\">Daily Dashboard</div>
+        <div class=\"title\">Daily Dashboard <a class=\"sunLink\" href=\"/api/morning_brief\" title=\"Morning Brief\">☀️</a></div>
         <div class=\"subtitle\">Morning meeting snapshot across GHL, Raydar, and Kixie</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">

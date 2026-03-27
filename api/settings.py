@@ -136,6 +136,16 @@ HTML = """<!doctype html>
 
     .stack { display:flex; flex-direction: column; gap: 12px; }
     .hgroup { display:flex; gap: 10px; align-items:center; flex-wrap:wrap; }
+
+    @media (max-width: 820px) {
+      .wrap { padding: 12px; }
+      .topbar { padding: 12px; gap: 10px; }
+      .title { font-size: 20px; }
+      .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+      .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
+      .card { padding: 12px; }
+      th, td { font-size: 11px; }
+    }
   </style>
 </head>
 <body>

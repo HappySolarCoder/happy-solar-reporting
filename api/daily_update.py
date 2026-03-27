@@ -95,6 +95,17 @@ HTML = """<!doctype html>
     .span-12 { grid-column: span 12; }
 
     @media (max-width: 1200px) { .span-3, .span-4, .span-6 { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 820px) {
+      .wrap { padding: 12px; }
+      .topbar { padding: 12px; gap: 10px; }
+      .title { font-size: 20px; }
+      .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+      .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
+      .filters { width:100%; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:8px; }
+      .filters input[type=date], .filters .btn, .filters button { width:100%; }
+      .kpi-card-center .kpi { font-size: 48px; }
+      .card { padding: 12px; }
+    }
     @media (max-width: 760px) { .grid-5 { grid-template-columns: 1fr; } }
 
     .kpi-label { color: var(--muted); font-size: 12px; font-weight: 900; }

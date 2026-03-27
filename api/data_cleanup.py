@@ -119,7 +119,7 @@ def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
         return None
 
 
-def render(rows_html: str, count: int, empty_count: int, team_count: int, start_date: str, end_date: str) -> str:
+def render(rows_html: str, count: int, empty_count: int, team_count: int, assigned_count: int, start_date: str, end_date: str) -> str:
     return f"""<!doctype html>
 <html>
 <head>
@@ -144,6 +144,16 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, start_
     .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:var(--shadow); }}
     .span-3 {{ grid-column: span 3; }} .span-12 {{ grid-column: span 12; }}
     @media (max-width:980px) {{ .span-3 {{ grid-column: span 12; }} }}
+    @media (max-width:820px) {{
+      .wrap {{ padding:12px; }}
+      .topbar {{ padding:12px; gap:10px; }}
+      .title {{ font-size:20px; }}
+      .nav {{ display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }}
+      .navbtn {{ white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }}
+      .filters {{ width:100%; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:8px; }}
+      .filters input[type=date], .filters .btn {{ width:100%; }}
+      th, td {{ font-size:11px; }}
+    }}
     .label {{ color:var(--muted); font-size:12px; font-weight:900; }}
     .kpi {{ margin-top:4px; font-size:34px; font-weight:950; }}
     .filters {{ display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; }}
@@ -163,7 +173,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, start_
     <div class=\"topbar\">
       <div>
         <div class=\"title\">Data Cleanup</div>
-        <div class=\"subtitle\">Appointment exists + Setter Last Name is empty OR team label (Rochester/Buffalo/Syracuse/Virtual)</div>
+        <div class=\"subtitle\">Appointment exists + (Setter Last Name empty/team label OR contact has Assigned Owner)</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">
           <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
@@ -191,9 +201,10 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, start_
     </div>
 
     <div class=\"grid\">
-      <div class=\"card span-3\"><div class=\"label\">Contacts to fix</div><div class=\"kpi\">{count}</div></div>
+      <div class=\"card span-3\"><div class=\"label\">Contacts in Cleanup</div><div class=\"kpi\">{count}</div></div>
       <div class=\"card span-3\"><div class=\"label\">Missing Setter Last Name</div><div class=\"kpi\">{empty_count}</div></div>
       <div class=\"card span-3\"><div class=\"label\">Setter = Team Label</div><div class=\"kpi\">{team_count}</div></div>
+      <div class=\"card span-3\"><div class=\"label\">Has Assigned Owner</div><div class=\"kpi\">{assigned_count}</div></div>
     </div>
 
     <div class=\"grid\">
@@ -265,11 +276,19 @@ class handler(BaseHTTPRequestHandler):
                 setter_raw = cf_value(c.get("customFields") or [], SETTER_CF_ID)
                 setter_norm = (setter_raw or "").strip().lower()
 
+                assigned_owner = (
+                    str(c.get("assignedTo") or "").strip()
+                    or str(c.get("ownerId") or "").strip()
+                    or str(c.get("assignedUserId") or "").strip()
+                )
+
                 issue = None
                 if not setter_norm:
                     issue = "missing_setter_last_name"
                 elif setter_norm in TEAM_LABELS:
                     issue = "setter_is_team_label"
+                elif assigned_owner:
+                    issue = "has_assigned_owner"
                 else:
                     continue
 
@@ -298,6 +317,7 @@ class handler(BaseHTTPRequestHandler):
                     "contact_id": contact_id,
                     "contact_url": contact_url,
                     "setter": setter_raw or "",
+                    "assigned_owner": assigned_owner,
                     "appt": appt_raw,
                     "appt_sort": appt_sort,
                 })
@@ -306,6 +326,7 @@ class handler(BaseHTTPRequestHandler):
 
             empty_count = sum(1 for r in rows if r["issue"] == "missing_setter_last_name")
             team_count = sum(1 for r in rows if r["issue"] == "setter_is_team_label")
+            assigned_count = sum(1 for r in rows if r["issue"] == "has_assigned_owner")
 
             if rows:
                 row_html = []
@@ -330,7 +351,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 rows_html = "<tr><td colspan='5' style='color:#9ca3af'>No rows</td></tr>"
 
-            body = render(rows_html, len(rows), empty_count, team_count, start_q, end_q).encode("utf-8")
+            body = render(rows_html, len(rows), empty_count, team_count, assigned_count, start_q, end_q).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

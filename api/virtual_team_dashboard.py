@@ -129,14 +129,20 @@ def render_html() -> str:
 
     /* Mobile optimizations */
     @media (max-width: 820px) {
-      .wrap { padding: 14px; }
-      .topbar { padding: 14px 14px; }
+      .wrap { padding: 12px; }
+      .topbar { padding: 12px; gap: 10px; }
       .title { font-size: 18px; }
-      .navbtn { padding: 8px 10px; font-size: 12px; }
-      .filters { gap: 8px; }
-      .filter-label { font-size: 11px; }
-      .kpi { font-size: 38px; }
-      .card { padding: 14px 14px; }
+      .brandCenter { display:none; }
+
+      .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; justify-content:flex-start; }
+      .navbtn { padding: 8px 10px; font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
+
+      .filters { width:100%; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; align-items:end; }
+      .filters label { font-size: 11px; margin-bottom: 2px; }
+      .filters input, .filters button { width:100%; }
+
+      .kpi { font-size: 34px; }
+      .card { padding: 12px; }
       table { display: block; overflow-x: auto; white-space: nowrap; }
     }
 

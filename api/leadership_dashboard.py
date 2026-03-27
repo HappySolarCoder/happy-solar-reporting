@@ -124,6 +124,15 @@ def render_html() -> str:
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
     .span-12 { grid-column: span 12; }
+
+    @media (max-width: 820px) {
+      .wrap { padding: 12px; }
+      .topbar { padding: 12px; gap: 10px; }
+      .title { font-size: 20px; }
+      .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+      .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
+      .card { padding: 12px; min-height: 90px; }
+    }
   </style>
 </head>
 <body>

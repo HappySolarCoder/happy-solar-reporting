@@ -399,6 +399,11 @@ def render_html(year: int, month: int) -> str:
       .card { min-height: 100px; }
       .kpi { font-size: 34px; }
       .span-12 { grid-column: span 2; }
+
+      .setterFilters { grid-template-columns: 1fr 1fr !important; }
+      #setterSummary { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+      .setterTable thead th { font-size: 12px !important; padding: 8px 6px !important; }
+      .setterTable tbody td, .setterTable tfoot td { font-size: 12px !important; padding: 8px 6px !important; }
     }
 
     @media (max-width: 520px) {
@@ -407,6 +412,11 @@ def render_html(year: int, month: int) -> str:
       .adminSettings { top: 12px; right: 12px; }
       .missingDisposTop { top: 12px; right: 134px; }
       .brandCenter { display:none; }
+
+      .setterFilters { grid-template-columns: 1fr !important; }
+      #setterSummary { grid-template-columns: 1fr !important; }
+      .setterTableWrap { overflow-x: auto; }
+      .setterTable { min-width: 760px; }
     }
 </style>
 </head>
@@ -520,30 +530,38 @@ def render_html(year: int, month: int) -> str:
             <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran)</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <div class="meta" style="margin-top:0">Lead Gen Source</div>
-            <select id="setterTableLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
-              <option value="">All</option>
-              <option value="Doors">Doors</option>
-              <option value="Phones">Phones</option>
-              <option value="3PL">3PL</option>
-              <option value="Self Gen">Self Gen</option>
-              <option value="none">none</option>
-            </select>
+            <div class="setterFilters" style="display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; width:100%; align-items:end;">
+              <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Lead Gen Source
+                <select id="setterTableLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;">
+                  <option value="">All</option>
+                  <option value="Doors">Doors</option>
+                  <option value="Phones">Phones</option>
+                  <option value="3PL">3PL</option>
+                  <option value="Self Gen">Self Gen</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
 
-            <div class="meta" style="margin-top:0">Team</div>
-            <select id="setterRoleFilter" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;">
-              <option value="fma" selected>FMA</option>
-              <option value="selfgen">Self Gen</option>
-              <option value="manager">Manager</option>
-              <option value="all">All</option>
-            </select>
+              <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Team
+                <select id="setterRoleFilter" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;">
+                  <option value="fma" selected>FMA</option>
+                  <option value="selfgen">Self Gen</option>
+                  <option value="manager">Manager</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
 
-            <div class="meta" style="margin-top:0">Start</div>
-            <input id="setterTableStart" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;" />
-            <div class="meta" style="margin-top:0">End</div>
-            <input id="setterTableEnd" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900;" />
-            <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
-            <button id="setterTableClear" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
+              <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Start
+                <input id="setterTableStart" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
+              </label>
+
+              <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">End
+                <input id="setterTableEnd" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
+              </label>
+
+              <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Apply</button>
+              <button id="setterTableClear" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Clear</button>
+            </div>
           </div>
         </div>
         <div id="setterSummary" style="display:grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap:10px; margin-top:10px;">

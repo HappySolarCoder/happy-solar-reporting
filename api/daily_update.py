@@ -64,6 +64,7 @@ HTML = """<!doctype html>
 
     .filters { display:flex; align-items:flex-end; gap: 10px; flex-wrap: wrap; }
     .filters label { display:block; font-size: 12px; color: var(--muted); font-weight: 900; margin-bottom: 4px; }
+    .mobileFilterToggle { display:none; background:#fff; color:#1f2937; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px; font-weight:900; }
     .filters input[type=date] {
       border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; font-size: 13px; font-weight: 900; background:#fff;
     }
@@ -101,7 +102,9 @@ HTML = """<!doctype html>
       .title { font-size: 20px; }
       .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
       .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
-      .filters { width:100%; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:8px; }
+      .mobileFilterToggle { display:inline-flex; align-items:center; justify-content:center; }
+      .filters { display:none; width:100%; grid-template-columns: repeat(2, minmax(0,1fr)); gap:8px; }
+      body.filters-open .filters { display:grid; }
       .filters input[type=date], .filters .btn, .filters button { width:100%; }
       .kpi-card-center .kpi { font-size: 48px; }
       .card { padding: 12px; }
@@ -196,6 +199,7 @@ HTML = """<!doctype html>
       </div>
 
       <div>
+        <button id=\"mobileFilterToggle\" class=\"mobileFilterToggle\" style=\"margin-bottom:8px\">Filters</button>
         <div class=\"filters\">
           <div>
             <label>Start</label>
@@ -514,6 +518,13 @@ HTML = """<!doctype html>
     const today = nyYmd(new Date());
     setRange(today, today);
   });
+
+  const mobileFilterToggle = document.getElementById('mobileFilterToggle');
+  if (mobileFilterToggle) {
+    mobileFilterToggle.addEventListener('click', () => {
+      document.body.classList.toggle('filters-open');
+    });
+  }
 
   wireSpotlight();
   load();

@@ -54,6 +54,8 @@ def render_html() -> str:
       box-shadow: 0 1px 3px rgba(17,24,39,0.05);
     }
 
+    .topbar > div { min-width: 0; }
+
     .title {
       font-size: 22px;
       font-weight: 900;

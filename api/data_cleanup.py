@@ -134,6 +134,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
     body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; margin:0; background:var(--bg); color:var(--text); }}
     .wrap {{ padding:22px; max-width:1240px; margin:0 auto; }}
     .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap; padding:18px 20px; border-radius:14px; background:var(--card); border:1px solid var(--border); box-shadow:var(--shadow); }}
+    .topbar > div {{ min-width: 0; }}
     .title {{ font-size:22px; font-weight:950; color:#1a2b4a; letter-spacing:-0.02em; }}
     .subtitle {{ margin-top:4px; color:var(--muted); font-size:13px; }}
     .pinkline {{ height:3px; width:240px; border-radius:999px; background:linear-gradient(90deg, var(--pink) 0%, var(--pink2) 45%, rgba(244,114,182,0) 100%); margin-top:10px; }}

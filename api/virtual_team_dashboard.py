@@ -51,6 +51,7 @@ def render_html() -> str:
     .topbar { position:relative; display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap;
       padding:18px 20px; border-radius:14px; background:var(--card); border:1px solid var(--border); box-shadow:var(--shadow);
     }
+    .topbar > div { min-width: 0; }
 
     .adminSettings { position:absolute; top:16px; right:18px; }
     .missingDisposTop { position:absolute; top:16px; right:158px; }

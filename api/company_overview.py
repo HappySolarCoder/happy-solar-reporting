@@ -85,6 +85,8 @@ def render_html(year: int, month: int) -> str:
       box-shadow: 0 2px 6px rgba(17,24,39,0.06);
     }
 
+    .topbar > div { min-width: 0; }
+
     .title {
       font-size: 22px;
       font-weight: 900;

@@ -223,6 +223,8 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
       right: 158px;
     }
 
+    .topbar > div { min-width: 0; }
+
     .title { font-size: 22px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
 

@@ -45,6 +45,8 @@ HTML = """<!doctype html>
       border: 1px solid var(--border); box-shadow: var(--shadow);
     }
 
+    .topbar > div { min-width: 0; }
+
     .title { font-size: 24px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
 

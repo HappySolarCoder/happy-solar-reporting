@@ -718,6 +718,13 @@ def render_html(year: int, month: int) -> str:
     }
 
     setActivePeriod('all');
+    // "All" is active — also clear any stale setter-table date range so the demo
+    // table shows current-month data (not a stuck old window).
+    clearSetterRange();
+    const stEl2 = document.getElementById('setterTableStart');
+    const enEl2 = document.getElementById('setterTableEnd');
+    if (stEl2) stEl2.value = '';
+    if (enEl2) enEl2.value = '';
   })();
 
   function setUrlRange(s, e) {
@@ -794,7 +801,15 @@ def render_html(year: int, month: int) -> str:
 
       if (per === 'all') {
         clearRange();
+        clearSetterRange();
+        // Also reset the setter-table-only date inputs in the DOM
+        const stEl2 = document.getElementById('setterTableStart');
+        const enEl2 = document.getElementById('setterTableEnd');
+        if (stEl2) stEl2.value = '';
+        if (enEl2) enEl2.value = '';
+        setActivePeriod('all');
         setUrlRange('', '');
+        load();
         return;
       }
 

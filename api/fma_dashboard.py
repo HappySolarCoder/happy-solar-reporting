@@ -1232,8 +1232,10 @@ def render_html(year: int, month: int) -> str:
           const cats = (rayId && roleByUser[rayId] && Array.isArray(roleByUser[rayId].categories)) ? roleByUser[rayId].categories : [];
           return { setter, ran, sit, pct, knocks, knocksMonth, appts, sales, knocksGoal, apptsGoal, demosGoal, score, rayId, cats };
         }).filter(r => {
-          // Always anchor row inclusion to Raydar knock activity this month
-          if (Number(r.knocksMonth || 0) <= 0) return false;
+          // Include setters who have at least one of: demos ran, appts created, or sales in the selected time range.
+          // NOT anchored to current-month knock activity (which would be inconsistent with the selected date range).
+          const hasAny = (Number(r.ran) || 0) > 0 || (Number(r.appts) || 0) > 0 || (Number(r.sales) || 0) > 0;
+          if (!hasAny) return false;
 
           // Team filter should be Raydar-based only (strict)
           if (selectedRole === 'all') return true;

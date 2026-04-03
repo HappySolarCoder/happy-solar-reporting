@@ -418,6 +418,21 @@ def render_html(year: int, month: int) -> str:
       .setterTableWrap { overflow-x: auto; }
       .setterTable { min-width: 760px; }
     }
+
+    /* See All modal */
+    #seeAllModal { display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; background:rgba(15,23,42,.55); backdrop-filter:blur(4px); }
+    #seeAllModal.open { display:flex; }
+    #seeAllModal .modal-inner { background:#fff; border-radius:16px; width:min(96vw, 1100px); max-height:92vh; overflow-y:auto; padding:24px 28px; box-shadow:0 20px 60px rgba(0,0,0,.18); }
+    #seeAllModal .modal-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+    #seeAllModal .modal-title { font-size:18px; font-weight:950; color:#1a2b4a; }
+    #seeAllModal .modal-close { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:10px; padding:6px 14px; font-size:13px; font-weight:900; cursor:pointer; color:#334155; }
+    #seeAllModal .modal-close:hover { background:#e2e8f0; }
+    #seeAllModal .modal-section { margin-bottom:28px; }
+    #seeAllModal .modal-section-title { font-size:13px; font-weight:950; color:var(--muted); margin:0 0 10px 0; text-transform:uppercase; letter-spacing:.05em; }
+    #seeAllModal table { width:100%; border-collapse:collapse; }
+    #seeAllModal th, #seeAllModal td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
+    #seeAllModal th { color:var(--muted); font-weight:900; background:#f8fafc; }
+    #seeAllModal td { color:#0f172a; font-weight:800; }
 </style>
 </head>
 <body>
@@ -569,6 +584,7 @@ def render_html(year: int, month: int) -> str:
           <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Avg Appts Attainment</div><div id="sumApptsAtt" style="font-size:22px; font-weight:900;">—</div></div>
           <div style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px;"><div class="meta" style="margin-top:0">Total Sales</div><div id="sumSales" style="font-size:22px; font-weight:900;">—</div></div>
         </div>
+        <div id="seeAllBtnContainer" style="display:none; margin-top:10px; text-align:right;"></div>
         <div class="setterTableWrap">
           <table class="setterTable">
             <colgroup>
@@ -1335,6 +1351,73 @@ def render_html(year: int, month: int) -> str:
             </tr>`;
         }
 
+        // See All button — only show when > 10 rows
+        const seeAllContainer = document.getElementById('seeAllBtnContainer');
+        if (seeAllContainer) {
+          if (rows.length > 10) {
+            seeAllContainer.innerHTML = `<button id="seeAllOpen" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${rows.length} Setters  ↗</button>`;
+            seeAllContainer.style.display = 'block';
+            const openBtn = document.getElementById('seeAllOpen');
+            if (openBtn) {
+              openBtn.addEventListener('click', () => {
+                const modal = document.getElementById('seeAllModal');
+                const content = document.getElementById('seeAllContent');
+                if (!modal || !content) return;
+
+                // Top Performers: rank + name + knocks + appts + sales (all rows)
+                const topAll = [...rows].sort((a,b) => (b.score||0)-(a.score||0)||String(a.setter).localeCompare(String(b.setter)));
+                const topRows = topAll.map((r, i) => `
+                  <tr>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sales||0)}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${r.score?r.score.toFixed(0)+'%':'—'}</td>
+                  </tr>`).join('');
+
+                // Demo Rate table: all rows, same columns as main table
+                const demoRows = sortedRows.map(r => `
+                  <tr>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.knocksGoal||'—'}</span></td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.apptsGoal||'—'}</span></td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.ran||0)}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sit||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.demosGoal||'—'}</span></td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score?r.score.toFixed(0)+'%':'—'}</span></td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.sales||0)}</td>
+                  </tr>`).join('');
+
+                content.innerHTML = `
+                  <div class="modal-section">
+                    <div class="modal-section-title">Top Performers — Ranked by Goal Score</div>
+                    <div style="overflow-x:auto;">
+                      <table>
+                        <thead><tr><th style="text-align:center;">#</th><th>Setter Last Name</th><th style="text-align:right;">Knocks</th><th style="text-align:right;">Appts Set</th><th style="text-align:right;">Sales</th><th style="text-align:right;">Goal Score</th></tr></thead>
+                        <tbody>${topRows}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div class="modal-section">
+                    <div class="modal-section-title">Demo Rate by Setter — Full Table</div>
+                    <div style="overflow-x:auto;">
+                      <table>
+                        <colgroup><col style="width:14%"/><col style="width:18%"/><col style="width:18%"/><col style="width:10%"/><col style="width:18%"/><col style="width:9%"/><col style="width:8%"/><col style="width:5%"/></colgroup>
+                        <thead><tr><th>Setter Last Name</th><th style="text-align:right;">Knocks / Goal</th><th style="text-align:right;">Appts / Goal</th><th style="text-align:center;">Opps Ran</th><th style="text-align:right;">Demos / Goal</th><th style="text-align:center;">Demo %</th><th style="text-align:center;">Goal Score</th><th style="text-align:right;">Sales</th></tr></thead>
+                        <tbody>${demoRows}</tbody>
+                        <tfoot><tr><td style="font-weight:950;">TOTAL</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:center;font-weight:950;">${totalRan}</td><td style="text-align:right;font-weight:950;">${totalSit}</td><td style="text-align:center;font-weight:950;">${totalPct.toFixed(1)}%</td><td style="text-align:center;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">${totalSales}</td></tr></tfoot>
+                      </table>
+                    </div>
+                  </div>`;
+                modal.classList.add('open');
+              });
+            }
+          } else {
+            seeAllContainer.style.display = 'none';
+          }
+        }
+
       }
 
 
@@ -1388,6 +1471,19 @@ def render_html(year: int, month: int) -> str:
     });
   }
 
+  // See All modal close
+  const seeAllCloseBtn = document.getElementById('seeAllClose');
+  if (seeAllCloseBtn) seeAllCloseBtn.addEventListener('click', () => {
+    const m = document.getElementById('seeAllModal');
+    if (m) m.classList.remove('open');
+  });
+  const seeAllModal = document.getElementById('seeAllModal');
+  if (seeAllModal) {
+    seeAllModal.addEventListener('click', (e) => {
+      if (e.target === seeAllModal) seeAllModal.classList.remove('open');
+    });
+  }
+
   // Click-to-sort for GHL demo-by-setter table headers
   document.querySelectorAll('th[data-sort-key]').forEach(th => {
     th.addEventListener('click', () => {
@@ -1414,6 +1510,17 @@ def render_html(year: int, month: int) -> str:
 
   load();
 </script>
+
+  <!-- See All modal -->
+  <div id="seeAllModal">
+    <div class="modal-inner">
+      <div class="modal-header">
+        <div class="modal-title">All Setters — Full View</div>
+        <button class="modal-close" id="seeAllClose">Close ✕</button>
+      </div>
+      <div id="seeAllContent"></div>
+    </div>
+  </div>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>

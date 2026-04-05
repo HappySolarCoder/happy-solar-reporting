@@ -365,13 +365,14 @@ class handler(BaseHTTPRequestHandler):
                         continue
                     found += 1
                     if len(sample) < 5:
+                        opp_cfs = opp.get("customFields") or []
+                        opp_top_keys = [k for k in opp.keys() if k not in ("id","contactId","customFields")]
                         sample.append({
                             "opp_id": s.id, "contact_id": cid,
                             "sold_date": sold,
-                            "system_size": contact.get("system_size"),
-                            "ppw_sold": contact.get("ppw_sold"),
-                            "finance_type": contact.get("finance_type"),
-                            "contact_keys": list(contact.keys())[:15]
+                            "contact_system_size": contact.get("system_size"),
+                            "opp_top_keys": opp_top_keys,
+                            "opp_cfs": [{"id": cf.get("id"), "name": cf.get("fieldName"), "val": str(cf.get("value","") or "")[:50]} for cf in opp_cfs[:10]]
                         })
                 
                 body = json.dumps({

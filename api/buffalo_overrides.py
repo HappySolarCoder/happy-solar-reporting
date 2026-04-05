@@ -209,7 +209,7 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
     start = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
 
     # Preload contacts
-    contacts_map: dict[str, dict] = {}
+    contacts_map = {}
     for snap in db.collection("ghl_contacts_v2").stream():
         d = snap.to_dict() or {}
         cid = str(d.get("id") or snap.id).strip()
@@ -217,7 +217,7 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
             contacts_map[cid] = d
 
     # Preload users
-    user_cache: dict[str, str] = {}
+    user_cache = {}
     for snap in db.collection("ghl_users_v2").stream():
         d = snap.to_dict() or {}
         uid = str(d.get("id") or snap.id).strip()
@@ -230,43 +230,34 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
             user_cache[uid] = name
 
     rows = []
-    debug_counts = {"stage_skip": 0, "no_contact": 0, "no_date": 0, "wrong_month": 0, "added": 0}
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
         stage_id = str(opp.get("pipelineStageId") or "")
         if stage_id not in BUFFALO_SOLD_STAGE_IDS:
-            debug_counts["stage_skip"] += 1
             continue
 
         contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
-        if not contact:
-            debug_counts["no_contact"] += 1
 
-        sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID) if contact else None
+        sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID)
         if not sold_date:
-            debug_counts["no_date"] += 1
             continue
         try:
             sd = datetime.strptime(sold_date[:10], "%Y-%m-%d").replace(tzinfo=tz)
             if not (start <= sd < end):
-                debug_counts["wrong_month"] += 1
                 continue
         except Exception:
             continue
 
-        debug_counts["added"] += 1
         owner_id = str(opp.get("assignedTo") or "").strip()
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
-        system_size = contact.get("system_size")
-        ppw_sold = contact.get("ppw_sold")
-        finance_type = contact.get("finance_type")
-
+        # NOTE: system_size, ppw_sold, finance_type not yet synced from GHL custom fields.
+        # Show "—" until field IDs are confirmed and synced.
         rows.append({
             "sales_rep": user_cache.get(owner_id) or owner_id or "—",
             "setter": setter,
-            "system_size": system_size if system_size not in (None, "") else "—",
-            "ppw_sold": ppw_sold if ppw_sold not in (None, "") else "—",
-            "finance_type": finance_type if finance_type not in (None, "") else "—",
+            "system_size": "—",
+            "ppw_sold": "—",
+            "finance_type": "—",
             "sold_date": sold_date[:10],
         })
 
@@ -280,16 +271,7 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
             return str(v).lower()
     rows.sort(key=sort_key, reverse=rev)
 
-    # Totals
-    sizes = [float(r["system_size"]) for r in rows if r["system_size"] not in ("—", None, "")]
-    ppws = [float(r["ppw_sold"].replace("$","")) for r in rows if r["ppw_sold"] not in ("—", None, "") and r["ppw_sold"] is not None]
-    totals = {
-        "avg_size": f"{sum(sizes)/len(sizes):.1f}" if sizes else "—",
-        "avg_ppw": f"${sum(ppws)/len(ppws):.2f}" if ppws else "—",
-    }
-
-    return rows, totals, debug_counts
-
+    return rows, {}
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -317,97 +299,7 @@ class handler(BaseHTTPRequestHandler):
 
             db = get_db()
 
-            # Debug mode: show detailed diagnostics
-            if qs.get("debug", [""])[0].strip() == "1":
-                stage_ids = BUFFALO_SOLD_STAGE_IDS
-                sold_date_cf = SOLD_DATE_CF_ID
-                tz = ZoneInfo("America/New_York")
-                if m == 12:
-                    end = datetime(y+1, 1, 1, 0, 0, 0, tzinfo=tz)
-                else:
-                    end = datetime(y, m+1, 1, 0, 0, 0, tzinfo=tz)
-                start_dt = datetime(y, m, 1, 0, 0, 0, tzinfo=tz)
-                
-                # Preload contacts
-                contacts_map = {}
-                for snap in db.collection("ghl_contacts_v2").stream():
-                    d = snap.to_dict() or {}
-                    cid = str(d.get("id") or snap.id).strip()
-                    if cid:
-                        contacts_map[cid] = d
-                
-                found = 0
-                null_date = 0
-                wrong_month = 0
-                no_contact = 0
-                sample = []
-                for si, s in enumerate(db.collection("ghl_opportunities_v2").stream()):
-                    opp = s.to_dict() or {}
-                    if str(opp.get("pipelineStageId") or "") not in stage_ids: continue
-                    cid = str(opp.get("contactId") or "").strip()
-                    contact = contacts_map.get(cid)
-                    if not contact:
-                        no_contact += 1
-                        continue
-                    sold = None
-                    for cf in (contact.get("customFields") or []):
-                        if str(cf.get("id") or "") == sold_date_cf:
-                            sold = str(cf.get("value") or "")[:10]
-                    if sold is None:
-                        null_date += 1
-                        continue
-                    try:
-                        sd = datetime.strptime(sold, "%Y-%m-%d").replace(tzinfo=tz)
-                        if not (start_dt <= sd < end):
-                            wrong_month += 1
-                            continue
-                    except:
-                        continue
-                    found += 1
-                    if len(sample) < 5:
-                        opp_contact = opp.get("contact") or {}
-                        opp_cfs = opp.get("customFields") or []
-                        opp_top_keys = [k for k in opp.keys() if k not in ("id","contactId","customFields","contact")]
-                        sample.append({
-                            "opp_id": s.id, "contact_id": cid,
-                            "sold_date": sold,
-                            "opp_monetaryValue": opp.get("monetaryValue"),
-                            "contact_system_size": contact.get("system_size"),
-                            "opp_contact_keys": list(opp_contact.keys()),
-                            "opp_contact_system_size": opp_contact.get("system_size"),
-                            "opp_contact_ppw_sold": opp_contact.get("ppwSold"),
-                            "opp_contact_finance_type": opp_contact.get("financeType"),
-                            "opp_cfs": [{"id": cf.get("id"), "val": str(cf.get("value","") or "")[:60]} for cf in opp_cfs[:5]]
-                        })
-                
-                body = json.dumps({
-                    "debug": True,
-                    "month": f"{y}-{m:02d}",
-                    "window_start": start_dt.isoformat(),
-                    "window_end": end.isoformat(),
-                    "opps_matching_stage": found,
-                    "null_date": null_date,
-                    "wrong_month": wrong_month,
-                    "no_contact_found": no_contact,
-                    "sample": sample
-                }, indent=2).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-
-            rows, totals, dbg = build_data(db, y, m, sort_col, sort_dir)
-            if qs.get('debug2', [''])[0].strip() == '1':
-                body = json.dumps({'dbg': dbg, 'len_rows': len(rows)}).encode('utf-8')
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Content-Length', str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            rows, totals, _
+            rows, totals = build_data(db, y, m, sort_col, sort_dir)
             month_str = f"{y}-{m:02d}"
 
             body = render_page(rows, totals, len(rows), y, m, month_str, sort_col, sort_dir).encode("utf-8")

@@ -230,24 +230,31 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
             user_cache[uid] = name
 
     rows = []
+    debug_counts = {"stage_skip": 0, "no_contact": 0, "no_date": 0, "wrong_month": 0, "added": 0}
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
         stage_id = str(opp.get("pipelineStageId") or "")
         if stage_id not in BUFFALO_SOLD_STAGE_IDS:
+            debug_counts["stage_skip"] += 1
             continue
 
         contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
+        if not contact:
+            debug_counts["no_contact"] += 1
 
-        sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID)
+        sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID) if contact else None
         if not sold_date:
+            debug_counts["no_date"] += 1
             continue
         try:
             sd = datetime.strptime(sold_date[:10], "%Y-%m-%d").replace(tzinfo=tz)
             if not (start <= sd < end):
+                debug_counts["wrong_month"] += 1
                 continue
         except Exception:
             continue
 
+        debug_counts["added"] += 1
         owner_id = str(opp.get("assignedTo") or "").strip()
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
         system_size = contact.get("system_size")
@@ -281,7 +288,7 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
         "avg_ppw": f"${sum(ppws)/len(ppws):.2f}" if ppws else "—",
     }
 
-    return rows, totals
+    return rows, totals, debug_counts
 
 
 class handler(BaseHTTPRequestHandler):
@@ -385,7 +392,16 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
-            rows, totals = build_data(db, y, m, sort_col, sort_dir)
+            rows, totals, dbg = build_data(db, y, m, sort_col, sort_dir)
+            if qs.get('debug2', [''])[0].strip() == '1':
+                body = json.dumps({'dbg': dbg, 'len_rows': len(rows)}).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            rows, totals, _
             month_str = f"{y}-{m:02d}"
 
             body = render_page(rows, totals, len(rows), y, m, month_str, sort_col, sort_dir).encode("utf-8")

@@ -252,12 +252,16 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
         # NOTE: system_size, ppw_sold, finance_type not yet synced from GHL custom fields.
         # Show "—" until field IDs are confirmed and synced.
+        system_size = contact.get("system_size") or "—"
+        ppw_sold = contact.get("ppw_sold") or "—"
+        finance_type = contact.get("finance_type") or "—"
+
         rows.append({
             "sales_rep": user_cache.get(owner_id) or owner_id or "—",
             "setter": setter,
-            "system_size": "—",
-            "ppw_sold": "—",
-            "finance_type": "—",
+            "system_size": system_size,
+            "ppw_sold": ppw_sold,
+            "finance_type": finance_type,
             "sold_date": sold_date[:10],
         })
 

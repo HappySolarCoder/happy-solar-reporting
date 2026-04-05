@@ -309,6 +309,43 @@ class handler(BaseHTTPRequestHandler):
                 sort_dir = "desc"
 
             db = get_db()
+
+            # Debug mode: show raw counts
+            if qs.get("debug", [""])[0].strip() == "1":
+                stage_ids = BUFFALO_SOLD_STAGE_IDS
+                opp_count = sum(1 for s in db.collection("ghl_opportunities_v2").stream()
+                               if str(s.to_dict().get("pipelineStageId") or "") in stage_ids)
+                sold_date_cf = SOLD_DATE_CF_ID
+                tz = ZoneInfo("America/New_York")
+                if m == 12:
+                    end = datetime(y+1, 1, 1, 0, 0, 0, tzinfo=tz)
+                else:
+                    end = datetime(y, m+1, 1, 0, 0, 0, tzinfo=tz)
+                start = datetime(y, m, 1, 0, 0, 0, tzinfo=tz)
+                # Sample a few opps to check contact join
+                sample = []
+                for si, s in enumerate(db.collection("ghl_opportunities_v2").stream()):
+                    if si > 200: break
+                    opp = s.to_dict() or {}
+                    if str(opp.get("pipelineStageId") or "") not in stage_ids: continue
+                    cid = str(opp.get("contactId") or "").strip()
+                    contact = db.collection("ghl_contacts_v2").document(cid).get().to_dict() if cid else {}
+                    sold = None
+                    for cf in (contact.get("customFields") or []):
+                        if str(cf.get("id") or "") == sold_date_cf:
+                            sold = str(cf.get("value") or "")[:10]
+                    sample.append({"opp_id": s.id, "contact_id": cid, "sold_date": sold})
+                body = json.dumps({"opp_with_stage": opp_count, "stage_ids": list(stage_ids),
+                                   "sold_date_cf": sold_date_cf, "month": f"{y}-{m:02d}",
+                                   "window_start": start.isoformat(), "window_end": end.isoformat(),
+                                   "sample": sample[:5]}, indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             rows, totals = build_data(db, y, m, sort_col, sort_dir)
             month_str = f"{y}-{m:02d}"
 

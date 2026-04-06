@@ -1135,7 +1135,7 @@ def render_html(year: int, month: int) -> str:
           if (nm) raydarNameById[rid] = nm;
         }
 
-        const topKnocks = Object.entries(knocksByActorTop)
+        const topKnocksAll = Object.entries(knocksByActorTop)
           .map(([uid, cnt]) => ({
             uid,
             name: raydarNameById[uid]
@@ -1143,8 +1143,9 @@ def render_html(year: int, month: int) -> str:
               || `Unknown (${String(uid).slice(0,8)}…)`,
             value: Number(cnt||0)
           }))
-          .sort((a,b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)))
-          .slice(0, 10);
+          .filter(r => Number(r.value || 0) > 0)
+          .sort((a,b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)));
+        const topKnocks = topKnocksAll.slice(0, 10);
         renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));
 
         // Use same attribution model as Top Performers — Knocks so numbers align
@@ -1187,14 +1188,15 @@ def render_html(year: int, month: int) -> str:
           if (dn) setterDisplayByLast[sln] = dn;
         }
 
-        const topAppts = Object.entries(apptsBySetterNormTop)
+        const topApptsAll = Object.entries(apptsBySetterNormTop)
           .map(([ln, cnt]) => ({
             last: ln,
             name: setterDisplayByLast[ln] || (ln ? (ln[0].toUpperCase() + ln.slice(1)) : '—'),
             value: Number(cnt || 0),
           }))
-          .sort((a,b) => (b.value - a.value) || a.name.localeCompare(b.name))
-          .slice(0, 10);
+          .filter(r => Number(r.value || 0) > 0)
+          .sort((a,b) => (b.value - a.value) || a.name.localeCompare(b.name));
+        const topAppts = topApptsAll.slice(0, 10);
 
         renderTopList('topAppts', topAppts.map(r => ({ name: r.name, value: r.value })));
 
@@ -1347,76 +1349,68 @@ def render_html(year: int, month: int) -> str:
             </tr>`;
         }
 
-        // See All button — force visible so users can always open full-view popup
+        // See All popup should mirror exactly the two Top Performers tables, uncapped (>10)
+        const unionSetters = new Set([
+          ...topKnocksAll.map(r => String(r.name || '').trim().toLowerCase()),
+          ...topApptsAll.map(r => String(r.name || '').trim().toLowerCase()),
+        ].filter(Boolean));
+        const fullCount = unionSetters.size;
+
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${rows.length} Setters  ↗</button>`;
-        if (seeAllContainer) {
-          seeAllContainer.innerHTML = btnHtml;
-          seeAllContainer.style.display = 'block';
-        }
-        if (seeAllTop) {
-          seeAllTop.innerHTML = btnHtml;
-          seeAllTop.style.display = 'block';
-        }
+        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${fullCount} Setters ↗</button>`;
+        if (seeAllContainer) { seeAllContainer.innerHTML = btnHtml; seeAllContainer.style.display = 'block'; }
+        if (seeAllTop) { seeAllTop.innerHTML = btnHtml; seeAllTop.style.display = 'block'; }
         const floatingBtn = document.getElementById('seeAllFloatingOpen');
-        if (floatingBtn) floatingBtn.textContent = `See All ${rows.length} Setters ↗`;
+        if (floatingBtn) floatingBtn.textContent = `See All ${fullCount} Setters ↗`;
 
         document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
           openBtn.addEventListener('click', () => {
-               const modal = document.getElementById('seeAllModal');
-               const content = document.getElementById('seeAllContent');
-               if (!modal || !content) return;
+            const modal = document.getElementById('seeAllModal');
+            const content = document.getElementById('seeAllContent');
+            if (!modal || !content) return;
 
-               // Top Performers: rank + name + knocks + appts + sales (all rows)
-               const topAll = [...rows].sort((a,b) => (b.score||0)-(a.score||0)||String(a.setter).localeCompare(String(b.setter)));
-               const topRows = topAll.map((r, i) => `
-                <tr>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sales||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${r.score?r.score.toFixed(0)+'%':'—'}</td>
-                </tr>`).join('');
+            const knocksRows = topKnocksAll.length
+              ? topKnocksAll.map((r, i) => `
+                  <tr>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.name || r.uid || '—'}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${Number(r.value||0)}</td>
+                  </tr>`).join('')
+              : `<tr><td colspan="3" style="padding:10px 12px; color:#64748b;">No knock data</td></tr>`;
 
-               // Demo Rate table: all rows, same columns as main table
-               const demoRows = sortedRows.map(r => `
-                <tr>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.knocksGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.apptsGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.ran||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sit||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.demosGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score?r.score.toFixed(0)+'%':'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.sales||0)}</td>
-                </tr>`).join('');
+            const apptRows = topApptsAll.length
+              ? topApptsAll.map((r, i) => `
+                  <tr>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.name || '—'}</td>
+                    <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${Number(r.value||0)}</td>
+                  </tr>`).join('')
+              : `<tr><td colspan="3" style="padding:10px 12px; color:#64748b;">No appointment data</td></tr>`;
 
-               content.innerHTML = `
-                <div class="modal-section">
-                  <div class="modal-section-title">Top Performers — Ranked by Goal Score</div>
-                  <div style="overflow-x:auto;">
-                    <table>
-                      <thead><tr><th style="text-align:center;">#</th><th>Setter Last Name</th><th style="text-align:right;">Knocks</th><th style="text-align:right;">Appts Set</th><th style="text-align:right;">Sales</th><th style="text-align:right;">Goal Score</th></tr></thead>
-                      <tbody>${topRows}</tbody>
-                    </table>
-                  </div>
+            content.innerHTML = `
+              <div class="modal-section">
+                <div class="modal-section-title">Top Performers — Knocks (Full List)</div>
+                <div style="overflow-x:auto;">
+                  <table>
+                    <thead><tr><th style="text-align:center;">#</th><th>Setter</th><th style="text-align:right;">Knocks</th></tr></thead>
+                    <tbody>${knocksRows}</tbody>
+                  </table>
                 </div>
-                <div class="modal-section">
-                  <div class="modal-section-title">Demo Rate by Setter — Full Table</div>
-                  <div style="overflow-x:auto;">
-                    <table>
-                      <colgroup><col style="width:14%"/><col style="width:18%"/><col style="width:18%"/><col style="width:10%"/><col style="width:18%"/><col style="width:9%"/><col style="width:8%"/><col style="width:5%"/></colgroup>
-                      <thead><tr><th>Setter Last Name</th><th style="text-align:right;">Knocks / Goal</th><th style="text-align:right;">Appts / Goal</th><th style="text-align:center;">Opps Ran</th><th style="text-align:right;">Demos / Goal</th><th style="text-align:center;">Demo %</th><th style="text-align:center;">Goal Score</th><th style="text-align:right;">Sales</th></tr></thead>
-                      <tbody>${demoRows}</tbody>
-                      <tfoot><tr><td style="font-weight:950;">TOTAL</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:center;font-weight:950;">${totalRan}</td><td style="text-align:right;font-weight:950;">${totalSit}</td><td style="text-align:center;font-weight:950;">${totalPct.toFixed(1)}%</td><td style="text-align:center;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">${totalSales}</td></tr></tfoot>
-                    </table>
-                  </div>
-                </div>`;
-              modal.classList.add('open');
-            });
+              </div>
+              <div class="modal-section">
+                <div class="modal-section-title">Top Performers — Appointments (Full List)</div>
+                <div style="overflow-x:auto;">
+                  <table>
+                    <thead><tr><th style="text-align:center;">#</th><th>Setter</th><th style="text-align:right;">Appointments</th></tr></thead>
+                    <tbody>${apptRows}</tbody>
+                  </table>
+                </div>
+              </div>`;
+
+            modal.classList.add('open');
           });
+        });
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');

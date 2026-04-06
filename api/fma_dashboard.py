@@ -1417,60 +1417,6 @@ def render_html(year: int, month: int) -> str:
               modal.classList.add('open');
             });
           });
-              const modal = document.getElementById('seeAllModal');
-              const content = document.getElementById('seeAllContent');
-              if (!modal || !content) return;
-
-              // Top Performers: rank + name + knocks + appts + sales (all rows)
-              const topAll = [...rows].sort((a,b) => (b.score||0)-(a.score||0)||String(a.setter).localeCompare(String(b.setter)));
-              const topRows = topAll.map((r, i) => `
-                <tr>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sales||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${r.score?r.score.toFixed(0)+'%':'—'}</td>
-                </tr>`).join('');
-
-              // Demo Rate table: all rows, same columns as main table
-              const demoRows = sortedRows.map(r => `
-                <tr>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.knocksGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.apptsGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.ran||0)}</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sit||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.demosGoal||'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score?r.score.toFixed(0)+'%':'—'}</span></td>
-                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.sales||0)}</td>
-                </tr>`).join('');
-
-              content.innerHTML = `
-                <div class="modal-section">
-                  <div class="modal-section-title">Top Performers — Ranked by Goal Score</div>
-                  <div style="overflow-x:auto;">
-                    <table>
-                      <thead><tr><th style="text-align:center;">#</th><th>Setter Last Name</th><th style="text-align:right;">Knocks</th><th style="text-align:right;">Appts Set</th><th style="text-align:right;">Sales</th><th style="text-align:right;">Goal Score</th></tr></thead>
-                      <tbody>${topRows}</tbody>
-                    </table>
-                  </div>
-                </div>
-                <div class="modal-section">
-                  <div class="modal-section-title">Demo Rate by Setter — Full Table</div>
-                  <div style="overflow-x:auto;">
-                    <table>
-                      <colgroup><col style="width:14%"/><col style="width:18%"/><col style="width:18%"/><col style="width:10%"/><col style="width:18%"/><col style="width:9%"/><col style="width:8%"/><col style="width:5%"/></colgroup>
-                      <thead><tr><th>Setter Last Name</th><th style="text-align:right;">Knocks / Goal</th><th style="text-align:right;">Appts / Goal</th><th style="text-align:center;">Opps Ran</th><th style="text-align:right;">Demos / Goal</th><th style="text-align:center;">Demo %</th><th style="text-align:center;">Goal Score</th><th style="text-align:right;">Sales</th></tr></thead>
-                      <tbody>${demoRows}</tbody>
-                      <tfoot><tr><td style="font-weight:950;">TOTAL</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:center;font-weight:950;">${totalRan}</td><td style="text-align:right;font-weight:950;">${totalSit}</td><td style="text-align:center;font-weight:950;">${totalPct.toFixed(1)}%</td><td style="text-align:center;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">${totalSales}</td></tr></tfoot>
-                    </table>
-                  </div>
-                </div>`;
-              modal.classList.add('open');
-            });
-          }
-        }
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');

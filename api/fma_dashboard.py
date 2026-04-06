@@ -1454,14 +1454,22 @@ def render_html(year: int, month: int) -> str:
   const clBtn = document.getElementById('setterTableClear');
 
   const existingSetterRange = getSetterRange();
-  if (existingSetterRange && stEl && enEl) {
-    stEl.value = existingSetterRange.start;
-    enEl.value = existingSetterRange.end;
-  } else if (stEl && enEl) {
+  if (stEl && enEl) {
     const r = currentNyMonthToDateRange();
-    stEl.value = r.start;
-    enEl.value = r.end;
-    setSetterRange({ start: r.start, end: r.end });
+    const today = nyYmd(new Date());
+    // If prior default was month-to-date (start=1st, end=today), upgrade to full month.
+    if (existingSetterRange && existingSetterRange.start === r.start && existingSetterRange.end === today) {
+      stEl.value = r.start;
+      enEl.value = r.end;
+      setSetterRange({ start: r.start, end: r.end });
+    } else if (existingSetterRange && existingSetterRange.start && existingSetterRange.end) {
+      stEl.value = existingSetterRange.start;
+      enEl.value = existingSetterRange.end;
+    } else {
+      stEl.value = r.start;
+      enEl.value = r.end;
+      setSetterRange({ start: r.start, end: r.end });
+    }
   }
 
   if (apBtn && stEl && enEl) {

@@ -242,6 +242,11 @@ CSS = """
     .ovr { width:86px; border:1px solid var(--border); border-radius:8px; padding:6px 8px; font-size:13px; font-weight:800; }
     .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
     .status { font-size:12px; color:#64748b; font-weight:800; min-height:18px; }
+    .forecast { margin-top:14px; border:1px solid var(--border); border-radius:12px; background:#fff; overflow:hidden; }
+    .forecast .head { padding:10px 12px; background:#f8fafc; border-bottom:1px solid var(--border); font-size:13px; font-weight:900; color:#475569; }
+    .forecast table { margin-top:0; box-shadow:none; border-radius:0; }
+    .forecast input { width:110px; border:1px solid var(--border); border-radius:8px; padding:6px 8px; font-size:13px; font-weight:800; }
+    .forecast .out { font-weight:950; color:#1a2b4a; font-variant-numeric:tabular-nums; }
     @media (max-width:780px) { .wrap { padding:12px; } .topbar { padding:12px; gap:10px; } .title { font-size:20px; } .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; } .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; } }
 """
 
@@ -351,6 +356,40 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         <thead><tr>""" + headers + """</tr></thead>
         <tbody>""" + rows_html + """</tbody>
       </table>
+
+      <div class="forecast" id="forecastTool">
+        <div class="head">Forecast / Projection Tool (Estimated Overrides)</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Scenario</th>
+              <th style="text-align:right;"># Sales</th>
+              <th style="text-align:right;">Avg System Size (kW)</th>
+              <th style="text-align:right;">Estimated Override ($)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>All Sales</td>
+              <td style="text-align:right;"><input id="fcAllSales" type="number" min="0" step="1" value="0" /></td>
+              <td style="text-align:right;"><input id="fcAllAvg" type="number" min="0" step="0.01" value="0" /></td>
+              <td style="text-align:right;" class="out" id="fcAllOut">$0.00</td>
+            </tr>
+            <tr>
+              <td>Non Direct Sales (not Doors)</td>
+              <td style="text-align:right;"><input id="fcNonSales" type="number" min="0" step="1" value="0" /></td>
+              <td style="text-align:right;"><input id="fcNonAvg" type="number" min="0" step="0.01" value="0" /></td>
+              <td style="text-align:right;" class="out" id="fcNonOut">$0.00</td>
+            </tr>
+            <tr>
+              <td>Direct Sales (Doors)</td>
+              <td style="text-align:right;"><input id="fcDirSales" type="number" min="0" step="1" value="0" /></td>
+              <td style="text-align:right;"><input id="fcDirAvg" type="number" min="0" step="0.01" value="0" /></td>
+              <td style="text-align:right;" class="out" id="fcDirOut">$0.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -414,6 +453,56 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         if (kpi) kpi.textContent = '$' + total.toFixed(2);
       }
 
+      function n0(v) {
+        var n = Number(v);
+        return isFinite(n) ? n : 0;
+      }
+
+      function recalcForecasts() {
+        var rate = Number(v(defaultEl && defaultEl.value));
+        var allSales = n0(document.getElementById('fcAllSales') && document.getElementById('fcAllSales').value);
+        var allAvg = n0(document.getElementById('fcAllAvg') && document.getElementById('fcAllAvg').value);
+        var nonSales = n0(document.getElementById('fcNonSales') && document.getElementById('fcNonSales').value);
+        var nonAvg = n0(document.getElementById('fcNonAvg') && document.getElementById('fcNonAvg').value);
+        var dirSales = n0(document.getElementById('fcDirSales') && document.getElementById('fcDirSales').value);
+        var dirAvg = n0(document.getElementById('fcDirAvg') && document.getElementById('fcDirAvg').value);
+
+        var allOut = Number((allSales * allAvg * rate).toFixed(2));
+        var nonOut = Number((nonSales * nonAvg * rate).toFixed(2));
+        var dirOut = Number((dirSales * dirAvg * rate).toFixed(2));
+
+        var e1 = document.getElementById('fcAllOut'); if (e1) e1.textContent = '$' + allOut.toFixed(2);
+        var e2 = document.getElementById('fcNonOut'); if (e2) e2.textContent = '$' + nonOut.toFixed(2);
+        var e3 = document.getElementById('fcDirOut'); if (e3) e3.textContent = '$' + dirOut.toFixed(2);
+      }
+
+      function seedForecastFromTable() {
+        var allCnt = 0, allSum = 0;
+        var nonCnt = 0, nonSum = 0;
+        var dirCnt = 0, dirSum = 0;
+
+        document.querySelectorAll('#salesTable tbody tr').forEach(function(tr){
+          var inp = tr.querySelector('.ovr[data-oppid]');
+          if (!inp) return;
+          var size = Number(inp.getAttribute('data-size') || 0);
+          if (!isFinite(size) || size <= 0) return;
+          var lead = tr.children && tr.children[3] ? String(tr.children[3].textContent || '').trim().toLowerCase() : '';
+
+          allCnt += 1; allSum += size;
+          if (lead === 'doors') { dirCnt += 1; dirSum += size; }
+          else { nonCnt += 1; nonSum += size; }
+        });
+
+        var setVal = function(id, val) { var el = document.getElementById(id); if (el) el.value = val; };
+        setVal('fcAllSales', allCnt);
+        setVal('fcAllAvg', allCnt ? (allSum / allCnt).toFixed(2) : 0);
+        setVal('fcNonSales', nonCnt);
+        setVal('fcNonAvg', nonCnt ? (nonSum / nonCnt).toFixed(2) : 0);
+        setVal('fcDirSales', dirCnt);
+        setVal('fcDirAvg', dirCnt ? (dirSum / dirCnt).toFixed(2) : 0);
+        recalcForecasts();
+      }
+
       var saveDefaultBtn = document.getElementById('saveDefaultBtn');
       var setAllBtn = document.getElementById('setAllBtn');
       var setBySourceBtn = document.getElementById('setBySourceBtn');
@@ -427,6 +516,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
           var x = v(defaultEl && defaultEl.value);
           if (defaultEl) defaultEl.value = x;
           await post({ action:'save_default', month:month, value:x });
+          recalcForecasts();
           setStatus('Default override saved.');
         } catch (e) {
           setStatus('Save default failed: ' + e.message, true);
@@ -463,7 +553,14 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
       document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
         inp.addEventListener('input', recalcCommissions);
       });
+      if (defaultEl) defaultEl.addEventListener('input', recalcForecasts);
+      ['fcAllSales','fcAllAvg','fcNonSales','fcNonAvg','fcDirSales','fcDirAvg'].forEach(function(id){
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('input', recalcForecasts);
+      });
+
       recalcCommissions();
+      seedForecastFromTable();
 
       if (saveRowsBtn) saveRowsBtn.addEventListener('click', async function() {
         try {

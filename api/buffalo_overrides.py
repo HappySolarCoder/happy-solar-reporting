@@ -32,6 +32,7 @@ BUFFALO_SOLD_STAGE_IDS = {
 
 SOLD_DATE_CF_ID = "P9oBjgbZjJdeE0OkBj9T"
 SETTER_CF_ID = "Eq4NLTSkJ56KTxbxypuE"
+LEAD_GEN_SOURCE_CF_ID = "hd5QqHEOVSsPom5bJ32P"
 DEFAULT_OVERRIDE_RATE = 0.05
 
 
@@ -184,6 +185,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
             "<tr>"
             "<td>" + h(r.get("sales_rep", "—")) + "</td>"
             "<td>" + h(r.get("setter", "—")) + "</td>"
+            "<td>" + h(r.get("lead_source", "—")) + "</td>"
             "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("system_size", "—")) + "</td>"
             "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("ppw_sold", "—")) + "</td>"
             "<td>" + h(r.get("finance_type", "—")) + "</td>"
@@ -193,11 +195,12 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         )
 
     if not rows_html:
-        rows_html = '<tr><td colspan="7" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
+        rows_html = '<tr><td colspan="8" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
 
     headers = (
         th_col("sales_rep", "Sales Rep", sort_col, sort_dir)
         + th_col("setter", "Setter", sort_col, sort_dir)
+        + th_col("lead_source", "Lead Gen Source", sort_col, sort_dir)
         + th_col("system_size", "System Size (kW)", sort_col, sort_dir)
         + th_col("ppw_sold", "PPW Sold ($)", sort_col, sort_dir)
         + th_col("finance_type", "Finance Product", sort_col, sort_dir)
@@ -402,6 +405,7 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
 
         owner_id = str(opp.get("assignedTo") or "").strip()
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
+        lead_source = cf_value(contact.get("customFields"), LEAD_GEN_SOURCE_CF_ID) or contact.get("leadSource") or "—"
         system_size = contact.get("system_size") or "—"
         ppw_sold = contact.get("ppw_sold") or "—"
         finance_type = contact.get("finance_type") or "—"
@@ -412,6 +416,7 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
                 "opp_id": opp_id,
                 "sales_rep": user_cache.get(owner_id) or owner_id or "—",
                 "setter": setter,
+                "lead_source": lead_source,
                 "system_size": system_size,
                 "ppw_sold": ppw_sold,
                 "finance_type": finance_type,
@@ -470,7 +475,7 @@ class handler(BaseHTTPRequestHandler):
 
             sort_col = qs.get("sort", ["sold_date"])[0].strip() or "sold_date"
             sort_dir = qs.get("dir", ["desc"])[0].strip() or "desc"
-            if sort_col not in ("sales_rep", "setter", "system_size", "ppw_sold", "finance_type", "override", "sold_date"):
+            if sort_col not in ("sales_rep", "setter", "lead_source", "system_size", "ppw_sold", "finance_type", "override", "sold_date"):
                 sort_col = "sold_date"
             if sort_dir not in ("asc", "desc"):
                 sort_dir = "desc"

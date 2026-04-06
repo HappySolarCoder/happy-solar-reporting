@@ -109,6 +109,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir)
             "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("system_size","—")) + "</td>"
             "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("ppw_sold","—")) + "</td>"
             "<td>" + h(r.get("finance_type","—")) + "</td>"
+            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("override","0.03")) + "</td>"
             "<td>" + h(r.get("sold_date","—")) + "</td>"
             "</tr>"
         )
@@ -122,6 +123,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir)
         th_col("system_size","System Size (kW)",sort_col,sort_dir) +
         th_col("ppw_sold","PPW Sold ($)",sort_col,sort_dir) +
         th_col("finance_type","Finance Product",sort_col,sort_dir) +
+        th_col("override","Override",sort_col,sort_dir) +
         th_col("sold_date","Sold Date",sort_col,sort_dir)
     )
 
@@ -262,6 +264,7 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
             "system_size": system_size,
             "ppw_sold": ppw_sold,
             "finance_type": finance_type,
+            "override": "0.03",
             "sold_date": sold_date[:10],
         })
 

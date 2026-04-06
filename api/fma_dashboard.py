@@ -574,11 +574,11 @@ def render_html(year: int, month: int) -> str:
           </label>
 
           <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Start
-            <input id="setterTableStart" type="date" value="__SETTER_START__" style="border:1px solid var(--border); border-radius:10px; padding:6px 8px; font-size:11px; font-weight:900; width:100%;" />
+            <input id="setterTableStart" type="date" value="__SETTER_START__" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:80%;" />
           </label>
 
           <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">End
-            <input id="setterTableEnd" type="date" value="__SETTER_END__" style="border:1px solid var(--border); border-radius:10px; padding:6px 8px; font-size:11px; font-weight:900; width:100%;" />
+            <input id="setterTableEnd" type="date" value="__SETTER_END__" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:80%;" />
           </label>
 
           <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Apply</button>

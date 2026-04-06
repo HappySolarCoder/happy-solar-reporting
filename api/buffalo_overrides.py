@@ -266,7 +266,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
       </div>
       <form method="GET" class="filters" style="margin:0;">
         <label>Month
-          <input type="month" name="month" value=""" + month_str + """" />
+          <input type="month" name="month" value=""" + h(month_str) + """ />
         </label>
         <button class="btn pink" type="submit">Go</button>
         <a class="btn" href="/api/buffalo_overrides">Reset</a>
@@ -275,7 +275,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
 
     <div class="kpi-row">
       <div class="kpi"><div class="label">Total Buffalo Sales</div><div class="value">""" + str(count) + """</div></div>
-      <div class="kpi"><div class="label">Period</div><div class="value" style="font-size:18px;">""" + h(month_name) + """</div></div>
+      <div class="kpi"><div class="label">Viewing Month</div><div class="value" style="font-size:18px;">""" + h(month_name) + """</div></div>
       <div class="kpi"><div class="label">Avg System Size (kW)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_size", "—")) + """</div></div>
       <div class="kpi"><div class="label">Total Override Commission ($)</div><div id="kpiOverrideTotal" class="value" style="font-size:22px;">""" + h(totals.get("total_override_commission", "—")) + """</div></div>
     </div>
@@ -283,7 +283,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
     <div class="wrap2">
       <div class="toolbar">
         <label style="font-size:12px; color:#6b7280; font-weight:900;">Default Override
-          <input id="defaultOverride" type="number" min="0.01" max="0.10" step="0.01" value=""" + f"{default_override:.2f}" + """" class="ovr" />
+          <input id="defaultOverride" type="number" min="0.01" max="0.10" step="0.01" value=""" + h(f"{default_override:.2f}") + """ class="ovr" />
         </label>
         <button class="btn" id="saveDefaultBtn" type="button">Save Default</button>
         <button class="btn" id="setAllBtn" type="button">Set All Rows To Value</button>

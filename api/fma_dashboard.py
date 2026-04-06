@@ -546,7 +546,7 @@ def render_html(year: int, month: int) -> str:
           </div>
         </div>
 
-        <div class="setterFilters" style="display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; width:100%; align-items:end; margin-top:10px;">
+        <div class="setterFilters" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; row-gap:8px; width:100%; align-items:end; margin-top:10px;">
           <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Lead Gen Source
             <select id="setterTableLeadSource" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;">
               <option value="">All</option>

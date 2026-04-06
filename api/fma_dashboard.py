@@ -799,9 +799,15 @@ def render_html(year: int, month: int) -> str:
 
   function currentNyMonthToDateRange() {
     const today = nyYmd(new Date());
+    const y = parseInt(today.slice(0,4), 10);
+    const m = parseInt(today.slice(5,7), 10);
+    const lastDay = new Date(Date.UTC(y, m, 0));
+    const y2 = lastDay.getUTCFullYear();
+    const m2 = String(lastDay.getUTCMonth() + 1).padStart(2,'0');
+    const d2 = String(lastDay.getUTCDate()).padStart(2,'0');
     return {
       start: today.slice(0,8) + '01',
-      end: today,
+      end: `${y2}-${m2}-${d2}`,
     };
   }
 
@@ -1451,6 +1457,11 @@ def render_html(year: int, month: int) -> str:
   if (existingSetterRange && stEl && enEl) {
     stEl.value = existingSetterRange.start;
     enEl.value = existingSetterRange.end;
+  } else if (stEl && enEl) {
+    const r = currentNyMonthToDateRange();
+    stEl.value = r.start;
+    enEl.value = r.end;
+    setSetterRange({ start: r.start, end: r.end });
   }
 
   if (apBtn && stEl && enEl) {

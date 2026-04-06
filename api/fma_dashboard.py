@@ -735,18 +735,15 @@ def render_html(year: int, month: int) -> str:
       return;
     }
 
-    const r = getRange();
-    if (r && r.start && r.end) {
-      if (startEl) startEl.value = r.start;
-      if (endEl) endEl.value = r.end;
-      if (metaEl) metaEl.textContent = `Custom range: ${r.start} → ${r.end}`;
-      setActivePeriod(inferActivePeriod(r.start, r.end));
-      return;
-    }
+    // Default (when URL has no explicit range): Today
+    const t = nyYmd(new Date());
+    if (startEl) startEl.value = t;
+    if (endEl) endEl.value = t;
+    setRange({ start: t, end: t });
+    if (metaEl) metaEl.textContent = `Today: ${t}`;
+    setActivePeriod('today');
 
-    setActivePeriod('all');
-    // "All" is active — also clear any stale setter-table date range so the demo
-    // table shows current-month data (not a stuck old window).
+    // Keep setter table defaults independent (current-month logic below)
     clearSetterRange();
     const stEl2 = document.getElementById('setterTableStart');
     const enEl2 = document.getElementById('setterTableEnd');
@@ -1361,11 +1358,11 @@ def render_html(year: int, month: int) -> str:
 
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${fullCount} Setters ↗</button>`;
+        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All Table Data</button>`;
         if (seeAllContainer) { seeAllContainer.innerHTML = btnHtml; seeAllContainer.style.display = 'block'; }
         if (seeAllTop) { seeAllTop.innerHTML = btnHtml; seeAllTop.style.display = 'block'; }
         const floatingBtn = document.getElementById('seeAllFloatingOpen');
-        if (floatingBtn) floatingBtn.textContent = `See All ${fullCount} Setters ↗`;
+        if (floatingBtn) floatingBtn.textContent = 'See All Table Data';
 
         document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
           openBtn.addEventListener('click', () => {
@@ -1579,7 +1576,7 @@ def render_html(year: int, month: int) -> str:
     </div>
   </div>
 
-  <button id="seeAllFloatingOpen" style="position:fixed; right:14px; bottom:56px; z-index:9999; border:1px solid var(--border); background:#fff; color:#1e293b; border-radius:999px; padding:8px 12px; font-size:12px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(15,23,42,.18);">See All Setters ↗</button>
+  <button id="seeAllFloatingOpen" style="position:fixed; right:14px; bottom:56px; z-index:9999; border:1px solid var(--border); background:#fff; color:#1e293b; border-radius:999px; padding:8px 12px; font-size:12px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(15,23,42,.18);">See All Table Data</button>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>

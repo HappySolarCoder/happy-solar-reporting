@@ -5,16 +5,17 @@
 Buffalo Overrides Dashboard.
 
 Shows every sold opportunity from the Buffalo pipeline with:
-  Sales Rep, Setter Last Name, System Size, PPW Sold, Finance Product, Sold Date
+  Sales Rep, Setter Last Name, System Size, PPW Sold, Finance Product, Override, Sold Date
 
-Date filter: sold date, defaults to current month (America/New_York).
+Date filter: sold date month (America/New_York).
+Override persistence: stored per month in Firestore collection `buffalo_overrides_monthly`.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -31,6 +32,7 @@ BUFFALO_SOLD_STAGE_IDS = {
 
 SOLD_DATE_CF_ID = "P9oBjgbZjJdeE0OkBj9T"
 SETTER_CF_ID = "Eq4NLTSkJ56KTxbxypuE"
+DEFAULT_OVERRIDE_RATE = 0.05
 
 
 def get_db() -> firestore.Client:
@@ -38,10 +40,22 @@ def get_db() -> firestore.Client:
     project_id = os.environ.get("GCP_PROJECT_ID")
     database_id = os.environ.get("FIRESTORE_DATABASE_ID")
     if not (creds_json and project_id and database_id):
-        missing = [k for k in ("FIREBASE_SERVICE_ACCOUNT_JSON","GCP_PROJECT_ID","FIRESTORE_DATABASE_ID") if not os.environ.get(k)]
+        missing = [k for k in ("FIREBASE_SERVICE_ACCOUNT_JSON", "GCP_PROJECT_ID", "FIRESTORE_DATABASE_ID") if not os.environ.get(k)]
         raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
     creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
     return firestore.Client(project=project_id, database=database_id, credentials=creds)
+
+
+def clamp_override(v: Any, fallback: float = DEFAULT_OVERRIDE_RATE) -> float:
+    try:
+        x = round(float(v), 2)
+    except Exception:
+        x = fallback
+    if x < 0.01:
+        x = 0.01
+    if x > 0.10:
+        x = 0.10
+    return round(x, 2)
 
 
 def cf_value(custom_fields: list[dict] | None, field_id: str) -> str | None:
@@ -55,7 +69,66 @@ def cf_value(custom_fields: list[dict] | None, field_id: str) -> str | None:
 
 def h(s: Any) -> str:
     t = "" if s is None else str(s)
-    return t.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("&#39;","&apos;")
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("&#39;", "&apos;")
+
+
+def month_key(year: int, month: int) -> str:
+    return f"{year:04d}-{month:02d}"
+
+
+def load_month_settings(db: firestore.Client, mkey: str) -> tuple[float, dict[str, float]]:
+    snap = db.collection("buffalo_overrides_monthly").document(mkey).get()
+    if not snap.exists:
+        return DEFAULT_OVERRIDE_RATE, {}
+    d = snap.to_dict() or {}
+    default_override = clamp_override(d.get("default_override", DEFAULT_OVERRIDE_RATE), DEFAULT_OVERRIDE_RATE)
+    raw = d.get("row_overrides") or {}
+    out: dict[str, float] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            kk = str(k or "").strip()
+            if not kk:
+                continue
+            out[kk] = clamp_override(v, default_override)
+    return default_override, out
+
+
+def save_month_default(db: firestore.Client, mkey: str, value: float) -> None:
+    ref = db.collection("buffalo_overrides_monthly").document(mkey)
+    ref.set(
+        {
+            "month": mkey,
+            "default_override": clamp_override(value),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+
+
+def save_row_overrides(db: firestore.Client, mkey: str, updates: dict[str, Any]) -> int:
+    ref = db.collection("buffalo_overrides_monthly").document(mkey)
+    snap = ref.get()
+    cur = (snap.to_dict() or {}).get("row_overrides") if snap.exists else {}
+    merged = dict(cur or {}) if isinstance(cur, dict) else {}
+
+    n = 0
+    for k, v in (updates or {}).items():
+        kk = str(k or "").strip()
+        if not kk:
+            continue
+        merged[kk] = clamp_override(v)
+        n += 1
+
+    ref.set(
+        {
+            "month": mkey,
+            "default_override": (snap.to_dict() or {}).get("default_override", DEFAULT_OVERRIDE_RATE) if snap.exists else DEFAULT_OVERRIDE_RATE,
+            "row_overrides": merged,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+    return n
 
 
 CSS = """
@@ -71,7 +144,7 @@ CSS = """
     .navbtn.active { background:rgba(236,72,153,.10); border-color:rgba(236,72,153,.45); color:#b80b66; }
     .filters { display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; margin-top:14px; }
     .filters label { display:block; font-size:12px; color:var(--muted); font-weight:900; margin-bottom:4px; }
-    .filters input[type=month] { border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:800; background:#fff; }
+    .filters input[type=month], .filters input[type=number] { border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:800; background:#fff; }
     .btn { display:inline-flex; align-items:center; padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; color:#1f2937; font-size:12px; font-weight:900; cursor:pointer; text-decoration:none; }
     .btn.pink { background:var(--pink); border-color:var(--pink); color:#fff; }
     .kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-top:14px; }
@@ -87,6 +160,9 @@ CSS = """
     tr:last-child td { border-bottom:none; }
     tr:hover td { background:#fafafa; }
     .wrap2 { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:var(--shadow); margin-top:14px; }
+    .ovr { width:86px; border:1px solid var(--border); border-radius:8px; padding:6px 8px; font-size:13px; font-weight:800; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+    .status { font-size:12px; color:#64748b; font-weight:800; min-height:18px; }
     @media (max-width:780px) { .wrap { padding:12px; } .topbar { padding:12px; gap:10px; } .title { font-size:20px; } .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; } .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; } }
 """
 
@@ -97,34 +173,36 @@ def th_col(key, label, sort_col, sort_dir):
     return '<th class="' + cls + '" data-col="' + h(key) + '">' + h(label) + icon + '</th>'
 
 
-def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir):
+def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir, default_override):
     month_name = datetime(year, month, 1).strftime("%B %Y")
 
     rows_html = ""
     for r in rows:
+        opp_id = h(r.get("opp_id", ""))
+        ov = f"{clamp_override(r.get('override', default_override), default_override):.2f}"
         rows_html += (
             "<tr>"
-            "<td>" + h(r.get("sales_rep","—")) + "</td>"
-            "<td>" + h(r.get("setter","—")) + "</td>"
-            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("system_size","—")) + "</td>"
-            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("ppw_sold","—")) + "</td>"
-            "<td>" + h(r.get("finance_type","—")) + "</td>"
-            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("override","0.03")) + "</td>"
-            "<td>" + h(r.get("sold_date","—")) + "</td>"
+            "<td>" + h(r.get("sales_rep", "—")) + "</td>"
+            "<td>" + h(r.get("setter", "—")) + "</td>"
+            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("system_size", "—")) + "</td>"
+            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("ppw_sold", "—")) + "</td>"
+            "<td>" + h(r.get("finance_type", "—")) + "</td>"
+            "<td style='text-align:right; font-variant-numeric:tabular-nums;'><input class='ovr' data-oppid='" + opp_id + "' type='number' min='0.01' max='0.10' step='0.01' value='" + ov + "' /></td>"
+            "<td>" + h(r.get("sold_date", "—")) + "</td>"
             "</tr>"
         )
 
     if not rows_html:
-        rows_html = '<tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
+        rows_html = '<tr><td colspan="7" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
 
     headers = (
-        th_col("sales_rep","Sales Rep",sort_col,sort_dir) +
-        th_col("setter","Setter",sort_col,sort_dir) +
-        th_col("system_size","System Size (kW)",sort_col,sort_dir) +
-        th_col("ppw_sold","PPW Sold ($)",sort_col,sort_dir) +
-        th_col("finance_type","Finance Product",sort_col,sort_dir) +
-        th_col("override","Override",sort_col,sort_dir) +
-        th_col("sold_date","Sold Date",sort_col,sort_dir)
+        th_col("sales_rep", "Sales Rep", sort_col, sort_dir)
+        + th_col("setter", "Setter", sort_col, sort_dir)
+        + th_col("system_size", "System Size (kW)", sort_col, sort_dir)
+        + th_col("ppw_sold", "PPW Sold ($)", sort_col, sort_dir)
+        + th_col("finance_type", "Finance Product", sort_col, sort_dir)
+        + th_col("override", "Override", sort_col, sort_dir)
+        + th_col("sold_date", "Sold Date", sort_col, sort_dir)
     )
 
     return """<!doctype html>
@@ -152,7 +230,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir)
       </div>
       <form method="GET" class="filters" style="margin:0;">
         <label>Month
-          <input type="month" name="month" value="""" + month_str + """" />
+          <input type="month" name="month" value=""" + month_str + """" />
         </label>
         <button class="btn pink" type="submit">Go</button>
         <a class="btn" href="/api/buffalo_overrides">Reset</a>
@@ -162,18 +240,24 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir)
     <div class="kpi-row">
       <div class="kpi"><div class="label">Total Buffalo Sales</div><div class="value">""" + str(count) + """</div></div>
       <div class="kpi"><div class="label">Period</div><div class="value" style="font-size:18px;">""" + h(month_name) + """</div></div>
-      <div class="kpi"><div class="label">Avg System Size (kW)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_size","—")) + """</div></div>
-      <div class="kpi"><div class="label">Avg PPW Sold ($)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_ppw","—")) + """</div></div>
+      <div class="kpi"><div class="label">Avg System Size (kW)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_size", "—")) + """</div></div>
+      <div class="kpi"><div class="label">Avg PPW Sold ($)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_ppw", "—")) + """</div></div>
     </div>
 
     <div class="wrap2">
+      <div class="toolbar">
+        <label style="font-size:12px; color:#6b7280; font-weight:900;">Default Override
+          <input id="defaultOverride" type="number" min="0.01" max="0.10" step="0.01" value=""" + f"{default_override:.2f}" + """" class="ovr" />
+        </label>
+        <button class="btn" id="saveDefaultBtn" type="button">Save Default</button>
+        <button class="btn" id="setAllBtn" type="button">Set All Rows To Value</button>
+        <button class="btn pink" id="saveRowsBtn" type="button">Save Row Edits</button>
+        <span class="status" id="statusMsg"></span>
+      </div>
+
       <table id="salesTable">
-        <thead>
-          <tr>""" + headers + """</tr>
-        </thead>
-        <tbody>
-          """ + rows_html + """
-        </tbody>
+        <thead><tr>""" + headers + """</tr></thead>
+        <tbody>""" + rows_html + """</tbody>
       </table>
     </div>
   </div>
@@ -196,13 +280,78 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir)
           window.location.search = params.toString();
         });
       });
+
+      var month = '""" + month_str + """';
+      var statusEl = document.getElementById('statusMsg');
+      function setStatus(msg, bad) {
+        if (!statusEl) return;
+        statusEl.textContent = msg || '';
+        statusEl.style.color = bad ? '#b91c1c' : '#64748b';
+      }
+      function v(x) {
+        var n = Number(x);
+        if (!isFinite(n)) n = 0.05;
+        if (n < 0.01) n = 0.01;
+        if (n > 0.10) n = 0.10;
+        return n.toFixed(2);
+      }
+      async function post(payload) {
+        var r = await fetch('/api/buffalo_overrides', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        var j = await r.json();
+        if (!r.ok || !j.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+      }
+
+      var saveDefaultBtn = document.getElementById('saveDefaultBtn');
+      var setAllBtn = document.getElementById('setAllBtn');
+      var saveRowsBtn = document.getElementById('saveRowsBtn');
+      var defaultEl = document.getElementById('defaultOverride');
+
+      if (saveDefaultBtn) saveDefaultBtn.addEventListener('click', async function() {
+        try {
+          setStatus('Saving default...');
+          var x = v(defaultEl && defaultEl.value);
+          if (defaultEl) defaultEl.value = x;
+          await post({ action:'save_default', month:month, value:x });
+          setStatus('Default override saved.');
+        } catch (e) {
+          setStatus('Save default failed: ' + e.message, true);
+        }
+      });
+
+      if (setAllBtn) setAllBtn.addEventListener('click', function() {
+        var x = v(defaultEl && defaultEl.value);
+        if (defaultEl) defaultEl.value = x;
+        document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){ inp.value = x; });
+        setStatus('All visible rows set to ' + x + '. Click Save Row Edits.');
+      });
+
+      if (saveRowsBtn) saveRowsBtn.addEventListener('click', async function() {
+        try {
+          setStatus('Saving row edits...');
+          var payload = {};
+          document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
+            var id = inp.getAttribute('data-oppid') || '';
+            if (!id) return;
+            payload[id] = v(inp.value);
+          });
+          var res = await post({ action:'save_rows', month:month, overrides:payload });
+          setStatus('Saved ' + (res.updated || 0) + ' row override(s).');
+        } catch (e) {
+          setStatus('Save rows failed: ' + e.message, true);
+        }
+      });
     })();
   </script>
 </body>
 </html>"""
 
 
-def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
+def build_data(db, year, month, default_override, row_overrides, sort_col="sold_date", sort_dir="desc"):
     tz = ZoneInfo("America/New_York")
     if month == 12:
         end = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=tz)
@@ -210,7 +359,6 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
         end = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=tz)
     start = datetime(year, month, 1, 0, 0, 0, tzinfo=tz)
 
-    # Preload contacts
     contacts_map = {}
     for snap in db.collection("ghl_contacts_v2").stream():
         d = snap.to_dict() or {}
@@ -218,7 +366,6 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
         if cid:
             contacts_map[cid] = d
 
-    # Preload users
     user_cache = {}
     for snap in db.collection("ghl_users_v2").stream():
         d = snap.to_dict() or {}
@@ -238,8 +385,11 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
         if stage_id not in BUFFALO_SOLD_STAGE_IDS:
             continue
 
-        contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
+        opp_id = str(opp.get("id") or snap.id or "").strip()
+        if not opp_id:
+            continue
 
+        contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
         sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID)
         if not sold_date:
             continue
@@ -252,33 +402,54 @@ def build_data(db, year, month, sort_col="sold_date", sort_dir="desc"):
 
         owner_id = str(opp.get("assignedTo") or "").strip()
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
-        # NOTE: system_size, ppw_sold, finance_type not yet synced from GHL custom fields.
-        # Show "—" until field IDs are confirmed and synced.
         system_size = contact.get("system_size") or "—"
         ppw_sold = contact.get("ppw_sold") or "—"
         finance_type = contact.get("finance_type") or "—"
+        override = row_overrides.get(opp_id, default_override)
 
-        rows.append({
-            "sales_rep": user_cache.get(owner_id) or owner_id or "—",
-            "setter": setter,
-            "system_size": system_size,
-            "ppw_sold": ppw_sold,
-            "finance_type": finance_type,
-            "override": "0.03",
-            "sold_date": sold_date[:10],
-        })
+        rows.append(
+            {
+                "opp_id": opp_id,
+                "sales_rep": user_cache.get(owner_id) or owner_id or "—",
+                "setter": setter,
+                "system_size": system_size,
+                "ppw_sold": ppw_sold,
+                "finance_type": finance_type,
+                "override": f"{clamp_override(override, default_override):.2f}",
+                "sold_date": sold_date[:10],
+            }
+        )
 
-    # Sort
     rev = sort_dir == "desc"
+
     def sort_key(r):
         v = r.get(sort_col, "")
         try:
             return float(v)
         except Exception:
             return str(v).lower()
+
     rows.sort(key=sort_key, reverse=rev)
 
-    return rows, {}
+    size_vals = []
+    ppw_vals = []
+    for r in rows:
+        try:
+            size_vals.append(float(str(r.get("system_size", "")).strip()))
+        except Exception:
+            pass
+        try:
+            ppw_vals.append(float(str(r.get("ppw_sold", "")).strip()))
+        except Exception:
+            pass
+
+    totals = {
+        "avg_size": f"{(sum(size_vals) / len(size_vals)):.2f}" if size_vals else "—",
+        "avg_ppw": f"{(sum(ppw_vals) / len(ppw_vals)):.2f}" if ppw_vals else "—",
+    }
+
+    return rows, totals
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -299,17 +470,18 @@ class handler(BaseHTTPRequestHandler):
 
             sort_col = qs.get("sort", ["sold_date"])[0].strip() or "sold_date"
             sort_dir = qs.get("dir", ["desc"])[0].strip() or "desc"
-            if sort_col not in ("sales_rep","setter","system_size","ppw_sold","finance_type","sold_date"):
+            if sort_col not in ("sales_rep", "setter", "system_size", "ppw_sold", "finance_type", "override", "sold_date"):
                 sort_col = "sold_date"
-            if sort_dir not in ("asc","desc"):
+            if sort_dir not in ("asc", "desc"):
                 sort_dir = "desc"
 
             db = get_db()
+            mkey = month_key(y, m)
+            default_override, row_overrides = load_month_settings(db, mkey)
 
-            rows, totals = build_data(db, y, m, sort_col, sort_dir)
+            rows, totals = build_data(db, y, m, default_override, row_overrides, sort_col, sort_dir)
             month_str = f"{y}-{m:02d}"
-
-            body = render_page(rows, totals, len(rows), y, m, month_str, sort_col, sort_dir).encode("utf-8")
+            body = render_page(rows, totals, len(rows), y, m, month_str, sort_col, sort_dir, default_override).encode("utf-8")
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -319,9 +491,53 @@ class handler(BaseHTTPRequestHandler):
 
         except Exception:
             import traceback
+
             err = traceback.format_exc()
             body = ("<html><body><h1>Error</h1><pre>" + h(str(err)) + "\n\n" + h(err) + "</pre></body></html>").encode("utf-8")
             self.send_response(500)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            payload = json.loads(raw.decode("utf-8") or "{}")
+
+            action = str(payload.get("action") or "").strip()
+            mkey = str(payload.get("month") or "").strip()
+            if not mkey or len(mkey) != 7 or "-" not in mkey:
+                raise ValueError("Invalid month (expected YYYY-MM)")
+
+            db = get_db()
+
+            if action == "save_default":
+                value = clamp_override(payload.get("value", DEFAULT_OVERRIDE_RATE), DEFAULT_OVERRIDE_RATE)
+                save_month_default(db, mkey, value)
+                out = {"ok": True, "action": action, "month": mkey, "value": f"{value:.2f}"}
+
+            elif action == "save_rows":
+                updates = payload.get("overrides") or {}
+                if not isinstance(updates, dict):
+                    raise ValueError("overrides must be an object")
+                n = save_row_overrides(db, mkey, updates)
+                out = {"ok": True, "action": action, "month": mkey, "updated": n}
+
+            else:
+                raise ValueError("Unsupported action")
+
+            body = json.dumps(out).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        except Exception as e:
+            body = json.dumps({"ok": False, "error": str(e)}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

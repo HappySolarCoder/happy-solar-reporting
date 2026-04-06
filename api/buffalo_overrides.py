@@ -73,6 +73,14 @@ def h(s: Any) -> str:
     return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("&#39;", "&apos;")
 
 
+def contact_name(contact: dict[str, Any]) -> str:
+    fn = str(contact.get("firstName") or "").strip()
+    ln = str(contact.get("lastName") or "").strip()
+    nm = str(contact.get("name") or "").strip()
+    full = (fn + " " + ln).strip()
+    return full or nm or "—"
+
+
 def month_key(year: int, month: int) -> str:
     return f"{year:04d}-{month:02d}"
 
@@ -158,6 +166,8 @@ CSS = """
     th:hover { background:#f1f5f9; }
     th.sorted { color:var(--pink); }
     td { color:#0f172a; font-weight:800; }
+    .contact-link { color:#0f172a; font-weight:900; text-decoration:none; }
+    .contact-link:hover { color:var(--pink); text-decoration:underline; }
     tr:last-child td { border-bottom:none; }
     tr:hover td { background:#fafafa; }
     .wrap2 { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:var(--shadow); margin-top:14px; }
@@ -181,8 +191,16 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
     for r in rows:
         opp_id = h(r.get("opp_id", ""))
         ov = f"{clamp_override(r.get('override', default_override), default_override):.2f}"
+        contact_url = r.get("contact_url", "")
+        contact_label = h(r.get("contact_name", "—"))
+        contact_cell = (
+            "<a class='contact-link' target='_blank' rel='noopener noreferrer' href='" + h(contact_url) + "'>" + contact_label + "</a>"
+            if contact_url
+            else contact_label
+        )
         rows_html += (
             "<tr>"
+            "<td>" + contact_cell + "</td>"
             "<td>" + h(r.get("sales_rep", "—")) + "</td>"
             "<td>" + h(r.get("setter", "—")) + "</td>"
             "<td>" + h(r.get("lead_source", "—")) + "</td>"
@@ -195,10 +213,11 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         )
 
     if not rows_html:
-        rows_html = '<tr><td colspan="8" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
+        rows_html = '<tr><td colspan="9" style="text-align:center; color:#94a3b8; padding:24px;">No Buffalo sales found for this period</td></tr>'
 
     headers = (
-        th_col("sales_rep", "Sales Rep", sort_col, sort_dir)
+        th_col("contact_name", "Contact Name", sort_col, sort_dir)
+        + th_col("sales_rep", "Sales Rep", sort_col, sort_dir)
         + th_col("setter", "Setter", sort_col, sort_dir)
         + th_col("lead_source", "Lead Gen Source", sort_col, sort_dir)
         + th_col("system_size", "System Size (kW)", sort_col, sort_dir)
@@ -392,7 +411,8 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
         if not opp_id:
             continue
 
-        contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
+        contact_id = str(opp.get("contactId") or "").strip()
+        contact = contacts_map.get(contact_id) or {}
         sold_date = cf_value(contact.get("customFields"), SOLD_DATE_CF_ID)
         if not sold_date:
             continue
@@ -405,6 +425,8 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
 
         owner_id = str(opp.get("assignedTo") or "").strip()
         setter = cf_value(contact.get("customFields"), SETTER_CF_ID) or "—"
+        loc_id = str(opp.get("locationId") or os.environ.get("GHL_LOCATION_ID") or "").strip()
+        contact_url = f"https://app.gohighlevel.com/v2/location/{loc_id}/contacts/detail/{contact_id}" if (loc_id and contact_id) else ""
         lead_source = cf_value(contact.get("customFields"), LEAD_GEN_SOURCE_CF_ID) or contact.get("leadSource") or "—"
         system_size = contact.get("system_size") or "—"
         ppw_sold = contact.get("ppw_sold") or "—"
@@ -414,6 +436,8 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
         rows.append(
             {
                 "opp_id": opp_id,
+                "contact_name": contact_name(contact),
+                "contact_url": contact_url,
                 "sales_rep": user_cache.get(owner_id) or owner_id or "—",
                 "setter": setter,
                 "lead_source": lead_source,
@@ -475,7 +499,7 @@ class handler(BaseHTTPRequestHandler):
 
             sort_col = qs.get("sort", ["sold_date"])[0].strip() or "sold_date"
             sort_dir = qs.get("dir", ["desc"])[0].strip() or "desc"
-            if sort_col not in ("sales_rep", "setter", "lead_source", "system_size", "ppw_sold", "finance_type", "override", "sold_date"):
+            if sort_col not in ("contact_name", "sales_rep", "setter", "lead_source", "system_size", "ppw_sold", "finance_type", "override", "sold_date"):
                 sort_col = "sold_date"
             if sort_dir not in ("asc", "desc"):
                 sort_dir = "desc"

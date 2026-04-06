@@ -287,6 +287,17 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         </label>
         <button class="btn" id="saveDefaultBtn" type="button">Save Default</button>
         <button class="btn" id="setAllBtn" type="button">Set All Rows To Value</button>
+        <label style="font-size:12px; color:#6b7280; font-weight:900;">Lead Gen Source
+          <select id="bulkLeadSource" class="ovr" style="width:150px;">
+            <option value="">All Sources</option>
+            <option value="Doors">Doors</option>
+            <option value="Phones">Phones</option>
+            <option value="3PL">3PL</option>
+            <option value="Self Gen">Self Gen</option>
+            <option value="none">none</option>
+          </select>
+        </label>
+        <button class="btn" id="setBySourceBtn" type="button">Set Rows By Source</button>
         <button class="btn pink" id="saveRowsBtn" type="button">Save Row Edits</button>
         <span class="status" id="statusMsg"></span>
       </div>
@@ -360,6 +371,8 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
 
       var saveDefaultBtn = document.getElementById('saveDefaultBtn');
       var setAllBtn = document.getElementById('setAllBtn');
+      var setBySourceBtn = document.getElementById('setBySourceBtn');
+      var sourceEl = document.getElementById('bulkLeadSource');
       var saveRowsBtn = document.getElementById('saveRowsBtn');
       var defaultEl = document.getElementById('defaultOverride');
 
@@ -381,6 +394,25 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){ inp.value = x; });
         recalcCommissions();
         setStatus('All visible rows set to ' + x + '. Click Save Row Edits.');
+      });
+
+      if (setBySourceBtn) setBySourceBtn.addEventListener('click', function() {
+        var x = v(defaultEl && defaultEl.value);
+        if (defaultEl) defaultEl.value = x;
+        var wanted = String((sourceEl && sourceEl.value) || '').trim().toLowerCase();
+        var touched = 0;
+        document.querySelectorAll('#salesTable tbody tr').forEach(function(tr){
+          var tdSource = tr.children && tr.children[3] ? String(tr.children[3].textContent || '').trim().toLowerCase() : '';
+          if (!wanted || tdSource === wanted) {
+            var inp = tr.querySelector('.ovr[data-oppid]');
+            if (inp) {
+              inp.value = x;
+              touched += 1;
+            }
+          }
+        });
+        recalcCommissions();
+        setStatus('Set ' + touched + ' row(s) to ' + x + (wanted ? (' for source ' + wanted) : '') + '. Click Save Row Edits.');
       });
 
       document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){

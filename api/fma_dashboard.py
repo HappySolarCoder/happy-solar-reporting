@@ -544,6 +544,8 @@ def render_html(year: int, month: int) -> str:
         </div>
       </div>
 
+      <div id="seeAllBtnContainerTop" class="span-12" style="display:none; text-align:right; margin-top:-2px; margin-bottom:4px;"></div>
+
       <div class="card span-12">
         <div class="card-header setterHeader">
           <div>
@@ -1347,12 +1349,72 @@ def render_html(year: int, month: int) -> str:
 
         // See All button — force visible so users can always open full-view popup
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
+        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
+        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${rows.length} Setters  ↗</button>`;
         if (seeAllContainer) {
-          seeAllContainer.innerHTML = `<button id="seeAllOpen" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All ${rows.length} Setters  ↗</button>`;
+          seeAllContainer.innerHTML = btnHtml;
           seeAllContainer.style.display = 'block';
-          const openBtn = document.getElementById('seeAllOpen');
-          if (openBtn) {
-            openBtn.addEventListener('click', () => {
+        }
+        if (seeAllTop) {
+          seeAllTop.innerHTML = btnHtml;
+          seeAllTop.style.display = 'block';
+        }
+
+        document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
+          openBtn.addEventListener('click', () => {
+               const modal = document.getElementById('seeAllModal');
+               const content = document.getElementById('seeAllContent');
+               if (!modal || !content) return;
+
+               // Top Performers: rank + name + knocks + appts + sales (all rows)
+               const topAll = [...rows].sort((a,b) => (b.score||0)-(a.score||0)||String(a.setter).localeCompare(String(b.setter)));
+               const topRows = topAll.map((r, i) => `
+                <tr>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-weight:900; color:${i<3?'#b80b66':'#334155'};">${i+1}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sales||0)}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:900;">${r.score?r.score.toFixed(0)+'%':'—'}</td>
+                </tr>`).join('');
+
+               // Demo Rate table: all rows, same columns as main table
+               const demoRows = sortedRows.map(r => `
+                <tr>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); font-weight:900; color:#0f172a; white-space:nowrap;">${r.setter}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.knocks||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.knocksGoal||'—'}</span></td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.appts||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.apptsGoal||'—'}</span></td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.ran||0)}</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${Number(r.sit||0)} <span style="color:#94a3b8; font-size:10px;">/ ${r.demosGoal||'—'}</span></td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric:tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score?r.score.toFixed(0)+'%':'—'}</span></td>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; font-weight:800;">${Number(r.sales||0)}</td>
+                </tr>`).join('');
+
+               content.innerHTML = `
+                <div class="modal-section">
+                  <div class="modal-section-title">Top Performers — Ranked by Goal Score</div>
+                  <div style="overflow-x:auto;">
+                    <table>
+                      <thead><tr><th style="text-align:center;">#</th><th>Setter Last Name</th><th style="text-align:right;">Knocks</th><th style="text-align:right;">Appts Set</th><th style="text-align:right;">Sales</th><th style="text-align:right;">Goal Score</th></tr></thead>
+                      <tbody>${topRows}</tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="modal-section">
+                  <div class="modal-section-title">Demo Rate by Setter — Full Table</div>
+                  <div style="overflow-x:auto;">
+                    <table>
+                      <colgroup><col style="width:14%"/><col style="width:18%"/><col style="width:18%"/><col style="width:10%"/><col style="width:18%"/><col style="width:9%"/><col style="width:8%"/><col style="width:5%"/></colgroup>
+                      <thead><tr><th>Setter Last Name</th><th style="text-align:right;">Knocks / Goal</th><th style="text-align:right;">Appts / Goal</th><th style="text-align:center;">Opps Ran</th><th style="text-align:right;">Demos / Goal</th><th style="text-align:center;">Demo %</th><th style="text-align:center;">Goal Score</th><th style="text-align:right;">Sales</th></tr></thead>
+                      <tbody>${demoRows}</tbody>
+                      <tfoot><tr><td style="font-weight:950;">TOTAL</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">—</td><td style="text-align:center;font-weight:950;">${totalRan}</td><td style="text-align:right;font-weight:950;">${totalSit}</td><td style="text-align:center;font-weight:950;">${totalPct.toFixed(1)}%</td><td style="text-align:center;font-weight:950;">—</td><td style="text-align:right;font-weight:950;">${totalSales}</td></tr></tfoot>
+                    </table>
+                  </div>
+                </div>`;
+              modal.classList.add('open');
+            });
+          });
               const modal = document.getElementById('seeAllModal');
               const content = document.getElementById('seeAllContent');
               if (!modal || !content) return;
@@ -1428,6 +1490,8 @@ def render_html(year: int, month: int) -> str:
 
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         if (seeAllContainer) seeAllContainer.style.display = 'none';
+        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
+        if (seeAllTop) seeAllTop.style.display = 'none';
 
       }
 

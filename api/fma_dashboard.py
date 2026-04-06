@@ -1370,6 +1370,23 @@ def render_html(year: int, month: int) -> str:
             const content = document.getElementById('seeAllContent');
             if (!modal || !content) return;
 
+            // Bind modal close behaviors once (button, backdrop click, Escape)
+            if (!modal.dataset.closeBound) {
+              const closeBtn = document.getElementById('seeAllClose');
+              if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                  modal.classList.remove('open');
+                });
+              }
+              modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.classList.remove('open');
+              });
+              document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') modal.classList.remove('open');
+              });
+              modal.dataset.closeBound = '1';
+            }
+
             const knocksRows = topKnocksAll.length
               ? topKnocksAll.map((r, i) => `
                   <tr>

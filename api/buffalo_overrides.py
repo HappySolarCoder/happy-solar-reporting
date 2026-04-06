@@ -293,7 +293,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         + th_col("setter", "Setter", sort_col, sort_dir)
         + th_col("lead_source", "Lead Gen Source", sort_col, sort_dir)
         + th_col("system_size", "System Size (kW)", sort_col, sort_dir)
-        + th_col("override", "Override", sort_col, sort_dir)
+        + th_col("override", "Override Amount", sort_col, sort_dir)
         + th_col("override_commission_num", "Override Commission ($)", sort_col, sort_dir)
         + th_col("sold_date", "Sold Date", sort_col, sort_dir)
     )
@@ -355,6 +355,15 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
       <table id="salesTable">
         <thead><tr>""" + headers + """</tr></thead>
         <tbody>""" + rows_html + """</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" style="font-weight:950;">TOTALS</td>
+            <td id="ftTotalSize" style="text-align:right; font-variant-numeric:tabular-nums; font-weight:950;">""" + h(totals.get("total_size", "—")) + """</td>
+            <td id="ftAvgOverride" style="text-align:right; font-variant-numeric:tabular-nums; font-weight:950;">""" + h(totals.get("avg_override", "—")) + """</td>
+            <td id="ftTotalCommission" style="text-align:right; font-variant-numeric:tabular-nums; font-weight:950;">""" + h(totals.get("total_override_commission", "—")) + """</td>
+            <td style="text-align:right; color:#94a3b8;">—</td>
+          </tr>
+        </tfoot>
       </table>
 
       <div class="forecast" id="forecastTool">
@@ -439,6 +448,9 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
 
       function recalcCommissions() {
         var total = 0;
+        var totalSize = 0;
+        var totalRate = 0;
+        var count = 0;
         document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
           var id = inp.getAttribute('data-oppid') || '';
           var size = Number(inp.getAttribute('data-size') || 0);
@@ -446,11 +458,20 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
           var commRaw = isFinite(size) ? (size * rate) : 0;
           var comm = Number(commRaw.toFixed(2));
           total += comm;
+          if (isFinite(size)) totalSize += size;
+          if (isFinite(rate)) totalRate += rate;
+          count += 1;
           var cell = document.querySelector('.comm[data-oppid="' + id + '"]');
           if (cell) cell.textContent = '$' + comm.toFixed(2);
         });
         var kpi = document.getElementById('kpiOverrideTotal');
         if (kpi) kpi.textContent = '$' + total.toFixed(2);
+        var ftSize = document.getElementById('ftTotalSize');
+        if (ftSize) ftSize.textContent = totalSize.toFixed(2);
+        var ftAvg = document.getElementById('ftAvgOverride');
+        if (ftAvg) ftAvg.textContent = count ? (totalRate / count).toFixed(2) : '—';
+        var ftComm = document.getElementById('ftTotalCommission');
+        if (ftComm) ftComm.textContent = '$' + total.toFixed(2);
       }
 
       function n0(v) {
@@ -676,10 +697,15 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
     rows.sort(key=sort_key, reverse=rev)
 
     size_vals = []
+    override_vals = []
     total_override_commission = 0.0
     for r in rows:
         try:
             size_vals.append(float(str(r.get("system_size", "")).strip()))
+        except Exception:
+            pass
+        try:
+            override_vals.append(float(r.get("override") or 0))
         except Exception:
             pass
         try:
@@ -689,6 +715,8 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
 
     totals = {
         "avg_size": f"{(sum(size_vals) / len(size_vals)):.2f}" if size_vals else "—",
+        "total_size": f"{sum(size_vals):.2f}" if size_vals else "—",
+        "avg_override": f"{(sum(override_vals) / len(override_vals)):.2f}" if override_vals else "—",
         "total_override_commission": f"${total_override_commission:.2f}",
     }
 

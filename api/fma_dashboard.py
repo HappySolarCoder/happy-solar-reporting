@@ -23,6 +23,12 @@ from urllib.parse import parse_qs, urlparse
 
 
 def render_html(year: int, month: int) -> str:
+    from calendar import monthrange
+    # Default setter table range = full month
+    last_day = monthrange(year, month)[1]
+    setter_start = f"{year}-{str(month).zfill(2)}-01"
+    setter_end = f"{year}-{str(month).zfill(2)}-{str(last_day).zfill(2)}"
+
     html = r"""<!doctype html>
 <html>
 <head>
@@ -568,11 +574,11 @@ def render_html(year: int, month: int) -> str:
           </label>
 
           <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">Start
-            <input id="setterTableStart" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
+            <input id="setterTableStart" type="date" value="__SETTER_START__" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
           </label>
 
           <label class="meta" style="margin:0; display:flex; flex-direction:column; gap:4px; min-width:0;">End
-            <input id="setterTableEnd" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
+            <input id="setterTableEnd" type="date" value="__SETTER_END__" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:100%;" />
           </label>
 
           <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Apply</button>
@@ -1453,23 +1459,12 @@ def render_html(year: int, month: int) -> str:
   const apBtn = document.getElementById('setterTableApply');
   const clBtn = document.getElementById('setterTableClear');
 
-  const existingSetterRange = getSetterRange();
   if (stEl && enEl) {
     const r = currentNyMonthToDateRange();
-    const today = nyYmd(new Date());
-    // If prior default was month-to-date (start=1st, end=today), upgrade to full month.
-    if (existingSetterRange && existingSetterRange.start === r.start && existingSetterRange.end === today) {
-      stEl.value = r.start;
-      enEl.value = r.end;
-      setSetterRange({ start: r.start, end: r.end });
-    } else if (existingSetterRange && existingSetterRange.start && existingSetterRange.end) {
-      stEl.value = existingSetterRange.start;
-      enEl.value = existingSetterRange.end;
-    } else {
-      stEl.value = r.start;
-      enEl.value = r.end;
-      setSetterRange({ start: r.start, end: r.end });
-    }
+    // Always default to full current month on load (overrides stale saved ranges).
+    stEl.value = r.start;
+    enEl.value = r.end;
+    setSetterRange({ start: r.start, end: r.end });
   }
 
   if (apBtn && stEl && enEl) {
@@ -1545,7 +1540,12 @@ def render_html(year: int, month: int) -> str:
 </body>
 </html>"""
 
-    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month))
+    return (
+        html.replace("__YEAR__", str(year))
+        .replace("__MONTH__", str(month))
+        .replace("__SETTER_START__", setter_start)
+        .replace("__SETTER_END__", setter_end)
+    )
 
 
 class handler(BaseHTTPRequestHandler):

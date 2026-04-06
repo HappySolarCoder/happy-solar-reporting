@@ -1359,6 +1359,8 @@ def render_html(year: int, month: int) -> str:
           seeAllTop.innerHTML = btnHtml;
           seeAllTop.style.display = 'block';
         }
+        const floatingBtn = document.getElementById('seeAllFloatingOpen');
+        if (floatingBtn) floatingBtn.textContent = `See All ${rows.length} Setters ↗`;
 
         document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
           openBtn.addEventListener('click', () => {
@@ -1548,6 +1550,24 @@ def render_html(year: int, month: int) -> str:
     });
   }
 
+  // Floating See All opener (always visible)
+  const seeAllFloatingOpen = document.getElementById('seeAllFloatingOpen');
+  if (seeAllFloatingOpen) {
+    seeAllFloatingOpen.addEventListener('click', () => {
+      const openBtn = document.querySelector('.seeAllOpenBtn');
+      if (openBtn) {
+        openBtn.click();
+        return;
+      }
+      // If data has not rendered yet, force a load then retry.
+      load();
+      setTimeout(() => {
+        const b = document.querySelector('.seeAllOpenBtn');
+        if (b) b.click();
+      }, 800);
+    });
+  }
+
   // See All modal close
   const seeAllCloseBtn = document.getElementById('seeAllClose');
   if (seeAllCloseBtn) seeAllCloseBtn.addEventListener('click', () => {
@@ -1598,6 +1618,8 @@ def render_html(year: int, month: int) -> str:
       <div id="seeAllContent"></div>
     </div>
   </div>
+
+  <button id="seeAllFloatingOpen" style="position:fixed; right:14px; bottom:56px; z-index:9999; border:1px solid var(--border); background:#fff; color:#1e293b; border-radius:999px; padding:8px 12px; font-size:12px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(15,23,42,.18);">See All Setters ↗</button>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>

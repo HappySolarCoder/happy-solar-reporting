@@ -17,6 +17,7 @@ import json
 import os
 import re
 from datetime import datetime
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -35,6 +36,9 @@ SOLD_DATE_CF_ID = "P9oBjgbZjJdeE0OkBj9T"
 SETTER_CF_ID = "Eq4NLTSkJ56KTxbxypuE"
 LEAD_GEN_SOURCE_CF_ID = "hd5QqHEOVSsPom5bJ32P"
 DEFAULT_OVERRIDE_RATE = 0.05
+DASHBOARD_PASSWORD = "Buffalo123$"
+AUTH_COOKIE_NAME = "buffalo_auth"
+AUTH_COOKIE_VALUE = "ok"
 
 
 def get_db() -> firestore.Client:
@@ -95,6 +99,54 @@ def contact_name(contact: dict[str, Any]) -> str:
     nm = str(contact.get("name") or "").strip()
     full = (fn + " " + ln).strip()
     return full or nm or "—"
+
+
+def is_authenticated(cookie_header: str | None) -> bool:
+    if not cookie_header:
+        return False
+    c = SimpleCookie()
+    c.load(cookie_header)
+    morsel = c.get(AUTH_COOKIE_NAME)
+    if not morsel:
+        return False
+    return str(morsel.value) == AUTH_COOKIE_VALUE
+
+
+def render_login_page(error: str = "") -> str:
+    err = f"<div style='color:#b91c1c;font-size:13px;font-weight:800;margin-top:8px;'>{h(error)}</div>" if error else ""
+    return """<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>Buffalo Overrides - Login</title>
+  <style>
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:#f5f7fa; }
+    .card { max-width:420px; margin:10vh auto; background:#fff; border:1px solid #e8ecf0; border-radius:14px; padding:20px; box-shadow:0 1px 3px rgba(17,24,39,.08); }
+    .title { font-size:22px; font-weight:950; color:#1a2b4a; }
+    .sub { margin-top:4px; color:#6b7280; font-size:13px; }
+    .pinkline { height:3px; width:180px; border-radius:999px; background:linear-gradient(90deg,#ec4899 0%,#f472b6 45%,rgba(244,114,182,0) 100%); margin-top:10px; }
+    label { display:block; margin-top:14px; font-size:12px; color:#6b7280; font-weight:900; }
+    input { width:100%; margin-top:4px; border:1px solid #e8ecf0; border-radius:10px; padding:10px 12px; font-size:14px; }
+    button { margin-top:12px; width:100%; border:1px solid #ec4899; background:#ec4899; color:#fff; border-radius:10px; padding:10px 12px; font-size:14px; font-weight:900; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class='card'>
+    <div class='title'>Buffalo Overrides</div>
+    <div class='sub'>Password required</div>
+    <div class='pinkline'></div>
+    <form method='POST'>
+      <input type='hidden' name='action' value='login' />
+      <label>Password
+        <input type='password' name='password' autocomplete='current-password' required />
+      </label>
+      <button type='submit'>Unlock Dashboard</button>
+      """ + err + """
+    </form>
+  </div>
+</body>
+</html>"""
 
 
 def month_key(year: int, month: int) -> str:
@@ -256,13 +308,6 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         <div class="title">Buffalo Overrides</div>
         <div class="subtitle">All sold opportunities from the Buffalo pipeline</div>
         <div class="pinkline"></div>
-        <div class="nav">
-          <a class="navbtn" href="/api/company_overview">Company Overview</a>
-          <a class="navbtn" href="/api/settings">Admin</a>
-          <a class="navbtn active" href="/api/buffalo_overrides">Buffalo Overrides</a>
-          <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales Dashboard</a>
-        </div>
       </div>
       <form method="GET" class="filters" style="margin:0;">
         <label>Month
@@ -556,6 +601,15 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            if not is_authenticated(self.headers.get("Cookie")):
+                body = render_login_page().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             tz = ZoneInfo("America/New_York")
             now = datetime.now(tz)
             qs = parse_qs(urlparse(self.path).query)
@@ -605,8 +659,37 @@ class handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length > 0 else b"{}"
-            payload = json.loads(raw.decode("utf-8") or "{}")
+            ctype = (self.headers.get("Content-Type") or "").lower()
 
+            if "application/x-www-form-urlencoded" in ctype:
+                form = parse_qs(raw.decode("utf-8", errors="ignore"))
+                action = (form.get("action", [""])[0] or "").strip()
+                if action == "login":
+                    pw = (form.get("password", [""])[0] or "")
+                    if pw == DASHBOARD_PASSWORD:
+                        self.send_response(302)
+                        self.send_header("Set-Cookie", f"{AUTH_COOKIE_NAME}={AUTH_COOKIE_VALUE}; Path=/; HttpOnly; SameSite=Lax")
+                        self.send_header("Location", "/api/buffalo_overrides")
+                        self.end_headers()
+                        return
+                    body = render_login_page("Invalid password").encode("utf-8")
+                    self.send_response(401)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+            if not is_authenticated(self.headers.get("Cookie")):
+                body = json.dumps({"ok": False, "error": "Unauthorized"}).encode("utf-8")
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            payload = json.loads(raw.decode("utf-8") or "{}")
             action = str(payload.get("action") or "").strip()
             mkey = str(payload.get("month") or "").strip()
             if not mkey or len(mkey) != 7 or "-" not in mkey:

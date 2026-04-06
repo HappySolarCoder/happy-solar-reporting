@@ -462,18 +462,21 @@ def render_html(year: int, month: int) -> str:
       </div>
       <button id="mobileFilterToggle" class="mobileFilterToggle">Filters</button>
 
-      <div style="min-width:320px; display:flex; flex-direction:column; justify-content:flex-end; gap:12px; padding-top:4px;">
+      <div style="min-width:320px; display:flex; justify-content:flex-end; align-items:flex-start; padding-top:4px;">
         <div style="display:flex; gap:8px; justify-content:flex-end;">
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/settings">Admin Settings</a>
         </div>
-        <div class="filters" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; margin-top:6px;">
-          <input id="startDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
-          <input id="endDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
-          <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
-          <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
-        </div>
       </div>
+    </div>
+
+    <div class="filters" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px; margin-bottom:2px;">
+      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#64748b;">Start</span>
+      <input id="startDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
+      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#64748b;">End</span>
+      <input id="endDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
+      <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
+      <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
     </div>
 
     <!-- Raydar-style period selector (UI only for now) -->

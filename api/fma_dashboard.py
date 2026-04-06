@@ -1345,24 +1345,6 @@ def render_html(year: int, month: int) -> str:
             </tr>`;
         }
 
-      } catch (e) {
-        const tbody = document.getElementById('setterDemoRows');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
-        const tfoot = document.getElementById('setterDemoTotals');
-        if (tfoot) {
-          tfoot.innerHTML = `
-            <tr>
-              <td style="padding:8px 12px; font-weight:950;">TOTAL</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
-            </tr>`;
-        }
-
         // See All button — only show when > 10 rows
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         if (seeAllContainer) {
@@ -1429,6 +1411,27 @@ def render_html(year: int, month: int) -> str:
             seeAllContainer.style.display = 'none';
           }
         }
+
+      } catch (e) {
+        const tbody = document.getElementById('setterDemoRows');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="padding:12px 8px; color:var(--muted2);">Error loading demo table: ${String(e)}</td></tr>`;
+        const tfoot = document.getElementById('setterDemoTotals');
+        if (tfoot) {
+          tfoot.innerHTML = `
+            <tr>
+              <td style="padding:8px 12px; font-weight:950;">TOTAL</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+              <td style="padding:8px 12px; text-align:right; font-weight:950; font-variant-numeric: tabular-nums;">—</td>
+            </tr>`;
+        }
+
+        const seeAllContainer = document.getElementById('seeAllBtnContainer');
+        if (seeAllContainer) seeAllContainer.style.display = 'none';
 
       }
 

@@ -348,7 +348,8 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
           var id = inp.getAttribute('data-oppid') || '';
           var size = Number(inp.getAttribute('data-size') || 0);
           var rate = Number(v(inp.value));
-          var comm = isFinite(size) ? (size * rate) : 0;
+          var commRaw = isFinite(size) ? (size * rate) : 0;
+          var comm = Number(commRaw.toFixed(2));
           total += comm;
           var cell = document.querySelector('.comm[data-oppid="' + id + '"]');
           if (cell) cell.textContent = '$' + comm.toFixed(2);

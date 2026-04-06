@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from typing import Any
@@ -57,6 +58,21 @@ def clamp_override(v: Any, fallback: float = DEFAULT_OVERRIDE_RATE) -> float:
     if x > 0.10:
         x = 0.10
     return round(x, 2)
+
+
+def parse_num(v: Any) -> float | None:
+    if v in (None, ""):
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = re.sub(r"[^0-9.\-]", "", s)
+    if s in ("", ".", "-", "-."):
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
 
 
 def cf_value(custom_fields: list[dict] | None, field_id: str) -> str | None:
@@ -205,8 +221,8 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
             "<td>" + h(r.get("setter", "—")) + "</td>"
             "<td>" + h(r.get("lead_source", "—")) + "</td>"
             "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("system_size", "—")) + "</td>"
-            "<td style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("ppw_sold", "—")) + "</td>"
-            "<td style='text-align:right; font-variant-numeric:tabular-nums;'><input class='ovr' data-oppid='" + opp_id + "' type='number' min='0.01' max='0.10' step='0.01' value='" + ov + "' /></td>"
+            "<td style='text-align:right; font-variant-numeric:tabular-nums;'><input class='ovr' data-oppid='" + opp_id + "' data-size='" + h(r.get("system_size_num", "")) + "' type='number' min='0.01' max='0.10' step='0.01' value='" + ov + "' /></td>"
+            "<td class='comm' data-oppid='" + opp_id + "' style='text-align:right; font-variant-numeric:tabular-nums;'>" + h(r.get("override_commission", "—")) + "</td>"
             "<td>" + h(r.get("sold_date", "—")) + "</td>"
             "</tr>"
         )
@@ -220,8 +236,8 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         + th_col("setter", "Setter", sort_col, sort_dir)
         + th_col("lead_source", "Lead Gen Source", sort_col, sort_dir)
         + th_col("system_size", "System Size (kW)", sort_col, sort_dir)
-        + th_col("ppw_sold", "PPW Sold ($)", sort_col, sort_dir)
         + th_col("override", "Override", sort_col, sort_dir)
+        + th_col("override_commission_num", "Override Commission ($)", sort_col, sort_dir)
         + th_col("sold_date", "Sold Date", sort_col, sort_dir)
     )
 
@@ -326,6 +342,17 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         return j;
       }
 
+      function recalcCommissions() {
+        document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
+          var id = inp.getAttribute('data-oppid') || '';
+          var size = Number(inp.getAttribute('data-size') || 0);
+          var rate = Number(v(inp.value));
+          var comm = isFinite(size) ? (size * rate) : 0;
+          var cell = document.querySelector('.comm[data-oppid="' + id + '"]');
+          if (cell) cell.textContent = '$' + comm.toFixed(2);
+        });
+      }
+
       var saveDefaultBtn = document.getElementById('saveDefaultBtn');
       var setAllBtn = document.getElementById('setAllBtn');
       var saveRowsBtn = document.getElementById('saveRowsBtn');
@@ -347,8 +374,14 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
         var x = v(defaultEl && defaultEl.value);
         if (defaultEl) defaultEl.value = x;
         document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){ inp.value = x; });
+        recalcCommissions();
         setStatus('All visible rows set to ' + x + '. Click Save Row Edits.');
       });
+
+      document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
+        inp.addEventListener('input', recalcCommissions);
+      });
+      recalcCommissions();
 
       if (saveRowsBtn) saveRowsBtn.addEventListener('click', async function() {
         try {
@@ -431,7 +464,9 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
         sales_rep = user_cache.get(owner_id) or owner_id or "—"
         if str(sales_rep).strip().lower() == "brooke simpson":
             continue
-        override = row_overrides.get(opp_id, default_override)
+        override_rate = clamp_override(row_overrides.get(opp_id, default_override), default_override)
+        size_num = parse_num(system_size)
+        comm_num = (size_num or 0.0) * override_rate
 
         rows.append(
             {
@@ -442,8 +477,10 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
                 "setter": setter,
                 "lead_source": lead_source,
                 "system_size": system_size,
-                "ppw_sold": ppw_sold,
-                "override": f"{clamp_override(override, default_override):.2f}",
+                "system_size_num": f"{size_num:.4f}" if size_num is not None else "",
+                "override": f"{override_rate:.2f}",
+                "override_commission_num": round(comm_num, 2),
+                "override_commission": f"${comm_num:.2f}",
                 "sold_date": sold_date[:10],
             }
         )
@@ -498,7 +535,7 @@ class handler(BaseHTTPRequestHandler):
 
             sort_col = qs.get("sort", ["sold_date"])[0].strip() or "sold_date"
             sort_dir = qs.get("dir", ["desc"])[0].strip() or "desc"
-            if sort_col not in ("contact_name", "sales_rep", "setter", "lead_source", "system_size", "ppw_sold", "override", "sold_date"):
+            if sort_col not in ("contact_name", "sales_rep", "setter", "lead_source", "system_size", "override", "override_commission_num", "sold_date"):
                 sort_col = "sold_date"
             if sort_dir not in ("asc", "desc"):
                 sort_dir = "desc"

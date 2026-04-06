@@ -277,7 +277,7 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
       <div class="kpi"><div class="label">Total Buffalo Sales</div><div class="value">""" + str(count) + """</div></div>
       <div class="kpi"><div class="label">Period</div><div class="value" style="font-size:18px;">""" + h(month_name) + """</div></div>
       <div class="kpi"><div class="label">Avg System Size (kW)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_size", "—")) + """</div></div>
-      <div class="kpi"><div class="label">Avg PPW Sold ($)</div><div class="value" style="font-size:22px;">""" + h(totals.get("avg_ppw", "—")) + """</div></div>
+      <div class="kpi"><div class="label">Total Override Commission ($)</div><div id="kpiOverrideTotal" class="value" style="font-size:22px;">""" + h(totals.get("total_override_commission", "—")) + """</div></div>
     </div>
 
     <div class="wrap2">
@@ -343,14 +343,18 @@ def render_page(rows, totals, count, year, month, month_str, sort_col, sort_dir,
       }
 
       function recalcCommissions() {
+        var total = 0;
         document.querySelectorAll('.ovr[data-oppid]').forEach(function(inp){
           var id = inp.getAttribute('data-oppid') || '';
           var size = Number(inp.getAttribute('data-size') || 0);
           var rate = Number(v(inp.value));
           var comm = isFinite(size) ? (size * rate) : 0;
+          total += comm;
           var cell = document.querySelector('.comm[data-oppid="' + id + '"]');
           if (cell) cell.textContent = '$' + comm.toFixed(2);
         });
+        var kpi = document.getElementById('kpiOverrideTotal');
+        if (kpi) kpi.textContent = '$' + total.toFixed(2);
       }
 
       var saveDefaultBtn = document.getElementById('saveDefaultBtn');
@@ -497,20 +501,20 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
     rows.sort(key=sort_key, reverse=rev)
 
     size_vals = []
-    ppw_vals = []
+    total_override_commission = 0.0
     for r in rows:
         try:
             size_vals.append(float(str(r.get("system_size", "")).strip()))
         except Exception:
             pass
         try:
-            ppw_vals.append(float(str(r.get("ppw_sold", "")).strip()))
+            total_override_commission += float(r.get("override_commission_num") or 0)
         except Exception:
             pass
 
     totals = {
         "avg_size": f"{(sum(size_vals) / len(size_vals)):.2f}" if size_vals else "—",
-        "avg_ppw": f"{(sum(ppw_vals) / len(ppw_vals)):.2f}" if ppw_vals else "—",
+        "total_override_commission": f"${total_override_commission:.2f}",
     }
 
     return rows, totals

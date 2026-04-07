@@ -1126,6 +1126,23 @@ def render_html(year: int, month: int) -> str:
           .filter(([,v]) => v && Array.isArray(v.categories) && v.categories.includes(selectedRole))
           .map(([k]) => String(k)));
 
+        // Fallback role inclusion by roster metadata for cases where raydar_user_id mapping is missing.
+        const normSetterName = (x) => String(x || '').trim().toLowerCase();
+        const roleSetterLasts = new Set();
+        for (const r of roster) {
+          const sln = normSetterName(r.ghl_setter_last_name);
+          if (!sln) continue;
+          const cats = Array.isArray(r.categories) ? r.categories.map(c => String(c || '').toLowerCase()) : [];
+          const team = String(r.team || r.role || r.segment || '').toLowerCase();
+          let include = false;
+          if (selectedRole === 'fma') include = cats.includes('fma') || team.includes('fma');
+          else if (selectedRole === 'selfgen') include = cats.includes('selfgen') || cats.includes('self gen') || team.includes('selfgen') || team.includes('self gen');
+          else if (selectedRole === 'manager') include = cats.includes('manager') || team.includes('manager');
+          if (include) roleSetterLasts.add(sln);
+        }
+        // Explicit force-include requested for FMA visibility.
+        if (selectedRole === 'fma') roleSetterLasts.add('meehan');
+
         const knocksByActorTop = rayTop && rayTop.breakdowns && rayTop.breakdowns.knocks_by_actor ? rayTop.breakdowns.knocks_by_actor : {};
 
         const raydarNameById = {};
@@ -1275,8 +1292,13 @@ def render_html(year: int, month: int) -> str:
           if (selectedRole === 'all') return true;
 
           const rid = String(r.rayId || '');
-          if (!rid) return false;
-          return roleIds.has(rid);
+          if (rid && roleIds.has(rid)) return true;
+
+          // Fallback by roster team metadata when role ids are unavailable.
+          const setterNorm2 = String(r.setter || '').trim().toLowerCase();
+          if (roleSetterLasts.has(setterNorm2)) return true;
+
+          return false;
         });
 
         const sortedRows = sortSetterRows(rows);

@@ -1091,8 +1091,9 @@ def render_html(year: int, month: int) -> str:
         const setterToPerson = {};
         const setterToRaydar = {};
         for (const r of roster) {
-          const sln = String(r.ghl_setter_last_name || '').trim();
-          if (!sln) continue;
+          const slnRaw = String(r.ghl_setter_last_name || '').trim();
+          if (!slnRaw) continue;
+          const sln = slnRaw.toLowerCase();
           setterToPerson[sln] = String(r.person_key || '');
           setterToRaydar[sln] = String(r.raydar_user_id || '');
         }
@@ -1243,8 +1244,9 @@ def render_html(year: int, month: int) -> str:
           const sit = Number(r.sit || 0);
           const pct = ran > 0 ? (sit / ran) * 100 : 0;
 
-          const pk = setterToPerson[setter] || setterToPerson[setter.toLowerCase()] || '';
-          const rayId = setterToRaydar[setter] || setterToRaydar[setter.toLowerCase()] || '';
+          const setterNorm = String(setter || '').trim().toLowerCase();
+          const pk = setterToPerson[setterNorm] || setterToPerson[setter] || '';
+          const rayId = setterToRaydar[setterNorm] || setterToRaydar[setter] || '';
 
           const knocks = rayId ? Number(knocksByClaimed[rayId] || 0) : 0;
           const knocksMonth = rayId ? Number(knocksByActorMonth[rayId] || 0) : 0;

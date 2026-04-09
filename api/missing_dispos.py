@@ -522,6 +522,7 @@ class handler(BaseHTTPRequestHandler):
             stage_lookup = pipelines_stage_lookup(db)
             pipelines = pipeline_name_lookup(db)
             users = users_lookup(db)
+            users_lc = {str(k).strip().lower(): v for k, v in users.items() if str(k).strip()}
 
             # Build set of stageIds whose stage name is "New Appointment"
             new_appt_stage_ids = {sid for sid, nm in stage_lookup.items() if str(nm).strip().lower() == 'new appointment'}
@@ -596,8 +597,24 @@ class handler(BaseHTTPRequestHandler):
                 if not (start_utc <= appt_utc < end_utc):
                     continue
 
-                assigned_to = str(opp.get('assignedTo') or '')
-                owner_name = users.get(assigned_to, assigned_to)
+                assigned_to = str(opp.get('assignedTo') or '').strip()
+
+                owner_name = users.get(assigned_to, '')
+                if not owner_name and assigned_to:
+                    owner_name = users_lc.get(assigned_to.lower(), '')
+
+                if not owner_name:
+                    owner_name = str(
+                        opp.get('assignedToName')
+                        or opp.get('assignedToUserName')
+                        or opp.get('assignedUserName')
+                        or opp.get('ownerName')
+                        or ((opp.get('assignedToUser') or {}).get('name') if isinstance(opp.get('assignedToUser'), dict) else '')
+                        or ''
+                    ).strip()
+
+                if not owner_name:
+                    owner_name = assigned_to
 
                 pid = str(opp.get('pipelineId') or '')
                 pname = pipelines.get(pid, pid)

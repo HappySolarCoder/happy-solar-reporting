@@ -464,6 +464,7 @@ def render_html(year: int, month: int) -> str:
 
       <div style="min-width:320px; display:flex; justify-content:flex-end; align-items:flex-start; padding-top:4px;">
         <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <a class="navbtn" href="/api/appointment_outcomes">Appointment Outcomes</a>
           <a class="navbtn" href="/api/missing_dispos">Missing Dispos</a>
           <a class="navbtn" href="/api/settings">Admin Settings</a>
         </div>

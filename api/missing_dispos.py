@@ -320,6 +320,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
         </div>
       </div>
       <div style="min-width:320px">
+        <a class="navbtn" href="/api/appointment_outcomes">Appointment Outcomes</a>
         <a class="navbtn missingDisposTop active" href="/api/missing_dispos">Missing Dispos</a>
         <a class="navbtn adminSettings" href="/api/settings">Admin Settings</a>
         <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Custom Range (Scheduled Appointment)</div>

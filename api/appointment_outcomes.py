@@ -257,6 +257,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
             <th>Contact</th>
             <th>Owner</th>
             <th>Pipeline</th>
+            <th>Pipeline Stage</th>
             <th class=\"right\">Opportunity ID</th>
           </tr>
         </thead>

@@ -109,6 +109,23 @@ def pipeline_name_lookup(db: firestore.Client) -> dict[str, str]:
     return out
 
 
+def pipeline_stage_name_lookup(db: firestore.Client) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for snap in db.collection("ghl_pipelines_v2").stream():
+        d = snap.to_dict() or {}
+        stages = d.get("stages") or []
+        if not isinstance(stages, list):
+            continue
+        for st in stages:
+            if not isinstance(st, dict):
+                continue
+            sid = str(st.get("id") or "").strip()
+            sname = str(st.get("name") or "").strip()
+            if sid and sname and sid not in out:
+                out[sid] = sname
+    return out
+
+
 def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     out: dict[str, str] = {}
     for snap in db.collection("ghl_users_v2").stream():
@@ -244,7 +261,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
           </tr>
         </thead>
         <tbody>
-          {rows_html if rows_html else '<tr><td class="empty" colspan="8">No dispositioned appointments in this window.</td></tr>'}
+          {rows_html if rows_html else '<tr><td class="empty" colspan="9">No dispositioned appointments in this window.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -295,6 +312,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             db = get_db()
             pipelines = pipeline_name_lookup(db)
+            stage_names = pipeline_stage_name_lookup(db)
             users = user_name_lookup(db)
             setter_by_contact = contact_setter_lookup(db)
 
@@ -336,6 +354,8 @@ class handler(BaseHTTPRequestHandler):
 
                 pid = str(d.get("pipelineId") or "").strip()
                 pipeline_name = pipelines.get(pid, pid)
+                stage_id = str(d.get("pipelineStageId") or d.get("pipelineStageUId") or "").strip()
+                stage_name = stage_names.get(stage_id, stage_id)
                 if pipeline_name.strip().lower() == "inbound/lead locker":
                     continue
 
@@ -358,6 +378,7 @@ class handler(BaseHTTPRequestHandler):
                         "contact": contact_name,
                         "owner": owner_name,
                         "pipeline": pipeline_name,
+                        "pipeline_stage": stage_name,
                         "opp_id": opp_id,
                     }
                 )
@@ -378,13 +399,14 @@ class handler(BaseHTTPRequestHandler):
                     f"<td>{escape((r.get('contact') or ''))}</td>"
                     f"<td>{escape((r.get('owner') or ''))}</td>"
                     f"<td>{escape((r.get('pipeline') or ''))}</td>"
+                    f"<td>{escape((r.get('pipeline_stage') or ''))}</td>"
                     f"<td class='right'>{escape((r.get('opp_id') or ''))}</td>"
                     "</tr>"
                 )
             rows_html = "\n".join(body)
 
         except Exception as e:
-            rows_html = f"<tr><td class='empty' colspan='8'>Error: {escape(str(e))}</td></tr>"
+            rows_html = f"<tr><td class='empty' colspan='9'>Error: {escape(str(e))}</td></tr>"
 
         subtitle_window = f"{start_local.strftime('%Y-%m-%d')} to {end_local.strftime('%Y-%m-%d')}"
         html = render_page(

@@ -24,6 +24,7 @@ from google.oauth2 import service_account
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
+DISPOSITION_NOTES_FIELD_ID = "cCcnzoIp8YgW2Pr0sB5E"  # GHL custom field: Disposition Notes
 
 
 def get_db() -> firestore.Client:
@@ -235,6 +236,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
             <th>Appointment Date & Time</th>
             <th>Setter Last Name</th>
             <th>Disposition</th>
+            <th>Disposition Notes</th>
             <th>Contact</th>
             <th>Owner</th>
             <th>Pipeline</th>
@@ -242,7 +244,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
           </tr>
         </thead>
         <tbody>
-          {rows_html if rows_html else '<tr><td class="empty" colspan="7">No dispositioned appointments in this window.</td></tr>'}
+          {rows_html if rows_html else '<tr><td class="empty" colspan="8">No dispositioned appointments in this window.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -321,6 +323,14 @@ class handler(BaseHTTPRequestHandler):
 
                 contact_id = str(d.get("contactId") or "").strip()
                 setter_last = setter_by_contact.get(contact_id, "")
+
+                disposition_notes = str(
+                    d.get("dispositionNotes")
+                    or d.get("dispositionNote")
+                    or d.get("notes")
+                    or get_custom_field_value(d.get("customFields") or [], DISPOSITION_NOTES_FIELD_ID)
+                    or ""
+                ).strip()
                 if selected_setter and setter_last.lower().strip() != selected_setter.lower().strip():
                     continue
 
@@ -344,6 +354,7 @@ class handler(BaseHTTPRequestHandler):
                         "dt_utc": dt_utc,
                         "setter": setter_last,
                         "dispo": dispo,
+                        "disposition_notes": disposition_notes,
                         "contact": contact_name,
                         "owner": owner_name,
                         "pipeline": pipeline_name,
@@ -363,6 +374,7 @@ class handler(BaseHTTPRequestHandler):
                     f"<td>{escape(format_local(r.get('dt_utc')))}</td>"
                     f"<td>{escape((r.get('setter') or ''))}</td>"
                     f"<td>{escape((r.get('dispo') or ''))}</td>"
+                    f"<td>{escape((r.get('disposition_notes') or ''))}</td>"
                     f"<td>{escape((r.get('contact') or ''))}</td>"
                     f"<td>{escape((r.get('owner') or ''))}</td>"
                     f"<td>{escape((r.get('pipeline') or ''))}</td>"
@@ -372,7 +384,7 @@ class handler(BaseHTTPRequestHandler):
             rows_html = "\n".join(body)
 
         except Exception as e:
-            rows_html = f"<tr><td class='empty' colspan='7'>Error: {escape(str(e))}</td></tr>"
+            rows_html = f"<tr><td class='empty' colspan='8'>Error: {escape(str(e))}</td></tr>"
 
         subtitle_window = f"{start_local.strftime('%Y-%m-%d')} to {end_local.strftime('%Y-%m-%d')}"
         html = render_page(

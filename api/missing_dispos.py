@@ -41,6 +41,11 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 
 
+OWNER_NAME_OVERRIDES = {
+    "0fhsjcmlntce0cpjyfhj": "William Breen",
+}
+
+
 def get_db() -> firestore.Client:
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
@@ -613,6 +618,9 @@ class handler(BaseHTTPRequestHandler):
                         or ((opp.get('assignedToUser') or {}).get('name') if isinstance(opp.get('assignedToUser'), dict) else '')
                         or ''
                     ).strip()
+
+                if not owner_name and assigned_to:
+                    owner_name = OWNER_NAME_OVERRIDES.get(assigned_to.lower(), "")
 
                 if not owner_name:
                     owner_name = assigned_to

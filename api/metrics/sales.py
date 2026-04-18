@@ -32,6 +32,10 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
+
+OWNER_NAME_OVERRIDES = {
+    "0fhsjcmlntce0cpjyfhj": "William Breen",
+}
 from google.cloud import firestore
 
 
@@ -191,10 +195,29 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if uid:
             user_name_cache[uid] = name
 
-    def user_name_from_id(user_id: str | None) -> str | None:
+    def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:
             return None
-        return user_name_cache.get(str(user_id).strip())
+        uid = str(user_id).strip()
+        if not uid:
+            return None
+        override = OWNER_NAME_OVERRIDES.get(uid.lower())
+        if override:
+            return override
+        hit = user_name_cache.get(uid)
+        if hit:
+            return hit
+        if isinstance(opp, dict):
+            for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
+                v = opp.get(k)
+                if v and str(v).strip():
+                    return str(v).strip()
+            au = opp.get("assignedToUser")
+            if isinstance(au, dict):
+                v = au.get("name")
+                if v and str(v).strip():
+                    return str(v).strip()
+        return None
 
     def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
         if not pipeline_id:
@@ -287,7 +310,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
         # Breakdown by opportunity owner (assignedTo)
         owner_id = opp.get("assignedTo")
-        oname = user_name_from_id(owner_id) or str(owner_id or "unassigned")
+        oname = user_name_from_id(owner_id, opp) or str(owner_id or "unassigned")
         owner_counts[oname] = owner_counts.get(oname, 0) + 1
 
         # Breakdown by Setter Last Name (custom field on contact)

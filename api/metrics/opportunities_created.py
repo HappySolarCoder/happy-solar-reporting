@@ -34,6 +34,10 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
+
+OWNER_NAME_OVERRIDES = {
+    "0fhsjcmlntce0cpjyfhj": "William Breen",
+}
 from google.cloud import firestore
 
 
@@ -199,6 +203,27 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     pipe_names = pipeline_name_lookup(db, c)
     user_names = user_name_lookup(db, c)
 
+    def resolve_owner_name(opp: dict, owner_id: str | None) -> str:
+        uid = str(owner_id or "").strip()
+        if not uid:
+            return "unassigned"
+        override = OWNER_NAME_OVERRIDES.get(uid.lower())
+        if override:
+            return override
+        hit = user_names.get(uid)
+        if hit and str(hit).strip():
+            return str(hit).strip()
+        for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
+            v = opp.get(k)
+            if v and str(v).strip():
+                return str(v).strip()
+        au = opp.get("assignedToUser")
+        if isinstance(au, dict):
+            v = au.get("name")
+            if v and str(v).strip():
+                return str(v).strip()
+        return uid
+
     pipeline_scope_norm = str(pipeline_scope or "core").strip().lower()
 
     included = {x.strip().lower() for x in c.included_pipeline_names}
@@ -258,7 +283,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         # owner
         owner_id = str(opp.get("assignedTo") or "")
-        oname = user_names.get(owner_id) or owner_id or "unassigned"
+        oname = resolve_owner_name(opp, owner_id) or "unassigned"
 
         # join to contact
         cid = str(opp.get("contactId") or "")

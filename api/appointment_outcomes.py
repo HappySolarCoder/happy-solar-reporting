@@ -25,6 +25,9 @@ from google.oauth2 import service_account
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
 DISPOSITION_NOTES_FIELD_ID = "cCcnzoIp8YgW2Pr0sB5E"  # GHL custom field: Disposition Notes
+OWNER_NAME_OVERRIDES = {
+    "0fhsjcmlntce0cpjyfhj": "William Breen",
+}
 
 
 def get_db() -> firestore.Client:
@@ -361,7 +364,23 @@ class handler(BaseHTTPRequestHandler):
                     continue
 
                 owner_id = str(d.get("assignedTo") or "").strip()
-                owner_name = users.get(owner_id, owner_id)
+                owner_name = users.get(owner_id, "")
+                if not owner_name:
+                    owner_name = OWNER_NAME_OVERRIDES.get(owner_id.lower(), "")
+                if not owner_name:
+                    for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
+                        v = d.get(k)
+                        if v and str(v).strip():
+                            owner_name = str(v).strip()
+                            break
+                if not owner_name:
+                    au = d.get("assignedToUser")
+                    if isinstance(au, dict):
+                        v = au.get("name")
+                        if v and str(v).strip():
+                            owner_name = str(v).strip()
+                if not owner_name:
+                    owner_name = owner_id
 
                 contact_name = ""
                 c = d.get("contact")

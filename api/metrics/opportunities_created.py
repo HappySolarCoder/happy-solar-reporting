@@ -34,11 +34,91 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
+from google.cloud import firestore
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
 }
-from google.cloud import firestore
+
+
+def compact_str(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def looks_like_identifier(value: Any) -> bool:
+    text = compact_str(value)
+    if not text or " " in text or len(text) < 12:
+        return False
+    return all(ch.isalnum() or ch in {"-", "_"} for ch in text)
+
+
+def best_person_name(record: dict[str, Any] | None, *, fallback: str = "") -> str:
+    if not isinstance(record, dict):
+        return fallback
+    candidates = [
+        record.get("name"),
+        record.get("displayName"),
+        record.get("fullName"),
+        " ".join(part for part in (compact_str(record.get("firstName")), compact_str(record.get("lastName"))) if part),
+        record.get("firstName"),
+        record.get("lastName"),
+        record.get("userName"),
+        record.get("agentName"),
+    ]
+    for candidate in candidates:
+        text = compact_str(candidate)
+        if text and not looks_like_identifier(text):
+            return text
+    return fallback
+
+
+def normalize_person_display(value: Any, *, empty: str) -> str:
+    s = " ".join(str(value or "").strip().split())
+    if not s:
+        return empty
+    low = s.lower()
+    if low in {"none", "null", "n/a"}:
+        return "none"
+    if low in {"unassigned", "unknown"}:
+        return "unassigned"
+    return s
+
+
+def pick_better_person_display(current: str | None, candidate: str) -> str:
+    if not current or current == candidate:
+        return candidate
+
+    def score(v: str) -> tuple[int, int, int]:
+        return (
+            0 if v == v.lower() else 1,
+            sum(1 for idx, ch in enumerate(v) if idx > 0 and ch.isupper()),
+            -len(v),
+        )
+
+    return candidate if score(candidate) > score(current) else current
+
+
+def add_casefold_count(
+    counts: dict[str, int],
+    labels: dict[str, str],
+    raw_value: Any,
+    *,
+    empty: str,
+    delta: int = 1,
+) -> str:
+    display = normalize_person_display(raw_value, empty=empty)
+    key = display.casefold()
+    labels[key] = pick_better_person_display(labels.get(key), display)
+    counts[key] = counts.get(key, 0) + delta
+    return labels[key]
+
+
+def finalize_casefold_counts(counts: dict[str, int], labels: dict[str, str]) -> dict[str, int]:
+    return {
+        labels[key]: value
+        for key, value in sorted(counts.items(), key=lambda kv: (-kv[1], labels.get(kv[0], kv[0])))
+        if value > 0
+    }
 
 
 @dataclass(frozen=True)
@@ -157,14 +237,10 @@ def user_name_lookup(db: firestore.Client, c: MetricContract) -> dict[str, str]:
     m: dict[str, str] = {}
     for doc in db.collection(c.users_collection).stream():
         u = doc.to_dict() or {}
-        uid = str(u.get("id") or doc.id)
-        name = u.get("name")
-        if not name:
-            fn = u.get("firstName") or ""
-            ln = u.get("lastName") or ""
-            name = (fn + " " + ln).strip() or None
-        if uid and name:
-            m[uid] = name
+        name = best_person_name(u)
+        for key in {compact_str(u.get("id")), compact_str(u.get("userId")), compact_str(doc.id)}:
+            if key and name:
+                m[key] = name
     return m
 
 
@@ -212,17 +288,19 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             return override
         hit = user_names.get(uid)
         if hit and str(hit).strip():
-            return str(hit).strip()
+            return normalize_person_display(hit, empty="unassigned")
         for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
             v = opp.get(k)
             if v and str(v).strip():
-                return str(v).strip()
+                text = compact_str(v)
+                if not looks_like_identifier(text):
+                    return normalize_person_display(text, empty="unassigned")
         au = opp.get("assignedToUser")
         if isinstance(au, dict):
-            v = au.get("name")
-            if v and str(v).strip():
-                return str(v).strip()
-        return uid
+            text = best_person_name(au)
+            if text:
+                return normalize_person_display(text, empty="unassigned")
+        return f"Unknown User ({uid[-6:]})"
 
     pipeline_scope_norm = str(pipeline_scope or "core").strip().lower()
 
@@ -248,7 +326,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
     by_pipeline: dict[str, int] = {}
     by_owner: dict[str, int] = {}
+    owner_labels: dict[str, str] = {}
     by_setter: dict[str, int] = {}
+    setter_labels: dict[str, str] = {}
     by_lead: dict[str, int] = {}
 
     for doc in db.collection(c.opp_collection).stream():
@@ -293,7 +373,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
 
-        setter_norm = str(setter).strip() if setter not in (None, "") else "none"
+        setter_norm = normalize_person_display(setter, empty="none")
         if setter_filter_norm and setter_norm.lower() != setter_filter_norm:
             continue
 
@@ -314,8 +394,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         }
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
-        by_owner[oname] = by_owner.get(oname, 0) + 1
-        by_setter[setter_norm] = by_setter.get(setter_norm, 0) + 1
+        oname = add_casefold_count(by_owner, owner_labels, oname, empty="unassigned")
+        setter_norm = add_casefold_count(by_setter, setter_labels, setter_norm, empty="none")
         by_lead[lead_norm] = by_lead.get(lead_norm, 0) + 1
 
     return {
@@ -351,8 +431,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         },
         "breakdowns": {
             "created_by_pipeline": {k: v for k, v in sorted(by_pipeline.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
-            "created_by_owner": {k: v for k, v in sorted(by_owner.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
-            "created_by_setter_last_name": {k: v for k, v in sorted(by_setter.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            "created_by_owner": finalize_casefold_counts(by_owner, owner_labels),
+            "created_by_setter_last_name": finalize_casefold_counts(by_setter, setter_labels),
             "created_by_lead_gen_source": {k: v for k, v in sorted(by_lead.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
         },
         "sample_rows": sorted(list(matching_rows.values()), key=lambda r: (r.get("createdAt") or "")),

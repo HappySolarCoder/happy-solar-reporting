@@ -38,6 +38,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -238,6 +239,60 @@ def disposition_map(db: firestore.Client) -> dict[str, dict[str, Any]]:
     return out
 
 
+def resolve_adjustment_month_key(
+    year: int,
+    month: int,
+    period: str | None,
+    start: str | None,
+    end: str | None,
+    start_local: datetime,
+    end_local: datetime,
+) -> str | None:
+    period_norm = (period or "").strip().lower()
+
+    if period_norm in {"thismo", "lastmo"}:
+        return f"{start_local.year:04d}-{start_local.month:02d}"
+
+    if not period and not start and not end:
+        return f"{year:04d}-{month:02d}"
+
+    if start and end and start_local.day == 1 and end_local.day == 1:
+        if start_local.month == 12:
+            next_month_start = datetime(start_local.year + 1, 1, 1, 0, 0, 0, tzinfo=start_local.tzinfo)
+        else:
+            next_month_start = datetime(start_local.year, start_local.month + 1, 1, 0, 0, 0, tzinfo=start_local.tzinfo)
+        if end_local == next_month_start:
+            return f"{start_local.year:04d}-{start_local.month:02d}"
+
+    return None
+
+
+def load_knock_adjustments(month_key: str | None) -> tuple[dict[str, int], str | None]:
+    if not month_key:
+        return {}, None
+
+    path = Path(__file__).resolve().parents[1] / "data" / "raydar_knock_adjustments.json"
+    if not path.exists():
+        return {}, str(path)
+
+    try:
+        raw = json.loads(path.read_text())
+    except Exception:
+        return {}, str(path)
+
+    month_doc = ((raw or {}).get("months") or {}).get(month_key) or {}
+    adjustments = month_doc.get("knocks_by_actor") or {}
+
+    out: dict[str, int] = {}
+    for uid, delta in adjustments.items():
+        try:
+            out[str(uid)] = int(delta)
+        except Exception:
+            continue
+
+    return out, str(path)
+
+
 def build_payload(
     db: firestore.Client,
     year: int,
@@ -353,8 +408,17 @@ def build_payload(
             k = str(at)
             by_assigned[k] = by_assigned.get(k, 0) + 1
 
+    adjustment_month_key = resolve_adjustment_month_key(year, month, period, start, end, start_local, end_local)
+    manual_knock_adjustments, adjustment_source = load_knock_adjustments(adjustment_month_key)
+    applied_adjustments: dict[str, int] = {}
+    for uid, delta in manual_knock_adjustments.items():
+        if delta == 0:
+            continue
+        by_actor[uid] = int(by_actor.get(uid, 0)) + int(delta)
+        applied_adjustments[uid] = int(delta)
+
     result = sum(int(v) for v in by_actor.values())
-    count_method = "SUM(knocks_by_actor)"
+    count_method = "SUM(knocks_by_actor)" + (" + manual_month_adjustments" if applied_adjustments else "")
 
     docs = list(q.limit(25).stream())
     users = user_name_map(db)
@@ -412,6 +476,11 @@ def build_payload(
             "collection": MetricContract.leads_collection,
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
             "inclusion": "dispositionedAt is non-null (enforced by >= start)",
+        },
+        "adjustments": {
+            "month_key": adjustment_month_key,
+            "source": adjustment_source,
+            "knocks_by_actor": applied_adjustments,
         },
         "breakdowns": {
             "knocks_by_actor": by_actor,

@@ -32,11 +32,90 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
+from google.cloud import firestore
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
 }
-from google.cloud import firestore
+
+
+def compact_str(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def looks_like_identifier(value: Any) -> bool:
+    text = compact_str(value)
+    if not text or " " in text or len(text) < 12:
+        return False
+    return all(ch.isalnum() or ch in {"-", "_"} for ch in text)
+
+
+def best_person_name(record: dict[str, Any] | None, *, fallback: str = "") -> str:
+    if not isinstance(record, dict):
+        return fallback
+    candidates = [
+        record.get("name"),
+        record.get("displayName"),
+        record.get("fullName"),
+        " ".join(part for part in (compact_str(record.get("firstName")), compact_str(record.get("lastName"))) if part),
+        record.get("firstName"),
+        record.get("lastName"),
+        record.get("userName"),
+    ]
+    for candidate in candidates:
+        text = compact_str(candidate)
+        if text and not looks_like_identifier(text):
+            return text
+    return fallback
+
+
+def normalize_person_display(value: Any, *, empty: str) -> str:
+    s = " ".join(str(value or "").strip().split())
+    if not s:
+        return empty
+    low = s.lower()
+    if low in {"none", "null", "n/a"}:
+        return "none"
+    if low in {"unassigned", "unknown"}:
+        return "unassigned"
+    return s
+
+
+def pick_better_person_display(current: str | None, candidate: str) -> str:
+    if not current or current == candidate:
+        return candidate
+
+    def score(v: str) -> tuple[int, int, int]:
+        return (
+            0 if v == v.lower() else 1,
+            sum(1 for idx, ch in enumerate(v) if idx > 0 and ch.isupper()),
+            -len(v),
+        )
+
+    return candidate if score(candidate) > score(current) else current
+
+
+def add_casefold_count(
+    counts: dict[str, int],
+    labels: dict[str, str],
+    raw_value: Any,
+    *,
+    empty: str,
+    delta: int = 1,
+) -> str:
+    display = normalize_person_display(raw_value, empty=empty)
+    key = display.casefold()
+    labels[key] = pick_better_person_display(labels.get(key), display)
+    counts[key] = counts.get(key, 0) + delta
+    return labels[key]
+
+
+def finalize_casefold_counts(counts: dict[str, int], labels: dict[str, str]) -> dict[str, int]:
+    return {
+        labels[key]: value
+        for key, value in sorted(counts.items(), key=lambda kv: (-kv[1], labels.get(kv[0], kv[0])))
+        if value > 0
+    }
 
 
 @dataclass(frozen=True)
@@ -161,7 +240,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     unique_opp_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
     owner_counts: dict[str, int] = {}
+    owner_labels: dict[str, str] = {}
     setter_counts: dict[str, int] = {}
+    setter_labels: dict[str, str] = {}
     lead_source_counts: dict[str, int] = {}
 
     scanned = 0
@@ -186,14 +267,10 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     user_name_cache: dict[str, str | None] = {}
     for snap in db.collection("ghl_users_v2").stream():
         d = snap.to_dict() or {}
-        uid = str(d.get("id") or snap.id).strip()
-        name = d.get("name")
-        if not name:
-            fn = d.get("firstName") or ""
-            ln = d.get("lastName") or ""
-            name = (fn + " " + ln).strip() or None
-        if uid:
-            user_name_cache[uid] = name
+        name = best_person_name(d) or None
+        for key in {compact_str(d.get("id")), compact_str(d.get("userId")), compact_str(snap.id)}:
+            if key:
+                user_name_cache[key] = name
 
     def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:
@@ -211,13 +288,15 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
                 v = opp.get(k)
                 if v and str(v).strip():
-                    return str(v).strip()
+                    text = compact_str(v)
+                    if not looks_like_identifier(text):
+                        return text
             au = opp.get("assignedToUser")
             if isinstance(au, dict):
-                v = au.get("name")
-                if v and str(v).strip():
-                    return str(v).strip()
-        return None
+                text = best_person_name(au)
+                if text:
+                    return text
+        return f"Unknown User ({uid[-6:]})"
 
     def pipeline_name_from_id(pipeline_id: str | None) -> str | None:
         if not pipeline_id:
@@ -311,7 +390,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         # Breakdown by opportunity owner (assignedTo)
         owner_id = opp.get("assignedTo")
         oname = user_name_from_id(owner_id, opp) or str(owner_id or "unassigned")
-        owner_counts[oname] = owner_counts.get(oname, 0) + 1
+        oname = add_casefold_count(owner_counts, owner_labels, oname, empty="unassigned")
 
         # Breakdown by Setter Last Name (custom field on contact)
         # Primary field can sometimes contain team/channel labels (e.g., Rochester/Buffalo).
@@ -342,8 +421,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if (not setter_name) or (setter_name.strip().lower() in invalid_primary_values and fallback_s):
             setter_name = fallback_s or setter_name
 
-        setter_bucket = setter_name if setter_name else "none"
-        setter_counts[setter_bucket] = setter_counts.get(setter_bucket, 0) + 1
+        setter_bucket = add_casefold_count(setter_counts, setter_labels, setter_name, empty="none")
 
         if lead_src:
             lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1
@@ -402,8 +480,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         },
         "breakdowns": {
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
-            "sales_by_owner": {k: v for k, v in sorted(owner_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
-            "sales_by_setter_last_name": {k: v for k, v in sorted(setter_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            "sales_by_owner": finalize_casefold_counts(owner_counts, owner_labels),
+            "sales_by_setter_last_name": finalize_casefold_counts(setter_counts, setter_labels),
             "sales_by_lead_gen_source": {k: v for k, v in sorted(lead_source_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
         },
         "sample_rows": contrib_rows,

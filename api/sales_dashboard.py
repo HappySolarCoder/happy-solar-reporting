@@ -23,12 +23,22 @@ Style:
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 def render_html(year: int, month: int) -> str:
+    nav_css = dashboard_nav_css()
+    nav_html = render_dashboard_nav("sales_dashboard")
     html = r"""<!doctype html>
 <html>
 <head>
@@ -110,14 +120,7 @@ def render_html(year: int, month: int) -> str:
     }
     .brandCenter img { height: 56px; width: auto; display:block; }
 
-    .nav {
-      margin-top: 12px;
-      display:flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: center;
-      width: 100%;
-    }
+__DASHBOARD_NAV_CSS__
 
     .navbtn {
       display:inline-flex;
@@ -362,13 +365,7 @@ def render_html(year: int, month: int) -> str:
         <div class="title">Sales Dashboard</div>
         <div class="subtitle">Happy Solar — sales + owner performance</div>
         <div class="accentline"></div>
-        <div class="nav">
-          <a class="navbtn" href="/api/company_overview">Company Overview</a>
-          <a class="navbtn active" href="/api/sales_dashboard">Sales Dashboard</a>
-          <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
-          <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
-          <a class="navbtn" href="/api/daily_update">Daily Dashboard</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
 
 
@@ -850,7 +847,7 @@ def render_html(year: int, month: int) -> str:
 </body>
 </html>"""
 
-    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month))
+    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month)).replace("__DASHBOARD_NAV_CSS__", nav_css).replace("__DASHBOARD_NAV_HTML__", nav_html)
 
 
 class handler(BaseHTTPRequestHandler):

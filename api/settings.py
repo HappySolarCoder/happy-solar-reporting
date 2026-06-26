@@ -19,6 +19,14 @@ from http.server import BaseHTTPRequestHandler
 
 import base64
 import os
+import sys
+from pathlib import Path
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 def _unauthorized(h: BaseHTTPRequestHandler):
@@ -143,7 +151,7 @@ HTML = """<!doctype html>
       .wrap { padding: 12px; }
       .topbar { padding: 12px; gap: 10px; }
       .title { font-size: 20px; }
-      .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
+__DASHBOARD_NAV_CSS__
       .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
       .card { padding: 12px; }
       th, td { font-size: 11px; }
@@ -157,12 +165,8 @@ HTML = """<!doctype html>
         <div class=\"title\">Settings</div>
         <div class=\"subtitle\">Map person → add goals → save once</div>
         <div class=\"pinkline\"></div>
-        <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/leadership_dashboard\">Leadership Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/daily_update\">Daily Dashboard</a>
+__DASHBOARD_NAV_HTML__
+        <div class=\"nav\" style=\"justify-content:flex-start;\">
           <a class=\"navbtn active\" href=\"/api/settings\">Settings</a>
           <a class=\"navbtn\" href=\"/api/data_cleanup\">Data Cleanup</a>
         </div>
@@ -183,6 +187,10 @@ HTML = """<!doctype html>
           <div class=\"hgroup\">
             <a class=\"btn secondary\" href=\"/api/secret_holographic_pipeline\">🪐 Holographic Pipeline</a>
             <a class=\"btn secondary\" href=\"/api/secret_futurecast\">🔮 Futurecast Simulator</a>
+            <a class=\"btn secondary\" href=\"/api/fma_commissions\">💸 FMA Commissions</a>
+            <a class=\"btn secondary\" href=\"/api/fma_weekly_review\">🗓️ FMA Weekly Review</a>
+            <a class=\"btn secondary\" href=\"/api/sc_overview\">📈 SC Overview</a>
+            <a class=\"btn secondary\" href=\"/api/scottsdale_incentive\">🌵 Scottsdale Incentive</a>
           </div>
         </div>
       </div>
@@ -612,7 +620,7 @@ HTML = """<!doctype html>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>
-</html>"""
+</html>""".replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css()).replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("settings"))
 
 
 class handler(BaseHTTPRequestHandler):

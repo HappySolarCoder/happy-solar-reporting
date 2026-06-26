@@ -9,7 +9,15 @@ Currently a scaffold page to support top-level navigation across production dash
 
 from __future__ import annotations
 
+import sys
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 def render_html() -> str:
@@ -73,12 +81,7 @@ def render_html() -> str:
       margin-top: 10px;
     }
 
-    .nav {
-      margin-top: 12px;
-      display:flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
+__DASHBOARD_NAV_CSS__
 
     .navbtn {
       display:inline-flex;
@@ -144,15 +147,7 @@ def render_html() -> str:
         <div class=\"title\">Leadership Dashboard</div>
         <div class=\"subtitle\">Happy Solar — production navigation scaffold</div>
         <div class=\"pinkline\"></div>
-        <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/missing_dispos\">Missing Dispos</a>
-          <a class=\"navbtn\" href=\"/api/virtual_team_dashboard\">Virtual Team</a>
-          <a class=\"navbtn\" href=\"/api/daily_update\">Daily Dashboard</a>
-          <a class=\"navbtn active\" href=\"/api/leadership_dashboard\">Leadership Dashboard</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
     </div>
 
@@ -167,7 +162,7 @@ def render_html() -> str:
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>
-</html>"""
+</html>""".replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css()).replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("leadership_dashboard"))
 
 
 class handler(BaseHTTPRequestHandler):

@@ -13,7 +13,15 @@ Uses existing metric APIs with date-only window (America/New_York):
 
 from __future__ import annotations
 
+import sys
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 HTML = """<!doctype html>
@@ -58,7 +66,7 @@ HTML = """<!doctype html>
       margin-top: 10px;
     }
 
-    .nav { margin-top: 12px; display:flex; gap: 10px; flex-wrap: wrap; }
+__DASHBOARD_NAV_CSS__
     .navbtn {
       display:inline-flex; align-items:center; padding: 9px 12px;
       border-radius: 12px; border: 1px solid var(--border);
@@ -89,17 +97,22 @@ HTML = """<!doctype html>
     .accent-opps { border-top: 4px solid #2563eb; background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0)); }
     .accent-raydar { border-top: 4px solid #7c3aed; background: linear-gradient(180deg, rgba(124,58,237,0.06), rgba(255,255,255,0)); }
     .accent-kixie { border-top: 4px solid #0ea5a4; background: linear-gradient(180deg, rgba(14,165,164,0.06), rgba(255,255,255,0)); }
+    .accent-powerline { border-top: 4px solid #ec4899; background: linear-gradient(180deg, rgba(236,72,153,0.06), rgba(255,255,255,0)); }
 
     .card-title.sales { color:#b91c1c; }
     .card-title.opps { color:#1d4ed8; }
     .card-title.raydar { color:#6d28d9; }
     .card-title.kixie { color:#0f766e; }
+    .card-title.powerline { color:#be185d; }
     .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
     .span-6 { grid-column: span 6; }
     .span-12 { grid-column: span 12; }
+    .activity-grid { align-items:stretch; }
+    .activity-stack { grid-column: span 6; display:grid; grid-template-rows: repeat(2, minmax(0, 1fr)); gap:14px; height:100%; min-height:0; }
+    .activity-stack .card { height:100%; min-height:0; overflow:hidden; }
 
-    @media (max-width: 1200px) { .span-3, .span-4, .span-6 { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 1200px) { .span-3, .span-4, .span-6, .activity-stack { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 820px) {
       .wrap { padding: 12px; }
       .topbar { padding: 12px; gap: 10px; }
@@ -192,14 +205,7 @@ HTML = """<!doctype html>
         <div class=\"title\">Daily Dashboard <a class=\"sunLink\" href=\"/api/morning_brief\" title=\"Morning Brief\">☀️</a></div>
         <div class=\"subtitle\">Morning meeting snapshot across GHL, Raydar, and Kixie</div>
         <div class=\"pinkline\"></div>
-        <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/virtual_team_dashboard\">Virtual Team</a>
-          <a class=\"navbtn active\" href=\"/api/daily_update\">Daily Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/settings\">Settings</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
 
       <div>
@@ -257,7 +263,7 @@ HTML = """<!doctype html>
         <div class="kpi" id="kpiOppsSelfGen">—</div>
       </div>
       <div class="card accent-opps kpi-card-center">
-        <div class="kpi-label">3PL Opportunities</div>
+        <div class="kpi-label">3PL/Inbound Opportunities</div>
         <div class="kpi" id="kpiOpps3pl">—</div>
       </div>
       <div class="card accent-opps kpi-card-center">
@@ -276,7 +282,7 @@ HTML = """<!doctype html>
         <div id="tblOppsSelfSetter"></div>
       </div>
       <div class="card span-3 accent-opps">
-        <div class="card-title opps">3PL Opps Created</div>
+        <div class="card-title opps">3PL/Inbound Opps Created</div>
         <div id="tblOpps3plSetter"></div>
       </div>
       <div class="card span-3 accent-opps">
@@ -286,14 +292,20 @@ HTML = """<!doctype html>
     </div>
 
     <div class="row-title">Activity</div>
-    <div class="grid">
+    <div class="grid activity-grid">
       <div class="card span-6 accent-raydar">
         <div class="card-title raydar">Door Knocks by Raydar User</div>
         <div id="tblKnocks"></div>
       </div>
-      <div class="card span-6 accent-kixie">
-        <div class="card-title kixie">Kixie Calls by User</div>
-        <div id="tblKixie"></div>
+      <div class="activity-stack">
+        <div class="card accent-kixie">
+          <div class="card-title kixie">Kixie Calls by User</div>
+          <div id="tblKixie"></div>
+        </div>
+        <div class="card accent-powerline">
+          <div class="card-title powerline">Powerline Calls by User</div>
+          <div id="tblPowerline"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -416,6 +428,46 @@ HTML = """<!doctype html>
     `;
   }
 
+  function renderPowerlineTable(containerId, rows, emptyMessage = 'No rows') {
+    const el = document.getElementById(containerId);
+    const list = Array.isArray(rows)
+      ? rows
+          .map((r) => ({
+            user: String(r?.label || r?.agent || '—'),
+            calls: Number(r?.call_attempts || 0),
+          }))
+          .sort((a, b) => (b.calls - a.calls) || a.user.localeCompare(b.user))
+      : [];
+    if (!list.length) {
+      el.innerHTML = `<div class=\"muted\" style=\"margin-top:8px\">${emptyMessage}</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th class=\"num\">Calls</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(r => `<tr><td>${r.user}</td><td class=\"num\">${numberFmt(r.calls)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function mergeCountMaps(...maps) {
+    const merged = {};
+    for (const map of maps) {
+      for (const [key, value] of Object.entries(map || {})) {
+        const label = String(key || '—').trim() || '—';
+        merged[label] = (merged[label] || 0) + Number(value || 0);
+      }
+    }
+    return merged;
+  }
+
   async function fetchJson(u) {
     const res = await fetch(u);
     if (!res.ok) throw new Error(`${u} → ${res.status}`);
@@ -437,19 +489,26 @@ HTML = """<!doctype html>
     document.getElementById('startDate').value = start;
     document.getElementById('endDate').value = end;
     document.getElementById('status').textContent = `Window: ${start} → ${end} (America/New_York)`;
+    renderPowerlineTable('tblPowerline', [], 'Loading…');
 
     const q = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&format=json`;
 
     // Non-blocking warm trigger for this exact daily window
     fetch(`/api/warm_cache?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&include_daily=1`, { keepalive: true }).catch(()=>{});
 
+    // Start Powerline immediately so the slowest activity card does not lag behind the rest of the dashboard.
+    const powerlinePromise = fetchJson(`/api/powerline_dashboard?${q}`)
+      .then((powerline) => ({ powerline }))
+      .catch((powerlineErr) => ({ powerlineErr }));
+
     try {
-      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsVirtual, knocks, kixie] = await Promise.all([
+      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsInbound, oppsVirtual, knocks, kixie] = await Promise.all([
         fetchJson(`/api/metrics/sales?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Doors')}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('3PL')}`),
+        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Inbound')}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
         fetchJson(`/api/metrics/kixie_calls_summary?${q}`),
@@ -469,7 +528,7 @@ HTML = """<!doctype html>
       };
       document.getElementById('kpiOppsDoors').textContent = numberFmt(leadVal(['doors']));
       document.getElementById('kpiOppsSelfGen').textContent = numberFmt(leadVal(['self gen','selfgen']));
-      document.getElementById('kpiOpps3pl').textContent = numberFmt(leadVal(['3pl']));
+      document.getElementById('kpiOpps3pl').textContent = numberFmt(leadVal(['3pl','inbound']));
       document.getElementById('kpiOppsVirtual').textContent = numberFmt(leadVal(['phones','virtual']));
 
       renderKVTable('tblSalesOwner', sales?.breakdowns?.sales_by_owner || {}, 'Sales');
@@ -478,13 +537,20 @@ HTML = """<!doctype html>
 
       renderKVTable('tblOppsDoorsSetter', oppsDoors?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
       renderKVTable('tblOppsSelfSetter', oppsSelf?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
-      renderKVTable('tblOpps3plSetter', opps3pl?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable(
+        'tblOpps3plSetter',
+        mergeCountMaps(
+          opps3pl?.breakdowns?.created_by_setter_last_name || {},
+          oppsInbound?.breakdowns?.created_by_setter_last_name || {},
+        ),
+        'Opps'
+      );
       renderKVTable('tblOppsVirtualSetter', oppsVirtual?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
 
       // Match FMA schema: use knocks_by_actor and map actor id -> Raydar user name.
       const knocksByActor = (knocks && knocks.breakdowns && knocks.breakdowns.knocks_by_actor) ? knocks.breakdowns.knocks_by_actor : {};
       const topKnockers = Array.isArray(knocks?.top_knockers) ? knocks.top_knockers : [];
-      const actorNameMap = {};
+      const actorNameMap = { ...((knocks && knocks.users) ? knocks.users : {}) };
       for (const r of topKnockers) {
         const id = String(r.userId || '').trim();
         const nm = String(r.name || '').trim();
@@ -498,6 +564,13 @@ HTML = """<!doctype html>
       renderKVTable('tblKnocks', knocksByName, 'Knocks');
 
       renderKixieTable('tblKixie', kixie?.by_agent || []);
+      const { powerline, powerlineErr } = await powerlinePromise;
+      if (powerlineErr) {
+        console.error(powerlineErr);
+        renderPowerlineTable('tblPowerline', [], 'Powerline unavailable');
+      } else {
+        renderPowerlineTable('tblPowerline', powerline?.tables?.by_agent || []);
+      }
 
       document.getElementById('status').textContent = `Loaded daily update for ${start} → ${end}`;
     } catch (e) {
@@ -538,6 +611,7 @@ HTML = """<!doctype html>
 </body>
 </html>
 """
+HTML = HTML.replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css()).replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("daily_update"))
 
 
 class handler(BaseHTTPRequestHandler):

@@ -31,14 +31,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 OWNER_NAME_OVERRIDES = {
@@ -170,9 +177,28 @@ def users_lookup(db: firestore.Client) -> dict[str, str]:
     out: dict[str, str] = {}
     for snap in db.collection("ghl_users_v2").stream():
         d = snap.to_dict() or {}
-        uid = str(d.get("id") or snap.id)
-        nm = str(d.get("name") or uid)
-        out[uid] = nm
+        candidates = [
+            d.get("name"),
+            d.get("displayName"),
+            d.get("fullName"),
+            " ".join(part for part in (str(d.get("firstName") or "").strip(), str(d.get("lastName") or "").strip()) if part),
+            d.get("firstName"),
+            d.get("lastName"),
+            d.get("userName"),
+        ]
+        nm = ""
+        for candidate in candidates:
+            text = " ".join(str(candidate or "").strip().split())
+            if text and not (" " not in text and len(text) >= 12 and all(ch.isalnum() or ch in {"-", "_"} for ch in text)):
+                nm = text
+                break
+        for uid in {
+            str(d.get("id") or "").strip(),
+            str(d.get("userId") or "").strip(),
+            str(snap.id or "").strip(),
+        }:
+            if uid and nm:
+                out[uid] = nm
     return out
 
 
@@ -187,6 +213,7 @@ def html_escape(x: Any) -> str:
 
 
 def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
+    nav_html = render_dashboard_nav("missing_dispos")
     html = """<!doctype html>
 <html>
 <head>
@@ -215,6 +242,8 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
       padding: 18px 20px; border-radius: 14px; background: var(--card);
       border: 1px solid var(--border); box-shadow: var(--shadow);
     }
+
+__DASHBOARD_NAV_CSS__
 
     .adminSettings {
       position: absolute;
@@ -316,13 +345,7 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
         <div class="title">Missing Dispos</div>
         <div class="subtitle">__SUBTITLE__</div>
         <div class="pinkline"></div>
-        <div class="nav">
-          <a class="navbtn" href="/api/company_overview">Company Overview</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales Dashboard</a>
-          <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
-          <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
-          <a class="navbtn" href="/api/daily_update">Daily Dashboard</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
       <div style="min-width:320px">
         <a class="navbtn" href="/api/appointment_outcomes">Appointment Outcomes</a>
@@ -495,6 +518,8 @@ def render_page(*, rows_html: str, count: int, subtitle: str) -> str:
         html.replace("__ROWS__", rows_html)
         .replace("__COUNT__", str(count))
         .replace("__SUBTITLE__", html_escape(subtitle))
+        .replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css())
+        .replace("__DASHBOARD_NAV_HTML__", nav_html)
     )
 
 
@@ -618,12 +643,14 @@ class handler(BaseHTTPRequestHandler):
                         or ((opp.get('assignedToUser') or {}).get('name') if isinstance(opp.get('assignedToUser'), dict) else '')
                         or ''
                     ).strip()
+                    if owner_name and " " not in owner_name and len(owner_name) >= 12 and all(ch.isalnum() or ch in {"-", "_"} for ch in owner_name):
+                        owner_name = ""
 
                 if not owner_name and assigned_to:
                     owner_name = OWNER_NAME_OVERRIDES.get(assigned_to.lower(), "")
 
                 if not owner_name:
-                    owner_name = assigned_to
+                    owner_name = f"Unknown User ({assigned_to[-6:]})" if assigned_to else "unassigned"
 
                 pid = str(opp.get('pipelineId') or '')
                 pname = pipelines.get(pid, pid)

@@ -37,6 +37,55 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 
 
+def normalize_person_display(value: Any, *, empty: str) -> str:
+    s = " ".join(str(value or "").strip().split())
+    if not s:
+        return empty
+    low = s.lower()
+    if low in {"none", "null", "n/a"}:
+        return "none"
+    if low in {"unassigned", "unknown"}:
+        return "unassigned"
+    return s
+
+
+def pick_better_person_display(current: str | None, candidate: str) -> str:
+    if not current or current == candidate:
+        return candidate
+
+    def score(v: str) -> tuple[int, int, int]:
+        return (
+            0 if v == v.lower() else 1,
+            sum(1 for idx, ch in enumerate(v) if idx > 0 and ch.isupper()),
+            -len(v),
+        )
+
+    return candidate if score(candidate) > score(current) else current
+
+
+def add_casefold_count(
+    counts: dict[str, int],
+    labels: dict[str, str],
+    raw_value: Any,
+    *,
+    empty: str,
+    delta: int = 1,
+) -> str:
+    display = normalize_person_display(raw_value, empty=empty)
+    key = display.casefold()
+    labels[key] = pick_better_person_display(labels.get(key), display)
+    counts[key] = counts.get(key, 0) + delta
+    return labels[key]
+
+
+def finalize_casefold_counts(counts: dict[str, int], labels: dict[str, str]) -> dict[str, int]:
+    return {
+        labels[key]: value
+        for key, value in sorted(counts.items(), key=lambda kv: (-kv[1], labels.get(kv[0], kv[0])))
+        if value > 0
+    }
+
+
 @dataclass(frozen=True)
 class MetricContract:
     metric_name: str = "Demo Rate"
@@ -343,6 +392,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     # breakdowns
     ran_by_setter: dict[str, int] = {}
     sit_by_setter: dict[str, int] = {}
+    setter_labels: dict[str, str] = {}
     by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
     sit_by_lead: dict[str, int] = {}
@@ -387,7 +437,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
         setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
-        setter_s = str(setter).strip() if setter not in (None, "") else "none"
+        setter_s = normalize_person_display(setter, empty="none")
 
         lead = normalize_lead_source(contact_custom_field(contact, c.lead_gen_source_contact_cf_id))
 
@@ -403,9 +453,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if dispo == "Sit":
             sit += 1
 
-        ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
+        setter_s = add_casefold_count(ran_by_setter, setter_labels, setter_s, empty="none")
         if dispo == "Sit":
-            sit_by_setter[setter_s] = sit_by_setter.get(setter_s, 0) + 1
+            add_casefold_count(sit_by_setter, setter_labels, setter_s, empty="none")
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_lead[lead] = by_lead.get(lead, 0) + 1
         if dispo == "Sit":
@@ -439,9 +489,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "sit_count": sit,
         "result": pct,
         "breakdowns": {
-            "ran_by_setter_last_name": ran_by_setter,
-            "sit_by_setter_last_name": sit_by_setter,
-            "demo_rate_by_setter_last_name": ran_by_setter,  # legacy: was misnamed; kept for backward-compat
+            "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),
+            "sit_by_setter_last_name": finalize_casefold_counts(sit_by_setter, setter_labels),
+            "demo_rate_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),  # legacy: was misnamed; kept for backward-compat
 
             "demo_rate_by_pipeline": by_pipeline,
             "ran_by_lead_gen_source": by_lead,

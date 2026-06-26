@@ -28,12 +28,22 @@ best-effort implementation based on the described rules.
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 def render_html(year: int, month: int) -> str:
+    nav_css = dashboard_nav_css()
+    nav_html = render_dashboard_nav("company_overview")
     html = r"""<!doctype html>
 <html>
 <head>
@@ -117,14 +127,7 @@ def render_html(year: int, month: int) -> str:
     }
     .brandCenter img { height: 56px; width: auto; display:block; }
 
-    .nav {
-      margin-top: 12px;
-      display:flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      justify-content: center;
-      width: 100%;
-    }
+__DASHBOARD_NAV_CSS__
 
     .navbtn {
       display:inline-flex;
@@ -437,13 +440,7 @@ def render_html(year: int, month: int) -> str:
         <div class="title">Company Overview</div>
         <div class="subtitle">Happy Solar — Sales + created opportunities</div>
         <div class="pinkline"></div>
-        <div class="nav">
-          <a class="navbtn active" href="/api/company_overview">Company Overview</a>
-          <a class="navbtn" href="/api/sales_dashboard">Sales Dashboard</a>
-          <a class="navbtn" href="/api/fma_dashboard">FMA Dashboard</a>
-          <a class="navbtn" href="/api/virtual_team_dashboard">Virtual Team</a>
-          <a class="navbtn" href="/api/daily_update">Daily Dashboard</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
 
 
@@ -545,7 +542,7 @@ def render_html(year: int, month: int) -> str:
         </div>
 
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">3PL Funnel</div></div>
+          <div class="card-header"><div class="card-title">3PL/Inbound Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
@@ -951,11 +948,15 @@ def render_html(year: int, month: int) -> str:
     renderVertical(document.getElementById('salesByPipelineV'), b.sales_by_pipeline || {});
 
     const salesByLead = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_lead_gen_source) ? salesData.breakdowns.sales_by_lead_gen_source : {};
+    const sumByAliases = (obj, aliases) => aliases.reduce((sum, key) => sum + Number((obj && obj[key]) || 0), 0);
+    const SELF_GEN_KEYS = ['Self Gen', 'self gen', 'selfgen', 'SelfGen'];
+    const PHONES_KEYS = ['Phones', 'Virtual'];
+    const THREE_PL_INBOUND_KEYS = ['3PL', 'Inbound'];
     document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));
-    document.getElementById('lgDoorsSales').textContent = String(Number(salesByLead['Doors'] || 0));
-    document.getElementById('lgSelfGenSales').textContent = String(Number(salesByLead['Self Gen'] || 0));
-    document.getElementById('lgPhonesSales').textContent = String(Number(salesByLead['Phones'] || salesByLead['Virtual'] || 0));
-    document.getElementById('lg3plSales').textContent = String(Number(salesByLead['3PL'] || 0));
+    document.getElementById('lgDoorsSales').textContent = String(sumByAliases(salesByLead, ['Doors']));
+    document.getElementById('lgSelfGenSales').textContent = String(sumByAliases(salesByLead, SELF_GEN_KEYS));
+    document.getElementById('lgPhonesSales').textContent = String(sumByAliases(salesByLead, PHONES_KEYS));
+    document.getElementById('lg3plSales').textContent = String(sumByAliases(salesByLead, THREE_PL_INBOUND_KEYS));
 
     const ranByLead = (ranData && ranData.breakdowns && ranData.breakdowns.ran_by_lead_gen_source) ? ranData.breakdowns.ran_by_lead_gen_source : {};
 
@@ -964,10 +965,10 @@ def render_html(year: int, month: int) -> str:
     }
     const createdByLead = (createdData.breakdowns || {}).created_by_lead_gen_source || {};
     document.getElementById('lgCompanyCreated').textContent = String(Number(createdData.result || 0));
-    document.getElementById('lgDoorsCreated').textContent = String(Number(createdByLead['Doors'] || 0));
-    document.getElementById('lgSelfGenCreated').textContent = String(Number(createdByLead['Self Gen'] || 0));
-    document.getElementById('lgPhonesCreated').textContent = String(Number(createdByLead['Phones'] || createdByLead['Virtual'] || 0));
-    document.getElementById('lg3plCreated').textContent = String(Number(createdByLead['3PL'] || 0));
+    document.getElementById('lgDoorsCreated').textContent = String(sumByAliases(createdByLead, ['Doors']));
+    document.getElementById('lgSelfGenCreated').textContent = String(sumByAliases(createdByLead, SELF_GEN_KEYS));
+    document.getElementById('lgPhonesCreated').textContent = String(sumByAliases(createdByLead, PHONES_KEYS));
+    document.getElementById('lg3plCreated').textContent = String(sumByAliases(createdByLead, THREE_PL_INBOUND_KEYS));
 
     const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
     const fmtCounts = (d) => {
@@ -983,16 +984,20 @@ def render_html(year: int, month: int) -> str:
     const ranLead = (demoData && demoData.breakdowns && demoData.breakdowns.ran_by_lead_gen_source) ? demoData.breakdowns.ran_by_lead_gen_source : {};
     const sitLead = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_lead_gen_source) ? demoData.breakdowns.sit_by_lead_gen_source : {};
 
-    const mkDemoObj = (lead) => ({
-      result: Number(demoPctByLead[lead] || 0),
-      ran_count: Number(ranLead[lead] || 0),
-      sit_count: Number(sitLead[lead] || 0),
-    });
+    const mkDemoObj = (aliases) => {
+      const ran = sumByAliases(ranLead, aliases);
+      const sit = sumByAliases(sitLead, aliases);
+      return {
+        result: ran > 0 ? (sit / ran) * 100 : 0,
+        ran_count: ran,
+        sit_count: sit,
+      };
+    };
 
-    const demoDoorsData = mkDemoObj('Doors');
-    const demoSelfGenData = mkDemoObj('Self Gen');
-    const demoPhonesData = mkDemoObj('Phones');
-    const demo3plData = mkDemoObj('3PL');
+    const demoDoorsData = mkDemoObj(['Doors']);
+    const demoSelfGenData = mkDemoObj(SELF_GEN_KEYS);
+    const demoPhonesData = mkDemoObj(PHONES_KEYS);
+    const demo3plData = mkDemoObj(THREE_PL_INBOUND_KEYS);
 
     document.getElementById('lgCompanyDemo').textContent = fmtPct(demoData);
     document.getElementById('lgDoorsDemo').textContent = fmtPct(demoDoorsData);
@@ -1014,14 +1019,14 @@ def render_html(year: int, month: int) -> str:
       document.getElementById(countsId).textContent = `Sales: ${s} • Ran: ${r}`;
     }
 
-    const mkSalesObj = (lead) => ({ result: Number(salesByLead[lead] || 0) });
-    const mkRanObj = (lead) => ({ result: Number(ranByLead[lead] || 0) });
+    const mkSalesObj = (aliases) => ({ result: sumByAliases(salesByLead, aliases) });
+    const mkRanObj = (aliases) => ({ result: sumByAliases(ranByLead, aliases) });
 
     setOpp2PrelimCard('lgCompanyOpp2', 'lgCompanyOpp2Counts', salesData, ranData);
-    setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', mkSalesObj('Doors'), mkRanObj('Doors'));
-    setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', mkSalesObj('Self Gen'), mkRanObj('Self Gen'));
-    setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', mkSalesObj('Phones'), mkRanObj('Phones'));
-    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj('3PL'), mkRanObj('3PL'));
+    setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', mkSalesObj(['Doors']), mkRanObj(['Doors']));
+    setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', mkSalesObj(SELF_GEN_KEYS), mkRanObj(SELF_GEN_KEYS));
+    setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', mkSalesObj(PHONES_KEYS), mkRanObj(PHONES_KEYS));
+    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj(THREE_PL_INBOUND_KEYS), mkRanObj(THREE_PL_INBOUND_KEYS));
 
     // Monthly trend chart (Aug 2025 onward)
     const trendRes = await fetch(`/api/metrics/company_trends?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&start_year=2025&start_month=8`);
@@ -1067,7 +1072,7 @@ def render_html(year: int, month: int) -> str:
 </body>
 </html>"""
 
-    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month))
+    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month)).replace("__DASHBOARD_NAV_CSS__", nav_css).replace("__DASHBOARD_NAV_HTML__", nav_html)
 
 
 class Handler(BaseHTTPRequestHandler):

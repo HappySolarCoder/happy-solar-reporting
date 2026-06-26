@@ -4,7 +4,7 @@
 
 Appointment Outcomes dashboard
 - List of appointments that have been dispositioned
-- Filters: Setter Last Name + date range
+- Filters: view + Setter Last Name + Sales Rep + date range
 - Default: yesterday
 - Date filtering field: appointment date/time (appointmentStartTime)
 """
@@ -13,14 +13,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+
 from google.cloud import firestore
 from google.oauth2 import service_account
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
@@ -28,6 +35,36 @@ DISPOSITION_NOTES_FIELD_ID = "cCcnzoIp8YgW2Pr0sB5E"  # GHL custom field: Disposi
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
 }
+
+
+def compact_str(value) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def looks_like_identifier(value) -> bool:
+    text = compact_str(value)
+    if not text or " " in text or len(text) < 12:
+        return False
+    return all(ch.isalnum() or ch in {"-", "_"} for ch in text)
+
+
+def best_person_name(record, *, fallback: str = "") -> str:
+    if not isinstance(record, dict):
+        return fallback
+    candidates = [
+        record.get("name"),
+        record.get("displayName"),
+        record.get("fullName"),
+        " ".join(part for part in (compact_str(record.get("firstName")), compact_str(record.get("lastName"))) if part),
+        record.get("firstName"),
+        record.get("lastName"),
+        record.get("userName"),
+    ]
+    for candidate in candidates:
+        text = compact_str(candidate)
+        if text and not looks_like_identifier(text):
+            return text
+    return fallback
 
 
 def get_db() -> firestore.Client:
@@ -133,9 +170,10 @@ def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     out: dict[str, str] = {}
     for snap in db.collection("ghl_users_v2").stream():
         d = snap.to_dict() or {}
-        uid = str(d.get("id") or snap.id)
-        name = str(d.get("name") or d.get("firstName") or uid)
-        out[uid] = name
+        name = best_person_name(d)
+        for key in {compact_str(d.get("id")), compact_str(d.get("userId")), compact_str(snap.id)}:
+            if key and name:
+                out[key] = name
     return out
 
 
@@ -155,13 +193,53 @@ def format_local(dt_utc: datetime | None) -> str:
     return dt_utc.astimezone(TZ).strftime("%Y-%m-%d %I:%M %p")
 
 
-def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_options: list[str], rows_html: str, subtitle_window: str) -> str:
+def view_copy(view: str) -> tuple[str, str]:
+    normalized = (view or "outcomes").strip().lower()
+    if normalized == "upcoming":
+        return ("Upcoming Appointments", "Upcoming appointments list")
+    if normalized == "all":
+        return ("Appointment Outcomes + Upcoming", "Dispositioned and upcoming appointments")
+    return ("Appointment Outcomes", "Dispositioned appointments list")
+
+
+def render_page(
+    *,
+    selected_view: str,
+    start_date: str,
+    end_date: str,
+    selected_setter: str,
+    setter_options: list[str],
+    selected_owner: str,
+    owner_options: list[str],
+    rows_html: str,
+    subtitle_window: str,
+    empty_state: str,
+) -> str:
+    normalized_view = (selected_view or "outcomes").strip().lower()
+    view_options = [
+        ("outcomes", "Outcomes Only"),
+        ("upcoming", "Upcoming Only"),
+        ("all", "Outcomes + Upcoming"),
+    ]
     options_html = ['<option value="">All setters</option>']
     for s in setter_options:
         sel = " selected" if s == selected_setter else ""
         options_html.append(f'<option value="{escape(s)}"{sel}>{escape(s)}</option>')
 
-    return f"""<!doctype html>
+    owner_options_html = ['<option value="">All sales reps</option>']
+    for owner in owner_options:
+        sel = " selected" if owner == selected_owner else ""
+        owner_options_html.append(f'<option value="{escape(owner)}"{sel}>{escape(owner)}</option>')
+
+    title_text, subtitle_prefix = view_copy(normalized_view)
+    view_options_html = []
+    for value, label in view_options:
+        sel = " selected" if value == normalized_view else ""
+        view_options_html.append(f'<option value="{escape(value)}"{sel}>{escape(label)}</option>')
+
+    nav_html = render_dashboard_nav("appointment_outcomes")
+    return (
+        f"""<!doctype html>
 <html>
 <head>
   <meta charset=\"utf-8\" />
@@ -181,10 +259,13 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
     .pinkline {{ height:3px; width:220px; border-radius:999px; background:linear-gradient(90deg, var(--pink) 0%, var(--pink2) 45%, rgba(244,114,182,0) 100%); margin-top:10px; }}
     .brandCenter {{ position:absolute; left:50%; top:12px; transform:translateX(-50%); pointer-events:none; }}
     .brandCenter img {{ height:56px; width:auto; }}
-    .nav {{ margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center; width:100%; }}
+__DASHBOARD_NAV_CSS__
     .navbtn {{ display:inline-flex; align-items:center; padding:9px 12px; border-radius:12px; border:1px solid var(--border); background:#fff; color:#1f2937; font-size:13px; font-weight:800; text-decoration:none; }}
     .navbtn.active {{ background:rgba(236,72,153,0.10); border-color:rgba(236,72,153,0.45); color:#b80b66; }}
     .adminSettings {{ position:absolute; top:16px; right:18px; }}
+    .dashboardSwitch {{ margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+    .dashboardSwitch label {{ font-size:12px; font-weight:900; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; }}
+    .dashboardSwitch select {{ min-width:240px; border:1px solid var(--border); border-radius:12px; background:#fff; color:#1f2937; padding:10px 12px; font-size:13px; font-weight:800; box-shadow:0 1px 3px rgba(17,24,39,0.06); }}
 
     .panel {{ margin-top:14px; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; }}
     .filters {{ display:flex; flex-wrap:wrap; align-items:end; gap:10px; }}
@@ -209,9 +290,18 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
   <div class=\"wrap\">
     <div class=\"topbar\">
       <div>
-        <div class=\"title\">Appointment Outcomes</div>
-        <div class=\"subtitle\">Dispositioned appointments list ({escape(subtitle_window)})</div>
+        <div class=\"title\">{escape(title_text)}</div>
+        <div class=\"subtitle\">{escape(subtitle_prefix)} ({escape(subtitle_window)})</div>
         <div class=\"pinkline\"></div>
+__DASHBOARD_NAV_HTML__
+        <div class=\"dashboardSwitch\">
+          <label for=\"fmaViewSelect\">FMA View</label>
+          <select id=\"fmaViewSelect\" onchange=\"if (this.value) window.location.href = this.value;\">
+            <option value=\"/api/fma_dashboard\">FMA Dashboard</option>
+            <option value=\"/api/appointment_outcomes\" selected>Appointment Outcomes</option>
+            <option value=\"/api/fma_commissions\">Commission Tracker</option>
+          </select>
+        </div>
       </div>
 
       <div class=\"brandCenter\"><img src=\"https://assets.zyrosite.com/cdn-cgi/image/format=auto,w=180,fit=crop,q=95/Aq2VyN6Nz4fD9PjZ/happy-solar-logo-m2W4o75D7Ks9NQj0.png\" alt=\"Happy Solar\" /></div>
@@ -220,21 +310,21 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
         <a class=\"navbtn\" href=\"/api/settings\">Admin Settings</a>
       </div>
 
-      <div class=\"nav\">
-        <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
-        <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
-        <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-        <a class=\"navbtn\" href=\"/api/missing_dispos\">Missing Dispos</a>
-        <a class=\"navbtn active\" href=\"/api/appointment_outcomes\">Appointment Outcomes</a>
-        <a class=\"navbtn\" href=\"/api/virtual_team_dashboard\">Virtual Team</a>
-      </div>
     </div>
 
     <div class=\"panel\">
       <form class=\"filters\" method=\"get\" action=\"/api/appointment_outcomes\">
         <div>
+          <label for=\"view\">View</label><br />
+          <select class=\"select\" id=\"view\" name=\"view\">{''.join(view_options_html)}</select>
+        </div>
+        <div>
           <label for=\"setter_last_name\">Setter Last Name</label><br />
           <select class=\"select\" id=\"setter_last_name\" name=\"setter_last_name\">{''.join(options_html)}</select>
+        </div>
+        <div>
+          <label for=\"owner_name\">Sales Rep (Owner)</label><br />
+          <select class=\"select\" id=\"owner_name\" name=\"owner_name\">{''.join(owner_options_html)}</select>
         </div>
         <div>
           <label for=\"start_date\">Start Date</label><br />
@@ -246,6 +336,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
         </div>
         <button class=\"btn primary\" type=\"submit\">Apply</button>
         <button class=\"btn\" type=\"button\" id=\"yesterdayBtn\">Yesterday</button>
+        <button class=\"btn\" type=\"button\" id=\"next7Btn\">Next 7 Days</button>
       </form>
     </div>
 
@@ -255,7 +346,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
           <tr>
             <th>Appointment Date & Time</th>
             <th>Setter Last Name</th>
-            <th>Disposition</th>
+            <th>Outcome / Status</th>
             <th>Disposition Notes</th>
             <th>Contact</th>
             <th>Owner</th>
@@ -265,7 +356,7 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
           </tr>
         </thead>
         <tbody>
-          {rows_html if rows_html else '<tr><td class="empty" colspan="9">No dispositioned appointments in this window.</td></tr>'}
+          {rows_html if rows_html else f'<tr><td class="empty" colspan="9">{escape(empty_state)}</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -282,10 +373,25 @@ def render_page(*, start_date: str, end_date: str, selected_setter: str, setter_
         document.getElementById('end_date').value = iso;
       }});
     }}
+    const nBtn = document.getElementById('next7Btn');
+    if (nBtn) {{
+      nBtn.addEventListener('click', () => {{
+        const now = new Date();
+        const end = new Date(now);
+        end.setDate(end.getDate() + 7);
+        document.getElementById('start_date').value = now.toISOString().slice(0,10);
+        document.getElementById('end_date').value = end.toISOString().slice(0,10);
+        const view = document.getElementById('view');
+        if (view) view.value = 'upcoming';
+      }});
+    }}
   </script>
 </body>
 </html>
 """
+        .replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css())
+        .replace("__DASHBOARD_NAV_HTML__", nav_html)
+    )
 
 
 class handler(BaseHTTPRequestHandler):
@@ -294,12 +400,22 @@ class handler(BaseHTTPRequestHandler):
 
         today_local = datetime.now(TZ).date()
         yday = today_local - timedelta(days=1)
+        now_utc = datetime.now(timezone.utc)
 
         start_raw = (qs.get("start_date", [""])[0] or "").strip()
         end_raw = (qs.get("end_date", [""])[0] or "").strip()
+        selected_view = (qs.get("view", ["outcomes"])[0] or "outcomes").strip().lower()
+        if selected_view not in {"outcomes", "upcoming", "all"}:
+            selected_view = "outcomes"
 
-        start_dt = parse_ymd(start_raw) or datetime(yday.year, yday.month, yday.day)
-        end_dt = parse_ymd(end_raw) or datetime(yday.year, yday.month, yday.day)
+        default_start = datetime(yday.year, yday.month, yday.day)
+        default_end = datetime(yday.year, yday.month, yday.day)
+        if selected_view == "upcoming":
+            default_start = datetime(today_local.year, today_local.month, today_local.day)
+            default_end = default_start + timedelta(days=7)
+
+        start_dt = parse_ymd(start_raw) or default_start
+        end_dt = parse_ymd(end_raw) or default_end
         if end_dt < start_dt:
             start_dt, end_dt = end_dt, start_dt
 
@@ -309,9 +425,11 @@ class handler(BaseHTTPRequestHandler):
         end_utc = end_local.astimezone(timezone.utc)
 
         selected_setter = (qs.get("setter_last_name", [""])[0] or "").strip()
+        selected_owner = (qs.get("owner_name", [""])[0] or "").strip()
 
         rows_html = ""
         setter_options: list[str] = []
+        owner_options: list[str] = []
 
         try:
             db = get_db()
@@ -340,7 +458,12 @@ class handler(BaseHTTPRequestHandler):
                     continue
 
                 dispo = normalize_disposition(d.get("dispositionValue"))
-                if not dispo:
+                is_upcoming = dt_utc >= now_utc
+                if selected_view == "outcomes" and not dispo:
+                    continue
+                if selected_view == "upcoming" and not is_upcoming:
+                    continue
+                if selected_view == "all" and not dispo and not is_upcoming:
                     continue
 
                 contact_id = str(d.get("contactId") or "").strip()
@@ -353,8 +476,6 @@ class handler(BaseHTTPRequestHandler):
                     or get_custom_field_value(d.get("customFields") or [], DISPOSITION_NOTES_FIELD_ID)
                     or ""
                 ).strip()
-                if selected_setter and setter_last.lower().strip() != selected_setter.lower().strip():
-                    continue
 
                 pid = str(d.get("pipelineId") or "").strip()
                 pipeline_name = pipelines.get(pid, pid)
@@ -371,16 +492,16 @@ class handler(BaseHTTPRequestHandler):
                     for k in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
                         v = d.get(k)
                         if v and str(v).strip():
-                            owner_name = str(v).strip()
-                            break
+                            text = compact_str(v)
+                            if not looks_like_identifier(text):
+                                owner_name = text
+                                break
                 if not owner_name:
                     au = d.get("assignedToUser")
                     if isinstance(au, dict):
-                        v = au.get("name")
-                        if v and str(v).strip():
-                            owner_name = str(v).strip()
+                        owner_name = best_person_name(au)
                 if not owner_name:
-                    owner_name = owner_id
+                    owner_name = f"Unknown User ({owner_id[-6:]})" if owner_id else "unassigned"
 
                 contact_name = ""
                 c = d.get("contact")
@@ -393,7 +514,7 @@ class handler(BaseHTTPRequestHandler):
                     {
                         "dt_utc": dt_utc,
                         "setter": setter_last,
-                        "dispo": dispo,
+                        "status": dispo or ("Upcoming" if is_upcoming else ""),
                         "disposition_notes": disposition_notes,
                         "contact": contact_name,
                         "owner": owner_name,
@@ -403,18 +524,27 @@ class handler(BaseHTTPRequestHandler):
                     }
                 )
 
-            opp_rows.sort(key=lambda r: r["dt_utc"], reverse=True)
+            opp_rows.sort(
+                key=lambda r: r["dt_utc"],
+                reverse=(selected_view == "outcomes"),
+            )
 
-            opts = sorted({(r.get("setter") or "").strip() for r in opp_rows if (r.get("setter") or "").strip()})
-            setter_options = opts
+            setter_options = sorted({(r.get("setter") or "").strip() for r in opp_rows if (r.get("setter") or "").strip()})
+            owner_options = sorted({(r.get("owner") or "").strip() for r in opp_rows if (r.get("owner") or "").strip()})
 
             body = []
             for r in opp_rows:
+                row_setter = (r.get("setter") or "").strip()
+                row_owner = (r.get("owner") or "").strip()
+                if selected_setter and row_setter.lower() != selected_setter.lower():
+                    continue
+                if selected_owner and row_owner.lower() != selected_owner.lower():
+                    continue
                 body.append(
                     "<tr>"
                     f"<td>{escape(format_local(r.get('dt_utc')))}</td>"
                     f"<td>{escape((r.get('setter') or ''))}</td>"
-                    f"<td>{escape((r.get('dispo') or ''))}</td>"
+                    f"<td>{escape((r.get('status') or ''))}</td>"
                     f"<td>{escape((r.get('disposition_notes') or ''))}</td>"
                     f"<td>{escape((r.get('contact') or ''))}</td>"
                     f"<td>{escape((r.get('owner') or ''))}</td>"
@@ -429,13 +559,21 @@ class handler(BaseHTTPRequestHandler):
             rows_html = f"<tr><td class='empty' colspan='9'>Error: {escape(str(e))}</td></tr>"
 
         subtitle_window = f"{start_local.strftime('%Y-%m-%d')} to {end_local.strftime('%Y-%m-%d')}"
+        empty_state = {
+            "upcoming": "No upcoming appointments in this window.",
+            "all": "No dispositioned or upcoming appointments in this window.",
+        }.get(selected_view, "No dispositioned appointments in this window.")
         html = render_page(
+            selected_view=selected_view,
             start_date=start_local.strftime("%Y-%m-%d"),
             end_date=end_local.strftime("%Y-%m-%d"),
             selected_setter=selected_setter,
             setter_options=setter_options,
+            selected_owner=selected_owner,
+            owner_options=owner_options,
             rows_html=rows_html,
             subtitle_window=subtitle_window,
+            empty_state=empty_state,
         )
 
         self.send_response(200)

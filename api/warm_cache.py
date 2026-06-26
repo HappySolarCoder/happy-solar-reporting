@@ -79,6 +79,7 @@ class handler(BaseHTTPRequestHandler):
             urls.extend([
                 f"{base}/api/metrics/raydar_doors_knocked?{q}",
                 f"{base}/api/metrics/kixie_calls_summary?{q}",
+                f"{base}/api/powerline_dashboard?{q}",
             ])
 
         results = []

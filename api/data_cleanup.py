@@ -4,12 +4,15 @@
 
 Admin Data Cleanup dashboard.
 
-Shows contacts where:
-- Appointment Date/Time is present (contact custom field e3udzXVTyqrMqICpyqjF)
-- AND one of:
-  - Setter Last Name is empty/missing (contact custom field Eq4NLTSkJ56KTxbxypuE)
-  - Setter Last Name is a team label (Rochester, Buffalo, Syracuse, Virtual)
-  - Contact is missing assigned owner
+Shows opportunities created in the selected window where:
+- Effective Setter Last Name is empty/missing
+- OR Effective Setter Last Name is a team label
+- OR Effective assigned owner is missing
+
+Canonical field logic matches the reporting endpoints:
+- setter = opportunity custom field Eq4NLTSkJ56KTxbxypuE, fallback contact custom field
+- owner = opportunity assignedTo, fallback contact assigned fields
+- time window = opportunity createdAt in America/New_York
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from google.oauth2 import service_account
 APPT_CF_ID = "e3udzXVTyqrMqICpyqjF"
 SETTER_CF_ID = "Eq4NLTSkJ56KTxbxypuE"
 TEAM_LABELS = {"rochester", "buffalo", "syracuse", "virtual"}
+EXCLUDED_PIPELINE_NAMES = {"inbound/lead locker"}
 DEFAULT_LOCATION_ID = os.environ.get("GHL_LOCATION_ID") or "MMKRDviKggXzlcHQTnvZ"
 
 
@@ -120,6 +124,15 @@ def parse_date_ymd(s: str | None) -> tuple[int, int, int] | None:
         return None
 
 
+def parse_iso_dt(s: str | None) -> datetime | None:
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def render(rows_html: str, count: int, empty_count: int, team_count: int, assigned_count: int, start_date: str, end_date: str) -> str:
     return f"""<!doctype html>
 <html>
@@ -175,7 +188,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
     <div class=\"topbar\">
       <div>
         <div class=\"title\">Data Cleanup</div>
-        <div class=\"subtitle\">Appointment exists + (Setter Last Name empty/team label OR contact missing Assigned Owner)</div>
+        <div class=\"subtitle\">Opportunity created in window + (Setter Last Name empty/team label OR missing Assigned Owner)</div>
         <div class=\"pinkline\"></div>
         <div class=\"nav\">
           <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
@@ -186,7 +199,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
         </div>
       </div>
       <div style=\"min-width:320px\">
-        <div class=\"label\">Appointment Date Filter</div>
+        <div class=\"label\">Opportunity Created Date Filter</div>
         <form method=\"GET\" class=\"filters\" style=\"margin-top:8px\">
           <div>
             <label>Start</label>
@@ -217,6 +230,7 @@ def render(rows_html: str, count: int, empty_count: int, team_count: int, assign
               <th>Issue</th>
               <th>Contact</th>
               <th>Setter Last Name</th>
+              <th>Opportunity Created</th>
               <th>Appointment Date</th>
               <th>Open in GHL</th>
             </tr>
@@ -268,20 +282,52 @@ class handler(BaseHTTPRequestHandler):
             db = get_db()
             rows = []
 
+            contact_cache: dict[str, dict[str, Any]] = {}
+            pipeline_cache: dict[str, str] = {}
             for snap in db.collection("ghl_contacts_v2").stream():
                 c = snap.to_dict() or {}
-                contact_id = str(c.get("id") or snap.id)
-                location_id = str(c.get("locationId") or DEFAULT_LOCATION_ID or "")
+                contact_id = str(c.get("id") or snap.id).strip()
+                if contact_id:
+                    contact_cache[contact_id] = c
+            for snap in db.collection("ghl_pipelines_v2").stream():
+                p = snap.to_dict() or {}
+                pipeline_id = str(p.get("id") or snap.id).strip()
+                if pipeline_id:
+                    pipeline_cache[pipeline_id] = str(p.get("name") or "").strip()
 
-                appt_raw = cf_value(c.get("customFields") or [], APPT_CF_ID)
-                if not appt_raw:
+            for snap in db.collection("ghl_opportunities_v2").stream():
+                opp = snap.to_dict() or {}
+                created_dt = parse_iso_dt(opp.get("createdAt"))
+                if not created_dt:
+                    continue
+                created_local = created_dt.astimezone(tz)
+                if not (start_local <= created_local < end_local_excl):
                     continue
 
-                setter_raw = cf_value(c.get("customFields") or [], SETTER_CF_ID)
+                pipeline_id = str(opp.get("pipelineId") or "").strip()
+                pipeline_name = (pipeline_cache.get(pipeline_id) or pipeline_id).strip().lower()
+                if pipeline_name in EXCLUDED_PIPELINE_NAMES:
+                    continue
+
+                contact_id = str(opp.get("contactId") or "").strip()
+                c = contact_cache.get(contact_id, {})
+                location_id = str(
+                    opp.get("locationId")
+                    or c.get("locationId")
+                    or DEFAULT_LOCATION_ID
+                    or ""
+                ).strip()
+
+                setter_opp = cf_value(opp.get("customFields") or [], SETTER_CF_ID)
+                setter_contact = cf_value(c.get("customFields") or [], SETTER_CF_ID)
+                setter_raw = setter_opp if setter_opp not in (None, "") else setter_contact
                 setter_norm = (setter_raw or "").strip().lower()
 
                 assigned_owner = (
-                    str(c.get("assignedTo") or "").strip()
+                    str(opp.get("assignedTo") or "").strip()
+                    or str(opp.get("ownerId") or "").strip()
+                    or str(opp.get("assignedUserId") or "").strip()
+                    or str(c.get("assignedTo") or "").strip()
                     or str(c.get("ownerId") or "").strip()
                     or str(c.get("assignedUserId") or "").strip()
                 )
@@ -299,6 +345,7 @@ class handler(BaseHTTPRequestHandler):
                 contact_name = (
                     str(c.get("contactName") or "").strip()
                     or (f"{str(c.get('firstName') or '').strip()} {str(c.get('lastName') or '').strip()}".strip())
+                    or str(opp.get("name") or "").strip()
                     or "—"
                 )
 
@@ -306,14 +353,7 @@ class handler(BaseHTTPRequestHandler):
                 if location_id and contact_id:
                     contact_url = f"https://app.gohighlevel.com/v2/location/{location_id}/contacts/detail/{contact_id}"
 
-                appt_local = parse_appt_local(appt_raw)
-                if not appt_local:
-                    continue
-
-                if not (start_local <= appt_local < end_local_excl):
-                    continue
-
-                appt_sort = appt_local.isoformat()
+                appt_raw = cf_value(c.get("customFields") or [], APPT_CF_ID)
 
                 rows.append({
                     "issue": issue,
@@ -322,11 +362,26 @@ class handler(BaseHTTPRequestHandler):
                     "contact_url": contact_url,
                     "setter": setter_raw or "",
                     "assigned_owner": assigned_owner,
-                    "appt": appt_raw,
-                    "appt_sort": appt_sort,
+                    "created_at": created_local.strftime("%Y-%m-%d %I:%M %p %Z"),
+                    "created_sort": created_local.isoformat(),
+                    "appt": appt_raw or "",
                 })
 
-            rows.sort(key=lambda r: (r["issue"], r["appt_sort"], r["contact_name"].lower()))
+            issue_rank = {
+                "missing_setter_last_name": 0,
+                "setter_is_team_label": 1,
+                "missing_assigned_owner": 2,
+            }
+            rows.sort(
+                key=lambda r: (
+                    issue_rank.get(r["issue"], 99),
+                    r["created_sort"],
+                    r["contact_name"].lower(),
+                ),
+                reverse=False,
+            )
+            rows.sort(key=lambda r: r["created_sort"], reverse=True)
+            rows.sort(key=lambda r: issue_rank.get(r["issue"], 99))
 
             empty_count = sum(1 for r in rows if r["issue"] == "missing_setter_last_name")
             team_count = sum(1 for r in rows if r["issue"] == "setter_is_team_label")
@@ -347,13 +402,14 @@ class handler(BaseHTTPRequestHandler):
                         f"<td><code>{html_escape(r['issue'])}</code></td>"
                         f"<td>{contact_cell}</td>"
                         f"<td>{html_escape(r['setter'] or '—')}</td>"
+                        f"<td>{html_escape(r['created_at'])}</td>"
                         f"<td>{html_escape(r['appt'])}</td>"
                         f"<td>{open_cell}</td>"
                         "</tr>"
                     )
                 rows_html = "\n".join(row_html)
             else:
-                rows_html = "<tr><td colspan='5' style='color:#9ca3af'>No rows</td></tr>"
+                rows_html = "<tr><td colspan='6' style='color:#9ca3af'>No rows</td></tr>"
 
             body = render(rows_html, len(rows), empty_count, team_count, assigned_count, start_q, end_q).encode("utf-8")
             self.send_response(200)

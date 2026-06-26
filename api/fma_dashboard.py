@@ -76,6 +76,7 @@ def render_html(year: int, month: int) -> str:
     }
 
     .wrap { padding: 22px; max-width: 1180px; margin: 0 auto; }
+    .topbarMain { min-width: 0; flex: 1 1 420px; }
 
     .topbar {
       position: relative;
@@ -407,8 +408,27 @@ __DASHBOARD_NAV_CSS__
     @media (max-width: 820px) {
       .wrap { padding: 12px; }
       .topbar { padding: 12px; gap: 10px; }
+      .topbarMain { flex-basis: 100%; width: 100%; }
       .title { font-size: 18px; }
       .brandCenter { display:none; }
+      .adminSettings, .missingDisposTop {
+        position: static;
+        order: 3;
+        width: 100%;
+      }
+
+      .dashboardSwitch {
+        width: 100%;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .dashboardSwitch label {
+        width: 100%;
+      }
+      .dashboardSwitch select {
+        width: 100%;
+        min-width: 0;
+      }
 
       .nav { display:flex; flex-wrap:nowrap; overflow-x:auto; gap:8px; padding-bottom:4px; -webkit-overflow-scrolling:touch; }
       .navbtn { padding: 8px 10px; font-size: 12px; white-space: nowrap; flex: 0 0 auto; }
@@ -445,8 +465,6 @@ __DASHBOARD_NAV_CSS__
     @media (max-width: 520px) {
       .grid { grid-template-columns: 1fr; }
       .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }
-      .adminSettings { top: 12px; right: 12px; }
-      .missingDisposTop { top: 12px; right: 134px; }
       .brandCenter { display:none; }
 
       .setterFilters { grid-template-columns: 1fr !important; }
@@ -474,7 +492,7 @@ __DASHBOARD_NAV_CSS__
 <body>
   <div class="wrap">
     <div class="topbar">
-      <div>
+      <div class="topbarMain">
         <div class="title">FMA Dashboard</div>
         <div class="subtitle">Team Performance — real-time setter metrics (Raydar-style cards)</div>
         <div class="pinkline"></div>

@@ -254,6 +254,7 @@ def render_page(
     body {{ font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; margin:0; background:var(--bg); color:var(--text); }}
     .wrap {{ padding: 22px; max-width: 1240px; margin: 0 auto; }}
     .topbar {{ position:relative; display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; padding:18px 20px; border-radius:14px; background:var(--card); border:2px solid var(--border); }}
+    .topbarMain {{ min-width:0; flex:1 1 420px; }}
     .title {{ font-size:22px; font-weight:950; color:#1a2b4a; letter-spacing:-0.02em; }}
     .subtitle {{ margin-top:4px; color:var(--muted); font-size:13px; }}
     .pinkline {{ height:3px; width:220px; border-radius:999px; background:linear-gradient(90deg, var(--pink) 0%, var(--pink2) 45%, rgba(244,114,182,0) 100%); margin-top:10px; }}
@@ -283,13 +284,17 @@ __DASHBOARD_NAV_CSS__
     @media (max-width: 900px) {{
       .brandCenter {{ display:none; }}
       .adminSettings {{ position:static; }}
+      .topbarMain {{ flex-basis:100%; width:100%; }}
+      .dashboardSwitch {{ width:100%; align-items:stretch; gap:6px; }}
+      .dashboardSwitch label {{ width:100%; }}
+      .dashboardSwitch select {{ width:100%; min-width:0; }}
     }}
   </style>
 </head>
 <body>
   <div class=\"wrap\">
     <div class=\"topbar\">
-      <div>
+      <div class=\"topbarMain\">
         <div class=\"title\">{escape(title_text)}</div>
         <div class=\"subtitle\">{escape(subtitle_prefix)} ({escape(subtitle_window)})</div>
         <div class=\"pinkline\"></div>

@@ -92,7 +92,7 @@ class handler(BaseHTTPRequestHandler):
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "public, s-maxage=60, stale-while-revalidate=300")
+            self.send_header("Cache-Control", "public, s-maxage=300, stale-while-revalidate=1800")
             self.end_headers()
             self.wfile.write(body)
         except Exception as e:

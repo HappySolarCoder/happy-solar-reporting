@@ -850,9 +850,6 @@ __DASHBOARD_NAV_HTML__
 
     const rp = rangeParams();
 
-    // Non-blocking warm trigger (hybrid strategy: baseline cron + on-open refresh)
-    fetch(`/api/warm_cache?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp.replace(/^&/, '&')}`, { keepalive: true }).catch(()=>{});
-
     const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
     const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all`;
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;

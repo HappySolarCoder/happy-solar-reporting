@@ -493,9 +493,6 @@ __DASHBOARD_NAV_HTML__
 
     const q = `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&format=json`;
 
-    // Non-blocking warm trigger for this exact daily window
-    fetch(`/api/warm_cache?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&include_daily=1`, { keepalive: true }).catch(()=>{});
-
     // Start Powerline immediately so the slowest activity card does not lag behind the rest of the dashboard.
     const powerlinePromise = fetchJson(`/api/powerline_dashboard?${q}`)
       .then((powerline) => ({ powerline }))

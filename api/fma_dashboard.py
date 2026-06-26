@@ -1358,21 +1358,9 @@ __DASHBOARD_NAV_HTML__
 
         const sortedRows = sortSetterRows(rows);
 
-        // Top Performers — Knocks must stay on the TOP page date range.
-        // Apply the same role filter as the table, but against the top-range Raydar payload.
-        const topKnocksRoleAll = topKnocksAll
-          .filter((r) => {
-            if (selectedRole === 'all') return true;
-            const rid = String(r.uid || '');
-            if (rid && roleIds.has(rid)) return true;
-            const setterLast = String(setterLastByRaydar[rid] || '').trim().toLowerCase();
-            if (setterLast && roleSetterLasts.has(setterLast)) return true;
-            return false;
-          })
-          .sort((a, b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)));
-        const topKnocksRole = topKnocksRoleAll.slice(0, 10);
-        topKnocksModalAll = topKnocksRoleAll;
-        renderTopList('topKnocks', topKnocksRole.map((r) => ({ name: r.name || r.uid || '—', value: r.value })));
+        // Top performer cards stay global. Team filtering only applies to the bottom table.
+        topKnocksModalAll = topKnocksAll;
+        renderTopList('topKnocks', topKnocksAll.slice(0, 10).map((r) => ({ name: r.name || r.uid || '—', value: r.value })));
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);

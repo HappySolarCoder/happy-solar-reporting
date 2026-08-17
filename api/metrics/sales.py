@@ -5,7 +5,7 @@
 QA endpoint for Sales metric.
 
 Sales definition (canonical):
-- Count of opportunities in Sold OR Sale Cancelled stage IDs (8 IDs)
+- Count of unique contacts/customers with an opportunity in Sold OR Sale Cancelled stage IDs (8 IDs)
 - Time filter is based on Contact Sold Date: ghl_contacts.dateSold (epoch millis)
 - Scope: Buffalo, Rochester, Virtual, Syracuse (enforced implicitly by stage IDs)
 
@@ -229,7 +229,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     start_local = datetime.fromisoformat(start_iso)
     end_local = datetime.fromisoformat(end_iso)
 
-    # Base query: opportunities in Sold/Sale Cancelled stages (opportunity grain)
+    # Base query: opportunities in Sold/Sale Cancelled stages, deduplicated to contact grain.
     # NOTE: Firestore may require a composite index for (pipelineStageId IN ...).
     # To keep QA reliable without indexes, we stream opportunities and filter stage client-side.
     stage_set = set(contract.stage_ids)
@@ -238,6 +238,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
     contrib_rows: list[dict[str, Any]] = []
     unique_opp_ids: set[str] = set()
+    unique_contact_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
     owner_counts: dict[str, int] = {}
     owner_labels: dict[str, str] = {}
@@ -383,6 +384,13 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
 
+        # Canonical sales grain is one unique contact/customer per reporting window.
+        # Multiple qualifying opportunities tied to the same contact contribute once
+        # to the total and to every breakdown.
+        if cache_key in unique_contact_ids:
+            continue
+        unique_contact_ids.add(cache_key)
+
         # Breakdown by pipeline (human name)
         pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
         pipeline_counts[pname] = pipeline_counts.get(pname, 0) + 1
@@ -458,19 +466,22 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "result": len(unique_opp_ids),
-        "count_method": "COUNT_DISTINCT(ghl_opportunities_v2.id) where pipelineStageId in stage_ids AND joined ghl_contacts_v2 Sold Date (date-only, EST month) in window",
+        "result": len(unique_contact_ids),
+        "count_method": "COUNT_DISTINCT(ghl_opportunities_v2.contactId) where pipelineStageId in stage_ids AND joined ghl_contacts_v2 Sold Date (date-only, EST window) in window",
         "debug": {
             "opportunities_scanned": scanned,
             "opportunities_matched_stage": matched_stage,
             "opportunities_matched_stage_and_date": matched_date,
             "distinct_opportunity_ids": len(unique_opp_ids),
+            "distinct_contact_ids": len(unique_contact_ids),
+            "duplicate_opportunities_removed": len(unique_opp_ids) - len(unique_contact_ids),
             "join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
         },
         "contract": {
             "base_collection": contract.collection,
             "stage_field": f"{contract.collection}.{contract.stage_field}",
             "opportunity_id_field": f"{contract.collection}.{contract.opportunity_id_field}",
+            "deduplication_field": f"{contract.collection}.contactId",
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "sold_date_field": f"ghl_contacts_v2.customFields[{contract.sold_date_custom_field_id}] (ISO)",
             "included_stage_ids": list(contract.stage_ids),

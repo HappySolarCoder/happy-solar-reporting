@@ -233,8 +233,40 @@ def pipeline_name_lookup(db: firestore.Client, c: MetricContract) -> dict[str, s
     return m
 
 
+def fill_missing_user_names(db: firestore.Client, names: dict[str, str], needed_ids) -> None:
+    """Bounded ghl_users_v2 get_all for assignedTo IDs that missed roster. No full user stream."""
+    missed: list[str] = []
+    seen: set[str] = set()
+    for raw in needed_ids:
+        uid = compact_str(raw)
+        if not uid or uid in seen:
+            continue
+        if uid in names or uid.lower() in OWNER_NAME_OVERRIDES:
+            continue
+        seen.add(uid)
+        missed.append(uid)
+    if not missed:
+        return
+    refs = [db.collection("ghl_users_v2").document(uid) for uid in missed]
+    for i in range(0, len(refs), 300):
+        for snap in db.get_all(refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            name = compact_str(d.get("name")) or best_person_name(d) or None
+            if not name:
+                continue
+            for key in {
+                compact_str(d.get("id")),
+                compact_str(d.get("userId")),
+                compact_str(snap.id),
+            }:
+                if key:
+                    names[key] = name
+
+
 def user_name_lookup(db: firestore.Client, c: MetricContract) -> dict[str, str]:
-    """Primary owner labels from roster_people_v1. Do not stream stale ghl_users_v2."""
+    """Primary owner labels from roster_people_v1. Bounded ghl_users_v2 get_all for assignedTo misses only."""
     m: dict[str, str] = {}
     for doc in db.collection("roster_people_v1").stream():
         u = doc.to_dict() or {}
@@ -366,9 +398,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         in_pipeline += 1
 
-        # owner
+        # owner resolved after bounded ghl_users_v2 fill for roster misses
         owner_id = str(opp.get("assignedTo") or "")
-        oname = resolve_owner_name(opp, owner_id) or "unassigned"
+        oname = None
 
         # join to contact
         cid = str(opp.get("contactId") or "")
@@ -390,7 +422,12 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         matching_rows[opp_id] = {
             "opportunityId": opp_id,
             "pipeline": pname,
-            "owner": oname,
+            "ownerId": owner_id,
+            "assignedToName": opp.get("assignedToName"),
+            "assignedToUserName": opp.get("assignedToUserName"),
+            "assignedUserName": opp.get("assignedUserName"),
+            "ownerName": opp.get("ownerName"),
+            "assignedToUser": opp.get("assignedToUser"),
             "contactId": cid,
             "contactLastName": (contact.get("lastName") if isinstance(contact, dict) else None),
             "createdAt": opp.get(c.created_at_field),
@@ -399,9 +436,18 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         }
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
-        oname = add_casefold_count(by_owner, owner_labels, oname, empty="unassigned")
         setter_norm = add_casefold_count(by_setter, setter_labels, setter_norm, empty="none")
         by_lead[lead_norm] = by_lead.get(lead_norm, 0) + 1
+
+    fill_missing_user_names(db, user_names, (r.get("ownerId") for r in matching_rows.values()))
+    by_owner = {}
+    owner_labels = {}
+    for r in matching_rows.values():
+        oname = resolve_owner_name(r, r.get("ownerId")) or "unassigned"
+        oname = add_casefold_count(by_owner, owner_labels, oname, empty="unassigned")
+        r["owner"] = oname
+        for k in ("ownerId", "assignedToName", "assignedToUserName", "assignedUserName", "ownerName", "assignedToUser"):
+            r.pop(k, None)
 
     return {
         "metric": c.metric_name,
@@ -429,7 +475,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "pipeline_field": f"{c.opp_collection}.pipelineId -> {c.pipeline_collection}.name",
             "included_pipeline_names": list(c.included_pipeline_names),
             "excluded_pipeline_names": list(c.excluded_pipeline_names),
-            "owner_field": f"{c.opp_collection}.assignedTo -> roster_people_v1.ghl_user_id -> display_name",
+            "owner_field": f"{c.opp_collection}.assignedTo -> roster_people_v1.ghl_user_id -> display_name (misses: ghl_users_v2 get_all, then assignedToName)",
             "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},

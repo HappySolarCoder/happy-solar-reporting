@@ -293,7 +293,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if pid:
             pipeline_name_cache[pid] = d.get("name")
 
-    # Primary owner labels: roster_people_v1. Do not stream stale ghl_users_v2.
+    # Primary owner labels: roster_people_v1.
+    # Bounded fallback: get_all only assignedTo IDs that missed roster from ghl_users_v2.
     user_name_cache: dict[str, str | None] = {}
     for snap in db.collection("roster_people_v1").stream():
         d = snap.to_dict() or {}
@@ -306,6 +307,34 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         for key in keys:
             if key and name:
                 user_name_cache[key] = name
+
+    needed_owner_ids = []
+    for snap in opp_snaps:
+        uid = compact_str((snap.to_dict() or {}).get("assignedTo"))
+        if uid:
+            needed_owner_ids.append(uid)
+    needed_owner_ids = list(dict.fromkeys(needed_owner_ids))
+    missed_owner_ids = [
+        uid
+        for uid in needed_owner_ids
+        if uid not in user_name_cache and uid.lower() not in OWNER_NAME_OVERRIDES
+    ]
+    owner_refs = [db.collection("ghl_users_v2").document(uid) for uid in missed_owner_ids]
+    for i in range(0, len(owner_refs), 300):
+        for snap in db.get_all(owner_refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            name = compact_str(d.get("name")) or best_person_name(d) or None
+            if not name:
+                continue
+            for key in {
+                compact_str(d.get("id")),
+                compact_str(d.get("userId")),
+                compact_str(snap.id),
+            }:
+                if key:
+                    user_name_cache[key] = name
 
     def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:

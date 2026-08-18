@@ -95,7 +95,7 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">Essential tab</div>
-        <div class="meta" style="margin-bottom:10px">Columns A–O. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Columns A–O plus Installer. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="salesTable"></table></div>
       </div>
     </div>

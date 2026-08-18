@@ -6,9 +6,10 @@ JSON grain for the Essential tab layout (Yadmada Job Tracker).
 Reuses the locked Sales metric from sales.py — same distinct contactId
 among the 8 Sold/Sale Cancelled stage IDs, Sold Date date-only, NY window.
 
-Does not filter Installer=Essential. Does not fill System Checks from
-Submission Checklist. WC / ESCO / CDG / Retention Rep / System Checks / QP
-are left empty.
+Does not filter Installer=Essential. Displays the raw stored Installer
+value from ghl_contacts_v2.customFields[JbTL2wtTiUUZ5wPZswDn]. Does not
+fill System Checks from Submission Checklist. WC / ESCO / CDG /
+Retention Rep / System Checks / QP are left empty.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ CLIENT_FIELD_ID = "mgGFiaHdEFf6lwiKu513"
 ASI_FIELD_ID = "kD6CYjEawVwDSmyjurbT"
 SIZE_FIELD_ID = "MVpb9cXvTFTdUVjqybQl"
 NOTES_FIELD_ID = "Q2NUde7fCBQWp7GU76ca"  # Appointment Notes only
+INSTALLER_FIELD_ID = "JbTL2wtTiUUZ5wPZswDn"  # Installer (raw GHL value)
 
 ESSENTIAL_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submissionDate", "Submission Date"),
@@ -49,6 +51,7 @@ ESSENTIAL_COLUMNS: tuple[tuple[str, str], ...] = (
     ("retentionRep", "Retention Rep"),
     ("systemChecks", "System Checks"),
     ("qp", "QP"),
+    ("installer", "Installer"),
 )
 
 
@@ -113,6 +116,7 @@ def build_essential_row(
         "retentionRep": "",
         "systemChecks": "",
         "qp": "",
+        "installer": raw_text(custom_field_raw(contact, INSTALLER_FIELD_ID)).strip(),
     }
 
 
@@ -171,7 +175,7 @@ def compute_essential_sales(
         },
         "contract": {
             **(sales.get("contract") or {}),
-            "layout": "Yadmada Job Tracker Essential tab columns A-O",
+            "layout": "Yadmada Job Tracker Essential tab columns A-O plus Installer",
             "installer_filter": None,
             "system_checks_source": None,
             "empty_columns": ["wc", "esco", "cdg", "retentionRep", "systemChecks", "qp"],
@@ -185,6 +189,7 @@ def compute_essential_sales(
                 "phone": "ghl_contacts_v2.phone",
                 "email": "ghl_contacts_v2.email",
                 "notes": f"ghl_contacts_v2.customFields[{NOTES_FIELD_ID}] Appointment Notes only",
+                "installer": f"ghl_contacts_v2.customFields[{INSTALLER_FIELD_ID}]",
             },
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",

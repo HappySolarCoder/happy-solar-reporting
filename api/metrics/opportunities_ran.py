@@ -256,8 +256,40 @@ def pipeline_name_lookup(db: firestore.Client) -> dict[str, str]:
     return m
 
 
+def fill_missing_user_names(db: firestore.Client, names: dict[str, str], needed_ids) -> None:
+    """Bounded ghl_users_v2 get_all for assignedTo IDs that missed roster. No full user stream."""
+    missed: list[str] = []
+    seen: set[str] = set()
+    for raw in needed_ids:
+        uid = compact_str(raw)
+        if not uid or uid in seen:
+            continue
+        if uid in names or uid.lower() in OWNER_NAME_OVERRIDES:
+            continue
+        seen.add(uid)
+        missed.append(uid)
+    if not missed:
+        return
+    refs = [db.collection("ghl_users_v2").document(uid) for uid in missed]
+    for i in range(0, len(refs), 300):
+        for snap in db.get_all(refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            name = compact_str(d.get("name")) or best_person_name(d) or None
+            if not name:
+                continue
+            for key in {
+                compact_str(d.get("id")),
+                compact_str(d.get("userId")),
+                compact_str(snap.id),
+            }:
+                if key:
+                    names[key] = name
+
+
 def user_name_lookup(db: firestore.Client) -> dict[str, str]:
-    """Primary owner labels from roster_people_v1. Do not stream stale ghl_users_v2."""
+    """Primary owner labels from roster_people_v1. Bounded ghl_users_v2 get_all for assignedTo misses only."""
     m = {}
     for doc in db.collection("roster_people_v1").stream():
         u = doc.to_dict() or {}
@@ -395,10 +427,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
 
-        # owner
+        # owner resolved after bounded ghl_users_v2 fill for roster misses
         owner_id = str(opp.get("assignedTo") or "")
-        oname = resolve_owner_name(opp, owner_id) or "unassigned"
-        oname = add_casefold_count(by_owner, owner_labels, oname, empty="unassigned")
 
         if setter:
             add_casefold_count(by_setter, setter_labels, setter, empty="none")
@@ -412,10 +442,25 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "contactId": cid,
             "contactLastName": last_name,
             "pipeline": pname,
-            "owner": oname,
+            "ownerId": owner_id,
+            "assignedToName": opp.get("assignedToName"),
+            "assignedToUserName": opp.get("assignedToUserName"),
+            "assignedUserName": opp.get("assignedUserName"),
+            "ownerName": opp.get("ownerName"),
+            "assignedToUser": opp.get("assignedToUser"),
             "appointmentOccurredAt": opp.get(c.appointment_occurred_at_field),
             "whatHappened": dispo_val,
         }
+
+    fill_missing_user_names(db, user_names, (r.get("ownerId") for r in matching_rows.values()))
+    by_owner = {}
+    owner_labels = {}
+    for r in matching_rows.values():
+        oname = resolve_owner_name(r, r.get("ownerId")) or "unassigned"
+        oname = add_casefold_count(by_owner, owner_labels, oname, empty="unassigned")
+        r["owner"] = oname
+        for k in ("ownerId", "assignedToName", "assignedToUserName", "assignedUserName", "ownerName", "assignedToUser"):
+            r.pop(k, None)
 
     return {
         "metric": c.metric_name,

@@ -67,8 +67,9 @@ class handler(BaseHTTPRequestHandler):
 
         q = urlencode(params)
 
+        # Sales removed from hourly warm 2026-08-18: /api/metrics/sales
+        # streamed full ghl_opportunities_v2 + ghl_contacts_v2 (~4.5k+ docs).
         urls = [
-            f"{base}/api/metrics/sales?{q}",
             f"{base}/api/metrics/opportunities_created?{q}&pipeline_scope=all",
             f"{base}/api/metrics/opportunities_ran?{q}",
             f"{base}/api/metrics/demo_rate?{q}",

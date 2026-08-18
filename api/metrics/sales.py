@@ -230,11 +230,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     end_local = datetime.fromisoformat(end_iso)
 
     # Base query: opportunities in Sold/Sale Cancelled stages, deduplicated to contact grain.
-    # NOTE: Firestore may require a composite index for (pipelineStageId IN ...).
-    # To keep QA reliable without indexes, we stream opportunities and filter stage client-side.
+    # Bounded: query the 8 stage IDs (Firestore `in` max 10). Do not stream all opps/contacts.
     stage_set = set(contract.stage_ids)
-
-    opp_q = db.collection(contract.collection)
+    stage_ids = list(contract.stage_ids)
 
     contrib_rows: list[dict[str, Any]] = []
     unique_opp_ids: set[str] = set()
@@ -246,16 +244,46 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     setter_labels: dict[str, str] = {}
     lead_source_counts: dict[str, int] = {}
 
-    scanned = 0
-    matched_stage = 0
     matched_date = 0
 
-    # Preload joins once (much faster than per-row Firestore lookups)
-    contacts_map: dict[str, dict] = {}
-    for snap in db.collection("ghl_contacts_v2").stream():
-        d = snap.to_dict() or {}
-        cid = str(d.get("id") or snap.id).strip()
+    opp_snaps = list(
+        db.collection(contract.collection)
+        .where(contract.stage_field, "in", stage_ids)
+        .stream()
+    )
+    scanned = len(opp_snaps)
+    matched_stage = 0
+
+    needed_contact_ids: list[str] = []
+    for snap in opp_snaps:
+        opp = snap.to_dict() or {}
+        if opp.get(contract.stage_field) not in stage_set:
+            continue
+        cid = compact_str(opp.get("contactId"))
         if cid:
+            needed_contact_ids.append(cid)
+    needed_contact_ids = list(dict.fromkeys(needed_contact_ids))
+
+    contacts_map: dict[str, dict] = {}
+    refs = [db.collection("ghl_contacts_v2").document(cid) for cid in needed_contact_ids]
+    for i in range(0, len(refs), 300):
+        for snap in db.get_all(refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            cid = compact_str(d.get("id") or snap.id)
+            if cid:
+                contacts_map[cid] = d
+            if snap.id:
+                contacts_map[compact_str(snap.id)] = d
+    for cid in needed_contact_ids:
+        if cid in contacts_map:
+            continue
+        misses = list(
+            db.collection("ghl_contacts_v2").where("id", "==", cid).limit(1).stream()
+        )
+        if misses:
+            d = misses[0].to_dict() or {}
             contacts_map[cid] = d
 
     pipeline_name_cache: dict[str, str | None] = {}
@@ -265,13 +293,48 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if pid:
             pipeline_name_cache[pid] = d.get("name")
 
+    # Primary owner labels: roster_people_v1.
+    # Bounded fallback: get_all only assignedTo IDs that missed roster from ghl_users_v2.
     user_name_cache: dict[str, str | None] = {}
-    for snap in db.collection("ghl_users_v2").stream():
+    for snap in db.collection("roster_people_v1").stream():
         d = snap.to_dict() or {}
-        name = best_person_name(d) or None
-        for key in {compact_str(d.get("id")), compact_str(d.get("userId")), compact_str(snap.id)}:
-            if key:
+        name = compact_str(d.get("display_name")) or best_person_name(d) or None
+        keys = {
+            compact_str(d.get("ghl_user_id")),
+            compact_str(d.get("ghlUserId")),
+            compact_str(snap.id),
+        }
+        for key in keys:
+            if key and name:
                 user_name_cache[key] = name
+
+    needed_owner_ids = []
+    for snap in opp_snaps:
+        uid = compact_str((snap.to_dict() or {}).get("assignedTo"))
+        if uid:
+            needed_owner_ids.append(uid)
+    needed_owner_ids = list(dict.fromkeys(needed_owner_ids))
+    missed_owner_ids = [
+        uid
+        for uid in needed_owner_ids
+        if uid not in user_name_cache and uid.lower() not in OWNER_NAME_OVERRIDES
+    ]
+    owner_refs = [db.collection("ghl_users_v2").document(uid) for uid in missed_owner_ids]
+    for i in range(0, len(owner_refs), 300):
+        for snap in db.get_all(owner_refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            name = compact_str(d.get("name")) or best_person_name(d) or None
+            if not name:
+                continue
+            for key in {
+                compact_str(d.get("id")),
+                compact_str(d.get("userId")),
+                compact_str(snap.id),
+            }:
+                if key:
+                    user_name_cache[key] = name
 
     def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:
@@ -304,10 +367,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             return None
         return pipeline_name_cache.get(str(pipeline_id).strip())
 
-
-    # Simple streaming approach for QA (optimize later with indexes/batching)
-    for opp_doc in opp_q.stream():
-        scanned += 1
+    for opp_doc in opp_snaps:
         opp = opp_doc.to_dict() or {}
 
         stage_id = opp.get(contract.stage_field)

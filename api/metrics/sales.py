@@ -219,7 +219,7 @@ def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[in
 
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, on_sale: Any = None) -> dict[str, Any]:
     if start and end:
         start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
     else:
@@ -516,6 +516,17 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                         if isinstance(cf, dict) and cf.get("value") not in (None, "")
                     ][:12],
                 }
+            )
+
+        # Optional row hook for dashboards that reuse this locked grain.
+        # Invoked after counts/breakdowns so KPI totals cannot change.
+        if on_sale is not None:
+            on_sale(
+                opp=opp,
+                contact=contact,
+                contact_id=cache_key,
+                sold_date=sold_date_str,
+                salesperson=oname,
             )
 
     payload = {

@@ -34,6 +34,7 @@ ASI_FIELD_ID = essential.ASI_FIELD_ID
 CLIENT_FIELD_ID = essential.CLIENT_FIELD_ID
 ESSENTIAL_COLUMNS = essential.ESSENTIAL_COLUMNS
 FINANCE_TYPE_FIELD_ID = essential.FINANCE_TYPE_FIELD_ID
+INSTALLER_FIELD_ID = essential.INSTALLER_FIELD_ID
 NOTES_FIELD_ID = essential.NOTES_FIELD_ID
 SIZE_FIELD_ID = essential.SIZE_FIELD_ID
 build_essential_row = essential.build_essential_row
@@ -42,13 +43,14 @@ custom_field_raw = essential.custom_field_raw
 raw_text = essential.raw_text
 compute_sales = sales.compute_sales
 render_dashboard_nav = nav.render_dashboard_nav
+page = load_module("essential_sales_page", API / "essential_sales.py")
 
 
 class EssentialSalesMappingTests(unittest.TestCase):
-    def test_columns_a_to_o(self):
+    def test_columns_a_to_o_plus_installer(self):
         labels = [label for _, label in ESSENTIAL_COLUMNS]
         self.assertEqual(
-            labels,
+            labels[:15],
             [
                 "Submission Date",
                 "Finance type",
@@ -67,7 +69,9 @@ class EssentialSalesMappingTests(unittest.TestCase):
                 "QP",
             ],
         )
-        self.assertEqual(len(ESSENTIAL_COLUMNS), 15)
+        self.assertEqual(ESSENTIAL_COLUMNS[15], ("installer", "Installer"))
+        self.assertEqual(len(ESSENTIAL_COLUMNS), 16)
+        self.assertEqual(INSTALLER_FIELD_ID, "JbTL2wtTiUUZ5wPZswDn")
 
     def test_custom_field_prefers_value_then_field_value_string(self):
         contact = {
@@ -129,6 +133,44 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertEqual(row["email"], "pat@example.com")
         self.assertEqual(row["salesperson"], "William Breen")
         self.assertEqual(row["submissionDate"], "2026-08-02")
+        self.assertEqual(row["installer"], "")
+
+    def test_installer_maps_from_ghl_field_and_blank_when_missing(self):
+        contact = {
+            "customFields": [
+                {"id": INSTALLER_FIELD_ID, "value": "  Momentum  "},
+                {"id": "other-installer-id", "value": "DO NOT USE"},
+            ]
+        }
+        row = build_essential_row(
+            contact=contact,
+            contact_id="c-installer",
+            sold_date="2026-08-04",
+            salesperson="Alex",
+        )
+        self.assertEqual(row["installer"], "Momentum")
+        self.assertTrue(all(row[k] == "" for k in ("wc", "esco", "cdg", "retentionRep", "systemChecks", "qp")))
+
+        missing = build_essential_row(
+            contact={"customFields": []},
+            contact_id="c-missing",
+            sold_date="2026-08-05",
+            salesperson="Alex",
+        )
+        self.assertEqual(missing["installer"], "")
+
+        via_string = build_essential_row(
+            contact={
+                "customFields": [
+                    {"id": INSTALLER_FIELD_ID, "value": "", "fieldValueString": "3rd Roc"},
+                ]
+            },
+            contact_id="c-string",
+            sold_date="2026-08-06",
+            salesperson="Alex",
+        )
+        self.assertEqual(via_string["installer"], "3rd Roc")
+        self.assertEqual(custom_field_raw(contact, INSTALLER_FIELD_ID), "  Momentum  ")
 
     def test_sales_hook_is_optional_and_after_counts(self):
         params = inspect.signature(compute_sales).parameters
@@ -203,7 +245,19 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertEqual(len(payload["rows"]), 1)
         self.assertEqual(payload["rows"][0]["client"], "River, Sam")
         self.assertEqual(payload["rows"][0]["salesperson"], "Alex")
+        self.assertEqual(payload["rows"][0]["installer"], "")
         self.assertTrue(all(payload["rows"][0][k] == "" for k in ("wc", "esco", "cdg", "retentionRep", "systemChecks", "qp")))
+        self.assertIsNone(payload["contract"]["installer_filter"])
+        self.assertEqual(
+            payload["contract"]["fields"]["installer"],
+            "ghl_contacts_v2.customFields[JbTL2wtTiUUZ5wPZswDn]",
+        )
+        self.assertEqual([c["key"] for c in payload["columns"]][-1], "installer")
+
+    def test_dashboard_renders_columns_from_payload(self):
+        html = page.render_html(2026, 8)
+        self.assertIn("renderTable(document.getElementById('salesTable'), data.columns || [], data.rows || [])", html)
+        self.assertIn("Installer is not filtered.", html)
 
 
 if __name__ == "__main__":

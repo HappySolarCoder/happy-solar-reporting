@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_DISK_CREATED
+LOAD_FROM_FILE:/workspace/pr-files/opportunities_created.py

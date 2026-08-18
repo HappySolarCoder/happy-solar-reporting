@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_DISK_SALES
+LOAD_FROM_FILE:/workspace/pr-files/sales.py

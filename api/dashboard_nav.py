@@ -224,7 +224,7 @@ def render_dashboard_loader() -> str:
 
 
 def render_dashboard_nav(current: str) -> str:
-    sales_active = current in {"sales_dashboard", "sale_cancellation_report"}
+    sales_active = current in {"sales_dashboard", "sale_cancellation_report", "essential_sales"}
     lead_gen_active = current in {
         "fma_dashboard",
         "virtual_team_dashboard",
@@ -245,6 +245,7 @@ def render_dashboard_nav(current: str) -> str:
             <summary class="navbtn{' active' if sales_active else ''}">Sales <span class="navmenu-caret">▾</span></summary>
             <div class="navmenu-list">
               <a class="navmenu-item{active('sales_dashboard')}" href="/api/sales_dashboard">Sales Dashboard</a>
+              <a class="navmenu-item{active('essential_sales')}" href="/api/essential_sales">Essential Sales</a>
               <a class="navmenu-item{active('sale_cancellation_report')}" href="/api/sale_cancellation_report">Sale Cancellations</a>
             </div>
           </details>

@@ -2,35 +2,41 @@
 
 """Website Funnel metric family.
 
-North star: session → estimate start → submit → GHL contact + website-attributed
-opportunity. CRM (GHL) is the source of truth for “lead”.
+Lead = a completed form submit (America/New_York):
+- Calculator: estimate_submit (name/phone/email in contact-complete)
+- /contact-me: wix_form_submit (complete Submit)
+- /contact-me counts as a completed form.
+- Not a CRM contact. Not a pageview.
 
-This is NOT Opportunities Created. That contract excludes Inbound/Lead Locker,
-where website leads land. Do not read or write lead-gen field
-hd5QqHEOVSsPom5bJ32P. Do not use Sold Date P9oBjgbZjJdeE0OkBj9T.
+Primary scoreboard:
+1. Completed form submits — volume. Goal: baseline pending (14-day).
+2. Session → completed form — completed_forms / sessions. Goal 2%.
+3. Estimate start → completed form — calculator-only:
+   estimate_submit / estimate_start. Goal 25%.
+   contact-me has no start; it is in volume and session→form only.
+4. Page contribution — share of completed forms by first page_group.
+   No % goal.
 
-Warehouse: Firestore DB happy-solar (FIRESTORE_DATABASE_ID) collection
-web_funnel_daily_v1 — one doc per America/New_York date (id YYYY-MM-DD).
+Secondary (diagnostic only, not scored this week):
+- address-complete and bill-complete drop-off
+- session → start by surface (site 8%, home 6%, city 12%,
+  ny-incentives 10%, calculator-direct 70%)
+
+Warehouse: FIRESTORE_DATABASE_ID collection web_funnel_daily_v1,
+one doc per America/New_York date (id YYYY-MM-DD).
 
 Cost rules:
-- Dashboard month view reads ≤31 daily docs. Never streams ghl_*.
-- Rollup uses a createdAt range query on ghl_opportunities_v2, then get_all
-  contacts for that website-opp set only (same bound pattern as compute_sales).
-- If a createdAt range query is impossible (missing index / type mismatch),
-  GHL lead counts are taken only from daily warehouse docs — no 4k+ scan.
+- Dashboard month view reads ≤31 daily docs.
+- Rollup pulls optional GA4 event counts for one NY day.
+- Does not read CRM opportunity or contact collections.
 - Not on warm_cache. Not hourly.
 
 GA4 (optional):
 - Measurement ID G-V02RZFR4SZ (locked).
-- Env GA4_PROPERTY_ID = numeric GA4 property id (required to pull traffic).
+- Env GA4_PROPERTY_ID = numeric property id (required to pull traffic).
 - Env GA4_SERVICE_ACCOUNT_JSON optional; else FIREBASE_SERVICE_ACCOUNT_JSON.
-- If creds/property are missing, write nulls for session/start/submit and
-  set ga4="not_configured". Do not fake traffic.
-
-Charles lock (2026-08-19): website field constants are names-only
-(Website Landing Page, Website Page Group, Website UTM, GA Client ID).
-Do not invent IDs. Do not call GHL to create fields. Do not use Secret
-Manager or any API key. Real IDs arrive in a later follow-up.
+- If creds/property are missing, write nulls and set ga4="not_configured".
+  Do not fake traffic.
 """
 
 from __future__ import annotations
@@ -46,35 +52,14 @@ from zoneinfo import ZoneInfo
 from google.cloud import firestore
 from google.oauth2 import service_account
 
-# --- Locked contract constants ------------------------------------------------
-
 METRIC_NAME = "Website Funnel"
 TIMEZONE_NAME = "America/New_York"
 DAILY_COLLECTION = "web_funnel_daily_v1"
-OPP_COLLECTION = "ghl_opportunities_v2"
-CONTACT_COLLECTION = "ghl_contacts_v2"
 
 GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
 GA4_PROPERTY_ID_ENV = "GA4_PROPERTY_ID"
 GA4_SERVICE_ACCOUNT_JSON_ENV = "GA4_SERVICE_ACCOUNT_JSON"
 FIREBASE_SERVICE_ACCOUNT_JSON_ENV = "FIREBASE_SERVICE_ACCOUNT_JSON"
-
-# Charles lock 2026-08-19: names-only. Do not invent IDs. Do not call GHL to
-# create fields. Do not use Secret Manager or any API key. Real IDs arrive
-# in a later follow-up. Until then, match contact/opportunity customFields
-# by these names, plus opportunity.source == "website".
-WEBSITE_LANDING_PAGE_FIELD_NAME = "Website Landing Page"
-WEBSITE_PAGE_GROUP_FIELD_NAME = "Website Page Group"
-WEBSITE_UTM_FIELD_NAME = "Website UTM"
-GA_CLIENT_ID_FIELD_NAME = "GA Client ID"
-WEBSITE_FIELD_NAMES: tuple[str, ...] = (
-    WEBSITE_LANDING_PAGE_FIELD_NAME,
-    WEBSITE_PAGE_GROUP_FIELD_NAME,
-    WEBSITE_UTM_FIELD_NAME,
-    GA_CLIENT_ID_FIELD_NAME,
-)
-
-WEBSITE_SOURCE_VALUE = "website"
 
 PAGE_GROUPS: tuple[str, ...] = (
     "home",
@@ -85,16 +70,6 @@ PAGE_GROUPS: tuple[str, ...] = (
     "calculator",
     "contact_me",
     "other",
-)
-
-PAGE_TABLE_ROWS: tuple[tuple[str, str], ...] = (
-    ("home", "home"),
-    ("city_buffalo", "buffalo"),
-    ("city_rochester", "rochester"),
-    ("city_syracuse", "syracuse"),
-    ("ny_incentives", "ny-incentives"),
-    ("calculator", "calculator"),
-    ("contact_me", "contact-me"),
 )
 
 CITY_LANDER_GROUPS = frozenset({"city_buffalo", "city_rochester", "city_syracuse"})
@@ -115,38 +90,29 @@ EVENT_COUNT_FIELDS = {
     "estimate_start": "starts",
     "estimate_address_complete": "address_complete",
     "estimate_bill_complete": "bill_complete",
-    "estimate_submit": "submits",
+    "estimate_submit": "estimate_submit",
     "wix_form_submit": "wix_form_submits",
 }
 
-# Locked scoreboard goals (America/New_York).
-GOAL_SESSION_TO_GHL = 0.015
-GOAL_SUBMIT_TO_GHL = 0.95
-GOAL_START_TO_SUBMIT = 0.25
+GOAL_SESSION_TO_FORM = 0.02
+GOAL_START_TO_FORM = 0.25
 GOAL_SESSION_TO_START_SITE = 0.08
 GOAL_SESSION_TO_START_HOME = 0.06
 GOAL_SESSION_TO_START_CITY = 0.12
 GOAL_SESSION_TO_START_NY_INCENTIVES = 0.10
 GOAL_SESSION_TO_START_CALCULATOR = 0.70
-GOAL_ORPHANS = 0
-GOAL_ATTRIBUTED_COVERAGE = 0.90
 
 KPI_NAMES: tuple[str, ...] = (
-    "GHL website leads",
-    "Session → GHL lead",
-    "Submit → GHL lead",
-    "Estimate start → submit",
-    "Session → estimate start",
+    "Completed form submits",
+    "Session → completed form",
+    "Estimate start → completed form",
     "Page contribution",
-    "Orphan Wix submits",
-    "Attributed source coverage",
 )
 
 EMPTY_PAGE_BUCKET = {
     "sessions": 0,
     "starts": 0,
-    "submits": 0,
-    "ghl_leads": 0,
+    "completed_forms": 0,
 }
 
 
@@ -186,50 +152,13 @@ def parse_date_ymd(value: str | None) -> tuple[int, int, int] | None:
         return None
 
 
-def ny_day_window(date_ymd: str) -> tuple[datetime, datetime, str, str]:
-    parsed = parse_date_ymd(date_ymd)
-    if not parsed:
-        raise ValueError("Invalid date; expected YYYY-MM-DD")
-    year, month, day = parsed
-    tz = ZoneInfo(TIMEZONE_NAME)
-    start_local = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
-    end_local = start_local + timedelta(days=1)
-    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
-
-
 def month_dates(year: int, month: int) -> list[str]:
     last = monthrange(year, month)[1]
     return [f"{year:04d}-{month:02d}-{day:02d}" for day in range(1, last + 1)]
 
 
-def parse_iso_dt(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        dt = value
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        return None
-
-
 def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
-
-
-def is_filled(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, str) and not value.strip():
-        return False
-    if isinstance(value, (list, dict)) and not value:
-        return False
-    return True
 
 
 def empty_by_page() -> dict[str, dict[str, int]]:
@@ -287,74 +216,6 @@ def page_group_from_landing(raw: Any) -> str:
     return "other"
 
 
-def _cf_name(cf: dict[str, Any]) -> str:
-    for key in ("name", "key", "fieldName", "field", "label"):
-        text = compact_str(cf.get(key))
-        if text:
-            return text
-    return ""
-
-
-def custom_field_value(entity: dict[str, Any] | None, *, field_name: str) -> Any:
-    """Match customFields by locked field name only. No invented IDs."""
-    if not isinstance(entity, dict):
-        return None
-    want_name = compact_str(field_name).casefold()
-    if not want_name:
-        return None
-    for cf in entity.get("customFields") or []:
-        if not isinstance(cf, dict):
-            continue
-        if _cf_name(cf).casefold() != want_name:
-            continue
-        value = cf.get("value")
-        if value in (None, ""):
-            value = cf.get("fieldValueString")
-        return value
-    return None
-
-
-def is_website_attributed(
-    opportunity: dict[str, Any] | None,
-    contact: dict[str, Any] | None,
-) -> bool:
-    opp = opportunity if isinstance(opportunity, dict) else {}
-    source = compact_str(opp.get("source")).casefold()
-    if source == WEBSITE_SOURCE_VALUE:
-        return True
-    for field_name in WEBSITE_FIELD_NAMES:
-        if is_filled(custom_field_value(contact, field_name=field_name)):
-            return True
-        if is_filled(custom_field_value(opp, field_name=field_name)):
-            return True
-    return False
-
-
-def lead_attribution(
-    opportunity: dict[str, Any] | None,
-    contact: dict[str, Any] | None,
-) -> dict[str, Any]:
-    landing = custom_field_value(contact, field_name=WEBSITE_LANDING_PAGE_FIELD_NAME)
-    if not is_filled(landing):
-        landing = custom_field_value(opportunity, field_name=WEBSITE_LANDING_PAGE_FIELD_NAME)
-    page_group_raw = custom_field_value(contact, field_name=WEBSITE_PAGE_GROUP_FIELD_NAME)
-    if is_filled(page_group_raw):
-        page_group = normalize_page_group(page_group_raw)
-    else:
-        page_group = page_group_from_landing(landing)
-    utm = custom_field_value(contact, field_name=WEBSITE_UTM_FIELD_NAME)
-    if not is_filled(utm):
-        utm = custom_field_value(opportunity, field_name=WEBSITE_UTM_FIELD_NAME)
-    source = compact_str((opportunity or {}).get("source")) or compact_str(utm) or "unknown"
-    return {
-        "landing_page": compact_str(landing),
-        "page_group": page_group,
-        "utm": compact_str(utm),
-        "source": source,
-        "attributed": is_filled(landing) and is_filled(utm),
-    }
-
-
 def ratio(numerator: int | None, denominator: int | None) -> float | None:
     if numerator is None or denominator is None or denominator <= 0:
         return None
@@ -369,10 +230,44 @@ def score_vs_goal(value: float | None, goal: float | None, *, higher_is_better: 
     return "hit" if value - 1e-12 <= goal else "miss"
 
 
+def drop_off(from_count: int | None, to_count: int | None) -> float | None:
+    if from_count is None or to_count is None or from_count <= 0:
+        return None
+    return max(float(from_count - to_count) / float(from_count), 0.0)
+
+
+def sum_completed_forms(estimate_submit: int | None, wix_form_submits: int | None) -> int | None:
+    if estimate_submit is None and wix_form_submits is None:
+        return None
+    return int(estimate_submit or 0) + int(wix_form_submits or 0)
+
+
 def ga4_credentials_available() -> bool:
     property_id = compact_str(os.environ.get(GA4_PROPERTY_ID_ENV))
     creds_json = os.environ.get(GA4_SERVICE_ACCOUNT_JSON_ENV) or os.environ.get(FIREBASE_SERVICE_ACCOUNT_JSON_ENV)
     return bool(property_id and creds_json)
+
+
+def _ga4_not_configured(error: str | None = None) -> dict[str, Any]:
+    return {
+        "ga4": "not_configured",
+        "sessions": None,
+        "cta_clicks": None,
+        "starts": None,
+        "address_complete": None,
+        "bill_complete": None,
+        "estimate_submit": None,
+        "wix_form_submits": None,
+        "completed_forms": None,
+        "by_page": empty_by_page(),
+        "error": error,
+        "env": {
+            "property_id_env": GA4_PROPERTY_ID_ENV,
+            "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
+            "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
+            "measurement_id": GA4_MEASUREMENT_ID,
+        },
+    }
 
 
 def _ga4_access_token() -> str | None:
@@ -404,46 +299,12 @@ def _ga4_access_token() -> str | None:
 def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
     """Pull one NY day's event counts. Never invent traffic if GA4 is missing."""
     if not ga4_credentials_available():
-        return {
-            "ga4": "not_configured",
-            "sessions": None,
-            "cta_clicks": None,
-            "starts": None,
-            "address_complete": None,
-            "bill_complete": None,
-            "submits": None,
-            "wix_form_submits": None,
-            "by_page": empty_by_page(),
-            "error": None,
-            "env": {
-                "property_id_env": GA4_PROPERTY_ID_ENV,
-                "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
-                "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
-                "measurement_id": GA4_MEASUREMENT_ID,
-            },
-        }
+        return _ga4_not_configured()
 
     property_id = compact_str(os.environ.get(GA4_PROPERTY_ID_ENV))
     token = _ga4_access_token()
     if not token:
-        return {
-            "ga4": "not_configured",
-            "sessions": None,
-            "cta_clicks": None,
-            "starts": None,
-            "address_complete": None,
-            "bill_complete": None,
-            "submits": None,
-            "wix_form_submits": None,
-            "by_page": empty_by_page(),
-            "error": "ga4_token_refresh_failed",
-            "env": {
-                "property_id_env": GA4_PROPERTY_ID_ENV,
-                "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
-                "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
-                "measurement_id": GA4_MEASUREMENT_ID,
-            },
-        }
+        return _ga4_not_configured("ga4_token_refresh_failed")
 
     import urllib.request
 
@@ -471,24 +332,7 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
         with urllib.request.urlopen(req, timeout=25) as resp:
             report = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
-        return {
-            "ga4": "not_configured",
-            "sessions": None,
-            "cta_clicks": None,
-            "starts": None,
-            "address_complete": None,
-            "bill_complete": None,
-            "submits": None,
-            "wix_form_submits": None,
-            "by_page": empty_by_page(),
-            "error": f"ga4_run_report_failed: {exc}",
-            "env": {
-                "property_id_env": GA4_PROPERTY_ID_ENV,
-                "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
-                "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
-                "measurement_id": GA4_MEASUREMENT_ID,
-            },
-        }
+        return _ga4_not_configured(f"ga4_run_report_failed: {exc}")
 
     totals = {field: 0 for field in EVENT_COUNT_FIELDS.values()}
     by_page = empty_by_page()
@@ -511,9 +355,11 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
             bucket["sessions"] += count
         elif field == "starts":
             bucket["starts"] += count
-        elif field == "submits":
-            bucket["submits"] += count
+        elif field in {"estimate_submit", "wix_form_submits"}:
+            bucket["completed_forms"] += count
 
+    estimate_submit = totals.get("estimate_submit", 0)
+    wix_form_submits = totals.get("wix_form_submits", 0)
     return {
         "ga4": "ok",
         "sessions": totals.get("sessions", 0),
@@ -521,8 +367,9 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
         "starts": totals.get("starts", 0),
         "address_complete": totals.get("address_complete", 0),
         "bill_complete": totals.get("bill_complete", 0),
-        "submits": totals.get("submits", 0),
-        "wix_form_submits": totals.get("wix_form_submits", 0),
+        "estimate_submit": estimate_submit,
+        "wix_form_submits": wix_form_submits,
+        "completed_forms": sum_completed_forms(estimate_submit, wix_form_submits),
         "by_page": by_page,
         "error": None,
         "env": {
@@ -535,170 +382,36 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
     }
 
 
-def _query_opps_created_in_window(db: firestore.Client, start_local: datetime, end_local: datetime) -> list[Any] | None:
-    """Bounded createdAt range query. Never a full ghl_opportunities_v2 stream.
-
-    Returns None when Firestore cannot bound by date (missing index / type).
-    """
-    start_utc = start_local.astimezone(timezone.utc)
-    end_utc = end_local.astimezone(timezone.utc)
-    start_iso = start_utc.isoformat().replace("+00:00", "Z")
-    end_iso = end_utc.isoformat().replace("+00:00", "Z")
-    col = db.collection(OPP_COLLECTION)
-
-    attempts = (
-        (start_iso, end_iso),
-        (start_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"), end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")),
-        (start_utc, end_utc),
-    )
-    last_error: Exception | None = None
-    last_empty: list[Any] | None = None
-    for lower, upper in attempts:
-        try:
-            snaps = list(col.where("createdAt", ">=", lower).where("createdAt", "<", upper).stream())
-            if snaps:
-                return snaps
-            last_empty = snaps
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_empty is not None:
-        return last_empty
-    if last_error is not None:
-        return None
-    return []
-
-
-def fetch_contacts_by_ids(db: firestore.Client, contact_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Bounded get_all by contactId from the website-opp set only."""
-    needed = list(dict.fromkeys(cid for cid in (compact_str(x) for x in contact_ids) if cid))
-    contacts: dict[str, dict[str, Any]] = {}
-    refs = [db.collection(CONTACT_COLLECTION).document(cid) for cid in needed]
-    for i in range(0, len(refs), 300):
-        for snap in db.get_all(refs[i : i + 300]):
-            if not snap.exists:
-                continue
-            data = snap.to_dict() or {}
-            cid = compact_str(data.get("id") or snap.id)
-            if cid:
-                contacts[cid] = data
-            contacts[compact_str(snap.id)] = data
-    for cid in needed:
-        if cid in contacts:
-            continue
-        misses = list(db.collection(CONTACT_COLLECTION).where("id", "==", cid).limit(1).stream())
-        if misses:
-            data = misses[0].to_dict() or {}
-            contacts[cid] = data
-    return contacts
-
-
-def compute_ghl_website_leads_for_day(db: firestore.Client, date_ymd: str) -> dict[str, Any]:
-    start_local, end_local, start_iso, end_iso = ny_day_window(date_ymd)
-    snaps = _query_opps_created_in_window(db, start_local, end_local)
-    if snaps is None:
-        return {
-            "ghl": "warehouse_only",
-            "ghl_leads": None,
-            "attributed_leads": None,
-            "by_page": empty_by_page(),
-            "by_source": {},
-            "contact_me_leads": None,
-            "note": (
-                "Could not bound ghl_opportunities_v2 by createdAt without a full "
-                "collection stream. GHL lead counts come only from daily warehouse docs."
-            ),
-            "window_start_local": start_iso,
-            "window_end_local": end_iso,
-        }
-
-    needed_ids: list[str] = []
-    opp_rows: list[dict[str, Any]] = []
-    for snap in snaps:
-        opp = snap.to_dict() or {}
-        created = parse_iso_dt(opp.get("createdAt"))
-        if created is None:
-            continue
-        created_local = created.astimezone(start_local.tzinfo)
-        if not (start_local <= created_local < end_local):
-            continue
-        cid = compact_str(opp.get("contactId"))
-        opp_rows.append({"opp": opp, "contactId": cid})
-        if cid:
-            needed_ids.append(cid)
-
-    contacts = fetch_contacts_by_ids(db, needed_ids)
-    leads: dict[str, dict[str, Any]] = {}
-    for row in opp_rows:
-        contact = contacts.get(row["contactId"]) if row["contactId"] else None
-        if not is_website_attributed(row["opp"], contact):
-            continue
-        cid = row["contactId"] or compact_str((row["opp"] or {}).get("id"))
-        if not cid or cid in leads:
-            continue
-        leads[cid] = lead_attribution(row["opp"], contact)
-
-    by_page = empty_by_page()
-    by_source: dict[str, int] = {}
-    attributed = 0
-    contact_me = 0
-    for lead in leads.values():
-        group = lead.get("page_group") if lead.get("page_group") in PAGE_GROUPS else "other"
-        by_page[group]["ghl_leads"] += 1
-        if group == "contact_me":
-            contact_me += 1
-        if lead.get("attributed"):
-            attributed += 1
-        source = compact_str(lead.get("source")) or "unknown"
-        by_source[source] = by_source.get(source, 0) + 1
-
-    return {
-        "ghl": "createdAt_range",
-        "ghl_leads": len(leads),
-        "attributed_leads": attributed,
-        "by_page": by_page,
-        "by_source": by_source,
-        "contact_me_leads": contact_me,
-        "note": "Distinct contactId with a website-attributed opportunity created in the NY day.",
-        "window_start_local": start_iso,
-        "window_end_local": end_iso,
-        "field_names": list(WEBSITE_FIELD_NAMES),
-    }
-
-
-def merge_by_page(
-    ga4_by_page: dict[str, dict[str, Any]] | None,
-    ghl_by_page: dict[str, dict[str, Any]] | None,
-) -> dict[str, dict[str, int | None]]:
+def normalize_by_page(raw: dict[str, Any] | None) -> dict[str, dict[str, int | None]]:
     out = empty_by_page()
     for group in PAGE_GROUPS:
-        ga_bucket = (ga4_by_page or {}).get(group) or {}
-        ghl_bucket = (ghl_by_page or {}).get(group) or {}
+        bucket = (raw or {}).get(group) or {}
+        completed = bucket.get("completed_forms")
+        if completed is None:
+            completed = bucket.get("estimate_submit")
+            if completed is None:
+                completed = 0
+                if bucket.get("wix_form_submits") is not None:
+                    completed += int(bucket.get("wix_form_submits") or 0)
         out[group] = {
-            "sessions": ga_bucket.get("sessions"),
-            "starts": ga_bucket.get("starts"),
-            "submits": ga_bucket.get("submits"),
-            "ghl_leads": int(ghl_bucket.get("ghl_leads") or 0) if ghl_bucket.get("ghl_leads") is not None else ghl_bucket.get("ghl_leads"),
+            "sessions": bucket.get("sessions"),
+            "starts": bucket.get("starts"),
+            "completed_forms": completed,
         }
-        if out[group]["ghl_leads"] is None:
-            out[group]["ghl_leads"] = 0
-        for key in ("sessions", "starts", "submits"):
+        for key in ("sessions", "starts", "completed_forms"):
             if out[group][key] is None:
                 continue
             out[group][key] = int(out[group][key] or 0)
     return out
 
 
-def compute_orphans(wix_form_submits: int | None, contact_me_leads: int | None, ga4_status: str) -> int:
-    if ga4_status != "ok" or wix_form_submits is None:
-        return 0
-    leads = int(contact_me_leads or 0)
-    return max(int(wix_form_submits) - leads, 0)
-
-
-def build_daily_doc(date_ymd: str, ga4: dict[str, Any], ghl: dict[str, Any]) -> dict[str, Any]:
+def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
     ga4_status = compact_str(ga4.get("ga4")) or "not_configured"
-    orphans = compute_orphans(ga4.get("wix_form_submits"), ghl.get("contact_me_leads"), ga4_status)
+    estimate_submit = ga4.get("estimate_submit")
+    wix_form_submits = ga4.get("wix_form_submits")
+    completed = ga4.get("completed_forms")
+    if completed is None:
+        completed = sum_completed_forms(estimate_submit, wix_form_submits)
     return {
         "date": date_ymd,
         "sessions": ga4.get("sessions"),
@@ -706,16 +419,11 @@ def build_daily_doc(date_ymd: str, ga4: dict[str, Any], ghl: dict[str, Any]) -> 
         "starts": ga4.get("starts"),
         "address_complete": ga4.get("address_complete"),
         "bill_complete": ga4.get("bill_complete"),
-        "submits": ga4.get("submits"),
-        "wix_form_submits": ga4.get("wix_form_submits"),
-        "ghl_leads": ghl.get("ghl_leads"),
-        "orphans": orphans,
-        "attributed_leads": ghl.get("attributed_leads"),
-        "by_page": merge_by_page(ga4.get("by_page"), ghl.get("by_page")),
-        "by_source": ghl.get("by_source") or {},
+        "estimate_submit": estimate_submit,
+        "wix_form_submits": wix_form_submits,
+        "completed_forms": completed,
+        "by_page": normalize_by_page(ga4.get("by_page")),
         "ga4": ga4_status,
-        "ghl": ghl.get("ghl"),
-        "ghl_note": ghl.get("note"),
         "ga4_error": ga4.get("error"),
         "measurement_id": GA4_MEASUREMENT_ID,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -727,8 +435,7 @@ def rollup_day(db: firestore.Client, date_ymd: str | None = None) -> dict[str, A
     if not parse_date_ymd(date_key):
         raise ValueError("Invalid date; expected YYYY-MM-DD")
     ga4 = fetch_ga4_event_counts(date_key)
-    ghl = compute_ghl_website_leads_for_day(db, date_key)
-    doc = build_daily_doc(date_key, ga4, ghl)
+    doc = build_daily_doc(date_key, ga4)
     db.collection(DAILY_COLLECTION).document(date_key).set(doc, merge=True)
     return {"wrote": True, "collection": DAILY_COLLECTION, "id": date_key, "doc": doc}
 
@@ -769,42 +476,36 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
     else:
         ga4_status = "ok"
 
+    estimate_submit = _sum_optional([row.get("estimate_submit") for row in docs])
+    wix_form_submits = _sum_optional([row.get("wix_form_submits") for row in docs])
+    completed_forms = _sum_optional([row.get("completed_forms") for row in docs])
+    if completed_forms is None:
+        completed_forms = sum_completed_forms(estimate_submit, wix_form_submits)
+
     totals = {
         "sessions": _sum_optional([row.get("sessions") for row in docs]),
         "cta_clicks": _sum_optional([row.get("cta_clicks") for row in docs]),
         "starts": _sum_optional([row.get("starts") for row in docs]),
         "address_complete": _sum_optional([row.get("address_complete") for row in docs]),
         "bill_complete": _sum_optional([row.get("bill_complete") for row in docs]),
-        "submits": _sum_optional([row.get("submits") for row in docs]),
-        "wix_form_submits": _sum_optional([row.get("wix_form_submits") for row in docs]),
-        "ghl_leads": _sum_optional([row.get("ghl_leads") for row in docs]),
-        "orphans": _sum_optional([row.get("orphans") for row in docs]) or 0,
-        "attributed_leads": _sum_optional([row.get("attributed_leads") for row in docs]),
+        "estimate_submit": estimate_submit,
+        "wix_form_submits": wix_form_submits,
+        "completed_forms": completed_forms,
     }
 
     by_page = empty_by_page()
-    by_source: dict[str, int] = {}
     for row in docs:
-        page_map = row.get("by_page") or {}
+        page_map = normalize_by_page(row.get("by_page"))
         for group in PAGE_GROUPS:
             bucket = page_map.get(group) or {}
-            for key in ("sessions", "starts", "submits", "ghl_leads"):
+            for key in ("sessions", "starts", "completed_forms"):
                 if bucket.get(key) is None:
                     continue
                 by_page[group][key] += int(bucket.get(key) or 0)
-        source_map = row.get("by_source") or {}
-        if isinstance(source_map, dict):
-            for source, count in source_map.items():
-                try:
-                    by_source[str(source)] = by_source.get(str(source), 0) + int(count or 0)
-                except Exception:
-                    continue
 
-    session_to_ghl = ratio(totals["ghl_leads"], totals["sessions"])
-    submit_to_ghl = ratio(totals["ghl_leads"], totals["submits"])
-    start_to_submit = ratio(totals["submits"], totals["starts"])
+    session_to_form = ratio(totals["completed_forms"], totals["sessions"])
+    start_to_form = ratio(totals["estimate_submit"], totals["starts"])
     session_to_start = ratio(totals["starts"], totals["sessions"])
-    attributed_coverage = ratio(totals["attributed_leads"], totals["ghl_leads"])
 
     def group_rate(group: str) -> float | None:
         bucket = by_page.get(group) or {}
@@ -815,62 +516,82 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
     city_rate = ratio(city_starts, city_sessions)
 
     page_share: dict[str, float | None] = {}
-    lead_total = totals["ghl_leads"] or 0
+    form_total = totals["completed_forms"] or 0
     for group in PAGE_GROUPS:
-        leads = int((by_page[group].get("ghl_leads") or 0))
-        page_share[group] = (leads / lead_total) if lead_total > 0 else None
+        count = int((by_page[group].get("completed_forms") or 0))
+        page_share[group] = (count / form_total) if form_total > 0 else None
 
     notes = [
-        "/contact-me submits are orphans until wired; do not count as leads.",
-        "CRM is the source of truth for lead. This family is not Opportunities Created.",
-        "Volume goal for GHL website leads is baseline pending until a 14-day baseline exists.",
+        "A lead is a completed form submit: estimate_submit on the calculator, or wix_form_submit on /contact-me.",
+        "/contact-me completed submits count as leads in volume and session → completed form.",
+        "Estimate start → completed form is calculator-only (estimate_submit / estimate_start). contact-me has no start.",
+        "Volume goal for completed form submits is baseline pending until a 14-day baseline exists.",
+        "Session → start by surface and address/bill drop-off are diagnostic only and are not scored this week.",
     ]
     if not docs:
         notes.append("No daily warehouse docs for this month. Run /api/web_funnel_rollup.")
     elif missing:
-        notes.append(f"Missing {len(missing)} daily warehouse doc(s): {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}.")
+        notes.append(
+            f"Missing {len(missing)} daily warehouse doc(s): {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}."
+        )
     if ga4_status == "not_configured":
-        notes.append("GA4 is not_configured. Session/start/submit are null — traffic was not faked.")
+        notes.append("GA4 is not_configured. Session/start/completed-form counts are null — traffic was not faked.")
     elif ga4_status == "partial":
         notes.append("Some daily docs have ga4=not_configured or are incomplete.")
-    if any(compact_str(row.get("ghl")) == "warehouse_only" for row in docs):
-        notes.append("Some days stored GHL counts as warehouse_only because opportunities could not be date-bounded without a stream.")
 
     kpis = {
-        "ghl_website_leads": {
-            "name": "GHL website leads",
-            "value": totals["ghl_leads"],
+        "completed_form_submits": {
+            "name": "Completed form submits",
+            "value": totals["completed_forms"],
             "goal": None,
             "goal_label": "baseline pending",
             "status": "baseline_pending",
         },
-        "session_to_ghl_lead": {
-            "name": "Session → GHL lead",
-            "value": session_to_ghl,
-            "goal": GOAL_SESSION_TO_GHL,
-            "goal_label": "1.5%",
-            "status": score_vs_goal(session_to_ghl, GOAL_SESSION_TO_GHL),
+        "session_to_completed_form": {
+            "name": "Session → completed form",
+            "value": session_to_form,
+            "goal": GOAL_SESSION_TO_FORM,
+            "goal_label": "2%",
+            "status": score_vs_goal(session_to_form, GOAL_SESSION_TO_FORM),
         },
-        "submit_to_ghl_lead": {
-            "name": "Submit → GHL lead",
-            "value": submit_to_ghl,
-            "goal": GOAL_SUBMIT_TO_GHL,
-            "goal_label": "≥95%",
-            "status": score_vs_goal(submit_to_ghl, GOAL_SUBMIT_TO_GHL),
-        },
-        "estimate_start_to_submit": {
-            "name": "Estimate start → submit",
-            "value": start_to_submit,
-            "goal": GOAL_START_TO_SUBMIT,
+        "estimate_start_to_completed_form": {
+            "name": "Estimate start → completed form",
+            "value": start_to_form,
+            "goal": GOAL_START_TO_FORM,
             "goal_label": "25%",
-            "status": score_vs_goal(start_to_submit, GOAL_START_TO_SUBMIT),
+            "status": score_vs_goal(start_to_form, GOAL_START_TO_FORM),
+            "scope": "calculator_only",
+            "formula": "estimate_submit / estimate_start",
+        },
+        "page_contribution": {
+            "name": "Page contribution",
+            "value": page_share,
+            "goal": None,
+            "goal_label": "no % goal",
+            "status": "informational",
+        },
+    }
+
+    secondary = {
+        "address_complete": {
+            "name": "Address complete",
+            "value": totals["address_complete"],
+            "rate_from_start": ratio(totals["address_complete"], totals["starts"]),
+            "drop_off_from_start": drop_off(totals["starts"], totals["address_complete"]),
+            "scored": False,
+        },
+        "bill_complete": {
+            "name": "Bill complete",
+            "value": totals["bill_complete"],
+            "rate_from_start": ratio(totals["bill_complete"], totals["starts"]),
+            "drop_off_from_address": drop_off(totals["address_complete"], totals["bill_complete"]),
+            "scored": False,
         },
         "session_to_estimate_start": {
             "name": "Session → estimate start",
             "value": session_to_start,
-            "goal": GOAL_SESSION_TO_START_SITE,
-            "goal_label": "site 8%",
-            "status": score_vs_goal(session_to_start, GOAL_SESSION_TO_START_SITE),
+            "scored": False,
+            "note": "Diagnostic only. Not scored this week.",
             "by_surface": {
                 "site": {"value": session_to_start, "goal": GOAL_SESSION_TO_START_SITE, "goal_label": "8%"},
                 "home": {"value": group_rate("home"), "goal": GOAL_SESSION_TO_START_HOME, "goal_label": "6%"},
@@ -887,27 +608,6 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
                 },
             },
         },
-        "page_contribution": {
-            "name": "Page contribution",
-            "value": page_share,
-            "goal": None,
-            "goal_label": "no % goal",
-            "status": "informational",
-        },
-        "orphan_wix_submits": {
-            "name": "Orphan Wix submits",
-            "value": totals["orphans"],
-            "goal": GOAL_ORPHANS,
-            "goal_label": "0",
-            "status": score_vs_goal(float(totals["orphans"]), float(GOAL_ORPHANS), higher_is_better=False),
-        },
-        "attributed_source_coverage": {
-            "name": "Attributed source coverage",
-            "value": attributed_coverage,
-            "goal": GOAL_ATTRIBUTED_COVERAGE,
-            "goal_label": "≥90%",
-            "status": score_vs_goal(attributed_coverage, GOAL_ATTRIBUTED_COVERAGE),
-        },
     }
 
     return {
@@ -922,41 +622,29 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "ga4": ga4_status,
         "totals": totals,
         "kpis": kpis,
+        "secondary": secondary,
         "by_page": by_page,
-        "by_source": dict(sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))),
         "notes": notes,
         "goals": {
-            "ghl_website_leads": "baseline pending",
-            "session_to_ghl_lead": "1.5%",
-            "submit_to_ghl_lead": "≥95%",
-            "estimate_start_to_submit": "25%",
-            "session_to_estimate_start": {
+            "completed_form_submits": "baseline pending",
+            "session_to_completed_form": "2%",
+            "estimate_start_to_completed_form": "25%",
+            "page_contribution": "no % goal",
+            "session_to_estimate_start_diagnostic": {
                 "site": "8%",
                 "home": "6%",
                 "city_landers": "12%",
                 "ny_incentives": "10%",
                 "calculator_direct": "70%",
             },
-            "page_contribution": "no % goal",
-            "orphan_wix_submits": 0,
-            "attributed_source_coverage": "≥90%",
         },
         "contract": {
             "lead_definition": (
-                "Distinct contactId with a new website-attributed opportunity. "
-                "Time = ghl_opportunities_v2.createdAt (America/New_York)."
+                "Completed form submit: estimate_submit (calculator contact-complete) "
+                "plus wix_form_submit (/contact-me complete Submit)."
             ),
-            "website_attribution": (
-                "opportunity.source == 'website' (case-insensitive) OR any of "
-                "Website Landing Page / Website Page Group / Website UTM / GA Client ID is non-empty."
-            ),
-            "field_names": list(WEBSITE_FIELD_NAMES),
-            "field_ids": "pending Charles follow-up — names-only until then",
-            "excluded": {
-                "lead_gen_source_field": "hd5QqHEOVSsPom5bJ32P not read or written",
-                "sold_date_field": "P9oBjgbZjJdeE0OkBj9T not used",
-                "opportunities_created": "Inbound/Lead Locker excluded there; website leads land there",
-            },
+            "contact_me": "Counts as a completed form in volume and session → completed form.",
+            "start_to_form": "Calculator-only: estimate_submit / estimate_start. contact-me excluded from numerator.",
             "warehouse": DAILY_COLLECTION,
             "ga4_measurement_id": GA4_MEASUREMENT_ID,
             "ga4_env": [GA4_PROPERTY_ID_ENV, GA4_SERVICE_ACCOUNT_JSON_ENV, FIREBASE_SERVICE_ACCOUNT_JSON_ENV],
@@ -1012,6 +700,7 @@ __DASHBOARD_NAV_CSS__
     th, td { border-bottom:1px solid var(--border); padding:9px 10px; text-align:left; font-size:13px; }
     th { color:#64748b; font-weight:900; background:#fafbfc; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
+    .section-label { grid-column:span 12; margin-top:4px; font-size:12px; font-weight:900; letter-spacing:.04em; text-transform:uppercase; color:#64748b; }
     @media (max-width:980px) { .span-3,.span-4,.span-6,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:28px; } }
   </style>
@@ -1021,7 +710,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Website Funnel</div>
-        <div class="subtitle">Session → estimate start → submit → GHL contact + website-attributed opportunity. CRM is the source of truth for lead. /contact-me submits are orphans until wired; do not count as leads.</div>
+        <div class="subtitle">A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Session → completed form is site-wide. Estimate start → completed form is calculator-only so /contact-me does not distort it.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -1035,58 +724,59 @@ __DASHBOARD_NAV_HTML__
     <div class="grid">
       <div id="statusBanner" class="banner hidden"></div>
 
+      <div class="section-label">Primary</div>
       <div class="card span-3">
-        <div class="card-title">GHL website leads</div>
-        <div class="kpi" id="kpiLeads">—</div>
+        <div class="card-title">Completed form submits</div>
+        <div class="kpi" id="kpiForms">—</div>
         <div class="goal">Volume goal: baseline pending</div>
-        <div class="meta">Distinct contactId · createdAt NY day</div>
+        <div class="meta">Calculator + /contact-me completed submits. 14-day baseline pending.</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Session → GHL lead</div>
-        <div class="kpi" id="kpiSessionLead">—</div>
-        <div class="goal">Goal 1.5%</div>
-        <div class="meta" id="kpiSessionLeadStatus"></div>
+        <div class="card-title">Session → completed form</div>
+        <div class="kpi" id="kpiSessionForm">—</div>
+        <div class="goal">Goal 2%</div>
+        <div class="meta" id="kpiSessionFormStatus">completed_forms / sessions</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Submit → GHL lead</div>
-        <div class="kpi" id="kpiSubmitLead">—</div>
-        <div class="goal">Goal ≥95% · below 95% is a wiring incident</div>
-        <div class="meta" id="kpiSubmitLeadStatus"></div>
-      </div>
-      <div class="card span-3">
-        <div class="card-title">Estimate start → submit</div>
-        <div class="kpi" id="kpiStartSubmit">—</div>
+        <div class="card-title">Estimate start → completed form</div>
+        <div class="kpi" id="kpiStartForm">—</div>
         <div class="goal">Goal 25%</div>
-        <div class="meta" id="kpiStartSubmitStatus"></div>
-      </div>
-      <div class="card span-6">
-        <div class="card-title">Session → estimate start</div>
-        <div class="kpi" id="kpiSessionStart">—</div>
-        <div class="goal">Goals: site 8%, home 6%, city landers 12%, /ny-incentives 10%, calculator-direct 70%</div>
-        <div class="meta" id="kpiSessionStartDetail"></div>
+        <div class="meta" id="kpiStartFormStatus">Calculator-only: estimate_submit / estimate_start</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Orphan Wix submits</div>
-        <div class="kpi" id="kpiOrphans">—</div>
-        <div class="goal">Goal 0</div>
-        <div class="meta">/contact-me (or other Wix forms) with no GHL contact in 24h. Not leads.</div>
-      </div>
-      <div class="card span-3">
-        <div class="card-title">Attributed source coverage</div>
-        <div class="kpi" id="kpiCoverage">—</div>
-        <div class="goal">Goal ≥90%</div>
-        <div class="meta">Website leads with landing page + utm filled</div>
+        <div class="card-title">Page contribution</div>
+        <div class="kpi" id="kpiPageShare">—</div>
+        <div class="goal">No % goal</div>
+        <div class="meta">Share of completed forms by first page_group</div>
       </div>
 
       <div class="card span-12">
         <div class="card-title">Page contribution</div>
-        <div class="meta" style="margin-bottom:10px">Share of leads by first page_group. No % goal. Rows: home / buffalo / rochester / syracuse / ny-incentives / calculator / contact-me. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Share of completed forms by first page_group. /contact-me counts. Rows: home / buffalo / rochester / syracuse / ny-incentives / calculator / contact-me. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <table id="pageTable">
           <thead>
-            <tr><th>Page</th><th>Sessions</th><th>Starts</th><th>Submits</th><th>GHL leads</th><th>Lead share</th></tr>
+            <tr><th>Page</th><th>Sessions</th><th>Starts</th><th>Completed forms</th><th>Form share</th></tr>
           </thead>
           <tbody></tbody>
         </table>
+      </div>
+
+      <div class="section-label">Secondary — diagnostic only, not scored this week</div>
+      <div class="card span-4">
+        <div class="card-title">Address complete</div>
+        <div class="kpi" id="kpiAddress">—</div>
+        <div class="meta" id="kpiAddressMeta">Drop-off from estimate start. Not scored.</div>
+      </div>
+      <div class="card span-4">
+        <div class="card-title">Bill complete</div>
+        <div class="kpi" id="kpiBill">—</div>
+        <div class="meta" id="kpiBillMeta">Drop-off from address complete. Not scored.</div>
+      </div>
+      <div class="card span-4">
+        <div class="card-title">Session → estimate start</div>
+        <div class="kpi" id="kpiSessionStart">—</div>
+        <div class="goal">Diagnostic goals: site 8%, home 6%, city 12%, ny-incentives 10%, calculator-direct 70%</div>
+        <div class="meta" id="kpiSessionStartDetail">Not scored this week.</div>
       </div>
     </div>
   </div>
@@ -1152,23 +842,37 @@ async function load() {
     banner.classList.add('hidden');
   }
   var k = data.kpis || {};
-  paintKpi('kpiLeads', num((k.ghl_website_leads || {}).value), 'baseline_pending');
-  paintKpi('kpiSessionLead', pct((k.session_to_ghl_lead || {}).value), (k.session_to_ghl_lead || {}).status);
-  setStatus(document.getElementById('kpiSessionLeadStatus'), (k.session_to_ghl_lead || {}).status, 'Goal 1.5%');
-  paintKpi('kpiSubmitLead', pct((k.submit_to_ghl_lead || {}).value), (k.submit_to_ghl_lead || {}).status);
-  setStatus(document.getElementById('kpiSubmitLeadStatus'), (k.submit_to_ghl_lead || {}).status, 'Goal ≥95%');
-  paintKpi('kpiStartSubmit', pct((k.estimate_start_to_submit || {}).value), (k.estimate_start_to_submit || {}).status);
-  setStatus(document.getElementById('kpiStartSubmitStatus'), (k.estimate_start_to_submit || {}).status, 'Goal 25%');
-  paintKpi('kpiSessionStart', pct((k.session_to_estimate_start || {}).value), (k.session_to_estimate_start || {}).status);
-  var surfaces = ((k.session_to_estimate_start || {}).by_surface) || {};
+  var secondary = data.secondary || {};
+  var share = ((k.page_contribution || {}).value) || {};
+  paintKpi('kpiForms', num((k.completed_form_submits || {}).value), 'baseline_pending');
+  paintKpi('kpiSessionForm', pct((k.session_to_completed_form || {}).value), (k.session_to_completed_form || {}).status);
+  setStatus(document.getElementById('kpiSessionFormStatus'), (k.session_to_completed_form || {}).status, 'Goal 2% · completed_forms / sessions');
+  paintKpi('kpiStartForm', pct((k.estimate_start_to_completed_form || {}).value), (k.estimate_start_to_completed_form || {}).status);
+  setStatus(document.getElementById('kpiStartFormStatus'), (k.estimate_start_to_completed_form || {}).status, 'Goal 25% · calculator-only');
+  var topShare = null;
+  Object.keys(share).forEach(function(key) {
+    if (share[key] == null) return;
+    if (topShare == null || share[key] > topShare) topShare = share[key];
+  });
+  paintKpi('kpiPageShare', pct(topShare), 'informational');
+
+  paintKpi('kpiAddress', num(((secondary.address_complete || {}).value)), 'informational');
+  document.getElementById('kpiAddressMeta').textContent =
+    'From start: ' + pct((secondary.address_complete || {}).rate_from_start) +
+    ' · drop-off ' + pct((secondary.address_complete || {}).drop_off_from_start) + ' · not scored';
+  paintKpi('kpiBill', num(((secondary.bill_complete || {}).value)), 'informational');
+  document.getElementById('kpiBillMeta').textContent =
+    'From start: ' + pct((secondary.bill_complete || {}).rate_from_start) +
+    ' · drop-off from address ' + pct((secondary.bill_complete || {}).drop_off_from_address) + ' · not scored';
+  var surfaces = ((secondary.session_to_estimate_start || {}).by_surface) || {};
+  paintKpi('kpiSessionStart', pct((secondary.session_to_estimate_start || {}).value), 'informational');
   document.getElementById('kpiSessionStartDetail').textContent =
     'site ' + pct((surfaces.site || {}).value) +
     ' · home ' + pct((surfaces.home || {}).value) +
-    ' · city landers ' + pct((surfaces.city_landers || {}).value) +
-    ' · /ny-incentives ' + pct((surfaces.ny_incentives || {}).value) +
-    ' · calculator-direct ' + pct((surfaces.calculator_direct || {}).value);
-  paintKpi('kpiOrphans', num((k.orphan_wix_submits || {}).value), (k.orphan_wix_submits || {}).status);
-  paintKpi('kpiCoverage', pct((k.attributed_source_coverage || {}).value), (k.attributed_source_coverage || {}).status);
+    ' · city ' + pct((surfaces.city_landers || {}).value) +
+    ' · ny-incentives ' + pct((surfaces.ny_incentives || {}).value) +
+    ' · calculator-direct ' + pct((surfaces.calculator_direct || {}).value) +
+    ' · not scored';
 
   var rows = [
     ['home', 'home'],
@@ -1180,12 +884,11 @@ async function load() {
     ['contact_me', 'contact-me']
   ];
   var byPage = data.by_page || {};
-  var share = ((k.page_contribution || {}).value) || {};
   var tbody = document.querySelector('#pageTable tbody');
   tbody.innerHTML = rows.map(function(pair) {
     var g = pair[0], label = pair[1], b = byPage[g] || {};
     return '<tr><td>' + label + '</td><td>' + num(b.sessions) + '</td><td>' + num(b.starts) +
-      '</td><td>' + num(b.submits) + '</td><td>' + num(b.ghl_leads) + '</td><td>' + pct(share[g]) + '</td></tr>';
+      '</td><td>' + num(b.completed_forms) + '</td><td>' + pct(share[g]) + '</td></tr>';
   }).join('');
 }
 document.getElementById('apply').addEventListener('click', load);

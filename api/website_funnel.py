@@ -3,7 +3,8 @@
 """Vercel Python function: /api/website_funnel
 
 Website Funnel dashboard (HTML) and month JSON (?format=json).
-Reads ≤31 web_funnel_daily_v1 docs. Never streams ghl_*.
+A lead is a completed form submit. Reads ≤31 web_funnel_daily_v1 docs.
+Never streams ghl_* collections.
 
 Optional ?rollup=1 writes yesterday (or ?date=YYYY-MM-DD) then returns
 the dashboard/JSON. Prefer /api/web_funnel_rollup for the write path.

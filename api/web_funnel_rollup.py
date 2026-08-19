@@ -3,7 +3,8 @@
 """Vercel Python function: /api/web_funnel_rollup
 
 Write/merge one web_funnel_daily_v1 doc for a given America/New_York date
-(default yesterday). Not on warm_cache. Not hourly.
+(default yesterday). Completed-form counts only. Never streams ghl_*
+collections. Not on warm_cache. Not hourly.
 
 Params:
 - date=YYYY-MM-DD (optional)

@@ -286,34 +286,70 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             d = misses[0].to_dict() or {}
             contacts_map[cid] = d
 
-    pipeline_name_cache: dict[str, str | None] = {}
-    for snap in db.collection("ghl_pipelines_v2").stream():
-        d = snap.to_dict() or {}
-        pid = str(d.get("id") or snap.id).strip()
+    needed_pipeline_ids: list[str] = []
+    needed_owner_ids: list[str] = []
+    for snap in opp_snaps:
+        opp = snap.to_dict() or {}
+        pid = compact_str(opp.get("pipelineId"))
         if pid:
-            pipeline_name_cache[pid] = d.get("name")
+            needed_pipeline_ids.append(pid)
+        uid = compact_str(opp.get("assignedTo"))
+        if uid:
+            needed_owner_ids.append(uid)
+    needed_pipeline_ids = list(dict.fromkeys(needed_pipeline_ids))
+    needed_owner_ids = list(dict.fromkeys(needed_owner_ids))
 
-    # Primary owner labels: roster_people_v1.
-    # Bounded fallback: get_all only assignedTo IDs that missed roster from ghl_users_v2.
+    # Bounded: only the pipeline docs on this sold-opp set. No collection stream.
+    pipeline_name_cache: dict[str, str | None] = {}
+    pipe_refs = [db.collection("ghl_pipelines_v2").document(pid) for pid in needed_pipeline_ids]
+    for i in range(0, len(pipe_refs), 300):
+        for snap in db.get_all(pipe_refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            pid = compact_str(d.get("id") or snap.id)
+            if pid:
+                pipeline_name_cache[pid] = d.get("name")
+    for pid in needed_pipeline_ids:
+        if pid in pipeline_name_cache:
+            continue
+        misses = list(
+            db.collection("ghl_pipelines_v2").where("id", "==", pid).limit(1).stream()
+        )
+        if misses:
+            d = misses[0].to_dict() or {}
+            pipeline_name_cache[compact_str(d.get("id") or pid)] = d.get("name")
+
+    # Primary owner labels: roster_people_v1 for these assignedTo IDs only.
+    # get_all by doc id, then where ghl_user_id in chunks of 10. No roster stream.
+    # Then bounded ghl_users_v2 get_all of remaining misses.
     user_name_cache: dict[str, str | None] = {}
-    for snap in db.collection("roster_people_v1").stream():
+
+    def _remember_roster(snap) -> None:
         d = snap.to_dict() or {}
         name = compact_str(d.get("display_name")) or best_person_name(d) or None
-        keys = {
+        if not name:
+            return
+        for key in {
             compact_str(d.get("ghl_user_id")),
             compact_str(d.get("ghlUserId")),
             compact_str(snap.id),
-        }
-        for key in keys:
-            if key and name:
+        }:
+            if key:
                 user_name_cache[key] = name
 
-    needed_owner_ids = []
-    for snap in opp_snaps:
-        uid = compact_str((snap.to_dict() or {}).get("assignedTo"))
-        if uid:
-            needed_owner_ids.append(uid)
-    needed_owner_ids = list(dict.fromkeys(needed_owner_ids))
+    roster_refs = [db.collection("roster_people_v1").document(uid) for uid in needed_owner_ids]
+    for i in range(0, len(roster_refs), 300):
+        for snap in db.get_all(roster_refs[i : i + 300]):
+            if snap.exists:
+                _remember_roster(snap)
+    still_missing_roster = [uid for uid in needed_owner_ids if uid not in user_name_cache]
+    for i in range(0, len(still_missing_roster), 10):
+        chunk = still_missing_roster[i : i + 10]
+        if not chunk:
+            continue
+        for snap in db.collection("roster_people_v1").where("ghl_user_id", "in", chunk).stream():
+            _remember_roster(snap)
     missed_owner_ids = [
         uid
         for uid in needed_owner_ids

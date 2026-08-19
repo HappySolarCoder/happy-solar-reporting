@@ -233,6 +233,7 @@ def render_dashboard_nav(current: str) -> str:
         "fma_commissions",
         "fma_monthly_kickoff",
     }
+    project_management_active = current in {"project_management_hub", "hold_cancelled"}
 
     def active(name: str) -> str:
         return " active" if current == name else ""
@@ -258,6 +259,13 @@ def render_dashboard_nav(current: str) -> str:
             </div>
           </details>
           <a class="navbtn{active('daily_update')}" href="/api/daily_update">Daily Dashboard</a>
+          <details class="navmenu">
+            <summary class="navbtn{' active' if project_management_active else ''}">Project Management <span class="navmenu-caret">▾</span></summary>
+            <div class="navmenu-list">
+              <a class="navmenu-item{active('project_management_hub')}" href="https://happy-solar-monday-pm.vercel.app/project-management-hub.html" target="_blank" rel="noopener noreferrer">Project Management Hub</a>
+              <a class="navmenu-item{active('hold_cancelled')}" href="https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html" target="_blank" rel="noopener noreferrer">Hold/Cancelled</a>
+            </div>
+          </details>
         </div>
         <script>
           (function() {{

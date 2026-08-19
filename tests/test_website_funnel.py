@@ -106,15 +106,34 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertIn("db.get_all", inspect.getsource(funnel.fetch_contacts_by_ids))
         self.assertIn("db.get_all", inspect.getsource(funnel.read_month_docs))
 
-    def test_field_id_constants_exist_and_may_be_empty(self):
+    def test_website_fields_are_names_only(self):
+        self.assertEqual(
+            funnel.WEBSITE_FIELD_NAMES,
+            (
+                "Website Landing Page",
+                "Website Page Group",
+                "Website UTM",
+                "GA Client ID",
+            ),
+        )
         self.assertEqual(funnel.WEBSITE_LANDING_PAGE_FIELD_NAME, "Website Landing Page")
         self.assertEqual(funnel.WEBSITE_PAGE_GROUP_FIELD_NAME, "Website Page Group")
         self.assertEqual(funnel.WEBSITE_UTM_FIELD_NAME, "Website UTM")
         self.assertEqual(funnel.GA_CLIENT_ID_FIELD_NAME, "GA Client ID")
-        self.assertIsInstance(funnel.WEBSITE_LANDING_PAGE_FIELD_ID, str)
-        self.assertIsInstance(funnel.WEBSITE_PAGE_GROUP_FIELD_ID, str)
-        self.assertIsInstance(funnel.WEBSITE_UTM_FIELD_ID, str)
-        self.assertIsInstance(funnel.GA_CLIENT_ID_FIELD_ID, str)
+        self.assertFalse(hasattr(funnel, "WEBSITE_LANDING_PAGE_FIELD_ID"))
+        self.assertFalse(hasattr(funnel, "WEBSITE_PAGE_GROUP_FIELD_ID"))
+        self.assertFalse(hasattr(funnel, "WEBSITE_UTM_FIELD_ID"))
+        self.assertFalse(hasattr(funnel, "GA_CLIENT_ID_FIELD_ID"))
+        self.assertFalse(hasattr(funnel, "load_website_field_ids"))
+        self.assertNotIn("ghl_custom_fields_v2", FUNNEL_SRC)
+        self.assertNotIn("secretmanager", FUNNEL_SRC.lower())
+        self.assertNotIn("SECRET_MANAGER", FUNNEL_SRC)
+        self.assertNotIn("GHL_API_KEY", FUNNEL_SRC)
+        self.assertNotIn("API_KEY", FUNNEL_SRC)
+        self.assertNotIn("create_field", FUNNEL_SRC)
+        lookup_src = inspect.getsource(funnel.custom_field_value)
+        self.assertIn("field_name", lookup_src)
+        self.assertNotIn("field_id", lookup_src)
 
     def test_ga4_env_names_are_documented(self):
         self.assertEqual(funnel.GA4_PROPERTY_ID_ENV, "GA4_PROPERTY_ID")

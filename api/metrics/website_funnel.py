@@ -26,6 +26,11 @@ GA4 (optional):
 - Env GA4_SERVICE_ACCOUNT_JSON optional; else FIREBASE_SERVICE_ACCOUNT_JSON.
 - If creds/property are missing, write nulls for session/start/submit and
   set ga4="not_configured". Do not fake traffic.
+
+Charles lock (2026-08-19): website field constants are names-only
+(Website Landing Page, Website Page Group, Website UTM, GA Client ID).
+Do not invent IDs. Do not call GHL to create fields. Do not use Secret
+Manager or any API key. Real IDs arrive in a later follow-up.
 """
 
 from __future__ import annotations
@@ -48,24 +53,26 @@ TIMEZONE_NAME = "America/New_York"
 DAILY_COLLECTION = "web_funnel_daily_v1"
 OPP_COLLECTION = "ghl_opportunities_v2"
 CONTACT_COLLECTION = "ghl_contacts_v2"
-CUSTOM_FIELDS_COLLECTION = "ghl_custom_fields_v2"
 
 GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
 GA4_PROPERTY_ID_ENV = "GA4_PROPERTY_ID"
 GA4_SERVICE_ACCOUNT_JSON_ENV = "GA4_SERVICE_ACCOUNT_JSON"
 FIREBASE_SERVICE_ACCOUNT_JSON_ENV = "FIREBASE_SERVICE_ACCOUNT_JSON"
 
-# Field IDs filled in a follow-up once they exist in GHL. Empty is OK:
-# matching also works by field name from ghl_custom_fields_v2 / contact.customFields.
-WEBSITE_LANDING_PAGE_FIELD_ID = ""
-WEBSITE_PAGE_GROUP_FIELD_ID = ""
-WEBSITE_UTM_FIELD_ID = ""
-GA_CLIENT_ID_FIELD_ID = ""
-
+# Charles lock 2026-08-19: names-only. Do not invent IDs. Do not call GHL to
+# create fields. Do not use Secret Manager or any API key. Real IDs arrive
+# in a later follow-up. Until then, match contact/opportunity customFields
+# by these names, plus opportunity.source == "website".
 WEBSITE_LANDING_PAGE_FIELD_NAME = "Website Landing Page"
 WEBSITE_PAGE_GROUP_FIELD_NAME = "Website Page Group"
 WEBSITE_UTM_FIELD_NAME = "Website UTM"
 GA_CLIENT_ID_FIELD_NAME = "GA Client ID"
+WEBSITE_FIELD_NAMES: tuple[str, ...] = (
+    WEBSITE_LANDING_PAGE_FIELD_NAME,
+    WEBSITE_PAGE_GROUP_FIELD_NAME,
+    WEBSITE_UTM_FIELD_NAME,
+    GA_CLIENT_ID_FIELD_NAME,
+)
 
 WEBSITE_SOURCE_VALUE = "website"
 
@@ -288,25 +295,17 @@ def _cf_name(cf: dict[str, Any]) -> str:
     return ""
 
 
-def custom_field_value(
-    entity: dict[str, Any] | None,
-    *,
-    field_id: str,
-    field_name: str,
-    name_to_id: dict[str, str] | None = None,
-) -> Any:
+def custom_field_value(entity: dict[str, Any] | None, *, field_name: str) -> Any:
+    """Match customFields by locked field name only. No invented IDs."""
     if not isinstance(entity, dict):
         return None
-    resolved_id = compact_str(field_id) or (name_to_id or {}).get(field_name.casefold(), "")
     want_name = compact_str(field_name).casefold()
+    if not want_name:
+        return None
     for cf in entity.get("customFields") or []:
         if not isinstance(cf, dict):
             continue
-        cid = compact_str(cf.get("id"))
-        cname = _cf_name(cf).casefold()
-        id_hit = bool(resolved_id) and cid == resolved_id
-        name_hit = bool(want_name) and cname == want_name
-        if not (id_hit or name_hit):
+        if _cf_name(cf).casefold() != want_name:
             continue
         value = cf.get("value")
         if value in (None, ""):
@@ -315,63 +314,18 @@ def custom_field_value(
     return None
 
 
-def load_website_field_ids(db: firestore.Client | None) -> dict[str, str]:
-    """Resolve empty field-ID constants from ghl_custom_fields_v2 by name.
-
-    Small metadata collection. Not ghl_contacts_v2 / ghl_opportunities_v2.
-    """
-    wanted = {
-        WEBSITE_LANDING_PAGE_FIELD_NAME.casefold(): WEBSITE_LANDING_PAGE_FIELD_NAME,
-        WEBSITE_PAGE_GROUP_FIELD_NAME.casefold(): WEBSITE_PAGE_GROUP_FIELD_NAME,
-        WEBSITE_UTM_FIELD_NAME.casefold(): WEBSITE_UTM_FIELD_NAME,
-        GA_CLIENT_ID_FIELD_NAME.casefold(): GA_CLIENT_ID_FIELD_NAME,
-    }
-    found: dict[str, str] = {}
-    if compact_str(WEBSITE_LANDING_PAGE_FIELD_ID):
-        found[WEBSITE_LANDING_PAGE_FIELD_NAME.casefold()] = WEBSITE_LANDING_PAGE_FIELD_ID
-    if compact_str(WEBSITE_PAGE_GROUP_FIELD_ID):
-        found[WEBSITE_PAGE_GROUP_FIELD_NAME.casefold()] = WEBSITE_PAGE_GROUP_FIELD_ID
-    if compact_str(WEBSITE_UTM_FIELD_ID):
-        found[WEBSITE_UTM_FIELD_NAME.casefold()] = WEBSITE_UTM_FIELD_ID
-    if compact_str(GA_CLIENT_ID_FIELD_ID):
-        found[GA_CLIENT_ID_FIELD_NAME.casefold()] = GA_CLIENT_ID_FIELD_ID
-    if db is None or len(found) == len(wanted):
-        return found
-    try:
-        for snap in db.collection(CUSTOM_FIELDS_COLLECTION).limit(500).stream():
-            data = snap.to_dict() or {}
-            name = _cf_name(data).casefold()
-            if name not in wanted or name in found:
-                continue
-            field_id = compact_str(data.get("id") or snap.id)
-            if field_id:
-                found[name] = field_id
-            if len(found) == len(wanted):
-                break
-    except Exception:
-        return found
-    return found
-
-
 def is_website_attributed(
     opportunity: dict[str, Any] | None,
     contact: dict[str, Any] | None,
-    name_to_id: dict[str, str] | None = None,
 ) -> bool:
     opp = opportunity if isinstance(opportunity, dict) else {}
     source = compact_str(opp.get("source")).casefold()
     if source == WEBSITE_SOURCE_VALUE:
         return True
-    attr_fields = (
-        (WEBSITE_LANDING_PAGE_FIELD_ID, WEBSITE_LANDING_PAGE_FIELD_NAME),
-        (WEBSITE_PAGE_GROUP_FIELD_ID, WEBSITE_PAGE_GROUP_FIELD_NAME),
-        (WEBSITE_UTM_FIELD_ID, WEBSITE_UTM_FIELD_NAME),
-        (GA_CLIENT_ID_FIELD_ID, GA_CLIENT_ID_FIELD_NAME),
-    )
-    for field_id, field_name in attr_fields:
-        if is_filled(custom_field_value(contact, field_id=field_id, field_name=field_name, name_to_id=name_to_id)):
+    for field_name in WEBSITE_FIELD_NAMES:
+        if is_filled(custom_field_value(contact, field_name=field_name)):
             return True
-        if is_filled(custom_field_value(opp, field_id=field_id, field_name=field_name, name_to_id=name_to_id)):
+        if is_filled(custom_field_value(opp, field_name=field_name)):
             return True
     return False
 
@@ -379,44 +333,18 @@ def is_website_attributed(
 def lead_attribution(
     opportunity: dict[str, Any] | None,
     contact: dict[str, Any] | None,
-    name_to_id: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    landing = custom_field_value(
-        contact,
-        field_id=WEBSITE_LANDING_PAGE_FIELD_ID,
-        field_name=WEBSITE_LANDING_PAGE_FIELD_NAME,
-        name_to_id=name_to_id,
-    )
+    landing = custom_field_value(contact, field_name=WEBSITE_LANDING_PAGE_FIELD_NAME)
     if not is_filled(landing):
-        landing = custom_field_value(
-            opportunity,
-            field_id=WEBSITE_LANDING_PAGE_FIELD_ID,
-            field_name=WEBSITE_LANDING_PAGE_FIELD_NAME,
-            name_to_id=name_to_id,
-        )
-    page_group_raw = custom_field_value(
-        contact,
-        field_id=WEBSITE_PAGE_GROUP_FIELD_ID,
-        field_name=WEBSITE_PAGE_GROUP_FIELD_NAME,
-        name_to_id=name_to_id,
-    )
+        landing = custom_field_value(opportunity, field_name=WEBSITE_LANDING_PAGE_FIELD_NAME)
+    page_group_raw = custom_field_value(contact, field_name=WEBSITE_PAGE_GROUP_FIELD_NAME)
     if is_filled(page_group_raw):
         page_group = normalize_page_group(page_group_raw)
     else:
         page_group = page_group_from_landing(landing)
-    utm = custom_field_value(
-        contact,
-        field_id=WEBSITE_UTM_FIELD_ID,
-        field_name=WEBSITE_UTM_FIELD_NAME,
-        name_to_id=name_to_id,
-    )
+    utm = custom_field_value(contact, field_name=WEBSITE_UTM_FIELD_NAME)
     if not is_filled(utm):
-        utm = custom_field_value(
-            opportunity,
-            field_id=WEBSITE_UTM_FIELD_ID,
-            field_name=WEBSITE_UTM_FIELD_NAME,
-            name_to_id=name_to_id,
-        )
+        utm = custom_field_value(opportunity, field_name=WEBSITE_UTM_FIELD_NAME)
     source = compact_str((opportunity or {}).get("source")) or compact_str(utm) or "unknown"
     return {
         "landing_page": compact_str(landing),
@@ -684,7 +612,6 @@ def compute_ghl_website_leads_for_day(db: firestore.Client, date_ymd: str) -> di
             "window_end_local": end_iso,
         }
 
-    name_to_id = load_website_field_ids(db)
     needed_ids: list[str] = []
     opp_rows: list[dict[str, Any]] = []
     for snap in snaps:
@@ -704,12 +631,12 @@ def compute_ghl_website_leads_for_day(db: firestore.Client, date_ymd: str) -> di
     leads: dict[str, dict[str, Any]] = {}
     for row in opp_rows:
         contact = contacts.get(row["contactId"]) if row["contactId"] else None
-        if not is_website_attributed(row["opp"], contact, name_to_id):
+        if not is_website_attributed(row["opp"], contact):
             continue
         cid = row["contactId"] or compact_str((row["opp"] or {}).get("id"))
         if not cid or cid in leads:
             continue
-        leads[cid] = lead_attribution(row["opp"], contact, name_to_id)
+        leads[cid] = lead_attribution(row["opp"], contact)
 
     by_page = empty_by_page()
     by_source: dict[str, int] = {}
@@ -735,12 +662,7 @@ def compute_ghl_website_leads_for_day(db: firestore.Client, date_ymd: str) -> di
         "note": "Distinct contactId with a website-attributed opportunity created in the NY day.",
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "field_ids": {
-            "website_landing_page": WEBSITE_LANDING_PAGE_FIELD_ID or name_to_id.get(WEBSITE_LANDING_PAGE_FIELD_NAME.casefold(), ""),
-            "website_page_group": WEBSITE_PAGE_GROUP_FIELD_ID or name_to_id.get(WEBSITE_PAGE_GROUP_FIELD_NAME.casefold(), ""),
-            "website_utm": WEBSITE_UTM_FIELD_ID or name_to_id.get(WEBSITE_UTM_FIELD_NAME.casefold(), ""),
-            "ga_client_id": GA_CLIENT_ID_FIELD_ID or name_to_id.get(GA_CLIENT_ID_FIELD_NAME.casefold(), ""),
-        },
+        "field_names": list(WEBSITE_FIELD_NAMES),
     }
 
 
@@ -1028,12 +950,8 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
                 "opportunity.source == 'website' (case-insensitive) OR any of "
                 "Website Landing Page / Website Page Group / Website UTM / GA Client ID is non-empty."
             ),
-            "field_ids": {
-                "website_landing_page": WEBSITE_LANDING_PAGE_FIELD_ID,
-                "website_page_group": WEBSITE_PAGE_GROUP_FIELD_ID,
-                "website_utm": WEBSITE_UTM_FIELD_ID,
-                "ga_client_id": GA_CLIENT_ID_FIELD_ID,
-            },
+            "field_names": list(WEBSITE_FIELD_NAMES),
+            "field_ids": "pending Charles follow-up — names-only until then",
             "excluded": {
                 "lead_gen_source_field": "hd5QqHEOVSsPom5bJ32P not read or written",
                 "sold_date_field": "P9oBjgbZjJdeE0OkBj9T not used",

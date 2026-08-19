@@ -67,21 +67,11 @@ class handler(BaseHTTPRequestHandler):
 
         q = urlencode(params)
 
-        # Sales removed from hourly warm 2026-08-18: /api/metrics/sales
-        # streamed full ghl_opportunities_v2 + ghl_contacts_v2 (~4.5k+ docs).
-        urls = [
-            f"{base}/api/metrics/opportunities_created?{q}&pipeline_scope=all",
-            f"{base}/api/metrics/opportunities_ran?{q}",
-            f"{base}/api/metrics/demo_rate?{q}",
-            f"{base}/api/metrics/company_snapshot?{q}",
-        ]
-
-        if include_daily and start and end:
-            urls.extend([
-                f"{base}/api/metrics/raydar_doors_knocked?{q}",
-                f"{base}/api/metrics/kixie_calls_summary?{q}",
-                f"{base}/api/powerline_dashboard?{q}",
-            ])
+        # 2026-08-18: sales removed from hourly warm (full opp+contact stream).
+        # 2026-08-19: created/ran/demo_rate/company_snapshot also full-stream
+        # ghl_opportunities_v2 + ghl_contacts_v2 (~4.5k docs). Hourly cron
+        # multiplied that 24x. Stop those warms. Do not add sales/essential_sales.
+        urls = []
 
         results = []
         ok = 0
@@ -99,9 +89,11 @@ class handler(BaseHTTPRequestHandler):
             "ok": ok,
             "total": len(urls),
             "window": {"year": year, "month": month, "start": start or None, "end": end or None},
+            "include_daily": include_daily,
+            "query": q,
             "results": results,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "note": "Use for hourly baseline warm + non-blocking on-open warm.",
+            "note": "Hourly metric warm stopped 2026-08-19. Handler stays 200. No sales/created/ran/demo/snapshot hits.",
         }
 
         body = json.dumps(payload).encode("utf-8")

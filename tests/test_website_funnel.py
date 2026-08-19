@@ -138,12 +138,13 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertEqual(funnel.GOAL_SESSION_TO_START_CITY, 0.12)
         self.assertEqual(funnel.GOAL_SESSION_TO_START_NY_INCENTIVES, 0.10)
         self.assertEqual(funnel.GOAL_SESSION_TO_START_CALCULATOR, 0.70)
+        self.assertEqual(funnel.SCOREBOARD, "sessions → start → completed form")
         self.assertEqual(
             funnel.KPI_NAMES,
             (
-                "Completed form submits",
-                "Session → completed form",
-                "Estimate start → completed form",
+                "Completed form",
+                "Sessions → completed form",
+                "Start → completed form",
                 "Page contribution",
             ),
         )
@@ -187,24 +188,35 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertNotIn("GHL_API_KEY", FUNNEL_SRC)
         self.assertNotIn("API_KEY", FUNNEL_SRC)
 
-    def test_handlers_exist_and_never_stream_ghl(self):
-        self.assertIn("Never streams ghl_*", PAGE_SRC)
-        self.assertIn("Never streams ghl_*", ROLLUP_SRC)
+    def test_handlers_exist_and_do_not_mention_ghl(self):
+        self.assertNotIn("ghl_", PAGE_SRC)
+        self.assertNotIn("ghl_", ROLLUP_SRC)
+        self.assertNotIn("ghl_", FUNNEL_SRC)
+        self.assertNotIn("GHL", PAGE_SRC)
+        self.assertNotIn("GHL", ROLLUP_SRC)
+        self.assertNotIn("GHL", FUNNEL_SRC)
+        self.assertNotIn("FIELD_NAME", FUNNEL_SRC)
         self.assertIn("compute_month", PAGE_SRC)
         self.assertIn("rollup_day", ROLLUP_SRC)
+        self.assertIn("sessions → start → completed form", PAGE_SRC)
         self.assertIn("completed form", PAGE_SRC)
 
 
 class WebsiteFunnelHtmlTests(unittest.TestCase):
     def test_dashboard_html_uses_completed_form_kpis(self):
         html = funnel.render_html(2026, 8)
+        self.assertIn("sessions → start → completed form", html)
         for name in (
-            "Completed form submits",
-            "Session → completed form",
-            "Estimate start → completed form",
+            "Completed form",
+            "Sessions → completed form",
+            "Start → completed form",
             "Page contribution",
         ):
             self.assertIn(name, html)
+        self.assertNotIn("Completed form submits", html)
+        self.assertNotIn(">Session → completed form<", html)
+        self.assertNotIn("Estimate start → completed form", html)
+        self.assertNotIn("Session → estimate start", html)
         self.assertIn("baseline pending", html)
         self.assertIn("Goal 2%", html)
         self.assertIn("Goal 25%", html)
@@ -228,7 +240,8 @@ class WebsiteFunnelHtmlTests(unittest.TestCase):
 
     def test_page_handler_renders_same_kpis(self):
         html = page.render_html(2026, 8)
-        self.assertIn("Completed form submits", html)
+        self.assertIn("Completed form", html)
+        self.assertIn("sessions → start → completed form", html)
         self.assertIn("Website Funnel", html)
         self.assertIn('href="/api/website_funnel"', html)
         self.assertNotIn("GHL website leads", html)
@@ -362,18 +375,23 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
         self.assertNotIn("attributed_leads", payload)
         self.assertNotIn("ghl_website_leads", payload["kpis"])
         self.assertNotIn("submit_to_ghl_lead", payload["kpis"])
-        self.assertEqual(payload["kpis"]["completed_form_submits"]["status"], "baseline_pending")
-        self.assertEqual(payload["kpis"]["completed_form_submits"]["goal_label"], "baseline pending")
-        self.assertAlmostEqual(payload["kpis"]["session_to_completed_form"]["value"], 7 / 200)
-        self.assertEqual(payload["kpis"]["session_to_completed_form"]["goal"], 0.02)
-        self.assertEqual(payload["kpis"]["session_to_completed_form"]["status"], "hit")
-        self.assertAlmostEqual(payload["kpis"]["estimate_start_to_completed_form"]["value"], 4 / 16)
-        self.assertNotAlmostEqual(payload["kpis"]["estimate_start_to_completed_form"]["value"], 7 / 16)
-        self.assertEqual(payload["kpis"]["estimate_start_to_completed_form"]["scope"], "calculator_only")
-        self.assertEqual(payload["kpis"]["estimate_start_to_completed_form"]["status"], "hit")
+        self.assertEqual(payload["scoreboard"], "sessions → start → completed form")
+        self.assertEqual(payload["kpis"]["completed_form"]["name"], "Completed form")
+        self.assertEqual(payload["kpis"]["sessions_to_completed_form"]["name"], "Sessions → completed form")
+        self.assertEqual(payload["kpis"]["start_to_completed_form"]["name"], "Start → completed form")
+        self.assertEqual(payload["kpis"]["completed_form"]["status"], "baseline_pending")
+        self.assertEqual(payload["kpis"]["completed_form"]["goal_label"], "baseline pending")
+        self.assertAlmostEqual(payload["kpis"]["sessions_to_completed_form"]["value"], 7 / 200)
+        self.assertEqual(payload["kpis"]["sessions_to_completed_form"]["goal"], 0.02)
+        self.assertEqual(payload["kpis"]["sessions_to_completed_form"]["status"], "hit")
+        self.assertAlmostEqual(payload["kpis"]["start_to_completed_form"]["value"], 4 / 16)
+        self.assertNotAlmostEqual(payload["kpis"]["start_to_completed_form"]["value"], 7 / 16)
+        self.assertEqual(payload["kpis"]["start_to_completed_form"]["scope"], "calculator_only")
+        self.assertEqual(payload["kpis"]["start_to_completed_form"]["status"], "hit")
         self.assertEqual(payload["by_page"]["contact_me"]["completed_forms"], 3)
         self.assertAlmostEqual(payload["kpis"]["page_contribution"]["value"]["contact_me"], 3 / 7)
-        self.assertFalse(payload["secondary"]["session_to_estimate_start"]["scored"])
+        self.assertEqual(payload["secondary"]["sessions_to_start"]["name"], "Sessions → start")
+        self.assertFalse(payload["secondary"]["sessions_to_start"]["scored"])
         self.assertFalse(payload["secondary"]["address_complete"]["scored"])
         self.assertFalse(payload["secondary"]["bill_complete"]["scored"])
         self.assertGreater(len(payload["missing_dates"]), 0)

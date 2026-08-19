@@ -3,7 +3,8 @@
 """Vercel Python function: /api/web_funnel_rollup
 
 Write/merge one web_funnel_daily_v1 doc for a given America/New_York date
-(default yesterday). Completed-form counts only. Never streams ghl_*
+(default yesterday). Scoreboard: sessions → start → completed form.
+Completed-form counts only. Does not read CRM contact or opportunity
 collections. Not on warm_cache. Not hourly.
 
 Params:

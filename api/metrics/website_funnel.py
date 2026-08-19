@@ -8,18 +8,20 @@ Lead = a completed form submit (America/New_York):
 - /contact-me counts as a completed form.
 - Not a CRM contact. Not a pageview.
 
-Primary scoreboard:
-1. Completed form submits — volume. Goal: baseline pending (14-day).
-2. Session → completed form — completed_forms / sessions. Goal 2%.
-3. Estimate start → completed form — calculator-only:
+Scoreboard: sessions → start → completed form.
+
+Primary:
+1. Completed form — volume. Goal: baseline pending (14-day).
+2. Sessions → completed form — completed_forms / sessions. Goal 2%.
+3. Start → completed form — calculator-only:
    estimate_submit / estimate_start. Goal 25%.
-   contact-me has no start; it is in volume and session→form only.
+   contact-me has no start; it is in volume and sessions→completed form only.
 4. Page contribution — share of completed forms by first page_group.
    No % goal.
 
 Secondary (diagnostic only, not scored this week):
 - address-complete and bill-complete drop-off
-- session → start by surface (site 8%, home 6%, city 12%,
+- sessions → start by surface (site 8%, home 6%, city 12%,
   ny-incentives 10%, calculator-direct 70%)
 
 Warehouse: FIRESTORE_DATABASE_ID collection web_funnel_daily_v1,
@@ -103,11 +105,12 @@ GOAL_SESSION_TO_START_NY_INCENTIVES = 0.10
 GOAL_SESSION_TO_START_CALCULATOR = 0.70
 
 KPI_NAMES: tuple[str, ...] = (
-    "Completed form submits",
-    "Session → completed form",
-    "Estimate start → completed form",
+    "Completed form",
+    "Sessions → completed form",
+    "Start → completed form",
     "Page contribution",
 )
+SCOREBOARD = "sessions → start → completed form"
 
 EMPTY_PAGE_BUCKET = {
     "sessions": 0,
@@ -523,10 +526,11 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
 
     notes = [
         "A lead is a completed form submit: estimate_submit on the calculator, or wix_form_submit on /contact-me.",
-        "/contact-me completed submits count as leads in volume and session → completed form.",
-        "Estimate start → completed form is calculator-only (estimate_submit / estimate_start). contact-me has no start.",
-        "Volume goal for completed form submits is baseline pending until a 14-day baseline exists.",
-        "Session → start by surface and address/bill drop-off are diagnostic only and are not scored this week.",
+        "Scoreboard is sessions → start → completed form.",
+        "/contact-me completed submits count as leads in volume and sessions → completed form.",
+        "Start → completed form is calculator-only (estimate_submit / estimate_start). contact-me has no start.",
+        "Volume goal for completed form is baseline pending until a 14-day baseline exists.",
+        "Sessions → start by surface and address/bill drop-off are diagnostic only and are not scored this week.",
     ]
     if not docs:
         notes.append("No daily warehouse docs for this month. Run /api/web_funnel_rollup.")
@@ -540,22 +544,22 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         notes.append("Some daily docs have ga4=not_configured or are incomplete.")
 
     kpis = {
-        "completed_form_submits": {
-            "name": "Completed form submits",
+        "completed_form": {
+            "name": "Completed form",
             "value": totals["completed_forms"],
             "goal": None,
             "goal_label": "baseline pending",
             "status": "baseline_pending",
         },
-        "session_to_completed_form": {
-            "name": "Session → completed form",
+        "sessions_to_completed_form": {
+            "name": "Sessions → completed form",
             "value": session_to_form,
             "goal": GOAL_SESSION_TO_FORM,
             "goal_label": "2%",
             "status": score_vs_goal(session_to_form, GOAL_SESSION_TO_FORM),
         },
-        "estimate_start_to_completed_form": {
-            "name": "Estimate start → completed form",
+        "start_to_completed_form": {
+            "name": "Start → completed form",
             "value": start_to_form,
             "goal": GOAL_START_TO_FORM,
             "goal_label": "25%",
@@ -587,8 +591,8 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
             "drop_off_from_address": drop_off(totals["address_complete"], totals["bill_complete"]),
             "scored": False,
         },
-        "session_to_estimate_start": {
-            "name": "Session → estimate start",
+        "sessions_to_start": {
+            "name": "Sessions → start",
             "value": session_to_start,
             "scored": False,
             "note": "Diagnostic only. Not scored this week.",
@@ -625,12 +629,13 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "secondary": secondary,
         "by_page": by_page,
         "notes": notes,
+        "scoreboard": SCOREBOARD,
         "goals": {
-            "completed_form_submits": "baseline pending",
-            "session_to_completed_form": "2%",
-            "estimate_start_to_completed_form": "25%",
+            "completed_form": "baseline pending",
+            "sessions_to_completed_form": "2%",
+            "start_to_completed_form": "25%",
             "page_contribution": "no % goal",
-            "session_to_estimate_start_diagnostic": {
+            "sessions_to_start_diagnostic": {
                 "site": "8%",
                 "home": "6%",
                 "city_landers": "12%",
@@ -643,7 +648,8 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
                 "Completed form submit: estimate_submit (calculator contact-complete) "
                 "plus wix_form_submit (/contact-me complete Submit)."
             ),
-            "contact_me": "Counts as a completed form in volume and session → completed form.",
+            "contact_me": "Counts as a completed form in volume and sessions → completed form.",
+            "scoreboard": SCOREBOARD,
             "start_to_form": "Calculator-only: estimate_submit / estimate_start. contact-me excluded from numerator.",
             "warehouse": DAILY_COLLECTION,
             "ga4_measurement_id": GA4_MEASUREMENT_ID,
@@ -710,7 +716,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Website Funnel</div>
-        <div class="subtitle">A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Session → completed form is site-wide. Estimate start → completed form is calculator-only so /contact-me does not distort it.</div>
+        <div class="subtitle">Scoreboard: sessions → start → completed form. A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Sessions → completed form is site-wide. Start → completed form is calculator-only so /contact-me does not distort it.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -724,24 +730,24 @@ __DASHBOARD_NAV_HTML__
     <div class="grid">
       <div id="statusBanner" class="banner hidden"></div>
 
-      <div class="section-label">Primary</div>
+      <div class="section-label">Primary — sessions → start → completed form</div>
       <div class="card span-3">
-        <div class="card-title">Completed form submits</div>
+        <div class="card-title">Completed form</div>
         <div class="kpi" id="kpiForms">—</div>
         <div class="goal">Volume goal: baseline pending</div>
-        <div class="meta">Calculator + /contact-me completed submits. 14-day baseline pending.</div>
+        <div class="meta">Calculator + /contact-me completed forms. 14-day baseline pending.</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Session → completed form</div>
+        <div class="card-title">Sessions → completed form</div>
         <div class="kpi" id="kpiSessionForm">—</div>
         <div class="goal">Goal 2%</div>
-        <div class="meta" id="kpiSessionFormStatus">completed_forms / sessions</div>
+        <div class="meta" id="kpiSessionFormStatus">completed form / sessions</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Estimate start → completed form</div>
+        <div class="card-title">Start → completed form</div>
         <div class="kpi" id="kpiStartForm">—</div>
         <div class="goal">Goal 25%</div>
-        <div class="meta" id="kpiStartFormStatus">Calculator-only: estimate_submit / estimate_start</div>
+        <div class="meta" id="kpiStartFormStatus">Calculator-only: start → completed form (estimate_submit / estimate_start)</div>
       </div>
       <div class="card span-3">
         <div class="card-title">Page contribution</div>
@@ -765,7 +771,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-4">
         <div class="card-title">Address complete</div>
         <div class="kpi" id="kpiAddress">—</div>
-        <div class="meta" id="kpiAddressMeta">Drop-off from estimate start. Not scored.</div>
+        <div class="meta" id="kpiAddressMeta">Drop-off from start. Not scored.</div>
       </div>
       <div class="card span-4">
         <div class="card-title">Bill complete</div>
@@ -773,7 +779,7 @@ __DASHBOARD_NAV_HTML__
         <div class="meta" id="kpiBillMeta">Drop-off from address complete. Not scored.</div>
       </div>
       <div class="card span-4">
-        <div class="card-title">Session → estimate start</div>
+        <div class="card-title">Sessions → start</div>
         <div class="kpi" id="kpiSessionStart">—</div>
         <div class="goal">Diagnostic goals: site 8%, home 6%, city 12%, ny-incentives 10%, calculator-direct 70%</div>
         <div class="meta" id="kpiSessionStartDetail">Not scored this week.</div>
@@ -844,11 +850,11 @@ async function load() {
   var k = data.kpis || {};
   var secondary = data.secondary || {};
   var share = ((k.page_contribution || {}).value) || {};
-  paintKpi('kpiForms', num((k.completed_form_submits || {}).value), 'baseline_pending');
-  paintKpi('kpiSessionForm', pct((k.session_to_completed_form || {}).value), (k.session_to_completed_form || {}).status);
-  setStatus(document.getElementById('kpiSessionFormStatus'), (k.session_to_completed_form || {}).status, 'Goal 2% · completed_forms / sessions');
-  paintKpi('kpiStartForm', pct((k.estimate_start_to_completed_form || {}).value), (k.estimate_start_to_completed_form || {}).status);
-  setStatus(document.getElementById('kpiStartFormStatus'), (k.estimate_start_to_completed_form || {}).status, 'Goal 25% · calculator-only');
+  paintKpi('kpiForms', num((k.completed_form || {}).value), 'baseline_pending');
+  paintKpi('kpiSessionForm', pct((k.sessions_to_completed_form || {}).value), (k.sessions_to_completed_form || {}).status);
+  setStatus(document.getElementById('kpiSessionFormStatus'), (k.sessions_to_completed_form || {}).status, 'Goal 2% · completed form / sessions');
+  paintKpi('kpiStartForm', pct((k.start_to_completed_form || {}).value), (k.start_to_completed_form || {}).status);
+  setStatus(document.getElementById('kpiStartFormStatus'), (k.start_to_completed_form || {}).status, 'Goal 25% · start → completed form');
   var topShare = null;
   Object.keys(share).forEach(function(key) {
     if (share[key] == null) return;
@@ -864,8 +870,8 @@ async function load() {
   document.getElementById('kpiBillMeta').textContent =
     'From start: ' + pct((secondary.bill_complete || {}).rate_from_start) +
     ' · drop-off from address ' + pct((secondary.bill_complete || {}).drop_off_from_address) + ' · not scored';
-  var surfaces = ((secondary.session_to_estimate_start || {}).by_surface) || {};
-  paintKpi('kpiSessionStart', pct((secondary.session_to_estimate_start || {}).value), 'informational');
+  var surfaces = ((secondary.sessions_to_start || {}).by_surface) || {};
+  paintKpi('kpiSessionStart', pct((secondary.sessions_to_start || {}).value), 'informational');
   document.getElementById('kpiSessionStartDetail').textContent =
     'site ' + pct((surfaces.site || {}).value) +
     ' · home ' + pct((surfaces.home || {}).value) +

@@ -225,6 +225,7 @@ class WebsiteFunnelHtmlTests(unittest.TestCase):
         self.assertIn("city 12%", html)
         self.assertIn("ny-incentives 10%", html)
         self.assertIn("calculator-direct 70%", html)
+        self.assertIn("Sessions → start", html)
         self.assertIn("not scored", html.lower())
         self.assertIn("home / buffalo / rochester / syracuse / ny-incentives / calculator / contact-me", html)
         self.assertIn("estimate_submit / estimate_start", html)

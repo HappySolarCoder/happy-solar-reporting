@@ -266,6 +266,7 @@ def render_dashboard_nav(current: str) -> str:
               <a class="navmenu-item{active('hold_cancelled')}" href="https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html" target="_blank" rel="noopener noreferrer">Hold/Cancelled</a>
             </div>
           </details>
+          <a class="navbtn{active('website_funnel')}" href="/api/website_funnel">Website Funnel</a>
         </div>
         <script>
           (function() {{

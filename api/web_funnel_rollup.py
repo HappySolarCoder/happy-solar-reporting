@@ -12,7 +12,8 @@ then GET /api/website_funnel_yesterday. The yesterday read does not
 auto-rollup.
 
 Params:
-- date=YYYY-MM-DD (optional)
+- date=YYYY-MM-DD (optional; default yesterday America/New_York)
+  Example: /api/web_funnel_rollup?date=2026-08-19
 """
 
 from __future__ import annotations

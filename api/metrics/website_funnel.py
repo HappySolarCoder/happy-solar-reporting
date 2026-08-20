@@ -44,11 +44,30 @@ Cost rules:
 - Not on warm_cache. Not hourly.
 
 GA4 (optional):
-- Measurement ID G-V02RZFR4SZ (locked).
+- Measurement ID G-V02RZFR4SZ (locked). Property 408492342 / stream G-V02RZFR4SZ.
+- Yadmada G-VTL7ZW6NPN is on the same property; host allowlist drops it.
 - Env GA4_PROPERTY_ID = numeric property id (required to pull traffic).
 - Env GA4_SERVICE_ACCOUNT_JSON optional; else FIREBASE_SERVICE_ACCOUNT_JSON.
 - If creds/property are missing, write nulls and set ga4="not_configured".
   Do not fake traffic.
+- Hold page_view (do not switch sessions to session_start).
+- One runReport per day. Dimensions: eventName + pagePath + hostName + pageLocation.
+
+Host / QA exclusions (lock):
+- Allowlist only: www.happyslr.com, happyslr.com, wny.happyslr.com.
+  Drop Vercel preview hosts, localhost, yadmada.com, gtm-msr.appspot.com,
+  everything else.
+- Drop events where debug_mode is true (dimension or pageLocation).
+- Drop events where traffic_type=internal or URL/session flag internal=1
+  (pageLocation query or dimension, if present).
+- debug_mode and traffic_type are not standard Data API dimensions.
+  pageLocation can see ?internal=1 when Designer adds that live flag.
+  Do not invent a tester IP list.
+- visits_total = page_view on www.happyslr.com + happyslr.com.
+- visits_wny = page_view on wny.happyslr.com.
+- sessions is kept equal to visits_total (scoreboard / yesterday).
+- completed_forms = estimate_submit + wix_form_submit after those filters.
+  Preview-host QA forms (Aug 19 estimate_* on *.vercel.app) do not count.
 """
 
 from __future__ import annotations
@@ -58,7 +77,7 @@ import os
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
@@ -69,9 +88,27 @@ TIMEZONE_NAME = "America/New_York"
 DAILY_COLLECTION = "web_funnel_daily_v1"
 
 GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
+GA4_PROPERTY_ID = "408492342"
 GA4_PROPERTY_ID_ENV = "GA4_PROPERTY_ID"
 GA4_SERVICE_ACCOUNT_JSON_ENV = "GA4_SERVICE_ACCOUNT_JSON"
 FIREBASE_SERVICE_ACCOUNT_JSON_ENV = "FIREBASE_SERVICE_ACCOUNT_JSON"
+
+HOST_WWW = "www.happyslr.com"
+HOST_APEX = "happyslr.com"
+HOST_WNY = "wny.happyslr.com"
+LIVE_TOTAL_HOSTS = frozenset({HOST_WWW, HOST_APEX})
+LIVE_WNY_HOSTS = frozenset({HOST_WNY})
+LIVE_FORM_HOSTS = LIVE_TOTAL_HOSTS | LIVE_WNY_HOSTS
+EXCLUDED_HOST_EXAMPLES = (
+    "yadmada.com",
+    "www.yadmada.com",
+    "vercel.app",
+    "localhost",
+    "gtm-msr.appspot.com",
+)
+GA4_REPORT_DIMENSIONS = ("eventName", "pagePath", "hostName", "pageLocation")
+# Not standard Data API dimensions today. pageLocation can see ?internal=1.
+GA4_MISSING_EXCLUSION_DIMENSIONS = ("debug_mode", "traffic_type")
 
 PAGE_GROUPS: tuple[str, ...] = (
     "home",
@@ -217,6 +254,112 @@ def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
 
+def normalize_host_name(raw: Any) -> str:
+    text = compact_str(raw).casefold()
+    if not text:
+        return ""
+    if "://" in text or text.startswith("//"):
+        try:
+            parsed = urlparse(text if "://" in text else f"https:{text}")
+            text = compact_str(parsed.hostname).casefold()
+        except Exception:
+            text = text.split("/")[0]
+    text = text.split("/")[0]
+    if "@" in text:
+        text = text.split("@")[-1]
+    if text.startswith("[") and "]" in text:
+        text = text[1 : text.index("]")]
+    else:
+        text = text.split(":")[0]
+    if text.startswith("www.") and text not in LIVE_TOTAL_HOSTS:
+        # keep www.happyslr.com as-is; do not promote other www hosts
+        pass
+    return text.rstrip(".")
+
+
+def classify_host(raw: Any) -> str:
+    """Return total | wny | excluded. Allowlist only — everything else is dropped."""
+    host = normalize_host_name(raw)
+    if host in LIVE_TOTAL_HOSTS:
+        return "total"
+    if host in LIVE_WNY_HOSTS:
+        return "wny"
+    return "excluded"
+
+
+def _flag_true(values: Any) -> bool:
+    if values is None:
+        return False
+    if isinstance(values, (list, tuple)):
+        parts = values
+    else:
+        parts = [values]
+    for raw in parts:
+        text = compact_str(raw).casefold()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _is_internal_traffic_type(value: Any) -> bool:
+    return compact_str(value).casefold() == "internal"
+
+
+def path_from_page_location(raw: Any) -> str:
+    text = compact_str(raw)
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text if "://" in text else f"https://dummy{text if text.startswith('/') else '/' + text}")
+        return parsed.path or "/"
+    except Exception:
+        return text
+
+
+def page_location_flags(raw: Any) -> dict[str, bool]:
+    """Read URL/session flags from pageLocation. Missing param is not a flag."""
+    text = compact_str(raw)
+    out = {"internal": False, "debug_mode": False, "traffic_type_internal": False}
+    if not text:
+        return out
+    try:
+        parsed = urlparse(text if "://" in text else f"https://dummy{text if text.startswith('/') else '/' + text}")
+        query = parse_qs(parsed.query, keep_blank_values=True)
+    except Exception:
+        return out
+    if _flag_true(query.get("internal")):
+        out["internal"] = True
+    if _flag_true(query.get("debug_mode")) or _flag_true(query.get("debugMode")):
+        out["debug_mode"] = True
+    traffic = compact_str((query.get("traffic_type") or query.get("trafficType") or [""])[0])
+    if _is_internal_traffic_type(traffic):
+        out["traffic_type_internal"] = True
+    return out
+
+
+def exclusion_reason(
+    *,
+    host_name: Any,
+    page_location: Any = None,
+    debug_mode: Any = None,
+    traffic_type: Any = None,
+    internal: Any = None,
+) -> str | None:
+    """Why a row is dropped. Host allowlist first (drops the known Aug 19 preview form)."""
+    if classify_host(host_name) == "excluded":
+        return "host"
+    if _flag_true(debug_mode):
+        return "debug_mode"
+    if _is_internal_traffic_type(traffic_type) or _flag_true(internal):
+        return "internal"
+    flags = page_location_flags(page_location)
+    if flags["debug_mode"]:
+        return "debug_mode"
+    if flags["internal"] or flags["traffic_type_internal"]:
+        return "internal"
+    return None
+
+
 def empty_by_page() -> dict[str, dict[str, int]]:
     return {group: dict(EMPTY_PAGE_BUCKET) for group in PAGE_GROUPS}
 
@@ -308,6 +451,8 @@ def _ga4_not_configured(error: str | None = None) -> dict[str, Any]:
     return {
         "ga4": "not_configured",
         "sessions": None,
+        "visits_total": None,
+        "visits_wny": None,
         "cta_clicks": None,
         "starts": None,
         "address_complete": None,
@@ -317,6 +462,10 @@ def _ga4_not_configured(error: str | None = None) -> dict[str, Any]:
         "completed_forms": None,
         "by_page": empty_by_page(),
         "error": error,
+        "filters": {
+            "hosts": sorted(LIVE_FORM_HOSTS),
+            "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
+        },
         "env": {
             "property_id_env": GA4_PROPERTY_ID_ENV,
             "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
@@ -366,8 +515,9 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
 
     body = {
         "dateRanges": [{"startDate": date_ymd, "endDate": date_ymd}],
-        "dimensions": [{"name": "eventName"}, {"name": "pagePath"}],
+        "dimensions": [{"name": name} for name in GA4_REPORT_DIMENSIONS],
         "metrics": [{"name": "eventCount"}],
+        "limit": "100000",
         "dimensionFilter": {
             "filter": {
                 "fieldName": "eventName",
@@ -390,24 +540,88 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
     except Exception as exc:
         return _ga4_not_configured(f"ga4_run_report_failed: {exc}")
 
-    totals = {field: 0 for field in EVENT_COUNT_FIELDS.values()}
-    by_page = empty_by_page()
-    for row in report.get("rows") or []:
+    parsed_rows = parse_ga4_report_rows(report, GA4_REPORT_DIMENSIONS)
+    out = summarize_ga4_event_rows(parsed_rows)
+    out["env"] = {
+        "property_id_env": GA4_PROPERTY_ID_ENV,
+        "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
+        "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
+        "measurement_id": GA4_MEASUREMENT_ID,
+        "property_id_set": True,
+    }
+    return out
+
+
+def parse_ga4_report_rows(report: dict[str, Any] | None, dimension_names: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+    names = [compact_str(name) for name in dimension_names]
+    rows: list[dict[str, Any]] = []
+    for row in (report or {}).get("rows") or []:
         dims = [cell.get("value") for cell in (row.get("dimensionValues") or [])]
         mets = [cell.get("value") for cell in (row.get("metricValues") or [])]
-        event_name = compact_str(dims[0] if dims else "")
-        page_path = compact_str(dims[1] if len(dims) > 1 else "")
+        values = {names[i]: compact_str(dims[i]) for i in range(min(len(names), len(dims)))}
         try:
             count = int(float(mets[0] if mets else 0))
         except Exception:
             count = 0
+        rows.append(
+            {
+                "event_name": values.get("eventName", ""),
+                "page_path": values.get("pagePath", ""),
+                "host_name": values.get("hostName", ""),
+                "page_location": values.get("pageLocation", ""),
+                "debug_mode": values.get("debug_mode") or values.get("customEvent:debug_mode"),
+                "traffic_type": values.get("traffic_type") or values.get("customEvent:traffic_type"),
+                "internal": values.get("internal") or values.get("customEvent:internal"),
+                "count": count,
+            }
+        )
+    return rows
+
+
+def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply host allowlist + debug/internal flags. Never invent traffic."""
+    totals = {field: 0 for field in EVENT_COUNT_FIELDS.values()}
+    visits_total = 0
+    visits_wny = 0
+    by_page = empty_by_page()
+    dropped = {"host": 0, "debug_mode": 0, "internal": 0}
+
+    for row in rows or []:
+        event_name = compact_str(row.get("event_name"))
+        page_path = compact_str(row.get("page_path"))
+        host_name = compact_str(row.get("host_name"))
+        page_location = compact_str(row.get("page_location"))
+        if not page_path:
+            page_path = path_from_page_location(page_location)
+        try:
+            count = int(row.get("count") or 0)
+        except Exception:
+            count = 0
+        reason = exclusion_reason(
+            host_name=host_name,
+            page_location=page_location,
+            debug_mode=row.get("debug_mode"),
+            traffic_type=row.get("traffic_type"),
+            internal=row.get("internal"),
+        )
+        if reason:
+            dropped[reason] = dropped.get(reason, 0) + count
+            continue
         field = EVENT_COUNT_FIELDS.get(event_name)
         if not field:
             continue
-        totals[field] = totals.get(field, 0) + count
+        host_kind = classify_host(host_name)
+        if event_name == "page_view":
+            if host_kind == "total":
+                visits_total += count
+                totals["sessions"] += count
+            elif host_kind == "wny":
+                visits_wny += count
+        else:
+            totals[field] = totals.get(field, 0) + count
         group = page_group_from_landing(page_path)
         bucket = by_page.setdefault(group, dict(EMPTY_PAGE_BUCKET))
-        if field == "sessions":
+        if event_name == "page_view" and host_kind == "total":
             bucket["sessions"] += count
         elif field == "starts":
             bucket["starts"] += count
@@ -418,7 +632,9 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
     wix_form_submits = totals.get("wix_form_submits", 0)
     return {
         "ga4": "ok",
-        "sessions": totals.get("sessions", 0),
+        "sessions": visits_total,
+        "visits_total": visits_total,
+        "visits_wny": visits_wny,
         "cta_clicks": totals.get("cta_clicks", 0),
         "starts": totals.get("starts", 0),
         "address_complete": totals.get("address_complete", 0),
@@ -427,13 +643,15 @@ def fetch_ga4_event_counts(date_ymd: str) -> dict[str, Any]:
         "wix_form_submits": wix_form_submits,
         "completed_forms": sum_completed_forms(estimate_submit, wix_form_submits),
         "by_page": by_page,
+        "dropped": dropped,
         "error": None,
-        "env": {
-            "property_id_env": GA4_PROPERTY_ID_ENV,
-            "service_account_env": GA4_SERVICE_ACCOUNT_JSON_ENV,
-            "service_account_fallback_env": FIREBASE_SERVICE_ACCOUNT_JSON_ENV,
-            "measurement_id": GA4_MEASUREMENT_ID,
-            "property_id_set": True,
+        "filters": {
+            "hosts": sorted(LIVE_FORM_HOSTS),
+            "visits_total_hosts": sorted(LIVE_TOTAL_HOSTS),
+            "visits_wny_hosts": sorted(LIVE_WNY_HOSTS),
+            "data_api_dimensions": list(GA4_REPORT_DIMENSIONS),
+            "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
+            "page_view_held": True,
         },
     }
 
@@ -468,9 +686,14 @@ def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
     completed = ga4.get("completed_forms")
     if completed is None:
         completed = sum_completed_forms(estimate_submit, wix_form_submits)
+    visits_total = ga4.get("visits_total")
+    visits_wny = ga4.get("visits_wny")
+    sessions = visits_total if visits_total is not None else ga4.get("sessions")
     return {
         "date": date_ymd,
-        "sessions": ga4.get("sessions"),
+        "sessions": sessions,
+        "visits_total": visits_total,
+        "visits_wny": visits_wny,
         "cta_clicks": ga4.get("cta_clicks"),
         "starts": ga4.get("starts"),
         "address_complete": ga4.get("address_complete"),
@@ -482,6 +705,8 @@ def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
         "ga4": ga4_status,
         "ga4_error": ga4.get("error"),
         "measurement_id": GA4_MEASUREMENT_ID,
+        "filters": ga4.get("filters"),
+        "dropped": ga4.get("dropped"),
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
@@ -617,6 +842,71 @@ def _sum_optional(values: list[Any]) -> int | None:
     return sum(present)
 
 
+def chart_day_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, Any]:
+    """Host-split chart row. Missing/not_configured/pre-split docs are nulls, not zeros."""
+    date_key = compact_str((doc or {}).get("date") or date_ymd)
+    empty = {
+        "date": date_key,
+        "visits_total": None,
+        "visits_wny": None,
+        "completed_forms": None,
+    }
+    if not doc:
+        return empty
+    ga4 = compact_str(doc.get("ga4")).casefold()
+    if ga4 != "ok":
+        return empty
+    if doc.get("visits_total") is None and doc.get("visits_wny") is None:
+        return empty
+    return {
+        "date": date_key,
+        "visits_total": _optional_int(doc.get("visits_total")),
+        "visits_wny": _optional_int(doc.get("visits_wny")),
+        "completed_forms": _optional_int(doc.get("completed_forms")),
+    }
+
+
+def month_chart_days(docs: list[dict[str, Any]], *, year: int, month: int) -> list[dict[str, Any]]:
+    by_date = {compact_str(row.get("date")): row for row in docs if compact_str(row.get("date"))}
+    return [chart_day_from_doc(by_date.get(day), day) for day in month_dates(year, month)]
+
+
+def cumulative_form_ratios(days: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Running month ratios. Divide-by-zero is null. Null days stay gaps and do not add 0 traffic."""
+    cum_forms = 0
+    cum_total = 0
+    cum_wny = 0
+    out: list[dict[str, Any]] = []
+    for row in days or []:
+        date_key = compact_str(row.get("date"))
+        visits_total = row.get("visits_total")
+        visits_wny = row.get("visits_wny")
+        completed = row.get("completed_forms")
+        if visits_total is None and visits_wny is None:
+            out.append(
+                {
+                    "date": date_key,
+                    "forms_over_wny": None,
+                    "forms_over_total": None,
+                }
+            )
+            continue
+        if completed is not None:
+            cum_forms += int(completed)
+        if visits_total is not None:
+            cum_total += int(visits_total)
+        if visits_wny is not None:
+            cum_wny += int(visits_wny)
+        out.append(
+            {
+                "date": date_key,
+                "forms_over_wny": ratio(cum_forms, cum_wny),
+                "forms_over_total": ratio(cum_forms, cum_total),
+            }
+        )
+    return out
+
+
 def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -> dict[str, Any]:
     dates = month_dates(year, month)
     present = {compact_str(row.get("date")) for row in docs if compact_str(row.get("date"))}
@@ -637,8 +927,13 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
     if completed_forms is None:
         completed_forms = sum_completed_forms(estimate_submit, wix_form_submits)
 
+    visits_total = _sum_optional([row.get("visits_total") for row in docs])
+    visits_wny = _sum_optional([row.get("visits_wny") for row in docs])
+    sessions = _sum_optional([row.get("sessions") for row in docs])
     totals = {
-        "sessions": _sum_optional([row.get("sessions") for row in docs]),
+        "sessions": sessions,
+        "visits_total": visits_total,
+        "visits_wny": visits_wny,
         "cta_clicks": _sum_optional([row.get("cta_clicks") for row in docs]),
         "starts": _sum_optional([row.get("starts") for row in docs]),
         "address_complete": _sum_optional([row.get("address_complete") for row in docs]),
@@ -647,6 +942,8 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "wix_form_submits": wix_form_submits,
         "completed_forms": completed_forms,
     }
+    days = month_chart_days(docs, year=year, month=month)
+    running = cumulative_form_ratios(days)
 
     by_page = empty_by_page()
     for row in docs:
@@ -694,6 +991,11 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         notes.append("GA4 is not_configured. Session/start/completed-form counts are null — traffic was not faked.")
     elif ga4_status == "partial":
         notes.append("Some daily docs have ga4=not_configured or are incomplete.")
+    if any(day.get("visits_total") is None and day.get("visits_wny") is None for day in days):
+        notes.append(
+            "Charts use host-split daily fields (visits_total / visits_wny / completed_forms). "
+            "Days without a host-split rollup are gaps, not zeros. Re-run /api/web_funnel_rollup?date=YYYY-MM-DD."
+        )
 
     kpis = {
         "completed_form": {
@@ -777,6 +1079,8 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "missing_dates": missing,
         "ga4": ga4_status,
         "totals": totals,
+        "days": days,
+        "running": running,
         "kpis": kpis,
         "secondary": secondary,
         "by_page": by_page,
@@ -805,7 +1109,20 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
             "start_to_form": "Calculator-only: estimate_submit / estimate_start. contact-me excluded from numerator.",
             "warehouse": DAILY_COLLECTION,
             "ga4_measurement_id": GA4_MEASUREMENT_ID,
+            "ga4_property_id": GA4_PROPERTY_ID,
             "ga4_env": [GA4_PROPERTY_ID_ENV, GA4_SERVICE_ACCOUNT_JSON_ENV, FIREBASE_SERVICE_ACCOUNT_JSON_ENV],
+            "visits_total": "page_view on www.happyslr.com + happyslr.com after host allowlist",
+            "visits_wny": "page_view on wny.happyslr.com after host allowlist",
+            "sessions": "Same as visits_total. page_view eventCount held; not session_start.",
+            "completed_forms": "estimate_submit + wix_form_submit on live hosts only, after debug/internal filters.",
+            "exclusions": {
+                "hosts": sorted(LIVE_FORM_HOSTS),
+                "drop": ["*.vercel.app", "localhost", "yadmada.com", "gtm-msr.appspot.com", "everything else"],
+                "debug_mode": "Dropped when present on the row or pageLocation. Not a standard Data API dimension.",
+                "internal": "Dropped when traffic_type=internal or internal=1. pageLocation can see ?internal=1. traffic_type is not a standard Data API dimension.",
+                "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
+                "no_tester_ip_list": True,
+            },
         },
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
@@ -859,6 +1176,11 @@ __DASHBOARD_NAV_CSS__
     th { color:#64748b; font-weight:900; background:#fafbfc; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
     .section-label { grid-column:span 12; margin-top:4px; font-size:12px; font-weight:900; letter-spacing:.04em; text-transform:uppercase; color:#64748b; }
+    .legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:10px 0 6px; font-size:12px; font-weight:800; color:#334155; }
+    .swatch { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
+    .chartBox { width:100%; min-height:240px; }
+    .chartBox svg { width:100%; height:240px; display:block; }
+    .chartEmpty { color:var(--muted); font-size:13px; font-weight:700; padding:18px 0; }
     @media (max-width:980px) { .span-3,.span-4,.span-6,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:28px; } }
   </style>
@@ -868,7 +1190,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Website Funnel</div>
-        <div class="subtitle">Scoreboard: sessions → start → completed form. A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Sessions → completed form is site-wide. Start → completed form is calculator-only so /contact-me does not distort it.</div>
+        <div class="subtitle">Scoreboard: sessions → start → completed form. A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Sessions → completed form is site-wide. Start → completed form is calculator-only so /contact-me does not distort it. Daily charts use live happyslr hosts only (www + apex + wny). Preview / localhost / yadmada traffic is excluded.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -917,6 +1239,27 @@ __DASHBOARD_NAV_HTML__
           </thead>
           <tbody></tbody>
         </table>
+      </div>
+
+      <div class="section-label">Daily — live hosts only</div>
+      <div class="card span-12">
+        <div class="card-title">Daily visits and forms</div>
+        <div class="meta">Total site visits = www.happyslr.com + happyslr.com page views. wny.happyslr.com visits are a separate series. Forms completed = live-host completed forms. Missing or not-configured days are gaps, not zeros.</div>
+        <div class="legend">
+          <span><span class="swatch" style="background:#2196F3"></span>Total site visits</span>
+          <span><span class="swatch" style="background:#00C853"></span>wny.happyslr.com visits</span>
+          <span><span class="swatch" style="background:#d97706"></span>Forms completed</span>
+        </div>
+        <div class="chartBox" id="visitsChart"></div>
+      </div>
+      <div class="card span-12">
+        <div class="card-title">Running conversion this month</div>
+        <div class="meta">Cumulative in the selected month: sum of forms so far / sum of visits so far. Divide-by-zero is blank, not 0%. Null days stay gaps.</div>
+        <div class="legend">
+          <span><span class="swatch" style="background:#00C853"></span>forms completed / wny.happyslr.com visits</span>
+          <span><span class="swatch" style="background:#2196F3"></span>forms completed / total site visits</span>
+        </div>
+        <div class="chartBox" id="rateChart"></div>
       </div>
 
       <div class="section-label">Secondary — diagnostic only, not scored this week</div>
@@ -1048,6 +1391,110 @@ async function load() {
     return '<tr><td>' + label + '</td><td>' + num(b.sessions) + '</td><td>' + num(b.starts) +
       '</td><td>' + num(b.completed_forms) + '</td><td>' + pct(share[g]) + '</td></tr>';
   }).join('');
+
+  var days = data.days || [];
+  var running = data.running || runningFromDays(days);
+  drawLineChart('visitsChart', days, [
+    {key: 'visits_total', label: 'Total site visits', color: '#2196F3'},
+    {key: 'visits_wny', label: 'wny.happyslr.com visits', color: '#00C853'},
+    {key: 'completed_forms', label: 'Forms completed', color: '#d97706'}
+  ], {kind: 'count', empty: 'No host-split warehouse days yet. Re-rollup to draw this chart. Gaps are not zeros.'});
+  drawLineChart('rateChart', running, [
+    {key: 'forms_over_wny', label: 'forms completed / wny.happyslr.com visits', color: '#00C853'},
+    {key: 'forms_over_total', label: 'forms completed / total site visits', color: '#2196F3'}
+  ], {kind: 'pct', empty: 'No running conversion yet. wny or total visits must be greater than zero.'});
+}
+function runningFromDays(days) {
+  var cumForms = 0, cumTotal = 0, cumWny = 0;
+  return (days || []).map(function(row) {
+    var out = {date: row.date, forms_over_wny: null, forms_over_total: null};
+    if (row.visits_total == null && row.visits_wny == null) return out;
+    if (row.completed_forms != null) cumForms += Number(row.completed_forms);
+    if (row.visits_total != null) cumTotal += Number(row.visits_total);
+    if (row.visits_wny != null) cumWny += Number(row.visits_wny);
+    out.forms_over_wny = cumWny > 0 ? cumForms / cumWny : null;
+    out.forms_over_total = cumTotal > 0 ? cumForms / cumTotal : null;
+    return out;
+  });
+}
+function drawLineChart(id, rows, series, opt) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  opt = opt || {};
+  var hasPoint = false;
+  var values = (series || []).map(function(s) {
+    return (rows || []).map(function(row) {
+      var v = row ? row[s.key] : null;
+      if (v == null || v === '') return null;
+      hasPoint = true;
+      return Number(v);
+    });
+  });
+  if (!hasPoint) {
+    el.innerHTML = '<div class="chartEmpty">' + (opt.empty || 'No data.') + '</div>';
+    return;
+  }
+  var W = Math.max(320, el.clientWidth || 760);
+  var H = 240;
+  var m = {l: 48, r: 14, t: 16, b: 32};
+  var iw = W - m.l - m.r;
+  var ih = H - m.t - m.b;
+  var n = (rows || []).length || 1;
+  var max = 0;
+  values.forEach(function(vals) {
+    vals.forEach(function(v) {
+      if (v == null) return;
+      if (v > max) max = v;
+    });
+  });
+  if (opt.kind === 'pct') max = Math.max(max, 0.01);
+  else max = Math.max(max, 1);
+  function x(i) {
+    return m.l + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+  }
+  function y(v) {
+    return m.t + ih - (v / max) * ih;
+  }
+  var grid = '';
+  for (var g = 0; g <= 4; g++) {
+    var gv = (max / 4) * g;
+    var gy = y(gv);
+    var glabel = opt.kind === 'pct' ? ((gv * 100).toFixed(1) + '%') : String(Math.round(gv));
+    grid += '<line x1="' + m.l + '" y1="' + gy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + gy.toFixed(1) + '" stroke="#eef2f7" />';
+    grid += '<text x="' + (m.l - 6) + '" y="' + (gy + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="#94a3b8">' + glabel + '</text>';
+  }
+  var xlabels = '';
+  var step = Math.max(1, Math.floor(n / 8));
+  for (var i = 0; i < n; i += step) {
+    var label = String((rows[i] || {}).date || '').slice(8);
+    xlabels += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="#64748b">' + label + '</text>';
+  }
+  if ((n - 1) % step !== 0) {
+    var last = String((rows[n - 1] || {}).date || '').slice(8);
+    xlabels += '<text x="' + x(n - 1).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="#64748b">' + last + '</text>';
+  }
+  var paths = '';
+  series.forEach(function(s, si) {
+    var d = '';
+    var drawing = false;
+    var dots = '';
+    values[si].forEach(function(v, i) {
+      if (v == null) {
+        drawing = false;
+        return;
+      }
+      var px = x(i).toFixed(1);
+      var py = y(v).toFixed(1);
+      d += (drawing ? ' L' : 'M') + px + ' ' + py;
+      drawing = true;
+      var tip = String((rows[i] || {}).date || '') + ' — ' + s.label + ' ' + (opt.kind === 'pct' ? pct(v) : num(v));
+      dots += '<circle cx="' + px + '" cy="' + py + '" r="3" fill="' + s.color + '"><title>' + tip + '</title></circle>';
+    });
+    if (d) {
+      paths += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2.5" />' + dots;
+    }
+  });
+  el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="240" role="img" aria-label="Website Funnel chart">' + grid + paths + xlabels + '</svg>';
 }
 document.getElementById('apply').addEventListener('click', load);
 load();

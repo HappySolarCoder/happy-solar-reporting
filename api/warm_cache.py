@@ -67,10 +67,9 @@ class handler(BaseHTTPRequestHandler):
 
         q = urlencode(params)
 
-        # 2026-08-18: sales removed from hourly warm (full opp+contact stream).
-        # 2026-08-19: created/ran/demo_rate/company_snapshot also full-stream
-        # ghl_opportunities_v2 + ghl_contacts_v2 (~4.5k docs). Hourly cron
-        # multiplied that 24x. Stop those warms. Do not add sales/essential_sales.
+        # 2026-08-18: sales KPI removed from hourly warm (was a full opp+contact stream).
+        # 2026-08-19: created / ran / demo / snapshot warms also stopped. Hourly
+        # cron multiplied those reads 24x. Do not add KPI or essential URLs back.
         urls = []
 
         results = []
@@ -93,7 +92,7 @@ class handler(BaseHTTPRequestHandler):
             "query": q,
             "results": results,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "note": "Hourly metric warm stopped 2026-08-19. Handler stays 200. No sales/created/ran/demo/snapshot hits.",
+            "note": "Hourly metric warm stopped 2026-08-19. Handler stays 200. No KPI metric hits.",
         }
 
         body = json.dumps(payload).encode("utf-8")

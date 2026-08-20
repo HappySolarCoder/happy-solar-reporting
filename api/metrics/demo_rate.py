@@ -218,6 +218,39 @@ def normalize_lead_source(v: Any) -> str:
     return s
 
 
+def compact_str(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def pipeline_id_keys(raw: Any) -> list[str]:
+    """Lookup keys for a pipelineId. compact_str and raw str() can differ (whitespace)."""
+    keys: list[str] = []
+    seen: set[str] = set()
+    raw_s = "" if raw is None else str(raw)
+    for candidate in (compact_str(raw), raw_s.strip(), raw_s):
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            keys.append(candidate)
+    return keys
+
+
+def remember_pipeline_name(m: dict[str, str], name: Any, *raw_ids: Any) -> None:
+    if not name:
+        return
+    name_s = str(name)
+    for raw in raw_ids:
+        for key in pipeline_id_keys(raw):
+            m[key] = name_s
+
+
+def resolve_pipeline_name(pipe_names: dict[str, str], raw_id: Any, *, fallback: str = "unknown") -> str:
+    for key in pipeline_id_keys(raw_id):
+        hit = pipe_names.get(key)
+        if hit:
+            return hit
+    return compact_str(raw_id) or str(raw_id or "") or fallback
+
+
 def contact_custom_field(contact: dict, cf_id: str) -> Any:
     for cf in (contact.get("customFields") or []):
         if isinstance(cf, dict) and cf.get("id") == cf_id:
@@ -225,14 +258,68 @@ def contact_custom_field(contact: dict, cf_id: str) -> Any:
     return None
 
 
-def pipeline_name_lookup(db: firestore.Client) -> dict[str, str]:
+def load_contacts_by_ids(db: firestore.Client, contact_ids) -> dict[str, dict]:
+    """Bounded ghl_contacts_v2 get_all for contactIds on the already-fetched opp set."""
+    contacts_map: dict[str, dict] = {}
+    needed: list[str] = []
+    seen: set[str] = set()
+    for raw in contact_ids:
+        cid = compact_str(raw)
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        needed.append(cid)
+    refs = [db.collection("ghl_contacts_v2").document(cid) for cid in needed]
+    for i in range(0, len(refs), 300):
+        for snap in db.get_all(refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            cid = compact_str(d.get("id") or snap.id)
+            if cid:
+                contacts_map[cid] = d
+            if snap.id:
+                contacts_map[compact_str(snap.id)] = d
+    for cid in needed:
+        if cid in contacts_map:
+            continue
+        misses = list(
+            db.collection("ghl_contacts_v2").where("id", "==", cid).limit(1).stream()
+        )
+        if misses:
+            contacts_map[cid] = misses[0].to_dict() or {}
+    return contacts_map
+
+
+def pipeline_name_lookup(db: firestore.Client, pipeline_ids) -> dict[str, str]:
+    """Bounded ghl_pipelines_v2 get_all for pipelineIds on the already-fetched opp set."""
     out: dict[str, str] = {}
-    for doc in db.collection(MetricContract.pipeline_collection).stream():
-        d = doc.to_dict() or {}
-        pid = str(d.get("id") or doc.id)
-        nm = str(d.get("name") or "")
-        if pid and nm:
-            out[pid] = nm
+    needed: list[str] = []
+    seen: set[str] = set()
+    for raw in pipeline_ids:
+        for pid in pipeline_id_keys(raw):
+            if pid in seen:
+                continue
+            seen.add(pid)
+            needed.append(pid)
+    refs = [db.collection("ghl_pipelines_v2").document(pid) for pid in needed]
+    for i in range(0, len(refs), 300):
+        for snap in db.get_all(refs[i : i + 300]):
+            if not snap.exists:
+                continue
+            d = snap.to_dict() or {}
+            remember_pipeline_name(out, d.get("name"), d.get("id"), snap.id)
+    for pid in needed:
+        if any(key in out for key in pipeline_id_keys(pid)):
+            name = next(out[key] for key in pipeline_id_keys(pid) if key in out)
+            remember_pipeline_name(out, name, pid)
+            continue
+        misses = list(
+            db.collection("ghl_pipelines_v2").where("id", "==", pid).limit(1).stream()
+        )
+        if misses:
+            d = misses[0].to_dict() or {}
+            remember_pipeline_name(out, d.get("name"), d.get("id"), misses[0].id, pid)
     return out
 
 
@@ -360,16 +447,6 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     else:
         start_local, end_local, start_str, end_str = month_window(year, month, c.timezone)
 
-    pipelines = pipeline_name_lookup(db)
-
-    # preload contacts by canonical id for fast joins
-    contacts_map: dict[str, dict] = {}
-    for dref in db.collection(MetricContract.contact_collection).stream():
-        d = dref.to_dict() or {}
-        cid = str(d.get("id") or dref.id).strip()
-        if cid:
-            contacts_map[cid] = d
-
     # Firestore query: only scan opportunities in the month window (big speedup)
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
@@ -379,11 +456,27 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     if end_utc > now_utc:
         end_utc = now_utc
 
-    opp_query = (
+    # Do not fall back to a full collection stream if this query fails.
+    opp_snaps = list(
         db.collection(c.opp_collection)
         .where(c.appointment_occurred_at_field, ">=", start_utc)
         .where(c.appointment_occurred_at_field, "<", end_utc)
+        .stream()
     )
+
+    needed_contact_ids: list[str] = []
+    needed_pipeline_ids: list[str] = []
+    for snap in opp_snaps:
+        opp = snap.to_dict() or {}
+        cid = compact_str(opp.get("contactId"))
+        if cid:
+            needed_contact_ids.append(cid)
+        pid_raw = opp.get("pipelineId")
+        if pipeline_id_keys(pid_raw):
+            needed_pipeline_ids.extend(pipeline_id_keys(pid_raw))
+
+    pipelines = pipeline_name_lookup(db, needed_pipeline_ids)
+    contacts_map = load_contacts_by_ids(db, needed_contact_ids)
 
     matching = []
     ran = 0
@@ -397,11 +490,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     by_lead: dict[str, int] = {}
     sit_by_lead: dict[str, int] = {}
 
-    for snap in opp_query.stream():
+    for snap in opp_snaps:
         opp = snap.to_dict() or {}
 
-        pid = str(opp.get("pipelineId") or "")
-        pname = (pipelines.get(pid) or "").strip()
+        pname = resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         pname_low = pname.lower()
 
         if not pname_low:

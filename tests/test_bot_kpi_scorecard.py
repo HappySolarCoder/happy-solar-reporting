@@ -38,7 +38,6 @@ page = load_module("bot_kpi_scorecard_page", PAGE_PATH)
 SCORE_SRC = SCORING_PATH.read_text(encoding="utf-8")
 PAGE_SRC = PAGE_PATH.read_text(encoding="utf-8")
 WARM_SRC = WARM.read_text(encoding="utf-8")
-NAV_SRC = NAV_PATH.read_text(encoding="utf-8")
 
 UNFILTERED_STREAMS = (
     'db.collection("ghl_opportunities_v2").stream()',
@@ -291,9 +290,12 @@ class NavTests(unittest.TestCase):
         self.assertIn("navbtn active", html)
         project = html.find("Project Management")
         bot = html.find("Bot KPI")
+        website = html.find("Website Funnel")
         self.assertNotEqual(project, -1)
         self.assertLess(project, bot)
-        self.assertNotIn("Website Funnel", NAV_SRC)
+        self.assertNotEqual(website, -1)
+        self.assertLess(bot, website)
+        self.assertIn('href="/api/website_funnel"', html)
 
 
 class WeekWindowTests(unittest.TestCase):

@@ -247,6 +247,13 @@ class WebsiteFunnelHtmlTests(unittest.TestCase):
         self.assertIn("not scored", html.lower())
         self.assertIn("home / buffalo / rochester / syracuse / ny-incentives / calculator / contact-me", html)
         self.assertIn("estimate_submit / estimate_start", html)
+        self.assertIn("Total site visits", html)
+        self.assertIn("wny.happyslr.com visits", html)
+        self.assertIn("Forms completed", html)
+        self.assertIn("forms completed / wny.happyslr.com visits", html)
+        self.assertIn("forms completed / total site visits", html)
+        self.assertIn("id=\"visitsChart\"", html)
+        self.assertIn("id=\"rateChart\"", html)
         self.assertNotIn("GHL", html)
         self.assertNotIn("orphan", html.lower())
         self.assertNotIn("Submit → GHL", html)
@@ -385,6 +392,13 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
         payload = funnel.aggregate_daily_docs(docs, year=2026, month=8)
         self.assertEqual(payload["collection"], "web_funnel_daily_v1")
         self.assertEqual(payload["totals"]["sessions"], 200)
+        self.assertEqual(len(payload["days"]), 31)
+        self.assertEqual(payload["days"][0]["date"], "2026-08-01")
+        self.assertIsNone(payload["days"][0]["visits_total"])
+        self.assertIsNone(payload["days"][0]["visits_wny"])
+        self.assertIsNone(payload["days"][0]["completed_forms"])
+        self.assertEqual(len(payload["running"]), 31)
+        self.assertIsNone(payload["running"][0]["forms_over_total"])
         self.assertEqual(payload["totals"]["starts"], 16)
         self.assertEqual(payload["totals"]["estimate_submit"], 4)
         self.assertEqual(payload["totals"]["wix_form_submits"], 3)
@@ -438,6 +452,8 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
             out = funnel.fetch_ga4_event_counts("2026-08-18")
         self.assertEqual(out["ga4"], "not_configured")
         self.assertIsNone(out["sessions"])
+        self.assertIsNone(out["visits_total"])
+        self.assertIsNone(out["visits_wny"])
         self.assertIsNone(out["starts"])
         self.assertIsNone(out["estimate_submit"])
         self.assertIsNone(out["wix_form_submits"])
@@ -673,6 +689,230 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
         self.assertEqual(payload["estimate_submit"], 0)
         self.assertIsNone(payload["session_to_submit"])
         self.assertIsNone(payload["start_to_submit"])
+
+
+class WebsiteFunnelHostSplitTests(unittest.TestCase):
+    def test_host_allowlist_and_exclusions(self):
+        self.assertEqual(funnel.classify_host("www.happyslr.com"), "total")
+        self.assertEqual(funnel.classify_host("happyslr.com"), "total")
+        self.assertEqual(funnel.classify_host("https://www.happyslr.com/buffalo"), "total")
+        self.assertEqual(funnel.classify_host("wny.happyslr.com"), "wny")
+        self.assertEqual(funnel.classify_host("WNY.happyslr.com"), "wny")
+        for host in (
+            "yadmada.com",
+            "www.yadmada.com",
+            "shop.yadmada.com",
+            "happy-solar-git-qa-evan.vercel.app",
+            "something.vercel.app",
+            "localhost",
+            "localhost:3000",
+            "127.0.0.1",
+            "gtm-msr.appspot.com",
+            "www.gtm-msr.appspot.com",
+            "",
+            None,
+        ):
+            self.assertEqual(funnel.classify_host(host), "excluded", host)
+        self.assertNotIn("session_start", funnel.GA4_EVENT_NAMES)
+        self.assertEqual(funnel.EVENT_COUNT_FIELDS["page_view"], "sessions")
+        self.assertIn("hostName", funnel.GA4_REPORT_DIMENSIONS)
+        self.assertIn("pageLocation", funnel.GA4_REPORT_DIMENSIONS)
+        self.assertEqual(inspect.getsource(funnel.fetch_ga4_event_counts).count("runReport"), 1)
+        self.assertIn('qs.get("date"', ROLLUP_SRC)
+
+    def test_preview_form_and_excluded_hosts_do_not_count(self):
+        out = funnel.summarize_ga4_event_rows(
+            [
+                {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/", "count": 200},
+                {"event_name": "page_view", "host_name": "happyslr.com", "page_path": "/", "count": 151},
+                {"event_name": "page_view", "host_name": "yadmada.com", "page_path": "/", "count": 40},
+                {"event_name": "page_view", "host_name": "preview.vercel.app", "page_path": "/", "count": 12},
+                {"event_name": "page_view", "host_name": "localhost", "page_path": "/", "count": 3},
+                {"event_name": "page_view", "host_name": "gtm-msr.appspot.com", "page_path": "/", "count": 5},
+                {"event_name": "page_view", "host_name": "wny.happyslr.com", "page_path": "/calculator", "count": 7},
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "happy-solar-git-qa.vercel.app",
+                    "page_path": "/calculator",
+                    "page_location": "https://happy-solar-git-qa.vercel.app/calculator",
+                    "count": 1,
+                },
+                {
+                    "event_name": "wix_form_submit",
+                    "host_name": "www.happyslr.com",
+                    "page_path": "/contact-me",
+                    "count": 2,
+                },
+            ]
+        )
+        self.assertEqual(out["visits_total"], 351)
+        self.assertEqual(out["sessions"], 351)
+        self.assertEqual(out["visits_wny"], 7)
+        self.assertEqual(out["completed_forms"], 2)
+        self.assertEqual(out["estimate_submit"], 0)
+        self.assertEqual(out["wix_form_submits"], 2)
+        self.assertGreater(out["dropped"]["host"], 0)
+        self.assertEqual(out["by_page"]["home"]["sessions"], 351)
+        self.assertNotEqual(out["visits_total"], 351 + 40 + 12 + 3 + 5)
+
+    def test_debug_mode_and_internal_flags_drop_events(self):
+        out = funnel.summarize_ga4_event_rows(
+            [
+                {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/", "count": 10},
+                {
+                    "event_name": "page_view",
+                    "host_name": "www.happyslr.com",
+                    "page_path": "/",
+                    "debug_mode": "true",
+                    "count": 4,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "www.happyslr.com",
+                    "page_path": "/calculator",
+                    "debug_mode": "1",
+                    "count": 1,
+                },
+                {
+                    "event_name": "wix_form_submit",
+                    "host_name": "happyslr.com",
+                    "page_path": "/contact-me",
+                    "traffic_type": "internal",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "page_location": "https://wny.happyslr.com/calculator?internal=1",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "page_location": "https://wny.happyslr.com/calculator",
+                    "count": 1,
+                },
+            ]
+        )
+        self.assertEqual(out["visits_total"], 10)
+        self.assertEqual(out["sessions"], 10)
+        self.assertEqual(out["visits_wny"], 0)
+        self.assertEqual(out["completed_forms"], 1)
+        self.assertEqual(out["estimate_submit"], 1)
+        self.assertEqual(out["wix_form_submits"], 0)
+        self.assertGreater(out["dropped"]["debug_mode"], 0)
+        self.assertGreater(out["dropped"]["internal"], 0)
+        self.assertIsNone(funnel.exclusion_reason(host_name="www.happyslr.com"))
+        self.assertEqual(
+            funnel.exclusion_reason(
+                host_name="www.happyslr.com",
+                page_location="https://www.happyslr.com/?internal=1",
+            ),
+            "internal",
+        )
+        self.assertEqual(
+            funnel.exclusion_reason(host_name="www.happyslr.com", debug_mode="true"),
+            "debug_mode",
+        )
+
+    def test_cumulative_ratio_null_on_zero_and_gaps(self):
+        days = [
+            {"date": "2026-08-01", "visits_total": None, "visits_wny": None, "completed_forms": None},
+            {"date": "2026-08-02", "visits_total": 100, "visits_wny": 0, "completed_forms": 2},
+            {"date": "2026-08-03", "visits_total": 50, "visits_wny": 10, "completed_forms": 1},
+            {"date": "2026-08-04", "visits_total": 0, "visits_wny": 0, "completed_forms": 0},
+        ]
+        running = funnel.cumulative_form_ratios(days)
+        self.assertIsNone(running[0]["forms_over_total"])
+        self.assertIsNone(running[0]["forms_over_wny"])
+        self.assertAlmostEqual(running[1]["forms_over_total"], 0.02)
+        self.assertIsNone(running[1]["forms_over_wny"])
+        self.assertAlmostEqual(running[2]["forms_over_total"], 3 / 150)
+        self.assertAlmostEqual(running[2]["forms_over_wny"], 0.3)
+        self.assertAlmostEqual(running[3]["forms_over_total"], 3 / 150)
+        self.assertAlmostEqual(running[3]["forms_over_wny"], 0.3)
+        zero = funnel.cumulative_form_ratios(
+            [{"date": "2026-08-19", "visits_total": 0, "visits_wny": 0, "completed_forms": 1}]
+        )
+        self.assertIsNone(zero[0]["forms_over_total"])
+        self.assertIsNone(zero[0]["forms_over_wny"])
+        self.assertIsNone(funnel.ratio(1, 0))
+        self.assertIsNone(funnel.ratio(0, 0))
+
+    def test_month_json_days_use_nulls_until_host_split(self):
+        docs = [
+            {
+                "date": "2026-08-19",
+                "ga4": "ok",
+                "sessions": 999,
+                "completed_forms": 1,
+            },
+            {
+                "date": "2026-08-20",
+                "ga4": "ok",
+                "visits_total": 209,
+                "visits_wny": 0,
+                "completed_forms": 0,
+                "sessions": 209,
+            },
+            {"date": "2026-08-21", "ga4": "not_configured", "visits_total": 0, "visits_wny": 0, "completed_forms": 0},
+        ]
+        payload = funnel.aggregate_daily_docs(docs, year=2026, month=8)
+        by_date = {row["date"]: row for row in payload["days"]}
+        self.assertEqual(len(payload["days"]), 31)
+        self.assertIsNone(by_date["2026-08-19"]["visits_total"])
+        self.assertIsNone(by_date["2026-08-19"]["completed_forms"])
+        self.assertEqual(by_date["2026-08-20"]["visits_total"], 209)
+        self.assertEqual(by_date["2026-08-20"]["visits_wny"], 0)
+        self.assertEqual(by_date["2026-08-20"]["completed_forms"], 0)
+        self.assertIsNone(by_date["2026-08-21"]["visits_total"])
+        self.assertEqual(payload["totals"]["visits_total"], 209)
+        self.assertEqual(payload["totals"]["sessions"], 1208)
+        self.assertIn("data_api_missing", payload["contract"]["exclusions"])
+        self.assertTrue(payload["contract"]["exclusions"]["no_tester_ip_list"])
+
+    def test_rollup_writes_host_split_and_sessions_match_visits_total(self):
+        captured = {}
+
+        class FakeDoc:
+            def set(self, payload, merge=True):
+                captured.update(payload)
+
+        class FakeCol:
+            def document(self, _id):
+                return FakeDoc()
+
+        class FakeDb:
+            def collection(self, name):
+                self.name = name
+                return FakeCol()
+
+        ga4 = funnel.summarize_ga4_event_rows(
+            [
+                {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/", "count": 351},
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "preview.vercel.app",
+                    "page_path": "/calculator",
+                    "count": 1,
+                },
+            ]
+        )
+        with patch.object(funnel, "fetch_ga4_event_counts", return_value=ga4):
+            out = funnel.rollup_day(FakeDb(), "2026-08-19")
+        self.assertEqual(out["doc"]["visits_total"], 351)
+        self.assertEqual(out["doc"]["sessions"], 351)
+        self.assertEqual(out["doc"]["visits_wny"], 0)
+        self.assertEqual(out["doc"]["completed_forms"], 0)
+        self.assertEqual(out["doc"]["estimate_submit"], 0)
+        self.assertEqual(captured["sessions"], 351)
+        self.assertEqual(captured["completed_forms"], 0)
+        self.assertNotIn("ghl_leads", captured)
+        self.assertNotIn("TESTER_IPS", FUNNEL_SRC)
+        self.assertNotIn("ip_allowlist", FUNNEL_SRC)
+        self.assertNotIn("ipAddress", FUNNEL_SRC)
 
 
 if __name__ == "__main__":

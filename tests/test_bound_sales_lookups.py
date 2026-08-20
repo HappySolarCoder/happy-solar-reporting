@@ -66,6 +66,35 @@ class BoundLookupTests(unittest.TestCase):
         self.assertIn("db.get_all(", DEMO)
         self.assertIn('db.collection("ghl_contacts_v2").document', DEMO)
 
+    def test_created_resolves_pipeline_name_with_compact_and_raw_keys(self):
+        self.assertIn("def pipeline_id_keys", CREATED)
+        self.assertIn("def resolve_pipeline_name", CREATED)
+        self.assertIn('resolve_pipeline_name(pipe_names, opp.get("pipelineId"))', CREATED)
+        self.assertNotIn('pname = pipe_names.get(pid) or pid or "unknown"', CREATED)
+        self.assertNotIn('db.collection("ghl_pipelines_v2").stream()', CREATED)
+        self.assertIn(".where(c.created_at_field,", CREATED)
+
+    def test_pipeline_id_alias_resolves_whitespace_raw_str(self):
+        """Charles: compact_str key vs filter raw str(pipelineId) dropped one Buffalo row."""
+        ns: dict = {}
+        exec(
+            "from typing import Any\n"
+            "def compact_str(value):\n"
+            "    return ' '.join(str(value or '').strip().split())\n"
+            "def pipeline_id_keys"
+            + CREATED.split("def pipeline_id_keys", 1)[1].split("def load_contacts_by_ids", 1)[0],
+            ns,
+        )
+        remember = ns["remember_pipeline_name"]
+        resolve = ns["resolve_pipeline_name"]
+        m = {}
+        remember(m, "Buffalo", "buffalo-pipe-id")
+        self.assertEqual(resolve(m, "buffalo-pipe-id"), "Buffalo")
+        self.assertEqual(resolve(m, "  buffalo-pipe-id  "), "Buffalo")
+        compact_only = {"buffalo-pipe-id": "Buffalo"}
+        self.assertEqual(resolve(compact_only, "  buffalo-pipe-id  "), "Buffalo")
+        self.assertEqual(resolve(compact_only, "buffalo-pipe-id"), "Buffalo")
+
     def test_sold_date_gaps_uses_sold_stage_query_and_contact_get_all(self):
         self.assertIn("P9oBjgbZjJdeE0OkBj9T", GAPS)
         self.assertIn('.where(contract.stage_field, "in", stage_ids)', GAPS)

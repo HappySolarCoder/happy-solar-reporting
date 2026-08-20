@@ -38,10 +38,13 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotEqual(project, -1)
         self.assertLess(daily, project)
         bot = html.find("Bot KPI")
+        website = html.find("Website Funnel")
         self.assertNotEqual(bot, -1)
         self.assertLess(project, bot)
         self.assertIn("/api/bot_kpi_scorecard", html)
-        self.assertNotIn("/api/website_funnel", html)
+        self.assertNotEqual(website, -1)
+        self.assertLess(bot, website)
+        self.assertIn("/api/website_funnel", html)
 
     def test_project_management_dropdown_is_active_for_either_child(self):
         hub_html = render_dashboard_nav("project_management_hub")

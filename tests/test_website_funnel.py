@@ -9,8 +9,10 @@ import importlib.util
 import inspect
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "api"
@@ -42,13 +44,15 @@ DEMO = (METRICS / "demo_rate.py").read_text()
 FUNNEL_SRC = (METRICS / "website_funnel.py").read_text()
 PAGE_SRC = (API / "website_funnel.py").read_text()
 ROLLUP_SRC = (API / "web_funnel_rollup.py").read_text()
+YESTERDAY_SRC = (API / "website_funnel_yesterday.py").read_text()
 
 FAMILY_PATHS = (
     METRICS / "website_funnel.py",
     API / "website_funnel.py",
     API / "web_funnel_rollup.py",
+    API / "website_funnel_yesterday.py",
 )
-FAMILY_TEXT = FUNNEL_SRC + "\n" + PAGE_SRC + "\n" + ROLLUP_SRC
+FAMILY_TEXT = FUNNEL_SRC + "\n" + PAGE_SRC + "\n" + ROLLUP_SRC + "\n" + YESTERDAY_SRC
 
 FORBIDDEN_GHL = (
     "ghl_contacts_v2",
@@ -93,9 +97,12 @@ DROPPED_HELPERS = (
 class WebsiteFunnelIsolationTests(unittest.TestCase):
     def test_website_funnel_is_not_referenced_from_warm_cache(self):
         self.assertNotIn("website_funnel", WARM)
+        self.assertNotIn("website_funnel_yesterday", WARM)
         self.assertNotIn("web_funnel", WARM)
         self.assertNotIn("web_funnel_daily_v1", WARM)
         self.assertIn("urls = []", WARM)
+        self.assertNotIn("/api/website_funnel", WARM)
+        self.assertNotIn("/api/website_funnel_yesterday", WARM)
 
     def test_locked_metric_contracts_are_unchanged(self):
         self.assertNotIn("website_funnel", SALES)
@@ -129,6 +136,10 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertIn('DAILY_COLLECTION = "web_funnel_daily_v1"', FUNNEL_SRC)
         self.assertIn("DAILY_COLLECTION", inspect.getsource(funnel.rollup_day))
         self.assertIn("DAILY_COLLECTION", inspect.getsource(funnel.read_month_docs))
+        self.assertIn("DAILY_COLLECTION", inspect.getsource(funnel.read_daily_doc))
+        self.assertIn("get_all", inspect.getsource(funnel.read_daily_doc))
+        self.assertNotIn(".stream(", inspect.getsource(funnel.read_daily_doc))
+        self.assertNotIn(".stream(", inspect.getsource(funnel.compute_day_snapshot))
 
     def test_goals_are_completed_form_not_ghl(self):
         self.assertEqual(funnel.GOAL_SESSION_TO_FORM, 0.02)
@@ -164,6 +175,9 @@ class WebsiteFunnelContractTests(unittest.TestCase):
             [
                 inspect.getsource(funnel.compute_month),
                 inspect.getsource(funnel.read_month_docs),
+                inspect.getsource(funnel.read_daily_doc),
+                inspect.getsource(funnel.compute_day_snapshot),
+                inspect.getsource(funnel.build_day_snapshot),
                 inspect.getsource(funnel.rollup_day),
                 inspect.getsource(funnel.fetch_ga4_event_counts),
                 inspect.getsource(funnel.aggregate_daily_docs),
@@ -192,11 +206,15 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertNotIn("ghl_", PAGE_SRC)
         self.assertNotIn("ghl_", ROLLUP_SRC)
         self.assertNotIn("ghl_", FUNNEL_SRC)
+        self.assertNotIn("ghl_", YESTERDAY_SRC)
         self.assertNotIn("GHL", PAGE_SRC)
         self.assertNotIn("GHL", ROLLUP_SRC)
         self.assertNotIn("GHL", FUNNEL_SRC)
+        self.assertNotIn("GHL", YESTERDAY_SRC)
         self.assertNotIn("FIELD_NAME", FUNNEL_SRC)
         self.assertIn("compute_month", PAGE_SRC)
+        self.assertIn("compute_day_snapshot", PAGE_SRC)
+        self.assertIn("compute_day_snapshot", YESTERDAY_SRC)
         self.assertIn("rollup_day", ROLLUP_SRC)
         self.assertIn("sessions → start → completed form", PAGE_SRC)
         self.assertIn("completed form", PAGE_SRC)
@@ -477,6 +495,184 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
         vercel = (ROOT / "vercel.json").read_text()
         self.assertNotIn("web_funnel", vercel)
         self.assertNotIn("website_funnel", vercel)
+        self.assertNotIn("website_funnel_yesterday", vercel)
+
+
+class _RecordingDb:
+    def __init__(self, snap):
+        self.snap = snap
+        self.collections = []
+        self.get_all_refs = []
+
+    def collection(self, name):
+        self.collections.append(name)
+        return self
+
+    def document(self, doc_id):
+        self.doc_id = doc_id
+        return f"ref:{doc_id}"
+
+    def get_all(self, refs):
+        self.get_all_refs.extend(list(refs))
+        return [self.snap]
+
+
+class _Snap:
+    def __init__(self, exists, doc_id, payload=None):
+        self.exists = exists
+        self.id = doc_id
+        self._payload = payload
+
+    def to_dict(self):
+        return self._payload
+
+
+class WebsiteFunnelYesterdayTests(unittest.TestCase):
+    def test_yesterday_window_is_ny_date_not_utc(self):
+        utc = datetime(2026, 8, 21, 3, 30, tzinfo=timezone.utc)
+        ny = utc.astimezone(ZoneInfo("America/New_York"))
+        self.assertEqual(ny.date().isoformat(), "2026-08-20")
+        self.assertEqual((utc.date() - timedelta(days=1)).isoformat(), "2026-08-20")
+        with patch.object(funnel, "ny_now", return_value=ny):
+            self.assertEqual(funnel.yesterday_ny_date(), "2026-08-19")
+            self.assertEqual(funnel.resolve_query_date(None), "2026-08-19")
+            self.assertEqual(funnel.resolve_query_date("yesterday"), "2026-08-19")
+            window = funnel.ny_calendar_day_window(funnel.yesterday_ny_date())
+        self.assertTrue(window["start"].startswith("2026-08-19T00:00:00"))
+        self.assertIn("23:59:59", window["end"])
+        self.assertEqual(window["timezone"], "America/New_York")
+        self.assertEqual(window["kind"], "calendar_day")
+        self.assertNotEqual(funnel.resolve_query_date("2026-08-19"), "2026-08-20")
+
+    def test_missing_doc_is_ready_false_with_nulls(self):
+        db = _RecordingDb(_Snap(False, "2026-08-19"))
+        payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        self.assertEqual(db.collections, ["web_funnel_daily_v1"])
+        self.assertEqual(db.get_all_refs, ["ref:2026-08-19"])
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["reason"], "source isn't ready")
+        self.assertEqual(payload["ga4"], "missing")
+        self.assertEqual(payload["lead_field"], "estimate_submit")
+        self.assertIsNone(payload["lead"])
+        for field in (
+            "sessions",
+            "estimate_start",
+            "address_complete",
+            "bill_complete",
+            "estimate_submit",
+            "session_to_submit",
+            "start_to_submit",
+            "session→submit",
+            "start→submit",
+            "starts",
+        ):
+            self.assertIn(field, payload)
+            self.assertIsNone(payload[field])
+
+    def test_not_configured_or_failed_doc_does_not_invent_counts(self):
+        for ga4_status in ("not_configured", "failed"):
+            db = _RecordingDb(
+                _Snap(
+                    True,
+                    "2026-08-19",
+                    {
+                        "date": "2026-08-19",
+                        "ga4": ga4_status,
+                        "sessions": 0,
+                        "starts": 0,
+                        "address_complete": 0,
+                        "bill_complete": 0,
+                        "estimate_submit": 0,
+                        "wix_form_submits": 0,
+                    },
+                )
+            )
+            payload = funnel.compute_day_snapshot(db, "2026-08-19")
+            self.assertFalse(payload["ready"], ga4_status)
+            self.assertEqual(payload["reason"], "source isn't ready")
+            self.assertIsNone(payload["sessions"])
+            self.assertIsNone(payload["estimate_start"])
+            self.assertIsNone(payload["estimate_submit"])
+            self.assertIsNone(payload["session_to_submit"])
+            self.assertIsNone(payload["start_to_submit"])
+            self.assertNotEqual(payload["sessions"], 0)
+
+    def test_present_doc_fills_calculator_fields(self):
+        db = _RecordingDb(
+            _Snap(
+                True,
+                "2026-08-19",
+                {
+                    "date": "2026-08-19",
+                    "ga4": "ok",
+                    "sessions": 100,
+                    "starts": 8,
+                    "address_complete": 6,
+                    "bill_complete": 5,
+                    "estimate_submit": 2,
+                    "wix_form_submits": 9,
+                    "completed_forms": 11,
+                },
+            )
+        )
+        payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        self.assertTrue(payload["ready"])
+        self.assertIsNone(payload["reason"])
+        self.assertEqual(payload["scope"], "calculator")
+        self.assertEqual(payload["site"], "wny.happyslr.com")
+        self.assertEqual(payload["lead_field"], "estimate_submit")
+        self.assertEqual(payload["lead"], 2)
+        self.assertEqual(payload["sessions"], 100)
+        self.assertEqual(payload["estimate_start"], 8)
+        self.assertEqual(payload["starts"], 8)
+        self.assertEqual(payload["address_complete"], 6)
+        self.assertEqual(payload["bill_complete"], 5)
+        self.assertEqual(payload["estimate_submit"], 2)
+        self.assertAlmostEqual(payload["session_to_submit"], 0.02)
+        self.assertAlmostEqual(payload["start_to_submit"], 0.25)
+        self.assertEqual(payload["session→submit"], payload["session_to_submit"])
+        self.assertEqual(payload["start→submit"], payload["start_to_submit"])
+        self.assertNotEqual(payload["lead"], 9)
+        self.assertNotEqual(payload["lead"], 11)
+        self.assertFalse(payload["auto_rollup"])
+        self.assertEqual(payload["reads"]["count"], 1)
+        self.assertEqual(payload["reads"]["method"], "get_all")
+        self.assertEqual(db.collections, ["web_funnel_daily_v1"])
+        self.assertNotIn("ghl_contacts_v2", db.collections)
+        self.assertNotIn("ghl_opportunities_v2", db.collections)
+
+    def test_yesterday_read_does_not_touch_ghl_collections(self):
+        tree = ast.parse(FUNNEL_SRC + "\n" + YESTERDAY_SRC)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                self.assertNotIn(node.value, ("ghl_contacts_v2", "ghl_opportunities_v2", "ghl_custom_fields_v2"))
+        src = inspect.getsource(funnel.read_daily_doc) + inspect.getsource(funnel.compute_day_snapshot)
+        self.assertNotIn("ghl_", src)
+        self.assertNotIn(".stream(", src)
+        self.assertIn("get_all", src)
+
+    def test_zero_traffic_ok_day_is_ready_with_zeros(self):
+        db = _RecordingDb(
+            _Snap(
+                True,
+                "2026-08-19",
+                {
+                    "date": "2026-08-19",
+                    "ga4": "ok",
+                    "sessions": 0,
+                    "starts": 0,
+                    "address_complete": 0,
+                    "bill_complete": 0,
+                    "estimate_submit": 0,
+                },
+            )
+        )
+        payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["sessions"], 0)
+        self.assertEqual(payload["estimate_submit"], 0)
+        self.assertIsNone(payload["session_to_submit"])
+        self.assertIsNone(payload["start_to_submit"])
 
 
 if __name__ == "__main__":

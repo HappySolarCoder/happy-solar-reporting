@@ -27,8 +27,18 @@ Secondary (diagnostic only, not scored this week):
 Warehouse: FIRESTORE_DATABASE_ID collection web_funnel_daily_v1,
 one doc per America/New_York date (id YYYY-MM-DD).
 
+Yesterday snapshot (8:00 America/New_York routine):
+- GET /api/website_funnel_yesterday reads one daily doc.
+- Optional write first: GET /api/web_funnel_rollup (yesterday NY).
+- The yesterday read does not auto-rollup.
+- Lead for that payload is estimate_submit only (calculator / wny).
+- Monthly scoreboard still includes /contact-me wix_form_submit.
+- Missing doc or ga4 not_configured/failed → ready=false and nulls.
+  Do not invent counts. Do not treat a missing source as 0 traffic.
+
 Cost rules:
 - Dashboard month view reads ≤31 daily docs.
+- Yesterday read is one document get / get_all. No collection stream.
 - Rollup pulls optional GA4 event counts for one NY day.
 - Does not read CRM opportunity or contact collections.
 - Not on warm_cache. Not hourly.
@@ -96,6 +106,21 @@ EVENT_COUNT_FIELDS = {
     "wix_form_submit": "wix_form_submits",
 }
 
+YESTERDAY_NOT_READY_REASON = "source isn't ready"
+YESTERDAY_LEAD_FIELD = "estimate_submit"
+YESTERDAY_SCOPE = "calculator"
+YESTERDAY_SITE = "wny.happyslr.com"
+YESTERDAY_METRIC_FIELDS = (
+    "sessions",
+    "estimate_start",
+    "address_complete",
+    "bill_complete",
+    "estimate_submit",
+    "session_to_submit",
+    "start_to_submit",
+)
+YESTERDAY_READY_GA4 = frozenset({"ok"})
+
 GOAL_SESSION_TO_FORM = 0.02
 GOAL_START_TO_FORM = 0.25
 GOAL_SESSION_TO_START_SITE = 0.08
@@ -150,9 +175,37 @@ def parse_date_ymd(value: str | None) -> tuple[int, int, int] | None:
         return None
     try:
         year, month, day = [int(part) for part in value.strip().split("-")]
+        datetime(year, month, day)
         return year, month, day
     except Exception:
         return None
+
+
+def resolve_query_date(value: str | None) -> str:
+    text = compact_str(value).casefold()
+    if not text or text == "yesterday":
+        return yesterday_ny_date()
+    parsed = parse_date_ymd(value)
+    if not parsed:
+        raise ValueError("Invalid date; expected YYYY-MM-DD or yesterday")
+    year, month, day = parsed
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def ny_calendar_day_window(date_ymd: str) -> dict[str, str]:
+    parsed = parse_date_ymd(date_ymd)
+    if not parsed:
+        raise ValueError("Invalid date; expected YYYY-MM-DD")
+    year, month, day = parsed
+    tz = ZoneInfo(TIMEZONE_NAME)
+    start = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
+    end = datetime(year, month, day, 23, 59, 59, 999999, tzinfo=tz)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "timezone": TIMEZONE_NAME,
+        "kind": "calendar_day",
+    }
 
 
 def month_dates(year: int, month: int) -> list[str]:
@@ -456,6 +509,105 @@ def read_month_docs(db: firestore.Client, year: int, month: int) -> list[dict[st
             docs.append(data)
     docs.sort(key=lambda row: row.get("date") or "")
     return docs
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def read_daily_doc(db: firestore.Client, date_ymd: str) -> dict[str, Any] | None:
+    """Read exactly one web_funnel_daily_v1 doc. No collection stream."""
+    date_key = resolve_query_date(date_ymd)
+    ref = db.collection(DAILY_COLLECTION).document(date_key)
+    snaps = list(db.get_all([ref]))
+    if not snaps:
+        return None
+    snap = snaps[0]
+    if not snap.exists:
+        return None
+    data = snap.to_dict() or {}
+    data["date"] = compact_str(data.get("date") or snap.id or date_key)
+    return data
+
+
+def daily_doc_is_ready(doc: dict[str, Any] | None) -> bool:
+    if not doc:
+        return False
+    ga4 = compact_str(doc.get("ga4")).casefold()
+    return ga4 in YESTERDAY_READY_GA4
+
+
+def empty_yesterday_metrics() -> dict[str, None]:
+    return {field: None for field in YESTERDAY_METRIC_FIELDS}
+
+
+def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, Any]:
+    date_key = resolve_query_date(date_ymd)
+    window = ny_calendar_day_window(date_key)
+    ga4 = compact_str((doc or {}).get("ga4")) or ("missing" if not doc else "unknown")
+    ready = daily_doc_is_ready(doc)
+    metrics = empty_yesterday_metrics()
+    if ready and doc is not None:
+        sessions = _optional_int(doc.get("sessions"))
+        estimate_start = _optional_int(doc.get("estimate_start"))
+        if estimate_start is None:
+            estimate_start = _optional_int(doc.get("starts"))
+        address_complete = _optional_int(doc.get("address_complete"))
+        bill_complete = _optional_int(doc.get("bill_complete"))
+        estimate_submit = _optional_int(doc.get("estimate_submit"))
+        metrics.update(
+            {
+                "sessions": sessions,
+                "estimate_start": estimate_start,
+                "address_complete": address_complete,
+                "bill_complete": bill_complete,
+                "estimate_submit": estimate_submit,
+                "session_to_submit": ratio(estimate_submit, sessions),
+                "start_to_submit": ratio(estimate_submit, estimate_start),
+            }
+        )
+    payload = {
+        "ready": ready,
+        "reason": None if ready else YESTERDAY_NOT_READY_REASON,
+        "metric": METRIC_NAME,
+        "scope": YESTERDAY_SCOPE,
+        "site": YESTERDAY_SITE,
+        "timezone": TIMEZONE_NAME,
+        "date": date_key,
+        "window": window,
+        "lead": metrics["estimate_submit"],
+        "lead_field": YESTERDAY_LEAD_FIELD,
+        "ga4": ga4 if doc else "missing",
+        "collection": DAILY_COLLECTION,
+        "reads": {"collection": DAILY_COLLECTION, "ids": [date_key], "method": "get_all", "count": 1},
+        "auto_rollup": False,
+        "routine": {
+            "when": "08:00 America/New_York",
+            "write": "/api/web_funnel_rollup",
+            "read": "/api/website_funnel_yesterday",
+            "note": "Hit rollup for yesterday first, then this read. This read does not roll up.",
+        },
+        "contract": {
+            "lead": YESTERDAY_LEAD_FIELD,
+            "lead_definition": "Calculator contact-complete only (estimate_submit). Monthly scoreboard still counts /contact-me wix_form_submit.",
+            "window": "America/New_York 00:00–23:59 calendar day, not rolling 24h, not UTC day.",
+            "not_ready": "Missing daily doc or ga4 not_configured/failed returns HTTP 200, ready=false, null metrics. Counts are never invented.",
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    payload.update(metrics)
+    payload["starts"] = metrics["estimate_start"]
+    payload["session→submit"] = metrics["session_to_submit"]
+    payload["start→submit"] = metrics["start_to_submit"]
+    return payload
+
+
+def compute_day_snapshot(db: firestore.Client, date_ymd: str | None = None) -> dict[str, Any]:
+    date_key = resolve_query_date(date_ymd)
+    doc = read_daily_doc(db, date_key)
+    return build_day_snapshot(doc, date_key)
 
 
 def _sum_optional(values: list[Any]) -> int | None:

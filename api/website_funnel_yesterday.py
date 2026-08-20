@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 
-"""Vercel Python function: /api/web_funnel_rollup
+"""Vercel Python function: /api/website_funnel_yesterday
 
-Write/merge one web_funnel_daily_v1 doc for a given America/New_York date
-(default yesterday). Scoreboard: sessions → start → completed form.
-Completed-form counts only. Does not read CRM contact or opportunity
-collections. Not on warm_cache. Not hourly.
+Charles 8:00 America/New_York routine — calculator / wny snapshot.
 
-8:00 America/New_York routine: hit this write for yesterday first,
-then GET /api/website_funnel_yesterday. The yesterday read does not
-auto-rollup.
+Reads one web_funnel_daily_v1/{YYYY-MM-DD} doc for yesterday in
+America/New_York (00:00–23:59 calendar day). No collection stream.
+Does not auto-rollup. Prefer GET /api/web_funnel_rollup first.
+
+Lead = estimate_submit only. Monthly Website Funnel still counts
+/contact-me wix_form_submit.
+
+If the daily doc is missing or ga4 is not_configured/failed:
+HTTP 200, ready=false, all metrics null. Counts are never invented.
 
 Params:
-- date=YYYY-MM-DD (optional)
+- date=YYYY-MM-DD or date=yesterday (optional; default yesterday NY)
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 
 def _load_metric():
     path = Path(__file__).resolve().parent / "metrics" / "website_funnel.py"
-    spec = importlib.util.spec_from_file_location("hs_website_funnel_rollup_metric", path)
+    spec = importlib.util.spec_from_file_location("hs_website_funnel_yesterday_metric", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load website_funnel metric from {path}")
     module = importlib.util.module_from_spec(spec)
@@ -43,7 +46,7 @@ class handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             date = (qs.get("date", [""])[0] or "").strip() or None
             db = metric.get_db()
-            payload = metric.rollup_day(db, date)
+            payload = metric.compute_day_snapshot(db, date)
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

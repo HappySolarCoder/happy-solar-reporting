@@ -7,8 +7,13 @@ Scoreboard: sessions → start → completed form.
 A lead is a completed form submit. Reads ≤31 web_funnel_daily_v1 docs.
 Does not read CRM contact or opportunity collections.
 
+Optional ?format=json&date=yesterday (or YYYY-MM-DD) returns the
+calculator / wny day snapshot (one daily doc). Prefer
+/api/website_funnel_yesterday for the 8am ET no-param read.
+
 Optional ?rollup=1 writes yesterday (or ?date=YYYY-MM-DD) then returns
 the dashboard/JSON. Prefer /api/web_funnel_rollup for the write path.
+Do not auto-rollup on dashboard open.
 """
 
 from __future__ import annotations
@@ -76,7 +81,10 @@ class handler(BaseHTTPRequestHandler):
 
             if want_json:
                 db = metric.get_db()
-                payload = metric.compute_month(db, year=year, month=month)
+                if date:
+                    payload = metric.compute_day_snapshot(db, date)
+                else:
+                    payload = metric.compute_month(db, year=year, month=month)
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

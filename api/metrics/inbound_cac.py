@@ -2,7 +2,7 @@
 
 """Vercel Python function: /api/metrics/inbound_cac
 
-Inbound lead-source CAC for Happy Solar.
+Inbound lead-source CAC for Happy Solar. Leadership page (direct URL).
 
 Warehouse facts (locked — do not invent names):
 - Firestore DB `happy-solar` on GCP project `gemini-assistant-bot`
@@ -18,26 +18,30 @@ Title buckets (case-insensitive):
 - contains `lead locker` → Lead Locker, unit cost $45
 - contains `solar review` or `solar reviews` → Solar Reviews, unit cost $70
 
-Metric per row:
+Metric per row (same rules for YTD window or a single NY month):
 1. Scope inbound opps: pipelineId == Inbound/Lead Locker AND title match
-   AND pipelineStageId != Refunded AND createdAt in the NY month window.
+   AND pipelineStageId != Refunded AND createdAt in the window.
 2. Spend = count(those opps) × unit cost.
 3. Sales = distinct contactId among those spend-scope opps that also appear
    on at least one opportunity currently in the 8 Sold/Sale Cancelled stage
    IDs AND whose Contact Sold Date (P9oBjgbZjJdeE0OkBj9T) falls in the same
-   America/New_York month (date-only; do not timezone-shift a ...Z wrapper).
+   window (date-only; do not timezone-shift a ...Z wrapper).
    Missing Sold Date is excluded — same as sales.py.
 4. CAC = spend / sales. sales == 0 → JSON null, never 0.
+5. Overall CAC = total spend / total sales. sales == 0 → JSON null.
+6. Monthly chart series: same rules per America/New_York month in the YTD
+   window. Months with sales=0 (undefined CAC) are JSON null, never 0.
 
 Queries:
 - Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (≈1261 historical docs;
-  month filter in memory).
+  window filter in memory).
 - Sales: pipelineStageId IN the 8 locked stage IDs, then get_all those
   intersection contacts only.
 - No full-stream of ghl_opportunities_v2 or ghl_contacts_v2.
 
 Params:
-- year, month (America/New_York; defaults to current NY month)
+- year (America/New_York; default current ET year)
+- month optional (1-12). Omitted / blank / ytd → YTD for that year.
 - format=json
 """
 
@@ -109,6 +113,14 @@ class InboundOppRecord:
     contact_id: str
 
 
+@dataclass(frozen=True)
+class RawInboundOpp:
+    bucket: str | None
+    created_local: datetime | None
+    refunded: bool
+    contact_id: str
+
+
 def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
@@ -133,6 +145,16 @@ def compute_cac(spend: float | int, sales: int) -> float | None:
     return spend / sales
 
 
+def parse_inbound_cac_params(qs: dict[str, list[str]], now: datetime) -> tuple[int, int | None]:
+    """Default year = current ET year. Default month omitted → YTD."""
+    year_raw = (qs.get("year") or [str(now.year)])[0]
+    year = int(year_raw)
+    month_raw = compact_str((qs.get("month") or [""])[0]).casefold()
+    if month_raw in ("", "ytd"):
+        return year, None
+    return year, int(month_raw)
+
+
 def parse_iso_dt(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -154,6 +176,28 @@ def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetim
         end_local = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=tz)
     else:
         end_local = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=tz)
+    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
+
+def ytd_months(year: int, now: datetime) -> list[int]:
+    """Calendar months in the YTD window for `year` in now's timezone."""
+    if year < now.year:
+        return list(range(1, 13))
+    if year == now.year:
+        return list(range(1, now.month + 1))
+    return []
+
+
+def ytd_window(year: int, tz_name: str, now: datetime) -> tuple[datetime, datetime, str, str]:
+    """Jan 1 of `year` through exclusive end of the YTD window (America/New_York)."""
+    tz = ZoneInfo(tz_name)
+    start_local = datetime(year, 1, 1, 0, 0, 0, tzinfo=tz)
+    months = ytd_months(year, now)
+    if not months:
+        end_local = start_local
+    else:
+        last_month = months[-1]
+        _, end_local, _, _ = month_window(year, last_month, tz_name)
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
@@ -196,6 +240,40 @@ def classify_inbound_opp(opp: dict[str, Any], start_local: datetime, end_local: 
     )
 
 
+def raw_from_opp(opp: dict[str, Any], tzinfo) -> RawInboundOpp:
+    created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
+    created_local = created.astimezone(tzinfo) if created else None
+    return RawInboundOpp(
+        bucket=bucket_title(opp.get(TITLE_FIELD)),
+        created_local=created_local,
+        refunded=is_refunded_stage(opp.get(STAGE_FIELD)),
+        contact_id=compact_str(opp.get("contactId")),
+    )
+
+
+def records_for_window(raws: list[RawInboundOpp], start_local: datetime, end_local: datetime) -> list[InboundOppRecord]:
+    records: list[InboundOppRecord] = []
+    for raw in raws:
+        in_window = bool(raw.created_local and start_local <= raw.created_local < end_local)
+        records.append(
+            InboundOppRecord(
+                bucket=raw.bucket,
+                in_window=in_window,
+                refunded=raw.refunded,
+                contact_id=raw.contact_id,
+            )
+        )
+    return records
+
+
+def spend_contact_ids(records: list[InboundOppRecord]) -> set[str]:
+    ids: set[str] = set()
+    for rec in records:
+        if rec.bucket and rec.in_window and not rec.refunded and rec.contact_id:
+            ids.add(rec.contact_id)
+    return ids
+
+
 def build_source_rows(
     records: list[InboundOppRecord],
     sold_contact_ids: set[str],
@@ -228,6 +306,49 @@ def build_source_rows(
             }
         )
     return rows
+
+
+def build_overall(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    spend = sum(int(row.get("spend") or 0) for row in rows)
+    sales = sum(int(row.get("sales") or 0) for row in rows)
+    opp_count = sum(int(row.get("opp_count") or 0) for row in rows)
+    refunded_excluded_count = sum(int(row.get("refunded_excluded_count") or 0) for row in rows)
+    return {
+        "source": "Overall",
+        "opp_count": opp_count,
+        "refunded_excluded_count": refunded_excluded_count,
+        "spend": spend,
+        "sales": sales,
+        "cac": compute_cac(spend, sales),
+    }
+
+
+def row_by_source(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    for row in rows:
+        if row.get("source") == name:
+            return row
+    return None
+
+
+def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
+    """Chart-friendly arrays. Missing CAC is null, never 0."""
+    months: list[str] = []
+    labels: list[str] = []
+    lead_locker_cac: list[float | None] = []
+    solar_reviews_cac: list[float | None] = []
+    for item in monthly:
+        months.append(item["label"])
+        labels.append(item["month_label"])
+        locker = row_by_source(item.get("rows") or [], "Lead Locker")
+        reviews = row_by_source(item.get("rows") or [], "Solar Reviews")
+        lead_locker_cac.append(None if locker is None else locker.get("cac"))
+        solar_reviews_cac.append(None if reviews is None else reviews.get("cac"))
+    return {
+        "months": months,
+        "labels": labels,
+        "lead_locker_cac": lead_locker_cac,
+        "solar_reviews_cac": solar_reviews_cac,
+    }
 
 
 def load_contacts_by_ids(db: firestore.Client, contact_ids) -> dict[str, dict]:
@@ -301,42 +422,86 @@ def sold_contacts_in_window(
     return matched
 
 
-def compute_inbound_cac(
-    db: firestore.Client,
-    *,
-    year: int,
-    month: int,
-    tz: str = TIMEZONE_NAME,
-) -> dict[str, Any]:
-    start_local, end_local, start_iso, end_iso = month_window(year, month, tz)
-    inbound_opps = load_inbound_opps(db)
-    records = [classify_inbound_opp(opp, start_local, end_local) for opp in inbound_opps]
-
-    spend_contact_ids: set[str] = set()
-    for rec in records:
-        if rec.bucket and rec.in_window and not rec.refunded and rec.contact_id:
-            spend_contact_ids.add(rec.contact_id)
-
-    sold_stage_ids = load_sold_stage_contact_ids(db, spend_contact_ids)
-    contacts_map = load_contacts_by_ids(db, sold_stage_ids)
+def _window_bundle(
+    raws: list[RawInboundOpp],
+    contacts_map: dict[str, dict],
+    sold_stage_ids: set[str],
+    start_local: datetime,
+    end_local: datetime,
+) -> tuple[list[InboundOppRecord], list[dict[str, Any]], dict[str, Any], set[str]]:
+    records = records_for_window(raws, start_local, end_local)
     sold_in_window = sold_contacts_in_window(contacts_map, sold_stage_ids, start_local, end_local)
     rows = build_source_rows(records, sold_in_window)
+    return records, rows, build_overall(rows), sold_in_window
+
+
+def assemble_inbound_cac(
+    raws: list[RawInboundOpp],
+    contacts_map: dict[str, dict],
+    sold_stage_ids: set[str],
+    *,
+    year: int,
+    month: int | None = None,
+    tz: str = TIMEZONE_NAME,
+    now: datetime | None = None,
+    inbound_opps_scanned: int | None = None,
+) -> dict[str, Any]:
+    tzinfo = ZoneInfo(tz)
+    now = now or datetime.now(tzinfo)
+    if month is None:
+        start_local, end_local, start_iso, end_iso = ytd_window(year, tz, now)
+        timeframe = "ytd"
+    else:
+        start_local, end_local, start_iso, end_iso = month_window(year, month, tz)
+        timeframe = "month"
+
+    records, rows, overall, sold_in_window = _window_bundle(
+        raws, contacts_map, sold_stage_ids, start_local, end_local
+    )
+
+    monthly: list[dict[str, Any]] = []
+    for chart_month in ytd_months(year, now):
+        m_start, m_end, _, _ = month_window(year, chart_month, tz)
+        _m_records, m_rows, m_overall, _ = _window_bundle(
+            raws, contacts_map, sold_stage_ids, m_start, m_end
+        )
+        monthly.append(
+            {
+                "year": year,
+                "month": chart_month,
+                "label": f"{year}-{chart_month:02d}",
+                "month_label": datetime(year, chart_month, 1).strftime("%b"),
+                "window_start_local": m_start.isoformat(),
+                "window_end_local": m_end.isoformat(),
+                "rows": m_rows,
+                "overall": m_overall,
+            }
+        )
+    chart = build_chart(monthly)
 
     contract = SalesMetricContract()
+    spend_ids = spend_contact_ids(records)
     return {
         "metric": "Inbound CAC",
         "unit": "usd_per_sale",
         "year": year,
         "month": month,
+        "timeframe": timeframe,
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "rows": rows,
+        "overall": overall,
+        "chart": chart,
+        "monthly": monthly,
         "count_method": (
             "spend = count(ghl_opportunities_v2 where pipelineId=Inbound/Lead Locker "
-            "AND name title-bucket AND pipelineStageId!=Refunded AND createdAt in NY month) "
+            "AND name title-bucket AND pipelineStageId!=Refunded AND createdAt in window) "
             "× unit_cost; sales = COUNT_DISTINCT(contactId) among those opps that also have "
-            "a Sold/Sale Cancelled opp and Contact Sold Date in the same NY month"
+            "a Sold/Sale Cancelled opp and Contact Sold Date in the same window; "
+            "default window is YTD (calendar year America/New_York); "
+            "overall CAC = total spend / total sales (null if sales=0); "
+            "monthly chart CAC is null (gap) when that month's sales=0"
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -361,10 +526,10 @@ def compute_inbound_cac(
             ],
         },
         "debug": {
-            "inbound_opps_scanned": len(inbound_opps),
+            "inbound_opps_scanned": inbound_opps_scanned if inbound_opps_scanned is not None else len(raws),
             "inbound_opps_in_window": sum(1 for rec in records if rec.in_window),
             "title_matched_in_window": sum(1 for rec in records if rec.in_window and rec.bucket),
-            "spend_scope_contacts": len(spend_contact_ids),
+            "spend_scope_contacts": len(spend_ids),
             "sold_stage_intersection_contacts": len(sold_stage_ids),
             "sold_date_in_window_contacts": len(sold_in_window),
             "join": f"{OPP_COLLECTION}.contactId -> {CONTACT_COLLECTION}.id",
@@ -373,15 +538,51 @@ def compute_inbound_cac(
     }
 
 
+def compute_inbound_cac(
+    db: firestore.Client,
+    *,
+    year: int,
+    month: int | None = None,
+    tz: str = TIMEZONE_NAME,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    tzinfo = ZoneInfo(tz)
+    now = now or datetime.now(tzinfo)
+    inbound_opps = load_inbound_opps(db)
+    raws = [raw_from_opp(opp, tzinfo) for opp in inbound_opps]
+
+    if month is None:
+        start_local, end_local, _, _ = ytd_window(year, tz, now)
+    else:
+        start_local, end_local, _, _ = month_window(year, month, tz)
+
+    spend_ids = spend_contact_ids(records_for_window(raws, start_local, end_local))
+    for chart_month in ytd_months(year, now):
+        m_start, m_end, _, _ = month_window(year, chart_month, tz)
+        spend_ids |= spend_contact_ids(records_for_window(raws, m_start, m_end))
+
+    sold_stage_ids = load_sold_stage_contact_ids(db, spend_ids)
+    contacts_map = load_contacts_by_ids(db, sold_stage_ids)
+    return assemble_inbound_cac(
+        raws,
+        contacts_map,
+        sold_stage_ids,
+        year=year,
+        month=month,
+        tz=tz,
+        now=now,
+        inbound_opps_scanned=len(inbound_opps),
+    )
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             qs = parse_qs(urlparse(self.path).query)
             now = datetime.now(ZoneInfo(TIMEZONE_NAME))
-            year = int(qs.get("year", [str(now.year)])[0])
-            month = int(qs.get("month", [str(now.month)])[0])
+            year, month = parse_inbound_cac_params(qs, now)
             tz = TIMEZONE_NAME
-            payload = compute_inbound_cac(get_db(), year=year, month=month, tz=tz)
+            payload = compute_inbound_cac(get_db(), year=year, month=month, tz=tz, now=now)
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

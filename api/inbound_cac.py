@@ -2,8 +2,9 @@
 
 """Vercel Python function: /api/inbound_cac
 
-Inbound CAC dashboard for Lead Locker and Solar Reviews.
-Data: /api/metrics/inbound_cac (JSON).
+Leadership Inbound CAC dashboard for Lead Locker and Solar Reviews.
+Not listed on the main dashboard Lead Generation nav.
+Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
 """
 
 from __future__ import annotations
@@ -22,9 +23,18 @@ if str(API_DIR) not in sys.path:
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
-def render_html(year: int, month: int) -> str:
+def parse_page_params(qs: dict[str, list[str]], now: datetime) -> tuple[int, int | None]:
+    year = int((qs.get("year") or [str(now.year)])[0])
+    month_raw = " ".join(str((qs.get("month") or [""])[0] or "").strip().split()).casefold()
+    if month_raw in ("", "ytd"):
+        return year, None
+    return year, int(month_raw)
+
+
+def render_html(year: int, month: int | None = None) -> str:
     nav_css = dashboard_nav_css()
     nav_html = render_dashboard_nav("inbound_cac")
+    default_month = "ytd" if month is None else str(month)
     html = r"""<!doctype html>
 <html>
 <head>
@@ -52,7 +62,7 @@ __DASHBOARD_NAV_CSS__
     button { background:var(--green); border-color:var(--green); color:#fff; font-weight:900; cursor:pointer; }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; margin-top:14px; }
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:0 1px 3px rgba(17,24,39,.06); }
-    .span-4 { grid-column:span 4; } .span-12 { grid-column:span 12; }
+    .span-3 { grid-column:span 3; } .span-4 { grid-column:span 4; } .span-12 { grid-column:span 12; }
     .card-title { font-size:13px; font-weight:800; color:var(--muted); }
     .kpi { font-size:42px; font-weight:950; margin-top:8px; letter-spacing:-.02em; }
     .meta { margin-top:6px; color:var(--muted2); font-size:12px; }
@@ -63,7 +73,12 @@ __DASHBOARD_NAV_CSS__
     td.num { text-align:right; font-variant-numeric:tabular-nums; }
     th.num { text-align:right; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
-    @media (max-width:980px) { .span-4,.span-12 { grid-column:span 12; } }
+    .legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:10px 0 6px; font-size:12px; font-weight:800; color:#334155; }
+    .swatch { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
+    .chartBox { width:100%; min-height:240px; }
+    .chartBox svg { width:100%; height:240px; display:block; }
+    .chartEmpty { color:var(--muted); font-size:13px; font-weight:700; padding:18px 0; }
+    @media (max-width:980px) { .span-3,.span-4,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:34px; } }
   </style>
 </head>
@@ -72,44 +87,58 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Cost per sale for Lead Locker ($45/lead) and Solar Reviews ($70/lead) on the Inbound/Lead Locker pipeline. Sales use locked Sold / Sale Cancelled stages (warehouse has no Won stage) and Contact Sold Date in the same America/New_York month.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Cost per sale for Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
       <div class="filters">
         <div class="filter"><div class="filter-label">Year</div><select id="year"></select></div>
-        <div class="filter"><div class="filter-label">Month</div><select id="month"></select></div>
+        <div class="filter"><div class="filter-label">Timeframe</div><select id="month"></select></div>
         <button id="apply">Apply</button>
       </div>
     </div>
 
     <div class="grid">
-      <div class="card span-4">
+      <div class="card span-3">
         <div class="card-title">Lead Locker CAC</div>
         <div class="kpi" id="leadLockerCac">—</div>
         <div class="meta" id="leadLockerMeta">$45 per lead</div>
       </div>
-      <div class="card span-4">
+      <div class="card span-3">
         <div class="card-title">Solar Reviews CAC</div>
         <div class="kpi" id="solarReviewsCac">—</div>
         <div class="meta" id="solarReviewsMeta">$70 per lead</div>
       </div>
-      <div class="card span-4">
+      <div class="card span-3">
+        <div class="card-title">Overall CAC</div>
+        <div class="kpi" id="overallCac">—</div>
+        <div class="meta" id="overallMeta">total spend / total sales</div>
+      </div>
+      <div class="card span-3">
         <div class="card-title">Window</div>
         <div class="kpi" id="windowKpi" style="font-size:22px;padding-top:10px">—</div>
         <div class="meta" id="windowMeta">America/New_York</div>
       </div>
       <div class="card span-12">
-        <div class="card-title">Inbound lead sources</div>
-        <div class="meta" style="margin-bottom:10px">Two rows only. Refunded-stage opps are excluded from spend. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="card-title">YTD totals</div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, and overall. Refunded-stage opps are excluded from spend. CAC is blank when sales=0. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
+      </div>
+      <div class="card span-12">
+        <div class="card-title">Month-by-month CAC</div>
+        <div class="meta">YTD months in America/New_York. Months with sales=0 are gaps, never plotted as 0.</div>
+        <div class="legend">
+          <span><span class="swatch" style="background:#2196F3"></span>Lead Locker CAC</span>
+          <span><span class="swatch" style="background:#00C853"></span>Solar Reviews CAC</span>
+        </div>
+        <div class="chartBox" id="cacChart"></div>
       </div>
     </div>
   </div>
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 <script>
 var defaultYear = __YEAR__;
-var defaultMonth = __MONTH__;
+var defaultMonth = '__MONTH__';
 var yearSel = document.getElementById('year');
 var monthSel = document.getElementById('month');
 function setOptions(sel, options, value) {
@@ -124,7 +153,7 @@ function setOptions(sel, options, value) {
 }
 var years = [];
 for (var y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
-var months = [];
+var months = [{value: 'ytd', label: 'YTD'}];
 for (var i = 0; i < 12; i++) months.push({value: i + 1, label: new Date(2000, i, 1).toLocaleString('en-US', {month: 'long'})});
 setOptions(yearSel, years, defaultYear);
 setOptions(monthSel, months, defaultMonth);
@@ -137,7 +166,9 @@ function fmtMoney(v) {
   return '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 2});
 }
 function query() {
-  return new URLSearchParams({ format: 'json', year: yearSel.value, month: monthSel.value }).toString();
+  var params = { format: 'json', year: yearSel.value };
+  if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;
+  return new URLSearchParams(params).toString();
 }
 function rowBySource(rows, name) {
   rows = rows || [];
@@ -146,7 +177,7 @@ function rowBySource(rows, name) {
   }
   return null;
 }
-function renderTable(el, rows) {
+function renderTable(el, rows, overall) {
   var html = '<thead><tr>';
   html += '<th>Source</th>';
   html += '<th class="num">Unit cost</th>';
@@ -156,13 +187,15 @@ function renderTable(el, rows) {
   html += '<th class="num">Sales</th>';
   html += '<th class="num">CAC</th>';
   html += '</tr></thead><tbody>';
-  if (!rows || !rows.length) {
+  var all = (rows || []).slice();
+  if (overall) all.push(overall);
+  if (!all.length) {
     html += '<tr><td colspan="7">No inbound rows in this window.</td></tr>';
   } else {
-    rows.forEach(function(r) {
+    all.forEach(function(r) {
       html += '<tr>';
       html += '<td>' + esc(r.source) + '</td>';
-      html += '<td class="num">' + fmtMoney(r.unit_cost) + '</td>';
+      html += '<td class="num">' + (r.unit_cost == null ? '—' : fmtMoney(r.unit_cost)) + '</td>';
       html += '<td class="num">' + esc(r.opp_count) + '</td>';
       html += '<td class="num">' + esc(r.refunded_excluded_count) + '</td>';
       html += '<td class="num">' + fmtMoney(r.spend) + '</td>';
@@ -174,6 +207,90 @@ function renderTable(el, rows) {
   html += '</tbody>';
   el.innerHTML = html;
 }
+function drawCacChart(chart) {
+  var el = document.getElementById('cacChart');
+  if (!el) return;
+  chart = chart || {};
+  var labels = chart.labels || [];
+  var locker = chart.lead_locker_cac || [];
+  var reviews = chart.solar_reviews_cac || [];
+  var rows = labels.map(function(label, i) {
+    return {
+      date: label,
+      lead_locker_cac: (locker[i] === undefined ? null : locker[i]),
+      solar_reviews_cac: (reviews[i] === undefined ? null : reviews[i])
+    };
+  });
+  var series = [
+    {key: 'lead_locker_cac', label: 'Lead Locker CAC', color: '#2196F3'},
+    {key: 'solar_reviews_cac', label: 'Solar Reviews CAC', color: '#00C853'}
+  ];
+  var hasPoint = false;
+  var values = series.map(function(s) {
+    return rows.map(function(row) {
+      var v = row[s.key];
+      if (v === null || v === undefined || v === '') return null;
+      hasPoint = true;
+      return Number(v);
+    });
+  });
+  if (!hasPoint) {
+    el.innerHTML = '<div class="chartEmpty">No monthly CAC yet. Months with sales=0 stay blank (not $0).</div>';
+    return;
+  }
+  var W = Math.max(320, el.clientWidth || 760);
+  var H = 240;
+  var m = {l: 48, r: 14, t: 16, b: 32};
+  var iw = W - m.l - m.r;
+  var ih = H - m.t - m.b;
+  var n = rows.length || 1;
+  var max = 0;
+  values.forEach(function(vals) {
+    vals.forEach(function(v) {
+      if (v == null) return;
+      if (v > max) max = v;
+    });
+  });
+  max = Math.max(max, 1);
+  function x(i) {
+    return m.l + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+  }
+  function y(v) {
+    return m.t + ih - (v / max) * ih;
+  }
+  var grid = '';
+  for (var g = 0; g <= 4; g++) {
+    var gv = (max / 4) * g;
+    var gy = y(gv);
+    grid += '<line x1="' + m.l + '" y1="' + gy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + gy.toFixed(1) + '" stroke="#eef2f7" />';
+    grid += '<text x="' + (m.l - 6) + '" y="' + (gy + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="#94a3b8">$' + Math.round(gv) + '</text>';
+  }
+  var xlabels = '';
+  for (var i = 0; i < n; i++) {
+    xlabels += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="#64748b">' + esc(labels[i] || '') + '</text>';
+  }
+  var paths = '';
+  series.forEach(function(s, si) {
+    var d = '';
+    var drawing = false;
+    var dots = '';
+    values[si].forEach(function(v, i) {
+      if (v == null) {
+        drawing = false;
+        return;
+      }
+      var px = x(i).toFixed(1);
+      var py = y(v).toFixed(1);
+      d += (drawing ? ' L' : 'M') + px + ' ' + py;
+      drawing = true;
+      dots += '<circle cx="' + px + '" cy="' + py + '" r="3" fill="' + s.color + '"><title>' + esc(labels[i] || '') + ' — ' + s.label + ' ' + fmtMoney(v) + '</title></circle>';
+    });
+    if (d) {
+      paths += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2.5" />' + dots;
+    }
+  });
+  el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="240" role="img" aria-label="Inbound CAC monthly chart">' + grid + paths + xlabels + '</svg>';
+}
 async function load() {
   var q = query();
   document.getElementById('jsonLink').href = '/api/metrics/inbound_cac?' + q;
@@ -182,12 +299,14 @@ async function load() {
   if (!res.ok) {
     document.getElementById('leadLockerCac').textContent = 'Error';
     document.getElementById('solarReviewsCac').textContent = '—';
+    document.getElementById('overallCac').textContent = '—';
     document.getElementById('windowKpi').textContent = '—';
     document.getElementById('windowMeta').textContent = data.error || 'Failed to load';
     return;
   }
   var locker = rowBySource(data.rows, 'Lead Locker');
   var reviews = rowBySource(data.rows, 'Solar Reviews');
+  var overall = data.overall || {};
   document.getElementById('leadLockerCac').textContent = locker ? fmtMoney(locker.cac) : '—';
   document.getElementById('leadLockerMeta').textContent = locker
     ? (fmtMoney(locker.spend) + ' spend · ' + locker.sales + ' sales')
@@ -196,11 +315,15 @@ async function load() {
   document.getElementById('solarReviewsMeta').textContent = reviews
     ? (fmtMoney(reviews.spend) + ' spend · ' + reviews.sales + ' sales')
     : '$70 per lead';
+  document.getElementById('overallCac').textContent = fmtMoney(overall.cac);
+  document.getElementById('overallMeta').textContent = (fmtMoney(overall.spend) + ' spend · ' + (overall.sales == null ? '0' : overall.sales) + ' sales');
   var start = String(data.window_start_local || '').slice(0, 10);
   var end = String(data.window_end_local || '').slice(0, 10);
-  document.getElementById('windowKpi').textContent = start + ' → ' + end;
+  var frame = data.timeframe === 'ytd' ? 'YTD' : 'Month';
+  document.getElementById('windowKpi').textContent = frame + ' · ' + start + ' → ' + end;
   document.getElementById('windowMeta').textContent = data.timezone || 'America/New_York';
-  renderTable(document.getElementById('cacTable'), data.rows || []);
+  renderTable(document.getElementById('cacTable'), data.rows || [], overall);
+  drawCacChart(data.chart || {});
 }
 document.getElementById('apply').addEventListener('click', load);
 load();
@@ -210,7 +333,7 @@ load();
 """
     return (
         html.replace("__YEAR__", str(year))
-        .replace("__MONTH__", str(month))
+        .replace("__MONTH__", default_month)
         .replace("__DASHBOARD_NAV_CSS__", nav_css)
         .replace("__DASHBOARD_NAV_HTML__", nav_html)
     )
@@ -221,8 +344,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             qs = parse_qs(urlparse(self.path).query)
             now = datetime.now(ZoneInfo("America/New_York"))
-            year = int(qs.get("year", [str(now.year)])[0])
-            month = int(qs.get("month", [str(now.month)])[0])
+            year, month = parse_page_params(qs, now)
             body = render_html(year, month).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

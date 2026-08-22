@@ -1,0 +1,200 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import unittest
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+API = ROOT / "api"
+METRICS = API / "metrics"
+for path in (str(API), str(METRICS)):
+    if path not in sys.path:
+        sys.path.append(path)
+
+
+def load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+metric = load_module("inbound_cac_metric", METRICS / "inbound_cac.py")
+page = load_module("inbound_cac_page", API / "inbound_cac.py")
+nav = load_module("dashboard_nav_inbound_cac", API / "dashboard_nav.py")
+sales = load_module("sales_for_inbound_cac", METRICS / "sales.py")
+
+METRIC_SRC = (METRICS / "inbound_cac.py").read_text(encoding="utf-8")
+PAGE_SRC = (API / "inbound_cac.py").read_text(encoding="utf-8")
+WARM_SRC = (API / "warm_cache.py").read_text(encoding="utf-8")
+
+NY = ZoneInfo("America/New_York")
+START, END, _, _ = metric.month_window(2026, 8, "America/New_York")
+
+UNFILTERED_STREAMS = (
+    'db.collection("ghl_opportunities_v2").stream()',
+    "db.collection('ghl_opportunities_v2').stream()",
+    'db.collection("ghl_contacts_v2").stream()',
+    "db.collection('ghl_contacts_v2').stream()",
+)
+
+
+class TitleBucketingTests(unittest.TestCase):
+    def test_lead_locker_prefix_and_case(self):
+        self.assertEqual(metric.bucket_title("Lead Locker: Jane Doe"), "Lead Locker")
+        self.assertEqual(metric.bucket_title("LEAD LOCKER — 123 Main"), "Lead Locker")
+        self.assertEqual(metric.bucket_title("contains lead locker here"), "Lead Locker")
+
+    def test_solar_review_and_reviews(self):
+        self.assertEqual(metric.bucket_title("Solar Review: Pat Lee"), "Solar Reviews")
+        self.assertEqual(metric.bucket_title("Solar Reviews: Pat Lee"), "Solar Reviews")
+        self.assertEqual(metric.bucket_title("solar review"), "Solar Reviews")
+
+    def test_unmatched_and_title_field_is_name(self):
+        self.assertIsNone(metric.bucket_title("Inbound/3PL: leftover"))
+        self.assertIsNone(metric.bucket_title(""))
+        self.assertIsNone(metric.bucket_title(None))
+        rec = metric.classify_inbound_opp(
+            {
+                "name": "Lead Locker: Ada",
+                "title": "Solar Review: ignored",
+                "createdAt": "2026-08-03T14:00:00.000Z",
+                "pipelineStageId": "open-stage",
+                "contactId": "c1",
+            },
+            START,
+            END,
+        )
+        self.assertEqual(rec.bucket, "Lead Locker")
+        self.assertEqual(metric.TITLE_FIELD, "name")
+
+
+class RefundedAndCacTests(unittest.TestCase):
+    def test_refunded_stage_id_is_excluded_from_spend_and_sales(self):
+        self.assertTrue(metric.is_refunded_stage("5bb63eb2-2208-481e-a0b9-f82ece3c030a"))
+        self.assertFalse(metric.is_refunded_stage("7981f111-73f2-4593-9662-6b95d99bf51a"))
+        records = [
+            metric.InboundOppRecord("Lead Locker", True, True, "c-refunded"),
+            metric.InboundOppRecord("Lead Locker", True, False, "c-open"),
+        ]
+        rows = metric.build_source_rows(records, {"c-refunded", "c-open"})
+        locker = {row["source"]: row for row in rows}["Lead Locker"]
+        self.assertEqual(locker["opp_count"], 1)
+        self.assertEqual(locker["refunded_excluded_count"], 1)
+        self.assertEqual(locker["spend"], 45)
+        self.assertEqual(locker["sales"], 1)
+        self.assertEqual(locker["cac"], 45.0)
+
+    def test_cac_is_json_null_when_sales_zero(self):
+        self.assertIsNone(metric.compute_cac(450, 0))
+        records = [metric.InboundOppRecord("Solar Reviews", True, False, "c-no-sale")]
+        rows = metric.build_source_rows(records, set())
+        reviews = {row["source"]: row for row in rows}["Solar Reviews"]
+        self.assertEqual(reviews["spend"], 70)
+        self.assertEqual(reviews["sales"], 0)
+        self.assertIsNone(reviews["cac"])
+        encoded = json.dumps(reviews)
+        self.assertIn('"cac": null', encoded)
+        self.assertNotIn('"cac": 0', encoded)
+
+    def test_always_returns_both_source_rows(self):
+        rows = metric.build_source_rows([], set())
+        self.assertEqual([row["source"] for row in rows], ["Lead Locker", "Solar Reviews"])
+        self.assertEqual(rows[0]["unit_cost"], 45)
+        self.assertEqual(rows[1]["unit_cost"], 70)
+        self.assertTrue(all(row["cac"] is None for row in rows))
+
+    def test_sales_are_distinct_contact_id(self):
+        records = [
+            metric.InboundOppRecord("Lead Locker", True, False, "c-same"),
+            metric.InboundOppRecord("Lead Locker", True, False, "c-same"),
+            metric.InboundOppRecord("Lead Locker", True, False, "c-other"),
+        ]
+        rows = metric.build_source_rows(records, {"c-same", "c-other"})
+        locker = {row["source"]: row for row in rows}["Lead Locker"]
+        self.assertEqual(locker["opp_count"], 3)
+        self.assertEqual(locker["spend"], 135)
+        self.assertEqual(locker["sales"], 2)
+        self.assertEqual(locker["cac"], 67.5)
+
+
+class SoldDateWindowTests(unittest.TestCase):
+    def test_missing_sold_date_is_excluded(self):
+        contact = {"customFields": []}
+        self.assertIsNone(metric.extract_sold_date_ymd(contact))
+        self.assertFalse(metric.sold_date_in_window(None, START, END))
+
+    def test_sold_date_does_not_timezone_shift_z_wrapper(self):
+        contact = {
+            "customFields": [
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-08-01T00:00:00.000Z"}
+            ]
+        }
+        ymd = metric.extract_sold_date_ymd(contact)
+        self.assertEqual(ymd, "2026-08-01")
+        self.assertTrue(metric.sold_date_in_window(ymd, START, END))
+        july_end = datetime(2026, 8, 1, 0, 0, 0, tzinfo=NY)
+        july_start = datetime(2026, 7, 1, 0, 0, 0, tzinfo=NY)
+        self.assertFalse(metric.sold_date_in_window(ymd, july_start, july_end))
+
+
+class BoundQueryAndNavTests(unittest.TestCase):
+    def test_inbound_query_is_pipeline_bounded_and_sales_use_stage_ids(self):
+        self.assertIn('.where("pipelineId", "==", INBOUND_PIPELINE_ID)', METRIC_SRC)
+        self.assertIn('.where(STAGE_FIELD, "in", stage_ids)', METRIC_SRC)
+        self.assertIn("db.get_all(", METRIC_SRC)
+        self.assertIn('db.collection(CONTACT_COLLECTION).document(cid)', METRIC_SRC)
+        for needle in UNFILTERED_STREAMS:
+            self.assertNotIn(needle, METRIC_SRC)
+            self.assertNotIn(needle, PAGE_SRC)
+        self.assertNotIn(".set(", METRIC_SRC)
+        self.assertNotIn(".update(", METRIC_SRC)
+        self.assertNotIn(".delete(", METRIC_SRC)
+
+    def test_uses_sales_stage_ids_and_sold_date_field(self):
+        self.assertEqual(metric.SOLD_DATE_CUSTOM_FIELD_ID, "P9oBjgbZjJdeE0OkBj9T")
+        self.assertEqual(metric.INBOUND_PIPELINE_ID, "7nSEgeoBYXZiIS7x41Jy")
+        self.assertEqual(metric.REFUNDED_STAGE_ID, "5bb63eb2-2208-481e-a0b9-f82ece3c030a")
+        self.assertIn("SalesMetricContract", METRIC_SRC)
+        self.assertIn("contract.stage_ids", METRIC_SRC)
+        self.assertEqual(
+            list(sales.SalesMetricContract().stage_ids),
+            [
+                "7981f111-73f2-4593-9662-6b95d99bf51a",
+                "adf3106e-d371-47ff-ab9e-6f7f33ecf415",
+                "0aea9f94-1205-4623-ad3d-6e1b08ae8791",
+                "34a1882f-7959-4d22-878d-91fe35a42907",
+                "fa84c1cf-2ed6-461e-b6dc-b1730fae2750",
+                "9bd71abf-7285-47bb-8800-a255e7b90630",
+                "45acf2ef-ac72-4aa3-a327-7ed37c54b4ad",
+                "b9af1705-6e54-4a7b-a5b9-27fea93aeea6",
+            ],
+        )
+
+    def test_not_on_warm_cache(self):
+        self.assertIn("urls = []", WARM_SRC)
+        self.assertNotIn("inbound_cac", WARM_SRC)
+
+    def test_nav_and_dashboard_wire_both_rows(self):
+        html = nav.render_dashboard_nav("inbound_cac")
+        self.assertIn('href="/api/inbound_cac"', html)
+        self.assertIn("Inbound CAC", html)
+        self.assertIn("navmenu-item active", html)
+        page_html = page.render_html(2026, 8)
+        self.assertIn("/api/metrics/inbound_cac?", page_html)
+        self.assertIn("Lead Locker", page_html)
+        self.assertIn("Solar Reviews", page_html)
+        self.assertIn("format: 'json'", page_html)
+
+
+if __name__ == "__main__":
+    unittest.main()

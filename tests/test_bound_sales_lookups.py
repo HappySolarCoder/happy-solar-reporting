@@ -11,6 +11,7 @@ CREATED = (ROOT / "api" / "metrics" / "opportunities_created.py").read_text()
 RAN = (ROOT / "api" / "metrics" / "opportunities_ran.py").read_text()
 DEMO = (ROOT / "api" / "metrics" / "demo_rate.py").read_text()
 GAPS = (ROOT / "api" / "metrics" / "sold_date_gaps.py").read_text()
+INBOUND_CAC = (ROOT / "api" / "metrics" / "inbound_cac.py").read_text()
 
 UNFILTERED_OPP_STREAMS = (
     'db.collection("ghl_opportunities_v2").stream()',
@@ -45,6 +46,7 @@ class BoundLookupTests(unittest.TestCase):
         self.assertNotIn("metrics/sales", WARM)
         self.assertNotIn("essential_sales", WARM)
         self.assertNotIn("sold_date_gaps", WARM)
+        self.assertNotIn("inbound_cac", WARM)
 
     def test_created_ran_demo_do_not_full_stream_opps_or_contacts(self):
         for name, src in (("created", CREATED), ("ran", RAN), ("demo", DEMO)):
@@ -107,6 +109,19 @@ class BoundLookupTests(unittest.TestCase):
         self.assertNotIn(".set(", GAPS)
         self.assertNotIn(".update(", GAPS)
         self.assertNotIn(".delete(", GAPS)
+
+    def test_inbound_cac_uses_pipeline_and_stage_bounds(self):
+        self.assertIn('.where("pipelineId", "==", INBOUND_PIPELINE_ID)', INBOUND_CAC)
+        self.assertIn('.where(STAGE_FIELD, "in", stage_ids)', INBOUND_CAC)
+        self.assertIn("db.get_all(", INBOUND_CAC)
+        self.assertIn("P9oBjgbZjJdeE0OkBj9T", INBOUND_CAC)
+        self.assertNotIn('db.collection("ghl_contacts_v2").stream()', INBOUND_CAC)
+        self.assertNotIn('db.collection("ghl_opportunities_v2").stream()', INBOUND_CAC)
+        self.assertNotIn("db.collection(OPP_COLLECTION).stream()", INBOUND_CAC)
+        self.assertNotIn("db.collection(CONTACT_COLLECTION).stream()", INBOUND_CAC)
+        self.assertNotIn(".set(", INBOUND_CAC)
+        self.assertNotIn(".update(", INBOUND_CAC)
+        self.assertNotIn(".delete(", INBOUND_CAC)
 
 
 if __name__ == "__main__":

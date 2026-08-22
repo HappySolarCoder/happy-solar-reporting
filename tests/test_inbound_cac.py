@@ -93,6 +93,9 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(locker["spend"], 45)
         self.assertEqual(locker["sales"], 1)
         self.assertEqual(locker["cac"], 45.0)
+        self.assertEqual(locker["setter_unit_cost"], 500)
+        self.assertEqual(locker["setter_spend"], 500)
+        self.assertEqual(locker["tac"], 545.0)
 
     def test_cac_is_json_null_when_sales_zero(self):
         self.assertIsNone(metric.compute_cac(450, 0))
@@ -102,9 +105,14 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(reviews["spend"], 70)
         self.assertEqual(reviews["sales"], 0)
         self.assertIsNone(reviews["cac"])
+        self.assertEqual(reviews["setter_unit_cost"], 500)
+        self.assertEqual(reviews["setter_spend"], 0)
+        self.assertIsNone(reviews["tac"])
         encoded = json.dumps(reviews)
         self.assertIn('"cac": null', encoded)
+        self.assertIn('"tac": null', encoded)
         self.assertNotIn('"cac": 0', encoded)
+        self.assertNotIn('"tac": 0', encoded)
 
     def test_always_returns_both_source_rows(self):
         rows = metric.build_source_rows([], set())
@@ -112,6 +120,9 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(rows[0]["unit_cost"], 45)
         self.assertEqual(rows[1]["unit_cost"], 70)
         self.assertTrue(all(row["cac"] is None for row in rows))
+        self.assertTrue(all(row["tac"] is None for row in rows))
+        self.assertTrue(all(row["setter_unit_cost"] == 500 for row in rows))
+        self.assertTrue(all(row["setter_spend"] == 0 for row in rows))
 
     def test_sales_are_distinct_contact_id(self):
         records = [
@@ -125,6 +136,8 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(locker["spend"], 135)
         self.assertEqual(locker["sales"], 2)
         self.assertEqual(locker["cac"], 67.5)
+        self.assertEqual(locker["setter_spend"], 1000)
+        self.assertEqual(locker["tac"], 567.5)
 
 
 class SoldDateWindowTests(unittest.TestCase):
@@ -204,8 +217,13 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("Lead Locker", page_html)
         self.assertIn("Solar Reviews", page_html)
         self.assertIn("Overall CAC", page_html)
+        self.assertIn("Overall TAC", page_html)
         self.assertIn("lead_locker_cac", page_html)
         self.assertIn("solar_reviews_cac", page_html)
+        self.assertIn("lead_locker_tac", page_html)
+        self.assertIn("solar_reviews_tac", page_html)
+        self.assertIn("$500", page_html)
+        self.assertNotIn("$400", page_html)
         self.assertIn("format: 'json'", page_html)
         self.assertIn("value: 'ytd'", page_html)
         self.assertIn("defaultMonth = 'ytd'", page_html)
@@ -247,9 +265,14 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(overall["spend"], 590)
         self.assertEqual(overall["sales"], 0)
         self.assertIsNone(overall["cac"])
+        self.assertEqual(overall["setter_unit_cost"], 500)
+        self.assertEqual(overall["setter_spend"], 0)
+        self.assertIsNone(overall["tac"])
         encoded = json.dumps(overall)
         self.assertIn('"cac": null', encoded)
+        self.assertIn('"tac": null', encoded)
         self.assertNotIn('"cac": 0', encoded)
+        self.assertNotIn('"tac": 0', encoded)
 
     def test_overall_cac_is_total_spend_over_total_sales(self):
         overall = metric.build_overall(
@@ -261,6 +284,9 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(overall["spend"], 590)
         self.assertEqual(overall["sales"], 3)
         self.assertEqual(overall["cac"], 590 / 3)
+        self.assertEqual(overall["setter_unit_cost"], 500)
+        self.assertEqual(overall["setter_spend"], 1500)
+        self.assertEqual(overall["tac"], 590 / 3 + 500)
 
     def test_month_chart_gaps_are_null_not_zero(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
@@ -311,24 +337,82 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(payload["chart"]["solar_reviews_cac"][0], 70.0)
         self.assertIsNone(payload["chart"]["solar_reviews_cac"][1])
         self.assertIsNone(payload["chart"]["solar_reviews_cac"][2])
+        self.assertIsNone(payload["chart"]["lead_locker_tac"][0])
+        self.assertEqual(payload["chart"]["lead_locker_tac"][1], 545.0)
+        self.assertIsNone(payload["chart"]["lead_locker_tac"][2])
+        self.assertEqual(payload["chart"]["solar_reviews_tac"][0], 570.0)
+        self.assertIsNone(payload["chart"]["solar_reviews_tac"][1])
+        self.assertIsNone(payload["chart"]["solar_reviews_tac"][2])
         encoded = json.dumps(payload["chart"])
         self.assertIn('"lead_locker_cac": [null, 45.0, null]', encoded)
-        self.assertNotIn("0.0", encoded.replace("45.0", "").replace("70.0", ""))
+        self.assertIn('"lead_locker_tac": [null, 545.0, null]', encoded)
+        self.assertIn('"solar_reviews_tac": [570.0, null, null]', encoded)
+        stripped = encoded.replace("45.0", "").replace("70.0", "").replace("545.0", "").replace("570.0", "")
+        self.assertNotIn("0.0", stripped)
         locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
         reviews = {row["source"]: row for row in payload["rows"]}["Solar Reviews"]
         self.assertEqual(locker["spend"], 90)
         self.assertEqual(locker["sales"], 1)
         self.assertEqual(locker["cac"], 90.0)
+        self.assertEqual(locker["setter_spend"], 500)
+        self.assertEqual(locker["tac"], 590.0)
         self.assertEqual(reviews["spend"], 70)
         self.assertEqual(reviews["sales"], 1)
         self.assertEqual(reviews["cac"], 70.0)
+        self.assertEqual(reviews["setter_spend"], 500)
+        self.assertEqual(reviews["tac"], 570.0)
         self.assertEqual(payload["overall"]["spend"], 160)
         self.assertEqual(payload["overall"]["sales"], 2)
         self.assertEqual(payload["overall"]["cac"], 80.0)
+        self.assertEqual(payload["overall"]["setter_spend"], 1000)
+        self.assertEqual(payload["overall"]["tac"], 580.0)
+        self.assertEqual(payload["contract"]["setter_unit_cost"], 500)
         empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
         self.assertIsNone(empty["overall"]["cac"])
+        self.assertIsNone(empty["overall"]["tac"])
         self.assertTrue(all(v is None for v in empty["chart"]["lead_locker_cac"]))
         self.assertTrue(all(v is None for v in empty["chart"]["solar_reviews_cac"]))
+        self.assertTrue(all(v is None for v in empty["chart"]["lead_locker_tac"]))
+        self.assertTrue(all(v is None for v in empty["chart"]["solar_reviews_tac"]))
+
+
+class SetterTacTests(unittest.TestCase):
+    def test_setter_unit_cost_is_500_not_400(self):
+        self.assertEqual(metric.SETTER_UNIT_COST, 500)
+        self.assertEqual(metric.compute_setter_spend(3), 1500)
+        self.assertEqual(metric.compute_setter_spend(0), 0)
+        self.assertNotIn("SETTER_UNIT_COST = 400", METRIC_SRC)
+        self.assertNotIn("$400", PAGE_SRC)
+        self.assertIn("SETTER_UNIT_COST = 500", METRIC_SRC)
+        self.assertIn("$500", PAGE_SRC)
+
+    def test_tac_equals_cac_plus_500_when_sales_positive(self):
+        self.assertEqual(metric.compute_tac(90, 1), 590.0)
+        self.assertEqual(metric.compute_tac(90, 1), metric.compute_cac(90, 1) + 500)
+        self.assertEqual(metric.compute_tac(135, 2), 567.5)
+        self.assertEqual(metric.compute_tac(135, 2), metric.compute_cac(135, 2) + 500)
+        rows = metric.build_source_rows(
+            [
+                metric.InboundOppRecord("Lead Locker", True, False, "c1"),
+                metric.InboundOppRecord("Lead Locker", True, False, "c2"),
+            ],
+            {"c1", "c2"},
+        )
+        locker = {row["source"]: row for row in rows}["Lead Locker"]
+        self.assertEqual(locker["cac"], 45.0)
+        self.assertEqual(locker["tac"], locker["cac"] + 500)
+        self.assertEqual(locker["setter_spend"], locker["sales"] * 500)
+
+    def test_tac_is_json_null_when_sales_zero(self):
+        self.assertIsNone(metric.compute_tac(450, 0))
+        encoded = json.dumps({"tac": metric.compute_tac(450, 0)})
+        self.assertIn('"tac": null', encoded)
+        self.assertNotIn('"tac": 0', encoded)
+
+    def test_still_un_navved_from_lead_generation(self):
+        html = nav.render_dashboard_nav("inbound_cac")
+        self.assertNotIn('href="/api/inbound_cac"', html)
+        self.assertNotIn("Inbound CAC", html)
 
 
 if __name__ == "__main__":

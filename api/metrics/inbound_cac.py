@@ -27,10 +27,14 @@ Metric per row (same rules for YTD window or a single NY month):
    IDs AND whose Contact Sold Date (P9oBjgbZjJdeE0OkBj9T) falls in the same
    window (date-only; do not timezone-shift a ...Z wrapper).
    Missing Sold Date is excluded — same as sales.py.
-4. CAC = spend / sales. sales == 0 → JSON null, never 0.
-5. Overall CAC = total spend / total sales. sales == 0 → JSON null.
-6. Monthly chart series: same rules per America/New_York month in the YTD
-   window. Months with sales=0 (undefined CAC) are JSON null, never 0.
+4. CAC (lead) = spend / sales. sales == 0 → JSON null, never 0.
+5. Setter unit cost SETTER_UNIT_COST = $500 per sale (constant; not invented).
+   setter_spend = sales × 500.
+   TAC = (lead_spend + setter_spend) / sales  (= CAC + 500 when sales > 0).
+   sales == 0 → TAC JSON null, never 0 (same as CAC).
+6. Overall CAC / TAC use the same formulas on totals.
+7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
+   series. Months with sales=0 are JSON null gaps, never 0.
 
 Queries:
 - Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (≈1261 historical docs;
@@ -77,6 +81,7 @@ INBOUND_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
 REFUNDED_STAGE_NAME = "Refunded"
 REFUNDED_STAGE_ID = "5bb63eb2-2208-481e-a0b9-f82ece3c030a"
 SOLD_DATE_CUSTOM_FIELD_ID = "P9oBjgbZjJdeE0OkBj9T"
+SETTER_UNIT_COST = 500
 
 SALE_STAGE_NAMES: tuple[str, ...] = (
     "Buffalo Sold",
@@ -143,6 +148,34 @@ def compute_cac(spend: float | int, sales: int) -> float | None:
     if sales == 0:
         return None
     return spend / sales
+
+
+def compute_setter_spend(sales: int, setter_unit_cost: int = SETTER_UNIT_COST) -> int:
+    return int(sales) * setter_unit_cost
+
+
+def compute_tac(
+    lead_spend: float | int,
+    sales: int,
+    setter_unit_cost: int = SETTER_UNIT_COST,
+) -> float | None:
+    """TAC = (lead_spend + sales × 500) / sales. sales == 0 → JSON null."""
+    if sales == 0:
+        return None
+    return (lead_spend + compute_setter_spend(sales, setter_unit_cost)) / sales
+
+
+def attach_acquisition_costs(
+    row: dict[str, Any],
+    setter_unit_cost: int = SETTER_UNIT_COST,
+) -> dict[str, Any]:
+    """Add setter_unit_cost, setter_spend, and tac. Does not invent other $."""
+    sales = int(row.get("sales") or 0)
+    spend = int(row.get("spend") or 0)
+    row["setter_unit_cost"] = setter_unit_cost
+    row["setter_spend"] = compute_setter_spend(sales, setter_unit_cost)
+    row["tac"] = compute_tac(spend, sales, setter_unit_cost)
+    return row
 
 
 def parse_inbound_cac_params(qs: dict[str, list[str]], now: datetime) -> tuple[int, int | None]:
@@ -295,15 +328,17 @@ def build_source_rows(
         sales = len(spend_contacts & sold_contact_ids)
         spend = opp_count * source.unit_cost
         rows.append(
-            {
-                "source": source.label,
-                "unit_cost": source.unit_cost,
-                "opp_count": opp_count,
-                "refunded_excluded_count": refunded_excluded_count,
-                "spend": spend,
-                "sales": sales,
-                "cac": compute_cac(spend, sales),
-            }
+            attach_acquisition_costs(
+                {
+                    "source": source.label,
+                    "unit_cost": source.unit_cost,
+                    "opp_count": opp_count,
+                    "refunded_excluded_count": refunded_excluded_count,
+                    "spend": spend,
+                    "sales": sales,
+                    "cac": compute_cac(spend, sales),
+                }
+            )
         )
     return rows
 
@@ -313,14 +348,16 @@ def build_overall(rows: list[dict[str, Any]]) -> dict[str, Any]:
     sales = sum(int(row.get("sales") or 0) for row in rows)
     opp_count = sum(int(row.get("opp_count") or 0) for row in rows)
     refunded_excluded_count = sum(int(row.get("refunded_excluded_count") or 0) for row in rows)
-    return {
-        "source": "Overall",
-        "opp_count": opp_count,
-        "refunded_excluded_count": refunded_excluded_count,
-        "spend": spend,
-        "sales": sales,
-        "cac": compute_cac(spend, sales),
-    }
+    return attach_acquisition_costs(
+        {
+            "source": "Overall",
+            "opp_count": opp_count,
+            "refunded_excluded_count": refunded_excluded_count,
+            "spend": spend,
+            "sales": sales,
+            "cac": compute_cac(spend, sales),
+        }
+    )
 
 
 def row_by_source(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
@@ -331,11 +368,13 @@ def row_by_source(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | Non
 
 
 def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
-    """Chart-friendly arrays. Missing CAC is null, never 0."""
+    """Chart-friendly arrays. Missing CAC/TAC is null, never 0."""
     months: list[str] = []
     labels: list[str] = []
     lead_locker_cac: list[float | None] = []
     solar_reviews_cac: list[float | None] = []
+    lead_locker_tac: list[float | None] = []
+    solar_reviews_tac: list[float | None] = []
     for item in monthly:
         months.append(item["label"])
         labels.append(item["month_label"])
@@ -343,11 +382,15 @@ def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
         reviews = row_by_source(item.get("rows") or [], "Solar Reviews")
         lead_locker_cac.append(None if locker is None else locker.get("cac"))
         solar_reviews_cac.append(None if reviews is None else reviews.get("cac"))
+        lead_locker_tac.append(None if locker is None else locker.get("tac"))
+        solar_reviews_tac.append(None if reviews is None else reviews.get("tac"))
     return {
         "months": months,
         "labels": labels,
         "lead_locker_cac": lead_locker_cac,
         "solar_reviews_cac": solar_reviews_cac,
+        "lead_locker_tac": lead_locker_tac,
+        "solar_reviews_tac": solar_reviews_tac,
     }
 
 
@@ -500,8 +543,10 @@ def assemble_inbound_cac(
             "× unit_cost; sales = COUNT_DISTINCT(contactId) among those opps that also have "
             "a Sold/Sale Cancelled opp and Contact Sold Date in the same window; "
             "default window is YTD (calendar year America/New_York); "
-            "overall CAC = total spend / total sales (null if sales=0); "
-            "monthly chart CAC is null (gap) when that month's sales=0"
+            "setter_spend = sales × SETTER_UNIT_COST (500); "
+            "TAC = (lead_spend + setter_spend) / sales (= CAC + 500 when sales>0); "
+            "overall CAC/TAC = totals (null if sales=0); "
+            "monthly chart CAC/TAC is null (gap) when that month's sales=0"
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -516,6 +561,8 @@ def assemble_inbound_cac(
                 f"{CONTACT_COLLECTION}.customFields[{SOLD_DATE_CUSTOM_FIELD_ID}] (ISO, date-only)"
             ),
             "sales_grain": f"COUNT_DISTINCT({OPP_COLLECTION}.contactId)",
+            "setter_unit_cost": SETTER_UNIT_COST,
+            "tac_formula": "(lead_spend + sales * setter_unit_cost) / sales",
             "charles_pipeline_name": "Inbound/3PL",
             "warehouse_pipeline_name": INBOUND_PIPELINE_NAME,
             "charles_sale_stage": "Won",

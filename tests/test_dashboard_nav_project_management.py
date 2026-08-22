@@ -45,8 +45,8 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotEqual(website, -1)
         self.assertLess(bot, website)
         self.assertIn("/api/website_funnel", html)
-        self.assertIn("/api/inbound_cac", html)
-        self.assertIn("Inbound CAC", html)
+        self.assertNotIn("/api/inbound_cac", html)
+        self.assertNotIn("Inbound CAC", html)
 
     def test_project_management_dropdown_is_active_for_either_child(self):
         hub_html = render_dashboard_nav("project_management_hub")

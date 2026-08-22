@@ -232,7 +232,6 @@ def render_dashboard_nav(current: str) -> str:
         "appointment_outcomes",
         "fma_commissions",
         "fma_monthly_kickoff",
-        "inbound_cac",
     }
     project_management_active = current in {"project_management_hub", "hold_cancelled"}
 
@@ -257,7 +256,6 @@ def render_dashboard_nav(current: str) -> str:
               <a class="navmenu-item{active('fma_dashboard')}" href="/api/fma_dashboard">FMA Dashboard</a>
               <a class="navmenu-item{active('virtual_team_dashboard')}" href="/api/virtual_team_dashboard">Virtual Dashboard</a>
               <a class="navmenu-item{active('powerline_dashboard')}" href="/api/powerline_dashboard">Powerline Dashboard</a>
-              <a class="navmenu-item{active('inbound_cac')}" href="/api/inbound_cac">Inbound CAC</a>
             </div>
           </details>
           <a class="navbtn{active('daily_update')}" href="/api/daily_update">Daily Dashboard</a>

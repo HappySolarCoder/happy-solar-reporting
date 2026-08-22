@@ -184,16 +184,151 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("urls = []", WARM_SRC)
         self.assertNotIn("inbound_cac", WARM_SRC)
 
-    def test_nav_and_dashboard_wire_both_rows(self):
+    def test_inbound_cac_is_not_on_lead_generation_nav(self):
         html = nav.render_dashboard_nav("inbound_cac")
-        self.assertIn('href="/api/inbound_cac"', html)
-        self.assertIn("Inbound CAC", html)
-        self.assertIn("navmenu-item active", html)
-        page_html = page.render_html(2026, 8)
+        self.assertNotIn('href="/api/inbound_cac"', html)
+        self.assertNotIn("Inbound CAC", html)
+        lead_start = html.find("Lead Generation")
+        lead_end = html.find("Daily Dashboard")
+        self.assertNotEqual(lead_start, -1)
+        self.assertNotEqual(lead_end, -1)
+        lead_block = html[lead_start:lead_end]
+        self.assertNotIn("inbound_cac", lead_block)
+        overview = nav.render_dashboard_nav("company_overview")
+        self.assertNotIn("/api/inbound_cac", overview)
+        self.assertNotIn("Inbound CAC", overview)
+
+    def test_dashboard_wires_ytd_totals_and_chart(self):
+        page_html = page.render_html(2026)
         self.assertIn("/api/metrics/inbound_cac?", page_html)
         self.assertIn("Lead Locker", page_html)
         self.assertIn("Solar Reviews", page_html)
+        self.assertIn("Overall CAC", page_html)
+        self.assertIn("lead_locker_cac", page_html)
+        self.assertIn("solar_reviews_cac", page_html)
         self.assertIn("format: 'json'", page_html)
+        self.assertIn("value: 'ytd'", page_html)
+        self.assertIn("defaultMonth = 'ytd'", page_html)
+        self.assertIn("if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;", page_html)
+        self.assertIn("if (v === null || v === undefined || v === '') return null;", page_html)
+        self.assertNotIn("|| 0", page_html)
+
+
+class YtdDefaultAndTotalsTests(unittest.TestCase):
+    def test_api_and_page_default_to_ytd_current_year(self):
+        now = datetime(2026, 8, 22, 11, 0, 0, tzinfo=NY)
+        year, month = metric.parse_inbound_cac_params({}, now)
+        self.assertEqual(year, 2026)
+        self.assertIsNone(month)
+        year, month = metric.parse_inbound_cac_params({"year": ["2025"]}, now)
+        self.assertEqual(year, 2025)
+        self.assertIsNone(month)
+        year, month = metric.parse_inbound_cac_params({"year": ["2026"], "month": ["ytd"]}, now)
+        self.assertEqual((year, month), (2026, None))
+        year, month = metric.parse_inbound_cac_params({"year": ["2026"], "month": ["8"]}, now)
+        self.assertEqual((year, month), (2026, 8))
+        page_year, page_month = page.parse_page_params({}, now)
+        self.assertEqual((page_year, page_month), (2026, None))
+        start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
+        self.assertEqual(start, datetime(2026, 1, 1, 0, 0, 0, tzinfo=NY))
+        self.assertEqual(end, datetime(2026, 9, 1, 0, 0, 0, tzinfo=NY))
+        self.assertEqual(metric.ytd_months(2026, now), [1, 2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(metric.ytd_months(2025, now), list(range(1, 13)))
+        self.assertEqual(metric.ytd_months(2027, now), [])
+
+    def test_overall_cac_is_null_when_sales_zero(self):
+        overall = metric.build_overall(
+            [
+                {"source": "Lead Locker", "spend": 450, "sales": 0, "opp_count": 10, "refunded_excluded_count": 0},
+                {"source": "Solar Reviews", "spend": 140, "sales": 0, "opp_count": 2, "refunded_excluded_count": 0},
+            ]
+        )
+        self.assertEqual(overall["source"], "Overall")
+        self.assertEqual(overall["spend"], 590)
+        self.assertEqual(overall["sales"], 0)
+        self.assertIsNone(overall["cac"])
+        encoded = json.dumps(overall)
+        self.assertIn('"cac": null', encoded)
+        self.assertNotIn('"cac": 0', encoded)
+
+    def test_overall_cac_is_total_spend_over_total_sales(self):
+        overall = metric.build_overall(
+            [
+                {"source": "Lead Locker", "spend": 450, "sales": 2, "opp_count": 10, "refunded_excluded_count": 0},
+                {"source": "Solar Reviews", "spend": 140, "sales": 1, "opp_count": 2, "refunded_excluded_count": 0},
+            ]
+        )
+        self.assertEqual(overall["spend"], 590)
+        self.assertEqual(overall["sales"], 3)
+        self.assertEqual(overall["cac"], 590 / 3)
+
+    def test_month_chart_gaps_are_null_not_zero(self):
+        now = datetime(2026, 3, 15, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 1, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-jan-no-sale",
+            ),
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-feb-sold",
+            ),
+            metric.RawInboundOpp(
+                "Solar Reviews",
+                datetime(2026, 1, 12, 12, 0, tzinfo=NY),
+                False,
+                "c-jan-reviews-sold",
+            ),
+        ]
+        contacts_map = {
+            "c-feb-sold": {
+                "customFields": [{"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-02-11"}]
+            },
+            "c-jan-reviews-sold": {
+                "customFields": [{"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-01-20"}]
+            },
+        }
+        sold_ids = {"c-feb-sold", "c-jan-reviews-sold"}
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            sold_ids,
+            year=2026,
+            month=None,
+            now=now,
+        )
+        self.assertEqual(payload["timeframe"], "ytd")
+        self.assertIsNone(payload["month"])
+        self.assertEqual(payload["chart"]["months"], ["2026-01", "2026-02", "2026-03"])
+        self.assertEqual(payload["chart"]["labels"], ["Jan", "Feb", "Mar"])
+        self.assertIsNone(payload["chart"]["lead_locker_cac"][0])
+        self.assertEqual(payload["chart"]["lead_locker_cac"][1], 45.0)
+        self.assertIsNone(payload["chart"]["lead_locker_cac"][2])
+        self.assertEqual(payload["chart"]["solar_reviews_cac"][0], 70.0)
+        self.assertIsNone(payload["chart"]["solar_reviews_cac"][1])
+        self.assertIsNone(payload["chart"]["solar_reviews_cac"][2])
+        encoded = json.dumps(payload["chart"])
+        self.assertIn('"lead_locker_cac": [null, 45.0, null]', encoded)
+        self.assertNotIn("0.0", encoded.replace("45.0", "").replace("70.0", ""))
+        locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
+        reviews = {row["source"]: row for row in payload["rows"]}["Solar Reviews"]
+        self.assertEqual(locker["spend"], 90)
+        self.assertEqual(locker["sales"], 1)
+        self.assertEqual(locker["cac"], 90.0)
+        self.assertEqual(reviews["spend"], 70)
+        self.assertEqual(reviews["sales"], 1)
+        self.assertEqual(reviews["cac"], 70.0)
+        self.assertEqual(payload["overall"]["spend"], 160)
+        self.assertEqual(payload["overall"]["sales"], 2)
+        self.assertEqual(payload["overall"]["cac"], 80.0)
+        empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
+        self.assertIsNone(empty["overall"]["cac"])
+        self.assertTrue(all(v is None for v in empty["chart"]["lead_locker_cac"]))
+        self.assertTrue(all(v is None for v in empty["chart"]["solar_reviews_cac"]))
 
 
 if __name__ == "__main__":

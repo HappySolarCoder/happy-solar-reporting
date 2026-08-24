@@ -47,6 +47,7 @@ ESSENTIAL_COLUMNS: tuple[tuple[str, str], ...] = (
     ("size", "Size"),
     ("phone", "Phone"),
     ("email", "Email"),
+    ("address", "Address"),
     ("notes", "Notes"),
     ("retentionRep", "Retention Rep"),
     ("systemChecks", "System Checks"),
@@ -91,6 +92,18 @@ def client_display(contact: dict[str, Any] | None, custom_value: Any) -> str:
     return last or first
 
 
+def address_display(contact: dict[str, Any] | None) -> str:
+    """Return the complete GHL contact mailing address without empty separators."""
+    if not isinstance(contact, dict):
+        return ""
+    street = raw_text(contact.get("address1")).strip()
+    city = raw_text(contact.get("city")).strip()
+    state = raw_text(contact.get("state")).strip()
+    postal_code = raw_text(contact.get("postalCode")).strip()
+    state_postal = " ".join(part for part in (state, postal_code) if part)
+    return ", ".join(part for part in (street, city, state_postal) if part)
+
+
 def build_essential_row(
     *,
     contact: dict[str, Any] | None,
@@ -112,6 +125,7 @@ def build_essential_row(
         "size": raw_text(custom_field_raw(contact, SIZE_FIELD_ID)),
         "phone": raw_text(contact.get("phone")).strip(),
         "email": raw_text(contact.get("email")).strip(),
+        "address": address_display(contact),
         "notes": raw_text(custom_field_raw(contact, NOTES_FIELD_ID)).strip(),
         "retentionRep": "",
         "systemChecks": "",
@@ -188,6 +202,7 @@ def compute_essential_sales(
                 "size": f"ghl_contacts_v2.customFields[{SIZE_FIELD_ID}] raw",
                 "phone": "ghl_contacts_v2.phone",
                 "email": "ghl_contacts_v2.email",
+                "address": "ghl_contacts_v2.address1 + city + state + postalCode",
                 "notes": f"ghl_contacts_v2.customFields[{NOTES_FIELD_ID}] Appointment Notes only",
                 "installer": f"ghl_contacts_v2.customFields[{INSTALLER_FIELD_ID}]",
             },

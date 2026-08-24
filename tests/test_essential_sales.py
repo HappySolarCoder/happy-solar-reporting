@@ -38,6 +38,7 @@ INSTALLER_FIELD_ID = essential.INSTALLER_FIELD_ID
 NOTES_FIELD_ID = essential.NOTES_FIELD_ID
 SIZE_FIELD_ID = essential.SIZE_FIELD_ID
 build_essential_row = essential.build_essential_row
+address_display = essential.address_display
 client_display = essential.client_display
 custom_field_raw = essential.custom_field_raw
 raw_text = essential.raw_text
@@ -47,10 +48,10 @@ page = load_module("essential_sales_page", API / "essential_sales.py")
 
 
 class EssentialSalesMappingTests(unittest.TestCase):
-    def test_columns_a_to_o_plus_installer(self):
+    def test_columns_include_address_and_installer(self):
         labels = [label for _, label in ESSENTIAL_COLUMNS]
         self.assertEqual(
-            labels[:15],
+            labels[:16],
             [
                 "Submission Date",
                 "Finance type",
@@ -63,14 +64,16 @@ class EssentialSalesMappingTests(unittest.TestCase):
                 "Size",
                 "Phone",
                 "Email",
+                "Address",
                 "Notes",
                 "Retention Rep",
                 "System Checks",
                 "QP",
             ],
         )
-        self.assertEqual(ESSENTIAL_COLUMNS[15], ("installer", "Installer"))
-        self.assertEqual(len(ESSENTIAL_COLUMNS), 16)
+        self.assertEqual(ESSENTIAL_COLUMNS[11], ("address", "Address"))
+        self.assertEqual(ESSENTIAL_COLUMNS[16], ("installer", "Installer"))
+        self.assertEqual(len(ESSENTIAL_COLUMNS), 17)
         self.assertEqual(INSTALLER_FIELD_ID, "JbTL2wtTiUUZ5wPZswDn")
 
     def test_custom_field_prefers_value_then_field_value_string(self):
@@ -96,12 +99,31 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertEqual(raw_text("8.400"), "8.400")
         self.assertEqual(raw_text(None), "")
 
+    def test_address_combines_standard_ghl_contact_fields(self):
+        self.assertEqual(
+            address_display(
+                {
+                    "address1": "123 Solar Way",
+                    "city": "Buffalo",
+                    "state": "NY",
+                    "postalCode": "14201",
+                }
+            ),
+            "123 Solar Way, Buffalo, NY 14201",
+        )
+        self.assertEqual(address_display({"address1": "123 Solar Way", "postalCode": "14201"}), "123 Solar Way, 14201")
+        self.assertEqual(address_display(None), "")
+
     def test_notes_are_appointment_notes_only(self):
         contact = {
             "firstName": "Pat",
             "lastName": "Lee",
             "phone": "555-0100",
             "email": "pat@example.com",
+            "address1": "10 Main St",
+            "city": "Rochester",
+            "state": "NY",
+            "postalCode": "14604",
             "customFields": [
                 {"id": NOTES_FIELD_ID, "value": "Appointment only"},
                 {"id": "submission-checklist-id", "value": "DO NOT USE"},
@@ -131,6 +153,7 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertEqual(row["size"], "9.12")
         self.assertEqual(row["phone"], "555-0100")
         self.assertEqual(row["email"], "pat@example.com")
+        self.assertEqual(row["address"], "10 Main St, Rochester, NY 14604")
         self.assertEqual(row["salesperson"], "William Breen")
         self.assertEqual(row["submissionDate"], "2026-08-02")
         self.assertEqual(row["installer"], "")
@@ -246,11 +269,16 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertEqual(payload["rows"][0]["client"], "River, Sam")
         self.assertEqual(payload["rows"][0]["salesperson"], "Alex")
         self.assertEqual(payload["rows"][0]["installer"], "")
+        self.assertEqual(payload["rows"][0]["address"], "")
         self.assertTrue(all(payload["rows"][0][k] == "" for k in ("wc", "esco", "cdg", "retentionRep", "systemChecks", "qp")))
         self.assertIsNone(payload["contract"]["installer_filter"])
         self.assertEqual(
             payload["contract"]["fields"]["installer"],
             "ghl_contacts_v2.customFields[JbTL2wtTiUUZ5wPZswDn]",
+        )
+        self.assertEqual(
+            payload["contract"]["fields"]["address"],
+            "ghl_contacts_v2.address1 + city + state + postalCode",
         )
         self.assertEqual([c["key"] for c in payload["columns"]][-1], "installer")
 

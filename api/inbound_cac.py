@@ -146,6 +146,12 @@ __DASHBOARD_NAV_HTML__
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
+        <div class="card-title">Performance KPIs</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Opportunities created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (same name title-bucket as CAC). Opp to prelim = that source’s sales ÷ opportunities created. Demo rate = that source’s sits ÷ opportunities created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
+        <div class="tableWrap"><table id="kpiTable"></table></div>
+        <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
+      </div>
+      <div class="card span-12">
         <div class="card-title">Month-by-month CAC and TAC</div>
         <div class="meta">YTD months in America/New_York. Months with sales=0 are gaps, never plotted as 0.</div>
         <div class="legend">
@@ -187,6 +193,10 @@ function esc(v) {
 function fmtMoney(v) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
   return '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+}
+function fmtPct(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return (Number(v) * 100).toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%';
 }
 function query() {
   var params = { format: 'json', year: yearSel.value };
@@ -235,6 +245,37 @@ function renderTable(el, rows, overall) {
   }
   html += '</tbody>';
   el.innerHTML = html;
+}
+function renderKpiTable(el, kpis) {
+  kpis = kpis || {};
+  var html = '<thead><tr>';
+  html += '<th>Source</th>';
+  html += '<th class="num">Opportunities created</th>';
+  html += '<th class="num">Sits</th>';
+  html += '<th class="num">Sales</th>';
+  html += '<th class="num">Opp to prelim</th>';
+  html += '<th class="num">Demo rate</th>';
+  html += '</tr></thead><tbody>';
+  var all = (kpis.rows || []).slice();
+  if (kpis.overall) all.push(kpis.overall);
+  if (!all.length) {
+    html += '<tr><td colspan="6">No inbound KPI rows in this window.</td></tr>';
+  } else {
+    all.forEach(function(r) {
+      html += '<tr>';
+      html += '<td>' + esc(r.source) + '</td>';
+      html += '<td class="num">' + esc(r.opportunities_created == null ? '—' : r.opportunities_created) + '</td>';
+      html += '<td class="num">' + esc(r.sits == null ? '—' : r.sits) + '</td>';
+      html += '<td class="num">' + esc(r.sales == null ? '—' : r.sales) + '</td>';
+      html += '<td class="num">' + fmtPct(r.opp_to_prelim) + '</td>';
+      html += '<td class="num">' + fmtPct(r.demo_rate) + '</td>';
+      html += '</tr>';
+    });
+  }
+  html += '</tbody>';
+  el.innerHTML = html;
+  var gap = document.getElementById('kpiJoinGap');
+  if (gap) gap.textContent = kpis.join_gap_short || '';
 }
 function drawCacChart(chart) {
   var el = document.getElementById('cacChart');
@@ -375,6 +416,7 @@ async function load() {
   document.getElementById('windowKpi').textContent = frame + ' · ' + start + ' → ' + end;
   document.getElementById('windowMeta').textContent = data.timezone || 'America/New_York';
   renderTable(document.getElementById('cacTable'), data.rows || [], overall);
+  renderKpiTable(document.getElementById('kpiTable'), data.performance_kpis || {});
   drawCacChart(data.chart || {});
 }
 document.getElementById('apply').addEventListener('click', load);

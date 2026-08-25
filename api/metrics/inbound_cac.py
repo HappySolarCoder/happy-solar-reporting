@@ -36,9 +36,30 @@ Metric per row (same rules for YTD window or a single NY month):
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
    series. Months with sales=0 are JSON null gaps, never 0.
 
+Performance KPIs (same window; table under YTD totals, same rows as CAC):
+- Pipeline 7nSEgeoBYXZiIS7x41Jy is bought leads only — not opportunities.
+  Do not count inbound/3PL records as opportunities_created.
+- Created + sits + demo rate come from territory pipelines only:
+  Buffalo GQtUlcTmLJ61HZjrGEPC, Rochester qJNvqKWp8Xc7DaBr8QYc,
+  Syracuse etLURrEVxupngZZRlISG, Virtual r1b9pwgliYj7WyWBchTV.
+- Join (investigated, not invented): same contactId from an inbound/3PL
+  bought-lead whose ghl_opportunities_v2.name title-buckets to Lead Locker
+  or Solar Reviews → later territory opp. Field: ghl_opportunities_v2.contactId.
+  Contact CF hd5QqHEOVSsPom5bJ32P can be Inbound; that is not the split.
+- Territory opps with no matching inbound bought-lead title are leftover
+  unattributed (JSON only). Overall = attributed Lead Locker + Solar Reviews.
+- opportunities_created = that source’s territory createdAt count.
+- opp_to_prelim = that source’s inbound CAC sales / opportunities_created.
+- demo_rate = that source’s territory sits / opportunities_created
+  (Evan’s formula; not Bot KPI Sit/(Sit+No Sit); sit time =
+  appointmentOccurredAt, exclude future vs now UTC).
+- Rates null if that row’s opportunities_created=0.
+
 Queries:
-- Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (≈1261 historical docs;
-  window filter in memory).
+- Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (attribution titles).
+- Territory created: bounded createdAt range, keep the 4 pipeline IDs.
+- Territory sits: bounded appointmentOccurredAt range, dispositionValue==Sit,
+  keep the 4 pipeline IDs.
 - Sales: pipelineStageId IN the 8 locked stage IDs, then get_all those
   intersection contacts only.
 - No full-stream of ghl_opportunities_v2 or ghl_contacts_v2.
@@ -54,7 +75,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -75,6 +96,40 @@ CONTACT_COLLECTION = "ghl_contacts_v2"
 CREATED_AT_FIELD = "createdAt"
 STAGE_FIELD = "pipelineStageId"
 TITLE_FIELD = "name"
+APPOINTMENT_OCCURRED_AT_FIELD = "appointmentOccurredAt"
+DISPOSITION_VALUE_FIELD = "dispositionValue"
+SIT_DISPOSITION = "Sit"
+
+# Territory Opportunities Created / sits. Inbound/3PL is bought leads only.
+TERRITORY_PIPELINE_IDS: tuple[str, ...] = (
+    "GQtUlcTmLJ61HZjrGEPC",  # Buffalo
+    "qJNvqKWp8Xc7DaBr8QYc",  # Rochester
+    "etLURrEVxupngZZRlISG",  # Syracuse
+    "r1b9pwgliYj7WyWBchTV",  # Virtual
+)
+TERRITORY_PIPELINE_ID_SET = set(TERRITORY_PIPELINE_IDS)
+# Contact lead-gen source. Can be Inbound on territory opps. Not the LL/SR split.
+LEAD_GEN_SOURCE_CONTACT_CF_ID = "hd5QqHEOVSsPom5bJ32P"
+
+# Join: inbound bought-lead title-bucket on the same contactId as a later
+# territory opp. Investigated 2026-08-25 — this hop exists; do not invent a
+# Lead Locker / Solar Reviews value on hd5QqHEOVSsPom5bJ32P.
+INBOUND_FOUR_PIPELINE_JOIN_EXISTS = True
+INBOUND_FOUR_PIPELINE_JOIN_FIELD = f"{OPP_COLLECTION}.contactId"
+INBOUND_COHORT_SCOPE = "territory_pipeline_attributed_via_inbound_contactId"
+INBOUND_FOUR_PIPELINE_JOIN_GAP = (
+    "Territory created/sits (Buffalo / Rochester / Syracuse / Virtual) are "
+    "attributed to Lead Locker / Solar Reviews via ghl_opportunities_v2.contactId "
+    "matching an inbound/3PL bought-lead whose name title-buckets on pipeline "
+    "7nSEgeoBYXZiIS7x41Jy. Contact CF hd5QqHEOVSsPom5bJ32P Inbound is not the "
+    "split. Territory opps with no matching inbound title are leftover "
+    "unattributed and are left out of Lead Locker, Solar Reviews, and Overall."
+)
+INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT = (
+    "Created and sits are territory-pipeline opps attributed by inbound/3PL "
+    "bought-lead title on the same contactId. Unattributed territory opps are "
+    "excluded from Overall. hd5QqHEOVSsPom5bJ32P Inbound is not the split."
+)
 
 INBOUND_PIPELINE_NAME = "Inbound/Lead Locker"
 INBOUND_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
@@ -124,6 +179,19 @@ class RawInboundOpp:
     created_local: datetime | None
     refunded: bool
     contact_id: str
+    opportunity_id: str = ""
+    occurred_utc: datetime | None = None
+    disposition: str | None = None
+
+
+@dataclass(frozen=True)
+class TerritoryOpp:
+    opportunity_id: str
+    contact_id: str
+    pipeline_id: str
+    created_local: datetime | None
+    occurred_utc: datetime | None = None
+    disposition: str | None = None
 
 
 def compact_str(value: Any) -> str:
@@ -186,6 +254,206 @@ def parse_inbound_cac_params(qs: dict[str, list[str]], now: datetime) -> tuple[i
     if month_raw in ("", "ytd"):
         return year, None
     return year, int(month_raw)
+
+
+def parse_optional_range(qs: dict[str, list[str]]) -> tuple[str | None, str | None]:
+    """Optional inclusive YYYY-MM-DD start/end for QA windows. Both required."""
+    start = compact_str((qs.get("start") or [""])[0]) or None
+    end = compact_str((qs.get("end") or [""])[0]) or None
+    if start and end:
+        return start, end
+    return None, None
+
+
+def parse_date_ymd(value: str | None) -> tuple[int, int, int] | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        year, month, day = [int(part) for part in value.strip().split("-")]
+        return year, month, day
+    except Exception:
+        return None
+
+
+def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datetime, datetime, str, str]:
+    """Inclusive start/end dates in America/New_York; end_local is exclusive next midnight."""
+    tz = ZoneInfo(tz_name)
+    start_parts = parse_date_ymd(start_ymd)
+    end_parts = parse_date_ymd(end_ymd)
+    if not (start_parts and end_parts):
+        raise ValueError("Invalid start/end date; expected YYYY-MM-DD")
+    sy, sm, sd = start_parts
+    ey, em, ed = end_parts
+    start_local = datetime(sy, sm, sd, 0, 0, 0, tzinfo=tz)
+    end_local = datetime(ey, em, ed, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
+    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
+
+def compute_share(numer: int, denom: int) -> float | None:
+    """Ratio numer/denom. denom == 0 → JSON null (same as CAC when sales=0)."""
+    if denom == 0:
+        return None
+    return numer / denom
+
+
+def as_occurred_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if hasattr(value, "to_datetime"):
+        try:
+            converted = value.to_datetime()
+            if isinstance(converted, datetime):
+                if converted.tzinfo is None:
+                    return converted.replace(tzinfo=timezone.utc)
+                return converted
+        except Exception:
+            return None
+    return parse_iso_dt(value)
+
+
+def kpi_row(*, source: str, opportunities_created: int, sits: int, sales: int) -> dict[str, Any]:
+    created = int(opportunities_created)
+    sit_count = int(sits)
+    sale_count = int(sales)
+    return {
+        "source": source,
+        "opportunities_created": created,
+        "sits": sit_count,
+        "sales": sale_count,
+        "opp_to_prelim": compute_share(sale_count, created),
+        "demo_rate": compute_share(sit_count, created),
+    }
+
+
+def inbound_contact_title_buckets(raws: list[RawInboundOpp]) -> dict[str, str]:
+    """contactId → Lead Locker | Solar Reviews from inbound/3PL bought-lead titles.
+
+    Refunded inbound titles still attribute (they were still bought as that source).
+    If one contact has both buckets, the latest inbound createdAt title wins.
+    """
+    best: dict[str, tuple[datetime, str]] = {}
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    for raw in raws:
+        if not raw.bucket or not raw.contact_id:
+            continue
+        created = raw.created_local or fallback
+        prev = best.get(raw.contact_id)
+        if prev is None or created >= prev[0]:
+            best[raw.contact_id] = (created, raw.bucket)
+    return {cid: bucket for cid, (_created, bucket) in best.items()}
+
+
+def is_territory_pipeline(pipeline_id: Any) -> bool:
+    return compact_str(pipeline_id) in TERRITORY_PIPELINE_ID_SET
+
+
+def territory_created_in_window(opp: TerritoryOpp, start_local: datetime, end_local: datetime) -> bool:
+    return bool(opp.opportunity_id and opp.created_local and start_local <= opp.created_local < end_local)
+
+
+def territory_sit_in_window(
+    opp: TerritoryOpp,
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> bool:
+    if not opp.opportunity_id or opp.disposition != SIT_DISPOSITION or not opp.occurred_utc:
+        return False
+    if opp.occurred_utc > now_utc:
+        return False
+    occurred_local = opp.occurred_utc.astimezone(start_local.tzinfo)
+    return start_local <= occurred_local < end_local
+
+
+def build_performance_kpis(
+    inbound_raws: list[RawInboundOpp],
+    territory_opps: list[TerritoryOpp],
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+    sales_by_source: dict[str, int],
+) -> dict[str, Any]:
+    """Territory created/sits attributed by inbound bought-lead title on contactId."""
+    contact_bucket = inbound_contact_title_buckets(inbound_raws)
+    created_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    sits_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    leftover_created: set[str] = set()
+    leftover_sits: set[str] = set()
+    pool_created: set[str] = set()
+    pool_sits: set[str] = set()
+    for opp in territory_opps:
+        bucket = contact_bucket.get(opp.contact_id)
+        if territory_created_in_window(opp, start_local, end_local):
+            pool_created.add(opp.opportunity_id)
+            if bucket:
+                created_by[bucket].add(opp.opportunity_id)
+            else:
+                leftover_created.add(opp.opportunity_id)
+        if territory_sit_in_window(opp, start_local, end_local, now_utc):
+            pool_sits.add(opp.opportunity_id)
+            if bucket:
+                sits_by[bucket].add(opp.opportunity_id)
+            else:
+                leftover_sits.add(opp.opportunity_id)
+    rows: list[dict[str, Any]] = []
+    for source in SOURCES:
+        rows.append(
+            kpi_row(
+                source=source.label,
+                opportunities_created=len(created_by[source.label]),
+                sits=len(sits_by[source.label]),
+                sales=int(sales_by_source.get(source.label) or 0),
+            )
+        )
+    overall = kpi_row(
+        source="Overall",
+        opportunities_created=sum(int(row["opportunities_created"]) for row in rows),
+        sits=sum(int(row["sits"]) for row in rows),
+        sales=sum(int(row["sales"]) for row in rows),
+    )
+    unattributed_created = len(leftover_created)
+    join_gap_short = (
+        f"{INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT} "
+        f"{unattributed_created} unattributed territory opportunities created "
+        f"left out of Overall."
+    )
+    return {
+        "opportunities_created": overall["opportunities_created"],
+        "sits": overall["sits"],
+        "sales": overall["sales"],
+        "opp_to_prelim": overall["opp_to_prelim"],
+        "demo_rate": overall["demo_rate"],
+        "rows": rows,
+        "overall": overall,
+        "created_sits_scope": INBOUND_COHORT_SCOPE,
+        "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
+        "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
+        "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
+        "join_gap_short": join_gap_short,
+        "unattributed_territory_opportunities_created": unattributed_created,
+        "unattributed_territory_sits": len(leftover_sits),
+        "territory_pool_opportunities_created": len(pool_created),
+        "territory_pool_sits": len(pool_sits),
+        "formulas": {
+            "opportunities_created": (
+                "COUNT_DISTINCT territory-pipeline ghl_opportunities_v2.id "
+                "(Buffalo/Rochester/Syracuse/Virtual) with createdAt in window, "
+                "attributed by inbound/3PL bought-lead title on the same contactId"
+            ),
+            "opp_to_prelim": "that source's inbound_cac.sales / that source's opportunities_created",
+            "demo_rate": "that source's sits / that source's opportunities_created",
+            "sits": (
+                "COUNT_DISTINCT territory-pipeline opps with dispositionValue==Sit "
+                "and appointmentOccurredAt in window (exclude future vs now UTC), "
+                "attributed by inbound/3PL bought-lead title on the same contactId"
+            ),
+            "overall": "attributed Lead Locker + Solar Reviews only",
+        },
+    }
 
 
 def parse_iso_dt(value: Any) -> datetime | None:
@@ -281,6 +549,9 @@ def raw_from_opp(opp: dict[str, Any], tzinfo) -> RawInboundOpp:
         created_local=created_local,
         refunded=is_refunded_stage(opp.get(STAGE_FIELD)),
         contact_id=compact_str(opp.get("contactId")),
+        opportunity_id=compact_str(opp.get("id")),
+        occurred_utc=as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD)),
+        disposition=compact_str(opp.get(DISPOSITION_VALUE_FIELD)) or None,
     )
 
 
@@ -429,7 +700,103 @@ def load_inbound_opps(db: firestore.Client) -> list[dict[str, Any]]:
     snaps = list(
         db.collection(OPP_COLLECTION).where("pipelineId", "==", INBOUND_PIPELINE_ID).stream()
     )
-    return [snap.to_dict() or {} for snap in snaps]
+    loaded: list[dict[str, Any]] = []
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        if not compact_str(opp.get("id")):
+            opp["id"] = snap.id
+        loaded.append(opp)
+    return loaded
+
+
+def territory_from_opp(opp: dict[str, Any], tzinfo, snap_id: str = "") -> TerritoryOpp | None:
+    if not is_territory_pipeline(opp.get("pipelineId")):
+        return None
+    created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
+    created_local = created.astimezone(tzinfo) if created else None
+    oid = compact_str(opp.get("id") or snap_id)
+    if not oid:
+        return None
+    return TerritoryOpp(
+        opportunity_id=oid,
+        contact_id=compact_str(opp.get("contactId")),
+        pipeline_id=compact_str(opp.get("pipelineId")),
+        created_local=created_local,
+        occurred_utc=as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD)),
+        disposition=compact_str(opp.get(DISPOSITION_VALUE_FIELD)) or None,
+    )
+
+
+def load_territory_created(
+    db: firestore.Client,
+    start_local: datetime,
+    end_local: datetime,
+) -> list[TerritoryOpp]:
+    """Bounded createdAt range; keep the four territory pipeline IDs. No full stream."""
+    start_bound = start_local.date().isoformat()
+    end_bound = (end_local + timedelta(days=1)).date().isoformat()
+    snaps = list(
+        db.collection(OPP_COLLECTION)
+        .where(CREATED_AT_FIELD, ">=", start_bound)
+        .where(CREATED_AT_FIELD, "<", end_bound)
+        .stream()
+    )
+    tzinfo = start_local.tzinfo
+    found: dict[str, TerritoryOpp] = {}
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        parsed = territory_from_opp(opp, tzinfo, snap.id)
+        if parsed and territory_created_in_window(parsed, start_local, end_local):
+            found[parsed.opportunity_id] = parsed
+    return list(found.values())
+
+
+def load_territory_sits(
+    db: firestore.Client,
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> list[TerritoryOpp]:
+    """Bounded appointmentOccurredAt range; Sit only; four territory pipeline IDs."""
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+    if end_utc > now_utc:
+        end_utc = now_utc
+    snaps = list(
+        db.collection(OPP_COLLECTION)
+        .where(APPOINTMENT_OCCURRED_AT_FIELD, ">=", start_utc)
+        .where(APPOINTMENT_OCCURRED_AT_FIELD, "<", end_utc)
+        .stream()
+    )
+    tzinfo = start_local.tzinfo
+    found: dict[str, TerritoryOpp] = {}
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        if opp.get(DISPOSITION_VALUE_FIELD) != SIT_DISPOSITION:
+            continue
+        parsed = territory_from_opp(opp, tzinfo, snap.id)
+        if parsed and territory_sit_in_window(parsed, start_local, end_local, now_utc):
+            found[parsed.opportunity_id] = parsed
+    return list(found.values())
+
+
+def merge_territory_opps(*groups: list[TerritoryOpp]) -> list[TerritoryOpp]:
+    merged: dict[str, TerritoryOpp] = {}
+    for group in groups:
+        for opp in group:
+            prev = merged.get(opp.opportunity_id)
+            if prev is None:
+                merged[opp.opportunity_id] = opp
+                continue
+            merged[opp.opportunity_id] = TerritoryOpp(
+                opportunity_id=opp.opportunity_id,
+                contact_id=opp.contact_id or prev.contact_id,
+                pipeline_id=opp.pipeline_id or prev.pipeline_id,
+                created_local=opp.created_local or prev.created_local,
+                occurred_utc=opp.occurred_utc or prev.occurred_utc,
+                disposition=opp.disposition or prev.disposition,
+            )
+    return list(merged.values())
 
 
 def load_sold_stage_contact_ids(db: firestore.Client, inbound_contact_ids: set[str]) -> set[str]:
@@ -488,10 +855,16 @@ def assemble_inbound_cac(
     tz: str = TIMEZONE_NAME,
     now: datetime | None = None,
     inbound_opps_scanned: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    territory_opps: list[TerritoryOpp] | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
-    if month is None:
+    if start and end:
+        start_local, end_local, start_iso, end_iso = date_range_window(start, end, tz)
+        timeframe = "range"
+    elif month is None:
         start_local, end_local, start_iso, end_iso = ytd_window(year, tz, now)
         timeframe = "ytd"
     else:
@@ -503,24 +876,34 @@ def assemble_inbound_cac(
     )
 
     monthly: list[dict[str, Any]] = []
-    for chart_month in ytd_months(year, now):
-        m_start, m_end, _, _ = month_window(year, chart_month, tz)
-        _m_records, m_rows, m_overall, _ = _window_bundle(
-            raws, contacts_map, sold_stage_ids, m_start, m_end
-        )
-        monthly.append(
-            {
-                "year": year,
-                "month": chart_month,
-                "label": f"{year}-{chart_month:02d}",
-                "month_label": datetime(year, chart_month, 1).strftime("%b"),
-                "window_start_local": m_start.isoformat(),
-                "window_end_local": m_end.isoformat(),
-                "rows": m_rows,
-                "overall": m_overall,
-            }
-        )
+    if timeframe != "range":
+        for chart_month in ytd_months(year, now):
+            m_start, m_end, _, _ = month_window(year, chart_month, tz)
+            _m_records, m_rows, m_overall, _ = _window_bundle(
+                raws, contacts_map, sold_stage_ids, m_start, m_end
+            )
+            monthly.append(
+                {
+                    "year": year,
+                    "month": chart_month,
+                    "label": f"{year}-{chart_month:02d}",
+                    "month_label": datetime(year, chart_month, 1).strftime("%b"),
+                    "window_start_local": m_start.isoformat(),
+                    "window_end_local": m_end.isoformat(),
+                    "rows": m_rows,
+                    "overall": m_overall,
+                }
+            )
     chart = build_chart(monthly)
+    sales_by_source = {row.get("source"): int(row.get("sales") or 0) for row in rows}
+    performance_kpis = build_performance_kpis(
+        raws,
+        territory_opps or [],
+        start_local,
+        end_local,
+        now.astimezone(timezone.utc),
+        sales_by_source,
+    )
 
     contract = SalesMetricContract()
     spend_ids = spend_contact_ids(records)
@@ -535,6 +918,7 @@ def assemble_inbound_cac(
         "window_end_local": end_iso,
         "rows": rows,
         "overall": overall,
+        "performance_kpis": performance_kpis,
         "chart": chart,
         "monthly": monthly,
         "count_method": (
@@ -546,7 +930,15 @@ def assemble_inbound_cac(
             "setter_spend = sales × SETTER_UNIT_COST (500); "
             "TAC = (lead_spend + setter_spend) / sales (= CAC + 500 when sales>0); "
             "overall CAC/TAC = totals (null if sales=0); "
-            "monthly chart CAC/TAC is null (gap) when that month's sales=0"
+            "monthly chart CAC/TAC is null (gap) when that month's sales=0; "
+            "performance_kpis rows are Lead Locker / Solar Reviews / Overall "
+            "(Overall = attributed those two sources only); "
+            "opportunities_created = territory-pipeline createdAt count attributed "
+            "by inbound/3PL bought-lead title on the same contactId; "
+            "opp_to_prelim = that source's inbound_cac.sales / opportunities_created; "
+            "demo_rate = that source's territory sits / opportunities_created "
+            "(null if opportunities_created=0); "
+            "unattributed territory opps are JSON leftover, not Overall"
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -571,6 +963,19 @@ def assemble_inbound_cac(
                 {"source": source.label, "unit_cost": source.unit_cost, "title_match": source.key}
                 for source in SOURCES
             ],
+            "performance_kpis": {
+                "created_sits_scope": INBOUND_COHORT_SCOPE,
+                "title_field": f"{OPP_COLLECTION}.{TITLE_FIELD}",
+                "inbound_pipeline_id": INBOUND_PIPELINE_ID,
+                "territory_pipeline_ids": list(TERRITORY_PIPELINE_IDS),
+                "sit_field": f"{OPP_COLLECTION}.{APPOINTMENT_OCCURRED_AT_FIELD}",
+                "sit_disposition": SIT_DISPOSITION,
+                "inbound_to_four_pipeline_join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
+                "inbound_to_four_pipeline_join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
+                "inbound_to_four_pipeline_join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
+                "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
+                "lead_gen_source_is_not_the_split": True,
+            },
         },
         "debug": {
             "inbound_opps_scanned": inbound_opps_scanned if inbound_opps_scanned is not None else len(raws),
@@ -580,6 +985,17 @@ def assemble_inbound_cac(
             "sold_stage_intersection_contacts": len(sold_stage_ids),
             "sold_date_in_window_contacts": len(sold_in_window),
             "join": f"{OPP_COLLECTION}.contactId -> {CONTACT_COLLECTION}.id",
+            "kpi_join": (
+                f"inbound {OPP_COLLECTION}.contactId + {TITLE_FIELD} title-bucket "
+                f"-> territory {OPP_COLLECTION}.contactId"
+            ),
+            "territory_opps_loaded": len(territory_opps or []),
+            "unattributed_territory_opportunities_created": performance_kpis.get(
+                "unattributed_territory_opportunities_created"
+            ),
+            "territory_pool_opportunities_created": performance_kpis.get(
+                "territory_pool_opportunities_created"
+            ),
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -592,24 +1008,34 @@ def compute_inbound_cac(
     month: int | None = None,
     tz: str = TIMEZONE_NAME,
     now: datetime | None = None,
+    start: str | None = None,
+    end: str | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
     inbound_opps = load_inbound_opps(db)
     raws = [raw_from_opp(opp, tzinfo) for opp in inbound_opps]
 
-    if month is None:
+    if start and end:
+        start_local, end_local, _, _ = date_range_window(start, end, tz)
+    elif month is None:
         start_local, end_local, _, _ = ytd_window(year, tz, now)
     else:
         start_local, end_local, _, _ = month_window(year, month, tz)
 
     spend_ids = spend_contact_ids(records_for_window(raws, start_local, end_local))
-    for chart_month in ytd_months(year, now):
-        m_start, m_end, _, _ = month_window(year, chart_month, tz)
-        spend_ids |= spend_contact_ids(records_for_window(raws, m_start, m_end))
+    if not (start and end):
+        for chart_month in ytd_months(year, now):
+            m_start, m_end, _, _ = month_window(year, chart_month, tz)
+            spend_ids |= spend_contact_ids(records_for_window(raws, m_start, m_end))
 
     sold_stage_ids = load_sold_stage_contact_ids(db, spend_ids)
     contacts_map = load_contacts_by_ids(db, sold_stage_ids)
+    now_utc = now.astimezone(timezone.utc)
+    territory_opps = merge_territory_opps(
+        load_territory_created(db, start_local, end_local),
+        load_territory_sits(db, start_local, end_local, now_utc),
+    )
     return assemble_inbound_cac(
         raws,
         contacts_map,
@@ -619,6 +1045,9 @@ def compute_inbound_cac(
         tz=tz,
         now=now,
         inbound_opps_scanned=len(inbound_opps),
+        start=start,
+        end=end,
+        territory_opps=territory_opps,
     )
 
 
@@ -628,8 +1057,11 @@ class handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             now = datetime.now(ZoneInfo(TIMEZONE_NAME))
             year, month = parse_inbound_cac_params(qs, now)
+            start, end = parse_optional_range(qs)
             tz = TIMEZONE_NAME
-            payload = compute_inbound_cac(get_db(), year=year, month=month, tz=tz, now=now)
+            payload = compute_inbound_cac(
+                get_db(), year=year, month=month, tz=tz, now=now, start=start, end=end
+            )
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

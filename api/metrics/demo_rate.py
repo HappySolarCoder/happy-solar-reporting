@@ -9,9 +9,16 @@ Numerator: count of opportunities with dispositionValue == "Sit".
 Denominator: count of opportunities with dispositionValue in {"Sit", "No Sit"}.
 
 Time filter:
-- Uses derived Firestore field: ghl_opportunities_v2.dispositionDate (Timestamp)
-  (populated by Cloud Run ghl-firestore-sync-v2)
+- First-write-wins Sit/No Sit timestamp: earlier of
+  ghl_opportunities_v2.appointmentOccurredAt and
+  ghl_opportunities_v2.dispositionDate (both written by ghl-firestore-sync-v2
+  from GYGpLKBPfMpiBqyU2ogQ Sit / No Sit). A later follow-up start time must
+  not move the sit. Follow-up is not a second sit.
 - Month windows computed in America/New_York.
+
+Inbound CAC KPI sits are not changed in this PR. Joanne OF48x1PrhxehlJS3ReMc
+is Doors (not inbound title-bucket). Same field can poison inbound sits in
+general; this opp is not CAC-attributed.
 
 Filters (optional query params):
 - pipeline=<pipeline name>   (e.g., buffalo)
@@ -27,14 +34,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+METRICS_DIR = Path(__file__).resolve().parent
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from sit_timestamp import frozen_sit_timestamp
 
 
 def normalize_person_display(value: Any, *, empty: str) -> str:
@@ -99,9 +114,14 @@ class MetricContract:
 
     # Derived fields we write into ghl_opportunities_v2
     disposition_value_field: str = "dispositionValue"  # Sit / No Sit / null
+    # GHL custom field "What happened with Appointment?" — source of dispositionValue
+    what_happened_custom_field_id: str = "GYGpLKBPfMpiBqyU2ogQ"
 
     # Stable occurred timestamp used for ran/demo month windows
     appointment_occurred_at_field: str = "appointmentOccurredAt"  # Firestore Timestamp/datetime
+    # First Sit/No Sit write time (preserved by sync). Used to freeze a sit that
+    # was later rewritten onto a follow-up appointmentStartTime.
+    disposition_date_field: str = "dispositionDate"
 
     # Pipeline scope
     included_pipeline_names: tuple[str, ...] = ("buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper")
@@ -182,6 +202,47 @@ def as_dt(v: Any) -> datetime | None:
         except Exception:
             return None
     return None
+
+
+def to_local_iso(dt: datetime | None, tz_name: str) -> str | None:
+    if not dt:
+        return None
+    from zoneinfo import ZoneInfo
+
+    aware = dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo("UTC"))
+    return aware.astimezone(ZoneInfo(tz_name)).isoformat()
+
+
+def load_demo_rate_snaps(
+    db: firestore.Client,
+    c: MetricContract,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list:
+    """Union of appointmentOccurredAt and dispositionDate window scans.
+
+    Needed when a follow-up rewrites appointmentOccurredAt out of the original
+    sit day/month. Do not full-stream the collection if a query fails.
+    """
+    by_id: dict[str, Any] = {}
+    for snap in (
+        db.collection(c.opp_collection)
+        .where(c.appointment_occurred_at_field, ">=", start_utc)
+        .where(c.appointment_occurred_at_field, "<", end_utc)
+        .stream()
+    ):
+        by_id[snap.id] = snap
+    try:
+        for snap in (
+            db.collection(c.opp_collection)
+            .where(c.disposition_date_field, ">=", start_utc)
+            .where(c.disposition_date_field, "<", end_utc)
+            .stream()
+        ):
+            by_id.setdefault(snap.id, snap)
+    except Exception:
+        pass
+    return list(by_id.values())
 
 
 def normalize_lead_source(v: Any) -> str:
@@ -361,7 +422,7 @@ def html_page(payload: dict) -> str:
         )
 
     table_rows = "".join(
-        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('appointmentOccurredAt'))}</td><td>{esc(r.get('contactFirstName'))}</td><td>{esc(r.get('contactLastName'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
+        f"<tr><td>{esc(r.get('opportunityId'))}</td><td>{esc(r.get('pipeline'))}</td><td>{esc(r.get('disposition'))}</td><td>{esc(r.get('frozenAppointmentOccurredAt'))}</td><td>{esc(r.get('appointmentOccurredAt'))}</td><td>{esc(r.get('dispositionDate'))}</td><td>{esc(r.get('contactFirstName'))}</td><td>{esc(r.get('contactLastName'))}</td><td>{esc(r.get('setter'))}</td><td>{esc(r.get('lead_source'))}</td></tr>"
         for r in rows[:500]
     )
 
@@ -421,7 +482,9 @@ def html_page(payload: dict) -> str:
                 <th>opportunityId</th>
                 <th>pipeline</th>
                 <th>disposition</th>
-                <th>appointmentOccurredAt</th>
+                <th>frozen sit timestamp</th>
+                <th>appointmentOccurredAt (raw)</th>
+                <th>dispositionDate</th>
                 <th>contactFirstName</th>
                 <th>contactLastName</th>
                 <th>setter</th>
@@ -450,19 +513,17 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     # Firestore query: only scan opportunities in the month window (big speedup)
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
-
-    # Guardrail (business rule): appointmentOccurredAt should not be in the future.
     now_utc = datetime.now(timezone.utc)
-    if end_utc > now_utc:
-        end_utc = now_utc
 
-    # Do not fall back to a full collection stream if this query fails.
-    opp_snaps = list(
-        db.collection(c.opp_collection)
-        .where(c.appointment_occurred_at_field, ">=", start_utc)
-        .where(c.appointment_occurred_at_field, "<", end_utc)
-        .stream()
-    )
+    # Do not cap the warehouse scan at "now". Locked opp only:
+    # Joanne Miechowski OF48x1PrhxehlJS3ReMc / contact vPLhdbmd9ggy9d0i0GTY
+    # Buffalo GQtUlcTmLJ61HZjrGEPC / Demo-Negotiating d22673c6-28aa-48c8-821b-8a8573d498da
+    # appointmentOccurredAt 2026-08-26T18:00:00Z (follow-up, still future vs now)
+    # dispositionDate 2026-08-20T20:45:48.990Z (first Sit write — freeze here)
+    # lastStageChangeAt 2026-08-20T20:45:46.331Z (New Appointment → Demo-Negotiating)
+    # 2025 duplicate is not this opp. Frozen stamp still capped below.
+    # Do not fall back to a full collection stream if a query fails.
+    opp_snaps = load_demo_rate_snaps(db, c, start_utc, end_utc)
 
     needed_contact_ids: list[str] = []
     needed_pipeline_ids: list[str] = []
@@ -509,15 +570,20 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if dispo not in ("Sit", "No Sit"):
             continue
 
-        dispo_dt = as_dt(opp.get(c.appointment_occurred_at_field))
-        if not dispo_dt:
+        frozen_dt = frozen_sit_timestamp(
+            opp.get(c.appointment_occurred_at_field),
+            opp.get(c.disposition_date_field),
+        )
+        if not frozen_dt:
+            continue
+        if frozen_dt > now_utc:
             continue
 
         # Convert to local timezone for month window comparisons
         try:
             from zoneinfo import ZoneInfo
 
-            local_dt = dispo_dt.astimezone(ZoneInfo(c.timezone)) if dispo_dt.tzinfo else dispo_dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(c.timezone))
+            local_dt = frozen_dt.astimezone(ZoneInfo(c.timezone))
         except Exception:
             continue
 
@@ -558,7 +624,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "opportunityId": str(opp.get("id") or snap.id),
                 "pipeline": pname,
                 "disposition": dispo,
-                "appointmentOccurredAt": local_dt.isoformat(),
+                "frozenAppointmentOccurredAt": local_dt.isoformat(),
+                "appointmentOccurredAt": to_local_iso(
+                    as_dt(opp.get(c.appointment_occurred_at_field)), c.timezone
+                ),
+                "dispositionDate": to_local_iso(
+                    as_dt(opp.get(c.disposition_date_field)), c.timezone
+                ),
                 "contactFirstName": contact.get("firstName"),
                 "contactLastName": contact.get("lastName"),
                 "setter": setter_s,
@@ -580,6 +652,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "ran_count": ran,
         "sit_count": sit,
         "result": pct,
+        "count_method": (
+            "Sit / Ran. Demos = Sit. Window = first-write-wins "
+            "min(appointmentOccurredAt, dispositionDate). "
+            "GYGpLKBPfMpiBqyU2ogQ / dispositionValue Sit|No Sit. "
+            "Follow-up is not a second sit."
+        ),
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),
             "sit_by_setter_last_name": finalize_casefold_counts(sit_by_setter, setter_labels),

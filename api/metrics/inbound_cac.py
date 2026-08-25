@@ -99,11 +99,13 @@ INBOUND_FOUR_PIPELINE_JOIN_GAP = (
     "Created and sits use the inbound CAC title-bucket on pipeline "
     "7nSEgeoBYXZiIS7x41Jy (ghl_opportunities_v2.name). There is no warehouse "
     "field that maps Lead Locker / Solar Reviews onto Buffalo / Rochester / "
-    "Syracuse / Virtual."
+    "Syracuse / Virtual. Sit does not live on inbound pipeline "
+    "7nSEgeoBYXZiIS7x41Jy (0 of 1279), so demo rate is 0 until that field exists here."
 )
 INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT = (
     "Created and sits are inbound-pipeline title buckets (Lead Locker / Solar Reviews), "
-    "not four-pipeline Opportunities Created."
+    "not four-pipeline Opportunities Created. Sit does not live on inbound pipeline "
+    "7nSEgeoBYXZiIS7x41Jy (0 of 1279), so demo rate is 0 until that field exists here."
 )
 
 INBOUND_PIPELINE_NAME = "Inbound/Lead Locker"

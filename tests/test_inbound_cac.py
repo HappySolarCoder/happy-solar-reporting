@@ -522,6 +522,14 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertFalse(kpis["join_exists"])
         self.assertIsNone(kpis["join_field"])
         self.assertIn("inbound-pipeline title buckets", kpis["join_gap_short"])
+        self.assertIn(
+            "Sit does not live on inbound pipeline 7nSEgeoBYXZiIS7x41Jy (0 of 1279)",
+            kpis["join_gap_short"],
+        )
+        self.assertIn(
+            "Sit does not live on inbound pipeline 7nSEgeoBYXZiIS7x41Jy (0 of 1279)",
+            kpis["join_gap"],
+        )
 
     def test_refunded_inbound_opp_still_counts_as_created(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
@@ -560,6 +568,9 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertIn("kpis.rows", PAGE_SRC)
         self.assertIn("kpis.overall", PAGE_SRC)
         self.assertIn("join_gap_short", PAGE_SRC)
+        self.assertEqual(PAGE_SRC.count('id="kpiJoinGap"'), 1)
+        self.assertIn("0 of 1279", METRIC_SRC)
+        self.assertIn("demo rate is 0 until that field exists here", METRIC_SRC)
         self.assertNotIn("FOUR_PIPELINE", PAGE_SRC)
         self.assertNotIn("Buffalo / Rochester / Syracuse / Virtual", PAGE_SRC)
         self.assertIn("Lead Locker / Solar Reviews / Overall split", page_html)

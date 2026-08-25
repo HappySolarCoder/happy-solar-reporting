@@ -37,19 +37,29 @@ Metric per row (same rules for YTD window or a single NY month):
    series. Months with sales=0 are JSON null gaps, never 0.
 
 Performance KPIs (same window; table under YTD totals, same rows as CAC):
-- Split by inbound title-bucket on pipeline 7nSEgeoBYXZiIS7x41Jy.
-  No join onto Buffalo / Rochester / Syracuse / Virtual.
-- opportunities_created = that source’s inbound-cohort createdAt count.
+- Pipeline 7nSEgeoBYXZiIS7x41Jy is bought leads only — not opportunities.
+  Do not count inbound/3PL records as opportunities_created.
+- Created + sits + demo rate come from territory pipelines only:
+  Buffalo GQtUlcTmLJ61HZjrGEPC, Rochester qJNvqKWp8Xc7DaBr8QYc,
+  Syracuse etLURrEVxupngZZRlISG, Virtual r1b9pwgliYj7WyWBchTV.
+- Join (investigated, not invented): same contactId from an inbound/3PL
+  bought-lead whose ghl_opportunities_v2.name title-buckets to Lead Locker
+  or Solar Reviews → later territory opp. Field: ghl_opportunities_v2.contactId.
+  Contact CF hd5QqHEOVSsPom5bJ32P can be Inbound; that is not the split.
+- Territory opps with no matching inbound bought-lead title are leftover
+  unattributed (JSON only). Overall = attributed Lead Locker + Solar Reviews.
+- opportunities_created = that source’s territory createdAt count.
 - opp_to_prelim = that source’s inbound CAC sales / opportunities_created.
-- demo_rate = that source’s inbound sits / opportunities_created
+- demo_rate = that source’s territory sits / opportunities_created
   (Evan’s formula; not Bot KPI Sit/(Sit+No Sit); sit time =
   appointmentOccurredAt, exclude future vs now UTC).
-- Overall = Lead Locker + Solar Reviews only.
 - Rates null if that row’s opportunities_created=0.
 
 Queries:
-- Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (≈1261 historical docs;
-  window filter in memory). Created/sits reuse that inbound set.
+- Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (attribution titles).
+- Territory created: bounded createdAt range, keep the 4 pipeline IDs.
+- Territory sits: bounded appointmentOccurredAt range, dispositionValue==Sit,
+  keep the 4 pipeline IDs.
 - Sales: pipelineStageId IN the 8 locked stage IDs, then get_all those
   intersection contacts only.
 - No full-stream of ghl_opportunities_v2 or ghl_contacts_v2.
@@ -90,22 +100,35 @@ APPOINTMENT_OCCURRED_AT_FIELD = "appointmentOccurredAt"
 DISPOSITION_VALUE_FIELD = "dispositionValue"
 SIT_DISPOSITION = "Sit"
 
-# Performance KPIs split by the same inbound title-bucket used for CAC.
-# No join onto Buffalo / Rochester / Syracuse / Virtual — do not invent one.
-INBOUND_FOUR_PIPELINE_JOIN_EXISTS = False
-INBOUND_FOUR_PIPELINE_JOIN_FIELD = None
-INBOUND_COHORT_SCOPE = "inbound_pipeline_title_bucket"
+# Territory Opportunities Created / sits. Inbound/3PL is bought leads only.
+TERRITORY_PIPELINE_IDS: tuple[str, ...] = (
+    "GQtUlcTmLJ61HZjrGEPC",  # Buffalo
+    "qJNvqKWp8Xc7DaBr8QYc",  # Rochester
+    "etLURrEVxupngZZRlISG",  # Syracuse
+    "r1b9pwgliYj7WyWBchTV",  # Virtual
+)
+TERRITORY_PIPELINE_ID_SET = set(TERRITORY_PIPELINE_IDS)
+# Contact lead-gen source. Can be Inbound on territory opps. Not the LL/SR split.
+LEAD_GEN_SOURCE_CONTACT_CF_ID = "hd5QqHEOVSsPom5bJ32P"
+
+# Join: inbound bought-lead title-bucket on the same contactId as a later
+# territory opp. Investigated 2026-08-25 — this hop exists; do not invent a
+# Lead Locker / Solar Reviews value on hd5QqHEOVSsPom5bJ32P.
+INBOUND_FOUR_PIPELINE_JOIN_EXISTS = True
+INBOUND_FOUR_PIPELINE_JOIN_FIELD = f"{OPP_COLLECTION}.contactId"
+INBOUND_COHORT_SCOPE = "territory_pipeline_attributed_via_inbound_contactId"
 INBOUND_FOUR_PIPELINE_JOIN_GAP = (
-    "Created and sits use the inbound CAC title-bucket on pipeline "
-    "7nSEgeoBYXZiIS7x41Jy (ghl_opportunities_v2.name). There is no warehouse "
-    "field that maps Lead Locker / Solar Reviews onto Buffalo / Rochester / "
-    "Syracuse / Virtual. Sit does not live on inbound pipeline "
-    "7nSEgeoBYXZiIS7x41Jy (0 of 1279), so demo rate is 0 until that field exists here."
+    "Territory created/sits (Buffalo / Rochester / Syracuse / Virtual) are "
+    "attributed to Lead Locker / Solar Reviews via ghl_opportunities_v2.contactId "
+    "matching an inbound/3PL bought-lead whose name title-buckets on pipeline "
+    "7nSEgeoBYXZiIS7x41Jy. Contact CF hd5QqHEOVSsPom5bJ32P Inbound is not the "
+    "split. Territory opps with no matching inbound title are leftover "
+    "unattributed and are left out of Lead Locker, Solar Reviews, and Overall."
 )
 INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT = (
-    "Created and sits are inbound-pipeline title buckets (Lead Locker / Solar Reviews), "
-    "not four-pipeline Opportunities Created. Sit does not live on inbound pipeline "
-    "7nSEgeoBYXZiIS7x41Jy (0 of 1279), so demo rate is 0 until that field exists here."
+    "Created and sits are territory-pipeline opps attributed by inbound/3PL "
+    "bought-lead title on the same contactId. Unattributed territory opps are "
+    "excluded from Overall. hd5QqHEOVSsPom5bJ32P Inbound is not the split."
 )
 
 INBOUND_PIPELINE_NAME = "Inbound/Lead Locker"
@@ -157,6 +180,16 @@ class RawInboundOpp:
     refunded: bool
     contact_id: str
     opportunity_id: str = ""
+    occurred_utc: datetime | None = None
+    disposition: str | None = None
+
+
+@dataclass(frozen=True)
+class TerritoryOpp:
+    opportunity_id: str
+    contact_id: str
+    pipeline_id: str
+    created_local: datetime | None
     occurred_utc: datetime | None = None
     disposition: str | None = None
 
@@ -296,53 +329,83 @@ def kpi_row(*, source: str, opportunities_created: int, sits: int, sales: int) -
     }
 
 
-def _raw_oid(raw: RawInboundOpp, index: int) -> str:
-    return raw.opportunity_id or f"{raw.bucket or 'none'}:{index}:{raw.contact_id}"
+def inbound_contact_title_buckets(raws: list[RawInboundOpp]) -> dict[str, str]:
+    """contactId → Lead Locker | Solar Reviews from inbound/3PL bought-lead titles.
+
+    Refunded inbound titles still attribute (they were still bought as that source).
+    If one contact has both buckets, the latest inbound createdAt title wins.
+    """
+    best: dict[str, tuple[datetime, str]] = {}
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    for raw in raws:
+        if not raw.bucket or not raw.contact_id:
+            continue
+        created = raw.created_local or fallback
+        prev = best.get(raw.contact_id)
+        if prev is None or created >= prev[0]:
+            best[raw.contact_id] = (created, raw.bucket)
+    return {cid: bucket for cid, (_created, bucket) in best.items()}
 
 
-def inbound_created_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
-    return bool(raw.bucket and raw.created_local and start_local <= raw.created_local < end_local)
+def is_territory_pipeline(pipeline_id: Any) -> bool:
+    return compact_str(pipeline_id) in TERRITORY_PIPELINE_ID_SET
 
 
-def inbound_sit_in_window(
-    raw: RawInboundOpp,
+def territory_created_in_window(opp: TerritoryOpp, start_local: datetime, end_local: datetime) -> bool:
+    return bool(opp.opportunity_id and opp.created_local and start_local <= opp.created_local < end_local)
+
+
+def territory_sit_in_window(
+    opp: TerritoryOpp,
     start_local: datetime,
     end_local: datetime,
     now_utc: datetime,
 ) -> bool:
-    if not raw.bucket or raw.disposition != SIT_DISPOSITION or not raw.occurred_utc:
+    if not opp.opportunity_id or opp.disposition != SIT_DISPOSITION or not opp.occurred_utc:
         return False
-    if raw.occurred_utc > now_utc:
+    if opp.occurred_utc > now_utc:
         return False
-    occurred_local = raw.occurred_utc.astimezone(start_local.tzinfo)
+    occurred_local = opp.occurred_utc.astimezone(start_local.tzinfo)
     return start_local <= occurred_local < end_local
 
 
 def build_performance_kpis(
-    raws: list[RawInboundOpp],
+    inbound_raws: list[RawInboundOpp],
+    territory_opps: list[TerritoryOpp],
     start_local: datetime,
     end_local: datetime,
     now_utc: datetime,
     sales_by_source: dict[str, int],
 ) -> dict[str, Any]:
-    """Per-source inbound title-bucket KPIs. Overall is Lead Locker + Solar Reviews only."""
+    """Territory created/sits attributed by inbound bought-lead title on contactId."""
+    contact_bucket = inbound_contact_title_buckets(inbound_raws)
+    created_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    sits_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    leftover_created: set[str] = set()
+    leftover_sits: set[str] = set()
+    pool_created: set[str] = set()
+    pool_sits: set[str] = set()
+    for opp in territory_opps:
+        bucket = contact_bucket.get(opp.contact_id)
+        if territory_created_in_window(opp, start_local, end_local):
+            pool_created.add(opp.opportunity_id)
+            if bucket:
+                created_by[bucket].add(opp.opportunity_id)
+            else:
+                leftover_created.add(opp.opportunity_id)
+        if territory_sit_in_window(opp, start_local, end_local, now_utc):
+            pool_sits.add(opp.opportunity_id)
+            if bucket:
+                sits_by[bucket].add(opp.opportunity_id)
+            else:
+                leftover_sits.add(opp.opportunity_id)
     rows: list[dict[str, Any]] = []
     for source in SOURCES:
-        created_ids: set[str] = set()
-        sit_ids: set[str] = set()
-        for index, raw in enumerate(raws):
-            if raw.bucket != source.label:
-                continue
-            oid = _raw_oid(raw, index)
-            if inbound_created_in_window(raw, start_local, end_local):
-                created_ids.add(oid)
-            if inbound_sit_in_window(raw, start_local, end_local, now_utc):
-                sit_ids.add(oid)
         rows.append(
             kpi_row(
                 source=source.label,
-                opportunities_created=len(created_ids),
-                sits=len(sit_ids),
+                opportunities_created=len(created_by[source.label]),
+                sits=len(sits_by[source.label]),
                 sales=int(sales_by_source.get(source.label) or 0),
             )
         )
@@ -351,6 +414,12 @@ def build_performance_kpis(
         opportunities_created=sum(int(row["opportunities_created"]) for row in rows),
         sits=sum(int(row["sits"]) for row in rows),
         sales=sum(int(row["sales"]) for row in rows),
+    )
+    unattributed_created = len(leftover_created)
+    join_gap_short = (
+        f"{INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT} "
+        f"{unattributed_created} unattributed territory opportunities created "
+        f"left out of Overall."
     )
     return {
         "opportunities_created": overall["opportunities_created"],
@@ -364,19 +433,25 @@ def build_performance_kpis(
         "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
         "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
         "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
-        "join_gap_short": INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT,
+        "join_gap_short": join_gap_short,
+        "unattributed_territory_opportunities_created": unattributed_created,
+        "unattributed_territory_sits": len(leftover_sits),
+        "territory_pool_opportunities_created": len(pool_created),
+        "territory_pool_sits": len(pool_sits),
         "formulas": {
             "opportunities_created": (
-                "COUNT_DISTINCT inbound-pipeline title-bucket opps "
-                "(ghl_opportunities_v2.name on 7nSEgeoBYXZiIS7x41Jy) with createdAt in window"
+                "COUNT_DISTINCT territory-pipeline ghl_opportunities_v2.id "
+                "(Buffalo/Rochester/Syracuse/Virtual) with createdAt in window, "
+                "attributed by inbound/3PL bought-lead title on the same contactId"
             ),
             "opp_to_prelim": "that source's inbound_cac.sales / that source's opportunities_created",
             "demo_rate": "that source's sits / that source's opportunities_created",
             "sits": (
-                "COUNT_DISTINCT inbound title-bucket opps with dispositionValue==Sit "
-                "and appointmentOccurredAt in window (exclude future vs now UTC)"
+                "COUNT_DISTINCT territory-pipeline opps with dispositionValue==Sit "
+                "and appointmentOccurredAt in window (exclude future vs now UTC), "
+                "attributed by inbound/3PL bought-lead title on the same contactId"
             ),
-            "overall": "Lead Locker + Solar Reviews only",
+            "overall": "attributed Lead Locker + Solar Reviews only",
         },
     }
 
@@ -625,7 +700,103 @@ def load_inbound_opps(db: firestore.Client) -> list[dict[str, Any]]:
     snaps = list(
         db.collection(OPP_COLLECTION).where("pipelineId", "==", INBOUND_PIPELINE_ID).stream()
     )
-    return [snap.to_dict() or {} for snap in snaps]
+    loaded: list[dict[str, Any]] = []
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        if not compact_str(opp.get("id")):
+            opp["id"] = snap.id
+        loaded.append(opp)
+    return loaded
+
+
+def territory_from_opp(opp: dict[str, Any], tzinfo, snap_id: str = "") -> TerritoryOpp | None:
+    if not is_territory_pipeline(opp.get("pipelineId")):
+        return None
+    created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
+    created_local = created.astimezone(tzinfo) if created else None
+    oid = compact_str(opp.get("id") or snap_id)
+    if not oid:
+        return None
+    return TerritoryOpp(
+        opportunity_id=oid,
+        contact_id=compact_str(opp.get("contactId")),
+        pipeline_id=compact_str(opp.get("pipelineId")),
+        created_local=created_local,
+        occurred_utc=as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD)),
+        disposition=compact_str(opp.get(DISPOSITION_VALUE_FIELD)) or None,
+    )
+
+
+def load_territory_created(
+    db: firestore.Client,
+    start_local: datetime,
+    end_local: datetime,
+) -> list[TerritoryOpp]:
+    """Bounded createdAt range; keep the four territory pipeline IDs. No full stream."""
+    start_bound = start_local.date().isoformat()
+    end_bound = (end_local + timedelta(days=1)).date().isoformat()
+    snaps = list(
+        db.collection(OPP_COLLECTION)
+        .where(CREATED_AT_FIELD, ">=", start_bound)
+        .where(CREATED_AT_FIELD, "<", end_bound)
+        .stream()
+    )
+    tzinfo = start_local.tzinfo
+    found: dict[str, TerritoryOpp] = {}
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        parsed = territory_from_opp(opp, tzinfo, snap.id)
+        if parsed and territory_created_in_window(parsed, start_local, end_local):
+            found[parsed.opportunity_id] = parsed
+    return list(found.values())
+
+
+def load_territory_sits(
+    db: firestore.Client,
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> list[TerritoryOpp]:
+    """Bounded appointmentOccurredAt range; Sit only; four territory pipeline IDs."""
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+    if end_utc > now_utc:
+        end_utc = now_utc
+    snaps = list(
+        db.collection(OPP_COLLECTION)
+        .where(APPOINTMENT_OCCURRED_AT_FIELD, ">=", start_utc)
+        .where(APPOINTMENT_OCCURRED_AT_FIELD, "<", end_utc)
+        .stream()
+    )
+    tzinfo = start_local.tzinfo
+    found: dict[str, TerritoryOpp] = {}
+    for snap in snaps:
+        opp = snap.to_dict() or {}
+        if opp.get(DISPOSITION_VALUE_FIELD) != SIT_DISPOSITION:
+            continue
+        parsed = territory_from_opp(opp, tzinfo, snap.id)
+        if parsed and territory_sit_in_window(parsed, start_local, end_local, now_utc):
+            found[parsed.opportunity_id] = parsed
+    return list(found.values())
+
+
+def merge_territory_opps(*groups: list[TerritoryOpp]) -> list[TerritoryOpp]:
+    merged: dict[str, TerritoryOpp] = {}
+    for group in groups:
+        for opp in group:
+            prev = merged.get(opp.opportunity_id)
+            if prev is None:
+                merged[opp.opportunity_id] = opp
+                continue
+            merged[opp.opportunity_id] = TerritoryOpp(
+                opportunity_id=opp.opportunity_id,
+                contact_id=opp.contact_id or prev.contact_id,
+                pipeline_id=opp.pipeline_id or prev.pipeline_id,
+                created_local=opp.created_local or prev.created_local,
+                occurred_utc=opp.occurred_utc or prev.occurred_utc,
+                disposition=opp.disposition or prev.disposition,
+            )
+    return list(merged.values())
 
 
 def load_sold_stage_contact_ids(db: firestore.Client, inbound_contact_ids: set[str]) -> set[str]:
@@ -686,6 +857,7 @@ def assemble_inbound_cac(
     inbound_opps_scanned: int | None = None,
     start: str | None = None,
     end: str | None = None,
+    territory_opps: list[TerritoryOpp] | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -726,6 +898,7 @@ def assemble_inbound_cac(
     sales_by_source = {row.get("source"): int(row.get("sales") or 0) for row in rows}
     performance_kpis = build_performance_kpis(
         raws,
+        territory_opps or [],
         start_local,
         end_local,
         now.astimezone(timezone.utc),
@@ -759,11 +932,13 @@ def assemble_inbound_cac(
             "overall CAC/TAC = totals (null if sales=0); "
             "monthly chart CAC/TAC is null (gap) when that month's sales=0; "
             "performance_kpis rows are Lead Locker / Solar Reviews / Overall "
-            "(Overall = those two sources only); "
-            "opportunities_created = inbound title-bucket createdAt count; "
+            "(Overall = attributed those two sources only); "
+            "opportunities_created = territory-pipeline createdAt count attributed "
+            "by inbound/3PL bought-lead title on the same contactId; "
             "opp_to_prelim = that source's inbound_cac.sales / opportunities_created; "
-            "demo_rate = that source's inbound sits / opportunities_created "
-            "(null if opportunities_created=0)"
+            "demo_rate = that source's territory sits / opportunities_created "
+            "(null if opportunities_created=0); "
+            "unattributed territory opps are JSON leftover, not Overall"
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -791,12 +966,15 @@ def assemble_inbound_cac(
             "performance_kpis": {
                 "created_sits_scope": INBOUND_COHORT_SCOPE,
                 "title_field": f"{OPP_COLLECTION}.{TITLE_FIELD}",
-                "pipeline_id": INBOUND_PIPELINE_ID,
+                "inbound_pipeline_id": INBOUND_PIPELINE_ID,
+                "territory_pipeline_ids": list(TERRITORY_PIPELINE_IDS),
                 "sit_field": f"{OPP_COLLECTION}.{APPOINTMENT_OCCURRED_AT_FIELD}",
                 "sit_disposition": SIT_DISPOSITION,
                 "inbound_to_four_pipeline_join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
                 "inbound_to_four_pipeline_join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
                 "inbound_to_four_pipeline_join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
+                "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
+                "lead_gen_source_is_not_the_split": True,
             },
         },
         "debug": {
@@ -807,6 +985,17 @@ def assemble_inbound_cac(
             "sold_stage_intersection_contacts": len(sold_stage_ids),
             "sold_date_in_window_contacts": len(sold_in_window),
             "join": f"{OPP_COLLECTION}.contactId -> {CONTACT_COLLECTION}.id",
+            "kpi_join": (
+                f"inbound {OPP_COLLECTION}.contactId + {TITLE_FIELD} title-bucket "
+                f"-> territory {OPP_COLLECTION}.contactId"
+            ),
+            "territory_opps_loaded": len(territory_opps or []),
+            "unattributed_territory_opportunities_created": performance_kpis.get(
+                "unattributed_territory_opportunities_created"
+            ),
+            "territory_pool_opportunities_created": performance_kpis.get(
+                "territory_pool_opportunities_created"
+            ),
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -842,6 +1031,11 @@ def compute_inbound_cac(
 
     sold_stage_ids = load_sold_stage_contact_ids(db, spend_ids)
     contacts_map = load_contacts_by_ids(db, sold_stage_ids)
+    now_utc = now.astimezone(timezone.utc)
+    territory_opps = merge_territory_opps(
+        load_territory_created(db, start_local, end_local),
+        load_territory_sits(db, start_local, end_local, now_utc),
+    )
     return assemble_inbound_cac(
         raws,
         contacts_map,
@@ -853,6 +1047,7 @@ def compute_inbound_cac(
         inbound_opps_scanned=len(inbound_opps),
         start=start,
         end=end,
+        territory_opps=territory_opps,
     )
 
 

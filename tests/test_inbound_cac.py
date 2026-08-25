@@ -386,22 +386,22 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(payload["overall"]["tac"], 580.0)
         self.assertEqual(payload["contract"]["setter_unit_cost"], 500)
         kpis = payload["performance_kpis"]
-        self.assertEqual(kpis["opportunities_created"], 3)
+        self.assertEqual(kpis["opportunities_created"], 0)
         self.assertEqual(kpis["sales"], 2)
         self.assertEqual(kpis["sits"], 0)
-        self.assertEqual(kpis["opp_to_prelim"], 2 / 3)
-        self.assertEqual(kpis["demo_rate"], 0.0)
+        self.assertIsNone(kpis["opp_to_prelim"])
+        self.assertIsNone(kpis["demo_rate"])
         locker_kpi = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
         reviews_kpi = {row["source"]: row for row in kpis["rows"]}["Solar Reviews"]
-        self.assertEqual(locker_kpi["opportunities_created"], 2)
+        self.assertEqual(locker_kpi["opportunities_created"], 0)
         self.assertEqual(locker_kpi["sales"], 1)
-        self.assertEqual(reviews_kpi["opportunities_created"], 1)
+        self.assertEqual(reviews_kpi["opportunities_created"], 0)
         self.assertEqual(reviews_kpi["sales"], 1)
         self.assertEqual(kpis["overall"]["source"], "Overall")
-        self.assertEqual(kpis["created_sits_scope"], "inbound_pipeline_title_bucket")
-        self.assertFalse(kpis["join_exists"])
-        self.assertIsNone(kpis["join_field"])
-        self.assertIn("7nSEgeoBYXZiIS7x41Jy", kpis["join_gap"])
+        self.assertEqual(kpis["created_sits_scope"], "territory_pipeline_attributed_via_inbound_contactId")
+        self.assertTrue(kpis["join_exists"])
+        self.assertEqual(kpis["join_field"], "ghl_opportunities_v2.contactId")
+        self.assertIn("contactId", kpis["join_gap"])
         empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
         self.assertIsNone(empty["overall"]["cac"])
         self.assertIsNone(empty["overall"]["tac"])
@@ -461,40 +461,33 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertNotIn('"opp_to_prelim": 0', encoded)
         self.assertNotIn('"demo_rate": 0', encoded)
 
-    def test_rows_are_lead_locker_solar_reviews_overall_only(self):
+    def _territory(self, oid, contact_id, created, occurred=None, disposition=None, pipeline=None):
+        return metric.TerritoryOpp(
+            opportunity_id=oid,
+            contact_id=contact_id,
+            pipeline_id=pipeline or metric.TERRITORY_PIPELINE_IDS[0],
+            created_local=created,
+            occurred_utc=occurred,
+            disposition=disposition,
+        )
+
+    def test_rows_are_attributed_territory_opps_not_inbound_bought_leads(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
         start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
         raws = [
-            metric.RawInboundOpp(
-                "Lead Locker",
-                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
-                False,
-                "c1",
-                "opp-ll-1",
-                datetime(2026, 2, 11, 17, 0, tzinfo=timezone.utc),
-                "Sit",
-            ),
-            metric.RawInboundOpp(
-                "Lead Locker",
-                datetime(2026, 2, 12, 12, 0, tzinfo=NY),
-                False,
-                "c2",
-                "opp-ll-2",
-                None,
-                None,
-            ),
-            metric.RawInboundOpp(
-                "Solar Reviews",
-                datetime(2026, 2, 13, 12, 0, tzinfo=NY),
-                False,
-                "c3",
-                "opp-sr-1",
-                datetime(2026, 2, 14, 17, 0, tzinfo=timezone.utc),
-                "Sit",
-            ),
+            metric.RawInboundOpp("Lead Locker", datetime(2026, 1, 5, 12, 0, tzinfo=NY), False, "c1"),
+            metric.RawInboundOpp("Lead Locker", datetime(2026, 1, 6, 12, 0, tzinfo=NY), False, "c2"),
+            metric.RawInboundOpp("Solar Reviews", datetime(2026, 1, 7, 12, 0, tzinfo=NY), False, "c3"),
+        ]
+        territory = [
+            self._territory("t-ll-1", "c1", datetime(2026, 2, 10, 12, 0, tzinfo=NY), datetime(2026, 2, 11, 17, 0, tzinfo=timezone.utc), "Sit"),
+            self._territory("t-ll-2", "c2", datetime(2026, 2, 12, 12, 0, tzinfo=NY)),
+            self._territory("t-sr-1", "c3", datetime(2026, 2, 13, 12, 0, tzinfo=NY), datetime(2026, 2, 14, 17, 0, tzinfo=timezone.utc), "Sit"),
+            self._territory("t-unattributed", "c-other", datetime(2026, 2, 15, 12, 0, tzinfo=NY), datetime(2026, 2, 16, 17, 0, tzinfo=timezone.utc), "Sit"),
         ]
         kpis = metric.build_performance_kpis(
             raws,
+            territory,
             start,
             end,
             now.astimezone(timezone.utc),
@@ -516,22 +509,17 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertEqual(kpis["overall"]["opportunities_created"], 3)
         self.assertEqual(kpis["overall"]["sits"], 2)
         self.assertEqual(kpis["overall"]["sales"], 2)
-        self.assertEqual(kpis["created_sits_scope"], "inbound_pipeline_title_bucket")
-        self.assertIn("that source's inbound_cac.sales", kpis["formulas"]["opp_to_prelim"])
-        self.assertIn("that source's sits", kpis["formulas"]["demo_rate"])
-        self.assertFalse(kpis["join_exists"])
-        self.assertIsNone(kpis["join_field"])
-        self.assertIn("inbound-pipeline title buckets", kpis["join_gap_short"])
-        self.assertIn(
-            "Sit does not live on inbound pipeline 7nSEgeoBYXZiIS7x41Jy (0 of 1279)",
-            kpis["join_gap_short"],
-        )
-        self.assertIn(
-            "Sit does not live on inbound pipeline 7nSEgeoBYXZiIS7x41Jy (0 of 1279)",
-            kpis["join_gap"],
-        )
+        self.assertEqual(kpis["territory_pool_opportunities_created"], 4)
+        self.assertEqual(kpis["unattributed_territory_opportunities_created"], 1)
+        self.assertEqual(kpis["unattributed_territory_sits"], 1)
+        self.assertEqual(kpis["created_sits_scope"], "territory_pipeline_attributed_via_inbound_contactId")
+        self.assertTrue(kpis["join_exists"])
+        self.assertEqual(kpis["join_field"], "ghl_opportunities_v2.contactId")
+        self.assertIn("1 unattributed territory opportunities created left out of Overall", kpis["join_gap_short"])
+        self.assertIn("hd5QqHEOVSsPom5bJ32P", kpis["join_gap"])
+        self.assertNotEqual(kpis["overall"]["opportunities_created"], kpis["territory_pool_opportunities_created"])
 
-    def test_refunded_inbound_opp_still_counts_as_created(self):
+    def test_refunded_inbound_title_still_attributes_territory_opp(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
         start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
         raws = [
@@ -541,26 +529,33 @@ class PerformanceKpiTests(unittest.TestCase):
                 True,
                 "c-refunded",
                 "opp-refunded",
-                None,
-                None,
-            ),
-            metric.RawInboundOpp(
-                "Lead Locker",
-                datetime(2026, 2, 11, 12, 0, tzinfo=NY),
-                False,
-                "c-open",
-                "opp-open",
-                None,
-                None,
-            ),
+            )
+        ]
+        territory = [
+            self._territory("t-refunded", "c-refunded", datetime(2026, 2, 12, 12, 0, tzinfo=NY))
         ]
         kpis = metric.build_performance_kpis(
-            raws, start, end, now.astimezone(timezone.utc), {"Lead Locker": 0}
+            raws, territory, start, end, now.astimezone(timezone.utc), {"Lead Locker": 0}
         )
         locker = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
-        self.assertEqual(locker["opportunities_created"], 2)
+        self.assertEqual(locker["opportunities_created"], 1)
         self.assertEqual(locker["sales"], 0)
         self.assertEqual(locker["opp_to_prelim"], 0.0)
+
+    def test_inbound_bought_leads_are_not_opportunities_created(self):
+        now = datetime(2026, 3, 15, tzinfo=NY)
+        start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
+        raws = [
+            metric.RawInboundOpp("Lead Locker", datetime(2026, 2, 10, 12, 0, tzinfo=NY), False, "c1"),
+        ]
+        kpis = metric.build_performance_kpis(
+            raws, [], start, end, now.astimezone(timezone.utc), {"Lead Locker": 43}
+        )
+        locker = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
+        self.assertEqual(locker["opportunities_created"], 0)
+        self.assertEqual(locker["sales"], 43)
+        self.assertIsNone(locker["opp_to_prelim"])
+        self.assertNotEqual(locker["opportunities_created"], 960)
 
     def test_page_kpi_table_matches_ytd_row_shape(self):
         page_html = page.render_html(2026)
@@ -569,34 +564,37 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertIn("kpis.overall", PAGE_SRC)
         self.assertIn("join_gap_short", PAGE_SRC)
         self.assertEqual(PAGE_SRC.count('id="kpiJoinGap"'), 1)
-        self.assertIn("0 of 1279", METRIC_SRC)
-        self.assertIn("demo rate is 0 until that field exists here", METRIC_SRC)
-        self.assertNotIn("FOUR_PIPELINE", PAGE_SRC)
-        self.assertNotIn("Buffalo / Rochester / Syracuse / Virtual", PAGE_SRC)
+        self.assertNotIn("0 of 1279", METRIC_SRC)
+        self.assertIn("GQtUlcTmLJ61HZjrGEPC", METRIC_SRC)
+        self.assertIn("qJNvqKWp8Xc7DaBr8QYc", METRIC_SRC)
+        self.assertIn("etLURrEVxupngZZRlISG", METRIC_SRC)
+        self.assertIn("r1b9pwgliYj7WyWBchTV", METRIC_SRC)
         self.assertIn("Lead Locker / Solar Reviews / Overall split", page_html)
+        self.assertIn("Buffalo / Rochester / Syracuse / Virtual", page_html)
 
     def test_future_sit_is_excluded(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
         start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
         raws = [
-            metric.RawInboundOpp(
-                "Lead Locker",
-                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
-                False,
+            metric.RawInboundOpp("Lead Locker", datetime(2026, 2, 10, 12, 0, tzinfo=NY), False, "c1")
+        ]
+        territory = [
+            self._territory(
+                "t-future",
                 "c1",
-                "opp-future",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
                 datetime(2026, 3, 20, 12, 0, tzinfo=timezone.utc),
                 "Sit",
             )
         ]
         kpis = metric.build_performance_kpis(
-            raws, start, end, now.astimezone(timezone.utc), {"Lead Locker": 0}
+            raws, territory, start, end, now.astimezone(timezone.utc), {"Lead Locker": 0}
         )
         locker = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
         self.assertEqual(locker["opportunities_created"], 1)
         self.assertEqual(locker["sits"], 0)
 
-    def test_assemble_counts_inbound_title_buckets(self):
+    def test_assemble_attributes_territory_via_inbound_contact_id(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
         raws = [
             metric.RawInboundOpp(
@@ -605,8 +603,6 @@ class PerformanceKpiTests(unittest.TestCase):
                 False,
                 "c-feb-sold",
                 "opp-ll",
-                datetime(2026, 2, 11, 17, 0, tzinfo=timezone.utc),
-                "Sit",
             )
         ]
         contacts_map = {
@@ -614,6 +610,15 @@ class PerformanceKpiTests(unittest.TestCase):
                 "customFields": [{"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-02-11"}]
             }
         }
+        territory = [
+            self._territory(
+                "t-buffalo",
+                "c-feb-sold",
+                datetime(2026, 2, 10, 14, 0, tzinfo=NY),
+                datetime(2026, 2, 11, 17, 0, tzinfo=timezone.utc),
+                "Sit",
+            )
+        ]
         payload = metric.assemble_inbound_cac(
             raws,
             contacts_map,
@@ -621,6 +626,7 @@ class PerformanceKpiTests(unittest.TestCase):
             year=2026,
             month=None,
             now=now,
+            territory_opps=territory,
         )
         locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
         self.assertEqual(locker["spend"], 45)
@@ -634,9 +640,13 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertEqual(kpis["sits"], 1)
         self.assertEqual(kpis["opp_to_prelim"], 1.0)
         self.assertEqual(kpis["demo_rate"], 1.0)
-        self.assertEqual(kpis["created_sits_scope"], "inbound_pipeline_title_bucket")
-        self.assertFalse(payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_exists"])
-        self.assertIsNone(payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_field"])
+        self.assertEqual(kpis["created_sits_scope"], "territory_pipeline_attributed_via_inbound_contactId")
+        self.assertTrue(payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_exists"])
+        self.assertEqual(
+            payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_field"],
+            "ghl_opportunities_v2.contactId",
+        )
+        self.assertTrue(payload["contract"]["performance_kpis"]["lead_gen_source_is_not_the_split"])
 
     def test_inclusive_range_window_is_america_new_york(self):
         start, end, start_iso, end_iso = metric.date_range_window(
@@ -647,22 +657,27 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertTrue(start_iso.startswith("2026-04-03"))
         self.assertTrue(end_iso.startswith("2026-04-06"))
 
-    def test_created_and_sits_reuse_inbound_pipeline_set(self):
+    def test_created_and_sits_use_bounded_territory_queries(self):
         self.assertIn('.where("pipelineId", "==", INBOUND_PIPELINE_ID)', METRIC_SRC)
         self.assertIn("appointmentOccurredAt", METRIC_SRC)
         self.assertIn("dispositionValue", METRIC_SRC)
-        self.assertNotIn("FOUR_PIPELINE_NAMES", METRIC_SRC)
-        self.assertNotIn("count_four_pipeline", METRIC_SRC)
+        self.assertIn("load_territory_created", METRIC_SRC)
+        self.assertIn("load_territory_sits", METRIC_SRC)
+        self.assertIn("TERRITORY_PIPELINE_IDS", METRIC_SRC)
         self.assertNotIn('db.collection(OPP_COLLECTION).stream()', METRIC_SRC)
         self.assertIn("parse_optional_range", METRIC_SRC)
-        self.assertIn("inbound_pipeline_title_bucket", METRIC_SRC)
+        self.assertIn("territory_pipeline_attributed_via_inbound_contactId", METRIC_SRC)
+        self.assertIn("hd5QqHEOVSsPom5bJ32P", METRIC_SRC)
+        self.assertIn("lead_gen_source_is_not_the_split", METRIC_SRC)
 
     def test_demo_rate_is_not_sit_over_sit_plus_no_sit(self):
         self.assertIn("not Bot KPI Sit/(Sit+No Sit)", METRIC_SRC)
         self.assertIn("that source's sits / that source's opportunities_created", METRIC_SRC)
         self.assertEqual(metric.SIT_DISPOSITION, "Sit")
         self.assertEqual(metric.APPOINTMENT_OCCURRED_AT_FIELD, "appointmentOccurredAt")
-        self.assertEqual(metric.INBOUND_COHORT_SCOPE, "inbound_pipeline_title_bucket")
+        self.assertEqual(metric.INBOUND_COHORT_SCOPE, "territory_pipeline_attributed_via_inbound_contactId")
+        self.assertEqual(metric.INBOUND_FOUR_PIPELINE_JOIN_FIELD, "ghl_opportunities_v2.contactId")
+        self.assertEqual(metric.LEAD_GEN_SOURCE_CONTACT_CF_ID, "hd5QqHEOVSsPom5bJ32P")
 
 
 if __name__ == "__main__":

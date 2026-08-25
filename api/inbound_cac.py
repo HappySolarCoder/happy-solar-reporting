@@ -147,7 +147,7 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Opp to prelim = that source’s sales ÷ opportunities created. Demo rate = that source’s sits ÷ opportunities created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Opportunities created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (same name title-bucket as CAC). Opp to prelim = that source’s sales ÷ opportunities created. Demo rate = that source’s sits ÷ opportunities created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>

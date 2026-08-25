@@ -16,6 +16,10 @@ Time filter:
   not move the sit. Follow-up is not a second sit.
 - Month windows computed in America/New_York.
 
+Inbound CAC KPI sits are not changed in this PR. Joanne OF48x1PrhxehlJS3ReMc
+is Doors (not inbound title-bucket). Same field can poison inbound sits in
+general; this opp is not CAC-attributed.
+
 Filters (optional query params):
 - pipeline=<pipeline name>   (e.g., buffalo)
 - setter=<setter last name>  (contact custom field Eq4NLTSkJ56KTxbxypuE)
@@ -511,10 +515,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     end_utc = end_local.astimezone(timezone.utc)
     now_utc = datetime.now(timezone.utc)
 
-    # Do not cap the warehouse scan at "now". A follow-up can rewrite
-    # appointmentOccurredAt into the future (Joanne Miechowski
-    # OF48x1PrhxehlJS3ReMc: occurred 2026-08-26T18:00:00Z / Aug 26 2:00 PM ET
-    # while the sit belongs on Aug 20). The frozen timestamp is still capped below.
+    # Do not cap the warehouse scan at "now". Locked opp only:
+    # Joanne Miechowski OF48x1PrhxehlJS3ReMc / contact vPLhdbmd9ggy9d0i0GTY
+    # Buffalo GQtUlcTmLJ61HZjrGEPC / Demo-Negotiating d22673c6-28aa-48c8-821b-8a8573d498da
+    # appointmentOccurredAt 2026-08-26T18:00:00Z (follow-up, still future vs now)
+    # dispositionDate 2026-08-20T20:45:48.990Z (first Sit write — freeze here)
+    # lastStageChangeAt 2026-08-20T20:45:46.331Z (New Appointment → Demo-Negotiating)
+    # 2025 duplicate is not this opp. Frozen stamp still capped below.
     # Do not fall back to a full collection stream if a query fails.
     opp_snaps = load_demo_rate_snaps(db, c, start_utc, end_utc)
 

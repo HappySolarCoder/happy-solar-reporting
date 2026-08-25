@@ -22,22 +22,37 @@ from sit_timestamp import as_aware_utc, frozen_sit_timestamp
 
 NY = ZoneInfo("America/New_York")
 
-# Evan 2026-08-25 live warehouse (do not invent another example).
+# Warehouse lock — Joanne Miechowski / 113 Arend Ave only. Do not invent
+# another example. Do not use 2025 duplicate PDDpxi8LpSVc4j3FTb50 / Mayer.
 JOANNE_OPP_ID = "OF48x1PrhxehlJS3ReMc"
 JOANNE_CONTACT_ID = "vPLhdbmd9ggy9d0i0GTY"
-# Live /api/qa/ghl_opps_ran_setter_table and appointment_outcomes:
-# appointmentOccurredAt = 2026-08-26T18:00:00Z = Aug 26, 2026 2:00 PM ET
+JOANNE_PIPELINE_ID = "GQtUlcTmLJ61HZjrGEPC"
+JOANNE_STAGE_ID = "d22673c6-28aa-48c8-821b-8a8573d498da"
+# Bug: current appointmentOccurredAt copied from appointmentStartTime follow-up.
 JOANNE_OCCURRED_AT = datetime(2026, 8, 26, 18, 0, 0, tzinfo=timezone.utc)
-# First Sit/No Sit write is the same-day stage mark (Aug 20), not the follow-up.
-JOANNE_DISPOSITION_DATE = datetime(2026, 8, 20, 16, 0, 0, tzinfo=NY)
+# First Sit write / stage mark (New Appointment → Demo-Negotiating).
+JOANNE_DISPOSITION_DATE = datetime(2026, 8, 20, 20, 45, 48, 990000, tzinfo=timezone.utc)
+JOANNE_LAST_STAGE_CHANGE_AT = datetime(2026, 8, 20, 20, 45, 46, 331000, tzinfo=timezone.utc)
+NOT_THE_TARGET_2025_OPP_ID = "PDDpxi8LpSVc4j3FTb50"
 
 
 class SitTimestampFreezeTests(unittest.TestCase):
     def test_joanne_follow_up_does_not_move_sit_off_aug_20(self):
         frozen = frozen_sit_timestamp(JOANNE_OCCURRED_AT, JOANNE_DISPOSITION_DATE)
-        self.assertIsNotNone(frozen)
+        self.assertEqual(frozen, JOANNE_DISPOSITION_DATE)
         self.assertEqual(frozen.astimezone(NY).date().isoformat(), "2026-08-20")
-        self.assertNotEqual(frozen.astimezone(NY).date().isoformat(), "2026-08-26")
+        self.assertEqual(frozen.astimezone(NY).strftime("%I:%M:%S %p"), "04:45:48 PM")
+        self.assertNotEqual(frozen, JOANNE_OCCURRED_AT)
+
+    def test_does_not_use_2025_duplicate(self):
+        self.assertNotIn(NOT_THE_TARGET_2025_OPP_ID, DEMO_SRC)
+        self.assertNotIn("ouBVilRfFMFr71ae7usF", DEMO_SRC)
+        self.assertIn(JOANNE_OPP_ID, DEMO_SRC)
+        self.assertIn(JOANNE_CONTACT_ID, DEMO_SRC)
+        self.assertIn(JOANNE_PIPELINE_ID, DEMO_SRC)
+        self.assertLess(JOANNE_LAST_STAGE_CHANGE_AT, JOANNE_DISPOSITION_DATE)
+        self.assertLess(JOANNE_DISPOSITION_DATE, JOANNE_OCCURRED_AT)
+        self.assertEqual(JOANNE_STAGE_ID, "d22673c6-28aa-48c8-821b-8a8573d498da")
 
     def test_first_write_wins_when_occurred_is_already_the_original_slot(self):
         occurred = datetime(2026, 8, 20, 17, 0, 0, tzinfo=NY)
@@ -60,10 +75,10 @@ class SitTimestampFreezeTests(unittest.TestCase):
 
     def test_iso_strings_parse(self):
         frozen = frozen_sit_timestamp(
-            "2026-08-26T18:00:00+00:00",
-            "2026-08-20T16:00:00-04:00",
+            "2026-08-26T18:00:00Z",
+            "2026-08-20T20:45:48.990Z",
         )
-        self.assertEqual(frozen.astimezone(NY).date().isoformat(), "2026-08-20")
+        self.assertEqual(frozen, JOANNE_DISPOSITION_DATE)
 
     def test_as_aware_utc_none(self):
         self.assertIsNone(as_aware_utc(None))
@@ -104,7 +119,10 @@ class DemoRateContractTests(unittest.TestCase):
 
     def test_joanne_case_is_named_in_metric(self):
         self.assertIn(JOANNE_OPP_ID, DEMO_SRC)
+        self.assertIn(JOANNE_CONTACT_ID, DEMO_SRC)
+        self.assertIn("2026-08-20T20:45:48.990Z", DEMO_SRC)
         self.assertIn("Joanne Miechowski", DEMO_SRC)
+        self.assertNotIn(NOT_THE_TARGET_2025_OPP_ID, DEMO_SRC)
 
 
 if __name__ == "__main__":

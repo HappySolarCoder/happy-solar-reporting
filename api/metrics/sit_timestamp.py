@@ -8,10 +8,11 @@ Warehouse fields (ghl-firestore-sync-v2, do not invent new ones):
   appointmentStartTime when Sit/No Sit is first marked, then preserved
 - dispositionDate — written once when Sit/No Sit is first marked, then preserved
 
-If the rep moves the GHL appointment to a follow-up *before* marking Sit/No Sit,
-the first appointmentOccurredAt write is already the follow-up. dispositionDate
-still records the first outcome write. Use the earlier stamp so the sit stays on
-the original appointment day and a later follow-up is not a second sit.
+Locked warehouse example (do not invent another; not 2025 PDDpxi8LpSVc4j3FTb50):
+Joanne Miechowski OF48x1PrhxehlJS3ReMc / vPLhdbmd9ggy9d0i0GTY
+- CURRENT appointmentOccurredAt 2026-08-26T18:00:00Z (bug; copied from follow-up start)
+- FREEZE dispositionDate 2026-08-20T20:45:48.990Z (first Sit write; lastStageChangeAt
+  2026-08-20T20:45:46.331Z New Appointment → Demo-Negotiating)
 """
 
 from __future__ import annotations

@@ -38,15 +38,18 @@ Metric per row (same rules for YTD window or a single NY month):
 
 Performance KPIs (same window; table under YTD totals, same rows as CAC):
 - Pipeline 7nSEgeoBYXZiIS7x41Jy is bought leads only — not opportunities.
-- leads = COUNT_DISTINCT inbound/3PL title-bucket ids (ghl_opportunities_v2.name
-  on 7nSEgeoBYXZiIS7x41Jy) with createdAt in window. Full bought-lead set,
-  including refunded titles (excluding them drops the count). Overall = LL+SR.
+- nr_leads = COUNT_DISTINCT inbound/3PL title-bucket ids (ghl_opportunities_v2.name
+  on 7nSEgeoBYXZiIS7x41Jy) with createdAt in window, EXCLUDING refunded stage
+  5bb63eb2-2208-481e-a0b9-f82ece3c030a. Same spend-universe as CAC opp_count.
+  Overall = LL+SR. Unmatched inbound titles stay out of Overall.
+- leads (JSON debug only) = the same title-bucket set INCLUDING refunded titles.
+  Do not show `leads` as the KPI column.
 - opps_created = attributed territory-pipeline opps (Buffalo / Rochester /
   Syracuse / Virtual) via inbound contactId. opportunities_created is an alias
-  of opps_created (territory), not leads.
-- opps_pct = opps_created / leads (null if leads=0). Lead→opp rate.
+  of opps_created (territory), not nr_leads.
+- opps_pct = opps_created / nr_leads (null if nr_leads=0).
 - sits + demo rate + opp_to_prelim use territory opps_created as denominator
-  (sales÷opps, sits÷opps), not leads.
+  (sales÷opps, sits÷opps), not nr_leads.
 - Join: inbound/3PL bought-lead title-bucket → later territory opp on
   ghl_opportunities_v2.contactId. hd5QqHEOVSsPom5bJ32P Inbound is not the split.
 - Territory opps with no matching inbound title are leftover unattributed
@@ -123,12 +126,13 @@ INBOUND_FOUR_PIPELINE_JOIN_GAP = (
     "unattributed and are left out of Lead Locker, Solar Reviews, and Overall."
 )
 INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT = (
-    "Leads are inbound/3PL bought-lead titles (including refunded). "
+    "NR Leads are inbound/3PL bought-lead titles excluding refunded. "
     "Opps created and sits are territory-pipeline opps attributed by that "
     "title on the same contactId. Unattributed territory opps are excluded "
     "from Overall. hd5QqHEOVSsPom5bJ32P Inbound is not the split."
 )
 LEADS_INCLUDE_REFUNDED_TITLES = True
+NR_LEADS_EXCLUDE_REFUNDED_TITLES = True
 
 INBOUND_PIPELINE_NAME = "Inbound/Lead Locker"
 INBOUND_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
@@ -324,43 +328,78 @@ def inbound_created_in_window(raw: RawInboundOpp, start_local: datetime, end_loc
 
 
 def inbound_lead_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
-    """Full inbound title-bucket set, including refunded titles. Unmatched titles stay out."""
+    """Title-bucket inbound in window. Refunded titles still match for attribution."""
     return bool(raw.bucket and inbound_created_in_window(raw, start_local, end_local))
+
+
+def inbound_nr_lead_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
+    """Spend-universe inbound title-bucket: in window and not refunded."""
+    return bool(inbound_lead_in_window(raw, start_local, end_local) and not raw.refunded)
+
+
+@dataclass(frozen=True)
+class InboundLeadCounts:
+    full_by: dict[str, set[str]]
+    nr_by: dict[str, set[str]]
+    unmatched: set[str]
+    unmatched_refunded: set[str]
+    unmatched_nr: set[str]
 
 
 def count_inbound_leads(
     raws: list[RawInboundOpp],
     start_local: datetime,
     end_local: datetime,
-) -> tuple[dict[str, set[str]], set[str], set[str]]:
-    """COUNT_DISTINCT inbound ids. Refunded titles stay in the bucket; unmatched stay out of Overall."""
-    leads_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+) -> InboundLeadCounts:
+    """COUNT_DISTINCT inbound ids.
+
+    full_by includes refunded titles (JSON debug `leads`).
+    nr_by excludes refunded (KPI NR Leads / spend-universe).
+    Unmatched titles stay out of Overall. Refunded unmatched stay out of NR Leads.
+    """
+    full_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    nr_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
     unmatched: set[str] = set()
     unmatched_refunded: set[str] = set()
+    unmatched_nr: set[str] = set()
     for index, raw in enumerate(raws):
         if not inbound_created_in_window(raw, start_local, end_local):
             continue
         lead_id = inbound_lead_id(raw, index)
         if raw.bucket:
-            leads_by[raw.bucket].add(lead_id)
+            full_by[raw.bucket].add(lead_id)
+            if not raw.refunded:
+                nr_by[raw.bucket].add(lead_id)
             continue
         unmatched.add(lead_id)
         if raw.refunded:
             unmatched_refunded.add(lead_id)
-    return leads_by, unmatched, unmatched_refunded
+        else:
+            unmatched_nr.add(lead_id)
+    return InboundLeadCounts(full_by, nr_by, unmatched, unmatched_refunded, unmatched_nr)
 
 
-def kpi_row(*, source: str, leads: int, opps_created: int, sits: int, sales: int) -> dict[str, Any]:
-    lead_count = int(leads)
+def kpi_row(
+    *,
+    source: str,
+    nr_leads: int,
+    opps_created: int,
+    sits: int,
+    sales: int,
+    leads: int | None = None,
+) -> dict[str, Any]:
+    nr_count = int(nr_leads)
     created = int(opps_created)
     sit_count = int(sits)
     sale_count = int(sales)
+    full_count = int(leads) if leads is not None else nr_count
     return {
         "source": source,
-        "leads": lead_count,
+        "nr_leads": nr_count,
+        "leads": full_count,
         "opps_created": created,
         "opportunities_created": created,
-        "opps_pct": compute_share(created, lead_count),
+        "opps_pct": compute_share(created, nr_count),
         "sits": sit_count,
         "sales": sale_count,
         "opp_to_prelim": compute_share(sale_count, created),
@@ -424,9 +463,9 @@ def build_performance_kpis(
     leftover_sits: set[str] = set()
     pool_created: set[str] = set()
     pool_sits: set[str] = set()
-    leads_by, unmatched_inbound, unmatched_inbound_refunded = count_inbound_leads(
-        inbound_raws, start_local, end_local
-    )
+    lead_counts = count_inbound_leads(inbound_raws, start_local, end_local)
+    unmatched_inbound = lead_counts.unmatched
+    unmatched_inbound_refunded = lead_counts.unmatched_refunded
     for opp in territory_opps:
         bucket = contact_bucket.get(opp.contact_id)
         if territory_created_in_window(opp, start_local, end_local):
@@ -446,7 +485,8 @@ def build_performance_kpis(
         rows.append(
             kpi_row(
                 source=source.label,
-                leads=len(leads_by[source.label]),
+                nr_leads=len(lead_counts.nr_by[source.label]),
+                leads=len(lead_counts.full_by[source.label]),
                 opps_created=len(created_by[source.label]),
                 sits=len(sits_by[source.label]),
                 sales=int(sales_by_source.get(source.label) or 0),
@@ -454,6 +494,7 @@ def build_performance_kpis(
         )
     overall = kpi_row(
         source="Overall",
+        nr_leads=sum(int(row["nr_leads"]) for row in rows),
         leads=sum(int(row["leads"]) for row in rows),
         opps_created=sum(int(row["opps_created"]) for row in rows),
         sits=sum(int(row["sits"]) for row in rows),
@@ -466,6 +507,7 @@ def build_performance_kpis(
         f"left out of Overall."
     )
     return {
+        "nr_leads": overall["nr_leads"],
         "leads": overall["leads"],
         "opps_created": overall["opps_created"],
         "opportunities_created": overall["opps_created"],
@@ -477,10 +519,13 @@ def build_performance_kpis(
         "rows": rows,
         "overall": overall,
         "created_sits_scope": INBOUND_COHORT_SCOPE,
-        "leads_scope": "inbound_pipeline_title_bucket",
+        "nr_leads_scope": "inbound_pipeline_title_bucket_excluding_refunded",
+        "leads_scope": "inbound_pipeline_title_bucket_including_refunded_debug",
         "leads_include_refunded_titles": LEADS_INCLUDE_REFUNDED_TITLES,
+        "nr_leads_exclude_refunded_titles": NR_LEADS_EXCLUDE_REFUNDED_TITLES,
         "unmatched_inbound_in_window": len(unmatched_inbound),
         "unmatched_inbound_refunded_in_window": len(unmatched_inbound_refunded),
+        "unmatched_inbound_nr_in_window": len(lead_counts.unmatched_nr),
         "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
         "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
         "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
@@ -490,18 +535,23 @@ def build_performance_kpis(
         "territory_pool_opportunities_created": len(pool_created),
         "territory_pool_sits": len(pool_sits),
         "formulas": {
-            "leads": (
+            "nr_leads": (
                 "COUNT_DISTINCT inbound/3PL ghl_opportunities_v2.id "
                 "(pipeline 7nSEgeoBYXZiIS7x41Jy, name title-bucket Lead Locker / "
-                "Solar Review) with createdAt in window; includes refunded titles"
+                "Solar Review) with createdAt in window; excludes refunded stage "
+                "5bb63eb2-2208-481e-a0b9-f82ece3c030a (spend-universe)"
+            ),
+            "leads": (
+                "debug only: same title-bucket COUNT_DISTINCT including refunded titles; "
+                "not the KPI NR Leads column"
             ),
             "opps_created": (
                 "COUNT_DISTINCT territory-pipeline ghl_opportunities_v2.id "
                 "(Buffalo/Rochester/Syracuse/Virtual) with createdAt in window, "
                 "attributed by inbound/3PL bought-lead title on the same contactId"
             ),
-            "opportunities_created": "alias of opps_created (territory), not leads",
-            "opps_pct": "that source's opps_created / that source's leads",
+            "opportunities_created": "alias of opps_created (territory), not nr_leads",
+            "opps_pct": "that source's opps_created / that source's nr_leads",
             "opp_to_prelim": "that source's inbound_cac.sales / that source's opps_created",
             "demo_rate": (
                 "that source's sits / that source's opps_created "
@@ -512,7 +562,7 @@ def build_performance_kpis(
                 "and appointmentOccurredAt in window (exclude future vs now UTC), "
                 "attributed by inbound/3PL bought-lead title on the same contactId"
             ),
-            "overall": "Lead Locker + Solar Reviews only (leads and attributed opps)",
+            "overall": "Lead Locker + Solar Reviews only (nr_leads and attributed opps)",
         },
     }
 
@@ -994,11 +1044,13 @@ def assemble_inbound_cac(
             "monthly chart CAC/TAC is null (gap) when that month's sales=0; "
             "performance_kpis rows are Lead Locker / Solar Reviews / Overall "
             "(Overall = those two sources only); "
-            "leads = inbound/3PL title-bucket createdAt count including refunded titles; "
+            "nr_leads = inbound/3PL title-bucket createdAt count excluding refunded titles "
+            "(spend-universe); "
+            "leads = debug full title-bucket count including refunded titles; "
             "opps_created = territory-pipeline createdAt count attributed "
             "by inbound/3PL bought-lead title on the same contactId "
             "(opportunities_created is an alias of opps_created); "
-            "opps_pct = opps_created / leads (null if leads=0); "
+            "opps_pct = opps_created / nr_leads (null if nr_leads=0); "
             "opp_to_prelim = that source's inbound_cac.sales / opps_created; "
             "demo_rate = that source's territory sits / opps_created "
             "(null if opps_created=0; not Bot KPI Sit/(Sit+No Sit)); "
@@ -1029,8 +1081,10 @@ def assemble_inbound_cac(
             ],
             "performance_kpis": {
                 "created_sits_scope": INBOUND_COHORT_SCOPE,
-                "leads_scope": "inbound_pipeline_title_bucket",
+                "nr_leads_scope": "inbound_pipeline_title_bucket_excluding_refunded",
+                "leads_scope": "inbound_pipeline_title_bucket_including_refunded_debug",
                 "leads_include_refunded_titles": LEADS_INCLUDE_REFUNDED_TITLES,
+                "nr_leads_exclude_refunded_titles": NR_LEADS_EXCLUDE_REFUNDED_TITLES,
                 "title_field": f"{OPP_COLLECTION}.{TITLE_FIELD}",
                 "inbound_pipeline_id": INBOUND_PIPELINE_ID,
                 "territory_pipeline_ids": list(TERRITORY_PIPELINE_IDS),
@@ -1060,6 +1114,7 @@ def assemble_inbound_cac(
             "unmatched_inbound_refunded_in_window": performance_kpis.get(
                 "unmatched_inbound_refunded_in_window"
             ),
+            "unmatched_inbound_nr_in_window": performance_kpis.get("unmatched_inbound_nr_in_window"),
             "unattributed_territory_opportunities_created": performance_kpis.get(
                 "unattributed_territory_opportunities_created"
             ),

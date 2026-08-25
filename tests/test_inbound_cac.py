@@ -230,6 +230,22 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;", page_html)
         self.assertIn("if (v === null || v === undefined || v === '') return null;", page_html)
         self.assertNotIn("|| 0", page_html)
+        ytd_at = page_html.find("YTD totals")
+        kpi_at = page_html.find("Performance KPIs")
+        chart_at = page_html.find("Month-by-month CAC and TAC")
+        self.assertTrue(0 < ytd_at < kpi_at < chart_at)
+        self.assertIn('id="kpiTable"', page_html)
+        self.assertIn("id=\"leadLockerCac\"", page_html)
+        self.assertIn("id=\"solarReviewsCac\"", page_html)
+        self.assertIn("id=\"overallCac\"", page_html)
+        self.assertIn("id=\"leadLockerTac\"", page_html)
+        self.assertIn("id=\"solarReviewsTac\"", page_html)
+        self.assertIn("id=\"overallTac\"", page_html)
+        self.assertIn("data.performance_kpis", page_html)
+        self.assertIn("opp_to_prelim", page_html)
+        self.assertIn("demo_rate", page_html)
+        self.assertIn("sits ÷ opportunities created", page_html)
+        self.assertIn("not Bot KPI Sit/(Sit+No Sit)", page_html)
 
 
 class YtdDefaultAndTotalsTests(unittest.TestCase):
@@ -367,6 +383,15 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(payload["overall"]["setter_spend"], 1000)
         self.assertEqual(payload["overall"]["tac"], 580.0)
         self.assertEqual(payload["contract"]["setter_unit_cost"], 500)
+        kpis = payload["performance_kpis"]
+        self.assertEqual(kpis["opportunities_created"], 0)
+        self.assertEqual(kpis["sales"], 2)
+        self.assertEqual(kpis["sits"], 0)
+        self.assertIsNone(kpis["opp_to_prelim"])
+        self.assertIsNone(kpis["demo_rate"])
+        self.assertFalse(kpis["join_exists"])
+        self.assertIsNone(kpis["join_field"])
+        self.assertIn("7nSEgeoBYXZiIS7x41Jy", kpis["join_gap"])
         empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
         self.assertIsNone(empty["overall"]["cac"])
         self.assertIsNone(empty["overall"]["tac"])
@@ -413,6 +438,100 @@ class SetterTacTests(unittest.TestCase):
         html = nav.render_dashboard_nav("inbound_cac")
         self.assertNotIn('href="/api/inbound_cac"', html)
         self.assertNotIn("Inbound CAC", html)
+
+
+class PerformanceKpiTests(unittest.TestCase):
+    def test_rates_are_null_when_opportunities_created_zero(self):
+        kpis = metric.build_performance_kpis(opportunities_created=0, sales=4, sits=2)
+        self.assertIsNone(kpis["opp_to_prelim"])
+        self.assertIsNone(kpis["demo_rate"])
+        encoded = json.dumps(kpis)
+        self.assertIn('"opp_to_prelim": null', encoded)
+        self.assertIn('"demo_rate": null', encoded)
+        self.assertNotIn('"opp_to_prelim": 0', encoded)
+        self.assertNotIn('"demo_rate": 0', encoded)
+
+    def test_formulas_are_sales_and_sits_over_created(self):
+        kpis = metric.build_performance_kpis(opportunities_created=10, sales=2, sits=4)
+        self.assertEqual(kpis["opportunities_created"], 10)
+        self.assertEqual(kpis["sales"], 2)
+        self.assertEqual(kpis["sits"], 4)
+        self.assertEqual(kpis["opp_to_prelim"], 0.2)
+        self.assertEqual(kpis["demo_rate"], 0.4)
+        self.assertEqual(kpis["formulas"]["opp_to_prelim"], "inbound_cac.sales / opportunities_created")
+        self.assertEqual(kpis["formulas"]["demo_rate"], "sits / opportunities_created")
+        self.assertFalse(kpis["join_exists"])
+        self.assertIsNone(kpis["join_field"])
+        self.assertIn("four sales pipelines", kpis["join_gap_short"])
+
+    def test_assemble_uses_passed_created_and_sit_counts(self):
+        now = datetime(2026, 3, 15, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-feb-sold",
+            )
+        ]
+        contacts_map = {
+            "c-feb-sold": {
+                "customFields": [{"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-02-11"}]
+            }
+        }
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-feb-sold"},
+            year=2026,
+            month=None,
+            now=now,
+            opportunities_created=8,
+            sits=3,
+        )
+        locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
+        self.assertEqual(locker["spend"], 45)
+        self.assertEqual(locker["sales"], 1)
+        self.assertEqual(locker["cac"], 45.0)
+        self.assertEqual(locker["tac"], 545.0)
+        self.assertEqual(payload["overall"]["sales"], 1)
+        self.assertEqual(payload["performance_kpis"]["opportunities_created"], 8)
+        self.assertEqual(payload["performance_kpis"]["sales"], 1)
+        self.assertEqual(payload["performance_kpis"]["sits"], 3)
+        self.assertEqual(payload["performance_kpis"]["opp_to_prelim"], 1 / 8)
+        self.assertEqual(payload["performance_kpis"]["demo_rate"], 3 / 8)
+        self.assertFalse(payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_exists"])
+        self.assertIsNone(payload["contract"]["performance_kpis"]["inbound_to_four_pipeline_join_field"])
+
+    def test_inclusive_range_window_is_america_new_york(self):
+        start, end, start_iso, end_iso = metric.date_range_window(
+            "2026-04-03", "2026-04-05", "America/New_York"
+        )
+        self.assertEqual(start, datetime(2026, 4, 3, 0, 0, 0, tzinfo=NY))
+        self.assertEqual(end, datetime(2026, 4, 6, 0, 0, 0, tzinfo=NY))
+        self.assertTrue(start_iso.startswith("2026-04-03"))
+        self.assertTrue(end_iso.startswith("2026-04-06"))
+
+    def test_created_and_sit_queries_are_bounded(self):
+        self.assertIn('.where(CREATED_AT_FIELD, ">=", start_bound)', METRIC_SRC)
+        self.assertIn('.where(CREATED_AT_FIELD, "<", end_bound)', METRIC_SRC)
+        self.assertIn('.where(APPOINTMENT_OCCURRED_AT_FIELD, ">=", start_utc)', METRIC_SRC)
+        self.assertIn('.where(APPOINTMENT_OCCURRED_AT_FIELD, "<", end_utc)', METRIC_SRC)
+        self.assertIn("dispositionValue", METRIC_SRC)
+        self.assertIn("rehash", METRIC_SRC.casefold())
+        self.assertIn("FOUR_PIPELINE_NAMES", METRIC_SRC)
+        self.assertNotIn('db.collection(OPP_COLLECTION).stream()', METRIC_SRC)
+        self.assertIn("parse_optional_range", METRIC_SRC)
+
+    def test_demo_rate_is_not_sit_over_sit_plus_no_sit(self):
+        self.assertIn("not Bot KPI Sit/(Sit+No Sit)", METRIC_SRC)
+        self.assertIn("sits / opportunities_created", METRIC_SRC)
+        self.assertEqual(metric.SIT_DISPOSITION, "Sit")
+        self.assertEqual(metric.APPOINTMENT_OCCURRED_AT_FIELD, "appointmentOccurredAt")
+        self.assertEqual(
+            list(metric.FOUR_PIPELINE_NAMES),
+            ["buffalo", "syracuse", "rochester", "virtual"],
+        )
 
 
 if __name__ == "__main__":

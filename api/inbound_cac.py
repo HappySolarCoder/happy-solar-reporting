@@ -142,12 +142,12 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">YTD totals</div>
-        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, and overall. Refunded-stage opps are excluded from lead spend. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, and overall. Refunded-stage leads are excluded from lead spend. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Opportunities created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (same name title-bucket as CAC). Opp to prelim = that source’s sales ÷ opportunities created. Demo rate = that source’s sits ÷ opportunities created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Leads are inbound/3PL bought-lead titles (including refunded). Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title. Opps % = opps created ÷ leads. Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
@@ -214,7 +214,7 @@ function renderTable(el, rows, overall) {
   var html = '<thead><tr>';
   html += '<th>Source</th>';
   html += '<th class="num">Lead unit</th>';
-  html += '<th class="num">Opps</th>';
+  html += '<th class="num">Leads</th>';
   html += '<th class="num">Refunded excluded</th>';
   html += '<th class="num">Lead spend</th>';
   html += '<th class="num">Sales</th>';
@@ -250,7 +250,9 @@ function renderKpiTable(el, kpis) {
   kpis = kpis || {};
   var html = '<thead><tr>';
   html += '<th>Source</th>';
-  html += '<th class="num">Opportunities created</th>';
+  html += '<th class="num">Leads</th>';
+  html += '<th class="num">Opps created</th>';
+  html += '<th class="num">Opps %</th>';
   html += '<th class="num">Sits</th>';
   html += '<th class="num">Sales</th>';
   html += '<th class="num">Opp to prelim</th>';
@@ -259,12 +261,15 @@ function renderKpiTable(el, kpis) {
   var all = (kpis.rows || []).slice();
   if (kpis.overall) all.push(kpis.overall);
   if (!all.length) {
-    html += '<tr><td colspan="6">No inbound KPI rows in this window.</td></tr>';
+    html += '<tr><td colspan="8">No inbound KPI rows in this window.</td></tr>';
   } else {
     all.forEach(function(r) {
+      var opps = (r.opps_created == null) ? r.opportunities_created : r.opps_created;
       html += '<tr>';
       html += '<td>' + esc(r.source) + '</td>';
-      html += '<td class="num">' + esc(r.opportunities_created == null ? '—' : r.opportunities_created) + '</td>';
+      html += '<td class="num">' + esc(r.leads == null ? '—' : r.leads) + '</td>';
+      html += '<td class="num">' + esc(opps == null ? '—' : opps) + '</td>';
+      html += '<td class="num">' + fmtPct(r.opps_pct) + '</td>';
       html += '<td class="num">' + esc(r.sits == null ? '—' : r.sits) + '</td>';
       html += '<td class="num">' + esc(r.sales == null ? '—' : r.sales) + '</td>';
       html += '<td class="num">' + fmtPct(r.opp_to_prelim) + '</td>';

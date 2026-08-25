@@ -523,6 +523,47 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertIsNone(kpis["join_field"])
         self.assertIn("inbound-pipeline title buckets", kpis["join_gap_short"])
 
+    def test_refunded_inbound_opp_still_counts_as_created(self):
+        now = datetime(2026, 3, 15, tzinfo=NY)
+        start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                True,
+                "c-refunded",
+                "opp-refunded",
+                None,
+                None,
+            ),
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 2, 11, 12, 0, tzinfo=NY),
+                False,
+                "c-open",
+                "opp-open",
+                None,
+                None,
+            ),
+        ]
+        kpis = metric.build_performance_kpis(
+            raws, start, end, now.astimezone(timezone.utc), {"Lead Locker": 0}
+        )
+        locker = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
+        self.assertEqual(locker["opportunities_created"], 2)
+        self.assertEqual(locker["sales"], 0)
+        self.assertEqual(locker["opp_to_prelim"], 0.0)
+
+    def test_page_kpi_table_matches_ytd_row_shape(self):
+        page_html = page.render_html(2026)
+        self.assertIn(">Sits</th>", PAGE_SRC)
+        self.assertIn("kpis.rows", PAGE_SRC)
+        self.assertIn("kpis.overall", PAGE_SRC)
+        self.assertIn("join_gap_short", PAGE_SRC)
+        self.assertNotIn("FOUR_PIPELINE", PAGE_SRC)
+        self.assertNotIn("Buffalo / Rochester / Syracuse / Virtual", PAGE_SRC)
+        self.assertIn("Lead Locker / Solar Reviews / Overall split", page_html)
+
     def test_future_sit_is_excluded(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
         start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)

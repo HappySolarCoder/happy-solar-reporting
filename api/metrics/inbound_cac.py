@@ -36,21 +36,22 @@ Metric per row (same rules for YTD window or a single NY month):
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
    series. Months with sales=0 are JSON null gaps, never 0.
 
-Performance KPIs (same window; table under YTD totals):
-- opportunities_created = four-pipeline Opportunities Created (createdAt).
-  No inbound title→four-pipeline join exists; do not invent one.
-- opp_to_prelim = inbound CAC sales / opportunities_created (null if created=0).
-- demo_rate = four-pipeline sits / opportunities_created (Evan’s formula;
-  not Bot KPI Sit/(Sit+No Sit); exclude rehash/sweeper; sit time =
+Performance KPIs (same window; table under YTD totals, same rows as CAC):
+- Split by inbound title-bucket on pipeline 7nSEgeoBYXZiIS7x41Jy.
+  No join onto Buffalo / Rochester / Syracuse / Virtual.
+- opportunities_created = that source’s inbound-cohort createdAt count.
+- opp_to_prelim = that source’s inbound CAC sales / opportunities_created.
+- demo_rate = that source’s inbound sits / opportunities_created
+  (Evan’s formula; not Bot KPI Sit/(Sit+No Sit); sit time =
   appointmentOccurredAt, exclude future vs now UTC).
+- Overall = Lead Locker + Solar Reviews only.
+- Rates null if that row’s opportunities_created=0.
 
 Queries:
 - Inbound: where pipelineId == 7nSEgeoBYXZiIS7x41Jy (≈1261 historical docs;
-  window filter in memory).
+  window filter in memory). Created/sits reuse that inbound set.
 - Sales: pipelineStageId IN the 8 locked stage IDs, then get_all those
   intersection contacts only.
-- Created: createdAt range on ghl_opportunities_v2, then four-pipeline name filter.
-- Sits: appointmentOccurredAt range, dispositionValue==Sit, four-pipeline only.
 - No full-stream of ghl_opportunities_v2 or ghl_contacts_v2.
 
 Params:
@@ -77,7 +78,6 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
-from opportunities_created import pipeline_id_keys, pipeline_name_lookup, resolve_pipeline_name
 from sales import SalesMetricContract, get_db
 
 TIMEZONE_NAME = "America/New_York"
@@ -90,28 +90,20 @@ APPOINTMENT_OCCURRED_AT_FIELD = "appointmentOccurredAt"
 DISPOSITION_VALUE_FIELD = "dispositionValue"
 SIT_DISPOSITION = "Sit"
 
-# Opportunities Created core scope (Buffalo / Syracuse / Rochester / Virtual).
-# Rehash / Sweeper are not in this set — do not silently include them for sits.
-FOUR_PIPELINE_NAMES: tuple[str, ...] = ("buffalo", "syracuse", "rochester", "virtual")
-EXCLUDED_PIPELINE_NAMES: tuple[str, ...] = ("inbound/lead locker",)
-
-# Investigated 2026-08-25: no warehouse field maps inbound CAC title buckets
-# (Lead Locker / Solar Reviews on pipeline 7nSEgeoBYXZiIS7x41Jy) onto the four
-# sales pipelines. Contact lead gen source hd5QqHEOVSsPom5bJ32P can be Inbound
-# on four-pipeline opps, but it is not Lead Locker / Solar Reviews and is not
-# a join from inbound CAC spend-scope opps. Do not invent a key.
+# Performance KPIs split by the same inbound title-bucket used for CAC.
+# No join onto Buffalo / Rochester / Syracuse / Virtual — do not invent one.
 INBOUND_FOUR_PIPELINE_JOIN_EXISTS = False
 INBOUND_FOUR_PIPELINE_JOIN_FIELD = None
+INBOUND_COHORT_SCOPE = "inbound_pipeline_title_bucket"
 INBOUND_FOUR_PIPELINE_JOIN_GAP = (
-    "No warehouse field maps inbound CAC Lead Locker / Solar Reviews "
-    "(ghl_opportunities_v2.name on pipeline 7nSEgeoBYXZiIS7x41Jy) onto "
-    "Buffalo / Rochester / Syracuse / Virtual. Opportunities Created excludes "
-    "Inbound/Lead Locker. Contact CF hd5QqHEOVSsPom5bJ32P can be Inbound but "
-    "is not Lead Locker / Solar Reviews."
+    "Created and sits use the inbound CAC title-bucket on pipeline "
+    "7nSEgeoBYXZiIS7x41Jy (ghl_opportunities_v2.name). There is no warehouse "
+    "field that maps Lead Locker / Solar Reviews onto Buffalo / Rochester / "
+    "Syracuse / Virtual."
 )
 INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT = (
-    "No inbound Lead Locker / Solar Reviews join onto the four sales pipelines; "
-    "this is the four-pipeline Opportunities Created count."
+    "Created and sits are inbound-pipeline title buckets (Lead Locker / Solar Reviews), "
+    "not four-pipeline Opportunities Created."
 )
 
 INBOUND_PIPELINE_NAME = "Inbound/Lead Locker"
@@ -162,6 +154,9 @@ class RawInboundOpp:
     created_local: datetime | None
     refunded: bool
     contact_id: str
+    opportunity_id: str = ""
+    occurred_utc: datetime | None = None
+    disposition: str | None = None
 
 
 def compact_str(value: Any) -> str:
@@ -266,80 +261,6 @@ def compute_share(numer: int, denom: int) -> float | None:
     return numer / denom
 
 
-def build_performance_kpis(*, opportunities_created: int, sales: int, sits: int) -> dict[str, Any]:
-    return {
-        "opportunities_created": int(opportunities_created),
-        "sales": int(sales),
-        "sits": int(sits),
-        "opp_to_prelim": compute_share(int(sales), int(opportunities_created)),
-        "demo_rate": compute_share(int(sits), int(opportunities_created)),
-        "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
-        "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
-        "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
-        "join_gap_short": INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT,
-        "formulas": {
-            "opportunities_created": (
-                "COUNT_DISTINCT(ghl_opportunities_v2.id) where createdAt in window "
-                "(America/New_York) and pipeline in {Buffalo,Syracuse,Rochester,Virtual} "
-                "excluding Inbound/Lead Locker"
-            ),
-            "opp_to_prelim": "inbound_cac.sales / opportunities_created",
-            "demo_rate": "sits / opportunities_created",
-            "sits": (
-                "COUNT_DISTINCT four-pipeline ghl_opportunities_v2.id where "
-                "dispositionValue==Sit and appointmentOccurredAt in window "
-                "(exclude future vs now UTC; exclude rehash/sweeper)"
-            ),
-        },
-    }
-
-
-def _in_four_sales_pipelines(pipe_names: dict[str, str], raw_pipeline_id: Any) -> bool:
-    pname = resolve_pipeline_name(pipe_names, raw_pipeline_id).strip().lower()
-    if pname in EXCLUDED_PIPELINE_NAMES:
-        return False
-    return pname in FOUR_PIPELINE_NAMES
-
-
-def count_four_pipeline_opportunities_created(
-    db: firestore.Client,
-    start_local: datetime,
-    end_local: datetime,
-) -> tuple[int, int]:
-    """Four-pipeline Opportunities Created. Bounded createdAt range; no full stream."""
-    start_bound = start_local.date().isoformat()
-    end_bound = (end_local + timedelta(days=1)).date().isoformat()
-    snaps = list(
-        db.collection(OPP_COLLECTION)
-        .where(CREATED_AT_FIELD, ">=", start_bound)
-        .where(CREATED_AT_FIELD, "<", end_bound)
-        .stream()
-    )
-    scanned = len(snaps)
-    kept: list[dict[str, Any]] = []
-    needed_pipeline_ids: list[str] = []
-    for snap in snaps:
-        opp = snap.to_dict() or {}
-        created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
-        if not created:
-            continue
-        created_local = created.astimezone(start_local.tzinfo)
-        if not (start_local <= created_local < end_local):
-            continue
-        oid = compact_str(opp.get("id") or snap.id)
-        if not oid:
-            continue
-        opp["_oid"] = oid
-        kept.append(opp)
-        needed_pipeline_ids.extend(pipeline_id_keys(opp.get("pipelineId")))
-    pipe_names = pipeline_name_lookup(db, needed_pipeline_ids)
-    ids: set[str] = set()
-    for opp in kept:
-        if _in_four_sales_pipelines(pipe_names, opp.get("pipelineId")):
-            ids.add(opp["_oid"])
-    return len(ids), scanned
-
-
 def as_occurred_dt(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -359,48 +280,103 @@ def as_occurred_dt(value: Any) -> datetime | None:
     return parse_iso_dt(value)
 
 
-def count_four_pipeline_sits(
-    db: firestore.Client,
+def kpi_row(*, source: str, opportunities_created: int, sits: int, sales: int) -> dict[str, Any]:
+    created = int(opportunities_created)
+    sit_count = int(sits)
+    sale_count = int(sales)
+    return {
+        "source": source,
+        "opportunities_created": created,
+        "sits": sit_count,
+        "sales": sale_count,
+        "opp_to_prelim": compute_share(sale_count, created),
+        "demo_rate": compute_share(sit_count, created),
+    }
+
+
+def _raw_oid(raw: RawInboundOpp, index: int) -> str:
+    return raw.opportunity_id or f"{raw.bucket or 'none'}:{index}:{raw.contact_id}"
+
+
+def inbound_created_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
+    return bool(raw.bucket and raw.created_local and start_local <= raw.created_local < end_local)
+
+
+def inbound_sit_in_window(
+    raw: RawInboundOpp,
     start_local: datetime,
     end_local: datetime,
     now_utc: datetime,
-) -> tuple[int, int]:
-    """Sits on the four sales pipelines. Bounded appointmentOccurredAt; no rehash/sweeper."""
-    start_utc = start_local.astimezone(timezone.utc)
-    end_utc = end_local.astimezone(timezone.utc)
-    if end_utc > now_utc:
-        end_utc = now_utc
-    snaps = list(
-        db.collection(OPP_COLLECTION)
-        .where(APPOINTMENT_OCCURRED_AT_FIELD, ">=", start_utc)
-        .where(APPOINTMENT_OCCURRED_AT_FIELD, "<", end_utc)
-        .stream()
+) -> bool:
+    if not raw.bucket or raw.disposition != SIT_DISPOSITION or not raw.occurred_utc:
+        return False
+    if raw.occurred_utc > now_utc:
+        return False
+    occurred_local = raw.occurred_utc.astimezone(start_local.tzinfo)
+    return start_local <= occurred_local < end_local
+
+
+def build_performance_kpis(
+    raws: list[RawInboundOpp],
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+    sales_by_source: dict[str, int],
+) -> dict[str, Any]:
+    """Per-source inbound title-bucket KPIs. Overall is Lead Locker + Solar Reviews only."""
+    rows: list[dict[str, Any]] = []
+    for source in SOURCES:
+        created_ids: set[str] = set()
+        sit_ids: set[str] = set()
+        for index, raw in enumerate(raws):
+            if raw.bucket != source.label:
+                continue
+            oid = _raw_oid(raw, index)
+            if inbound_created_in_window(raw, start_local, end_local):
+                created_ids.add(oid)
+            if inbound_sit_in_window(raw, start_local, end_local, now_utc):
+                sit_ids.add(oid)
+        rows.append(
+            kpi_row(
+                source=source.label,
+                opportunities_created=len(created_ids),
+                sits=len(sit_ids),
+                sales=int(sales_by_source.get(source.label) or 0),
+            )
+        )
+    overall = kpi_row(
+        source="Overall",
+        opportunities_created=sum(int(row["opportunities_created"]) for row in rows),
+        sits=sum(int(row["sits"]) for row in rows),
+        sales=sum(int(row["sales"]) for row in rows),
     )
-    scanned = len(snaps)
-    kept: list[dict[str, Any]] = []
-    needed_pipeline_ids: list[str] = []
-    for snap in snaps:
-        opp = snap.to_dict() or {}
-        if opp.get(DISPOSITION_VALUE_FIELD) != SIT_DISPOSITION:
-            continue
-        occurred = as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD))
-        if not occurred or occurred > now_utc:
-            continue
-        occurred_local = occurred.astimezone(start_local.tzinfo)
-        if not (start_local <= occurred_local < end_local):
-            continue
-        oid = compact_str(opp.get("id") or snap.id)
-        if not oid:
-            continue
-        opp["_oid"] = oid
-        kept.append(opp)
-        needed_pipeline_ids.extend(pipeline_id_keys(opp.get("pipelineId")))
-    pipe_names = pipeline_name_lookup(db, needed_pipeline_ids)
-    ids: set[str] = set()
-    for opp in kept:
-        if _in_four_sales_pipelines(pipe_names, opp.get("pipelineId")):
-            ids.add(opp["_oid"])
-    return len(ids), scanned
+    return {
+        "opportunities_created": overall["opportunities_created"],
+        "sits": overall["sits"],
+        "sales": overall["sales"],
+        "opp_to_prelim": overall["opp_to_prelim"],
+        "demo_rate": overall["demo_rate"],
+        "rows": rows,
+        "overall": overall,
+        "created_sits_scope": INBOUND_COHORT_SCOPE,
+        "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
+        "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
+        "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
+        "join_gap_short": INBOUND_FOUR_PIPELINE_JOIN_GAP_SHORT,
+        "formulas": {
+            "opportunities_created": (
+                "COUNT_DISTINCT inbound-pipeline title-bucket opps "
+                "(ghl_opportunities_v2.name on 7nSEgeoBYXZiIS7x41Jy) with createdAt in window"
+            ),
+            "opp_to_prelim": "that source's inbound_cac.sales / that source's opportunities_created",
+            "demo_rate": "that source's sits / that source's opportunities_created",
+            "sits": (
+                "COUNT_DISTINCT inbound title-bucket opps with dispositionValue==Sit "
+                "and appointmentOccurredAt in window (exclude future vs now UTC)"
+            ),
+            "overall": "Lead Locker + Solar Reviews only",
+        },
+    }
 
 
 def parse_iso_dt(value: Any) -> datetime | None:
@@ -496,6 +472,9 @@ def raw_from_opp(opp: dict[str, Any], tzinfo) -> RawInboundOpp:
         created_local=created_local,
         refunded=is_refunded_stage(opp.get(STAGE_FIELD)),
         contact_id=compact_str(opp.get("contactId")),
+        opportunity_id=compact_str(opp.get("id")),
+        occurred_utc=as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD)),
+        disposition=compact_str(opp.get(DISPOSITION_VALUE_FIELD)) or None,
     )
 
 
@@ -705,10 +684,6 @@ def assemble_inbound_cac(
     inbound_opps_scanned: int | None = None,
     start: str | None = None,
     end: str | None = None,
-    opportunities_created: int = 0,
-    sits: int = 0,
-    created_scanned: int | None = None,
-    sit_scanned: int | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -746,10 +721,13 @@ def assemble_inbound_cac(
                 }
             )
     chart = build_chart(monthly)
+    sales_by_source = {row.get("source"): int(row.get("sales") or 0) for row in rows}
     performance_kpis = build_performance_kpis(
-        opportunities_created=opportunities_created,
-        sales=int(overall.get("sales") or 0),
-        sits=sits,
+        raws,
+        start_local,
+        end_local,
+        now.astimezone(timezone.utc),
+        sales_by_source,
     )
 
     contract = SalesMetricContract()
@@ -778,10 +756,11 @@ def assemble_inbound_cac(
             "TAC = (lead_spend + setter_spend) / sales (= CAC + 500 when sales>0); "
             "overall CAC/TAC = totals (null if sales=0); "
             "monthly chart CAC/TAC is null (gap) when that month's sales=0; "
-            "performance_kpis.opportunities_created = four-pipeline Opportunities Created "
-            "(no inbound title→four-pipeline join); "
-            "opp_to_prelim = inbound_cac.sales / opportunities_created; "
-            "demo_rate = four-pipeline sits / opportunities_created "
+            "performance_kpis rows are Lead Locker / Solar Reviews / Overall "
+            "(Overall = those two sources only); "
+            "opportunities_created = inbound title-bucket createdAt count; "
+            "opp_to_prelim = that source's inbound_cac.sales / opportunities_created; "
+            "demo_rate = that source's inbound sits / opportunities_created "
             "(null if opportunities_created=0)"
         ),
         "contract": {
@@ -808,8 +787,9 @@ def assemble_inbound_cac(
                 for source in SOURCES
             ],
             "performance_kpis": {
-                "opportunities_created_pipelines": list(FOUR_PIPELINE_NAMES),
-                "excluded_pipelines": list(EXCLUDED_PIPELINE_NAMES),
+                "created_sits_scope": INBOUND_COHORT_SCOPE,
+                "title_field": f"{OPP_COLLECTION}.{TITLE_FIELD}",
+                "pipeline_id": INBOUND_PIPELINE_ID,
                 "sit_field": f"{OPP_COLLECTION}.{APPOINTMENT_OCCURRED_AT_FIELD}",
                 "sit_disposition": SIT_DISPOSITION,
                 "inbound_to_four_pipeline_join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
@@ -825,8 +805,6 @@ def assemble_inbound_cac(
             "sold_stage_intersection_contacts": len(sold_stage_ids),
             "sold_date_in_window_contacts": len(sold_in_window),
             "join": f"{OPP_COLLECTION}.contactId -> {CONTACT_COLLECTION}.id",
-            "four_pipeline_created_scanned": created_scanned,
-            "four_pipeline_sit_scanned": sit_scanned,
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -862,11 +840,6 @@ def compute_inbound_cac(
 
     sold_stage_ids = load_sold_stage_contact_ids(db, spend_ids)
     contacts_map = load_contacts_by_ids(db, sold_stage_ids)
-    now_utc = now.astimezone(timezone.utc)
-    opportunities_created, created_scanned = count_four_pipeline_opportunities_created(
-        db, start_local, end_local
-    )
-    sits, sit_scanned = count_four_pipeline_sits(db, start_local, end_local, now_utc)
     return assemble_inbound_cac(
         raws,
         contacts_map,
@@ -878,10 +851,6 @@ def compute_inbound_cac(
         inbound_opps_scanned=len(inbound_opps),
         start=start,
         end=end,
-        opportunities_created=opportunities_created,
-        sits=sits,
-        created_scanned=created_scanned,
-        sit_scanned=sit_scanned,
     )
 
 

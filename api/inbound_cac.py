@@ -147,7 +147,7 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window as the CAC totals. Opportunities created is the four-pipeline Opportunities Created count (Buffalo, Rochester, Syracuse, Virtual). Opp to prelim = sales ÷ opportunities created. Demo rate = sits ÷ opportunities created (Evan’s formula for this table — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Opp to prelim = that source’s sales ÷ opportunities created. Demo rate = that source’s sits ÷ opportunities created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when opportunities created is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
@@ -249,13 +249,29 @@ function renderTable(el, rows, overall) {
 function renderKpiTable(el, kpis) {
   kpis = kpis || {};
   var html = '<thead><tr>';
-  html += '<th>KPI</th>';
-  html += '<th class="num">Value</th>';
-  html += '<th>Formula</th>';
+  html += '<th>Source</th>';
+  html += '<th class="num">Opportunities created</th>';
+  html += '<th class="num">Sits</th>';
+  html += '<th class="num">Sales</th>';
+  html += '<th class="num">Opp to prelim</th>';
+  html += '<th class="num">Demo rate</th>';
   html += '</tr></thead><tbody>';
-  html += '<tr><td>Opportunities created</td><td class="num">' + esc(kpis.opportunities_created == null ? '—' : kpis.opportunities_created) + '</td><td>Four-pipeline Opportunities Created (createdAt)</td></tr>';
-  html += '<tr><td>Opp to prelim</td><td class="num">' + fmtPct(kpis.opp_to_prelim) + '</td><td>sales ÷ opportunities created</td></tr>';
-  html += '<tr><td>Demo rate</td><td class="num">' + fmtPct(kpis.demo_rate) + '</td><td>sits ÷ opportunities created</td></tr>';
+  var all = (kpis.rows || []).slice();
+  if (kpis.overall) all.push(kpis.overall);
+  if (!all.length) {
+    html += '<tr><td colspan="6">No inbound KPI rows in this window.</td></tr>';
+  } else {
+    all.forEach(function(r) {
+      html += '<tr>';
+      html += '<td>' + esc(r.source) + '</td>';
+      html += '<td class="num">' + esc(r.opportunities_created == null ? '—' : r.opportunities_created) + '</td>';
+      html += '<td class="num">' + esc(r.sits == null ? '—' : r.sits) + '</td>';
+      html += '<td class="num">' + esc(r.sales == null ? '—' : r.sales) + '</td>';
+      html += '<td class="num">' + fmtPct(r.opp_to_prelim) + '</td>';
+      html += '<td class="num">' + fmtPct(r.demo_rate) + '</td>';
+      html += '</tr>';
+    });
+  }
   html += '</tbody>';
   el.innerHTML = html;
   var gap = document.getElementById('kpiJoinGap');

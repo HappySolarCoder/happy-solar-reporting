@@ -630,6 +630,8 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertEqual(kpis["overall"]["leads"], 3)
         self.assertNotEqual(locker["leads"], spend_rows["Lead Locker"]["opp_count"])
         self.assertNotEqual(kpis["overall"]["leads"], 4)
+        self.assertEqual(kpis["unmatched_inbound_in_window"], 1)
+        self.assertEqual(kpis["unmatched_inbound_refunded_in_window"], 0)
         self.assertTrue(kpis["leads_include_refunded_titles"])
         self.assertEqual(kpis["formulas"]["leads"].count("includes refunded titles"), 1)
 
@@ -783,6 +785,123 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertEqual(metric.INBOUND_COHORT_SCOPE, "territory_pipeline_attributed_via_inbound_contactId")
         self.assertEqual(metric.INBOUND_FOUR_PIPELINE_JOIN_FIELD, "ghl_opportunities_v2.contactId")
         self.assertEqual(metric.LEAD_GEN_SOURCE_CONTACT_CF_ID, "hd5QqHEOVSsPom5bJ32P")
+
+
+class WarehouseYtdLockTests(unittest.TestCase):
+    """Data lock (read-only happy-solar, YTD ET 2026-01-01 → 2026-09-01).
+
+    Inputs are warehouse facts. The metric must compute the lock — it must not
+    contain these counts as constants.
+    """
+
+    def _add_inbound(self, raws, n, bucket, refunded, prefix, created):
+        for i in range(n):
+            raws.append(
+                metric.RawInboundOpp(
+                    bucket,
+                    created,
+                    refunded,
+                    f"{prefix}-c-{i}",
+                    f"{prefix}-opp-{i}",
+                )
+            )
+
+    def _territory(self, oid, contact_id, created):
+        return metric.TerritoryOpp(
+            opportunity_id=oid,
+            contact_id=contact_id,
+            pipeline_id=metric.TERRITORY_PIPELINE_IDS[0],
+            created_local=created,
+        )
+
+    def test_metric_does_not_hardcode_warehouse_lock(self):
+        self.assertNotIn("960", METRIC_SRC)
+        self.assertNotIn("1215", METRIC_SRC)
+        self.assertNotIn("0.13333333333333333", METRIC_SRC)
+        self.assertNotIn("0.17647058823529413", METRIC_SRC)
+        self.assertNotIn("0.14238683127572016", METRIC_SRC)
+
+    def test_solar_review_singular_title_buckets(self):
+        self.assertEqual(metric.bucket_title("Solar Review: Jane"), "Solar Reviews")
+        self.assertEqual(metric.bucket_title("Lead Locker: Jane"), "Lead Locker")
+
+    def test_compute_ytd_lock_leads_opps_and_pct(self):
+        now = datetime(2026, 8, 25, 12, 0, tzinfo=NY)
+        start, end, _, _ = metric.ytd_window(2026, "America/New_York", now)
+        created = datetime(2026, 2, 10, 12, 0, tzinfo=NY)
+        raws: list = []
+        # Spend-universe (CAC table) + refunded titles that stay in KPI Leads.
+        self._add_inbound(raws, 600, "Lead Locker", False, "ll", created)
+        self._add_inbound(raws, 360, "Lead Locker", True, "llr", created)
+        self._add_inbound(raws, 235, "Solar Reviews", False, "sr", created)
+        self._add_inbound(raws, 20, "Solar Reviews", True, "srr", created)
+        self._add_inbound(raws, 58, None, False, "um", created)
+        self._add_inbound(raws, 6, None, True, "umr", created)
+        self.assertEqual(len(raws), 1279)
+
+        leads_by, unmatched, unmatched_refunded = metric.count_inbound_leads(raws, start, end)
+        ll_leads = len(leads_by["Lead Locker"])
+        sr_leads = len(leads_by["Solar Reviews"])
+        overall_leads = ll_leads + sr_leads
+        self.assertEqual(ll_leads, 960)
+        self.assertEqual(sr_leads, 255)
+        self.assertEqual(overall_leads, 1215)
+        self.assertEqual(len(unmatched), 64)
+        self.assertEqual(len(unmatched_refunded), 6)
+        self.assertEqual(overall_leads + len(unmatched), 1279)
+
+        records = metric.records_for_window(raws, start, end)
+        self.assertEqual(sum(1 for rec in records if rec.in_window), 1279)
+        spend_rows = {row["source"]: row for row in metric.build_source_rows(records, set())}
+        self.assertEqual(spend_rows["Lead Locker"]["opp_count"], 600)
+        self.assertEqual(spend_rows["Lead Locker"]["refunded_excluded_count"], 360)
+        self.assertEqual(spend_rows["Solar Reviews"]["opp_count"], 235)
+        self.assertEqual(spend_rows["Solar Reviews"]["refunded_excluded_count"], 20)
+        overall_spend = metric.build_overall(list(spend_rows.values()))
+        self.assertEqual(overall_spend["opp_count"], 835)
+        self.assertNotEqual(ll_leads, spend_rows["Lead Locker"]["opp_count"])
+        self.assertNotEqual(sr_leads, spend_rows["Solar Reviews"]["opp_count"])
+        self.assertNotEqual(overall_leads, overall_spend["opp_count"])
+
+        territory = []
+        for i in range(128):
+            territory.append(self._territory(f"t-ll-{i}", f"ll-c-{i}", created))
+        for i in range(45):
+            territory.append(self._territory(f"t-sr-{i}", f"sr-c-{i}", created))
+        for i in range(1065):
+            territory.append(self._territory(f"t-left-{i}", f"other-c-{i}", created))
+        self.assertEqual(len(territory), 1238)
+
+        kpis = metric.build_performance_kpis(
+            raws,
+            territory,
+            start,
+            end,
+            now.astimezone(timezone.utc),
+            {"Lead Locker": 43, "Solar Reviews": 19},
+        )
+        locker = {row["source"]: row for row in kpis["rows"]}["Lead Locker"]
+        reviews = {row["source"]: row for row in kpis["rows"]}["Solar Reviews"]
+        self.assertEqual(locker["leads"], ll_leads)
+        self.assertEqual(reviews["leads"], sr_leads)
+        self.assertEqual(kpis["overall"]["leads"], overall_leads)
+        self.assertEqual(kpis["unmatched_inbound_in_window"], 64)
+        self.assertEqual(kpis["unmatched_inbound_refunded_in_window"], 6)
+        self.assertEqual(locker["opps_created"], 128)
+        self.assertEqual(reviews["opps_created"], 45)
+        self.assertEqual(kpis["overall"]["opps_created"], 173)
+        self.assertEqual(kpis["opportunities_created"], kpis["opps_created"])
+        self.assertEqual(kpis["territory_pool_opportunities_created"], 1238)
+        self.assertEqual(kpis["unattributed_territory_opportunities_created"], 1065)
+        self.assertEqual(locker["opps_pct"], metric.compute_share(128, ll_leads))
+        self.assertEqual(reviews["opps_pct"], metric.compute_share(45, sr_leads))
+        self.assertEqual(kpis["overall"]["opps_pct"], metric.compute_share(173, overall_leads))
+        self.assertEqual(locker["opps_pct"], 0.13333333333333333)
+        self.assertEqual(reviews["opps_pct"], 0.17647058823529413)
+        self.assertEqual(kpis["overall"]["opps_pct"], 0.14238683127572016)
+        self.assertNotEqual(locker["leads"], 600)
+        self.assertNotEqual(reviews["leads"], 235)
+        self.assertNotEqual(kpis["overall"]["leads"], 835)
 
 
 if __name__ == "__main__":

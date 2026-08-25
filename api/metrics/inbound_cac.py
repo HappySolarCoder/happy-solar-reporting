@@ -315,12 +315,39 @@ def as_occurred_dt(value: Any) -> datetime | None:
 
 
 def inbound_lead_id(raw: RawInboundOpp, index: int) -> str:
+    """Grain is COUNT_DISTINCT ghl_opportunities_v2.id. Fallback only if id is missing."""
     return raw.opportunity_id or f"{raw.bucket or 'none'}:{index}:{raw.contact_id}"
 
 
+def inbound_created_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
+    return bool(raw.created_local and start_local <= raw.created_local < end_local)
+
+
 def inbound_lead_in_window(raw: RawInboundOpp, start_local: datetime, end_local: datetime) -> bool:
-    """Full inbound title-bucket set, including refunded titles."""
-    return bool(raw.bucket and raw.created_local and start_local <= raw.created_local < end_local)
+    """Full inbound title-bucket set, including refunded titles. Unmatched titles stay out."""
+    return bool(raw.bucket and inbound_created_in_window(raw, start_local, end_local))
+
+
+def count_inbound_leads(
+    raws: list[RawInboundOpp],
+    start_local: datetime,
+    end_local: datetime,
+) -> tuple[dict[str, set[str]], set[str], set[str]]:
+    """COUNT_DISTINCT inbound ids. Refunded titles stay in the bucket; unmatched stay out of Overall."""
+    leads_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
+    unmatched: set[str] = set()
+    unmatched_refunded: set[str] = set()
+    for index, raw in enumerate(raws):
+        if not inbound_created_in_window(raw, start_local, end_local):
+            continue
+        lead_id = inbound_lead_id(raw, index)
+        if raw.bucket:
+            leads_by[raw.bucket].add(lead_id)
+            continue
+        unmatched.add(lead_id)
+        if raw.refunded:
+            unmatched_refunded.add(lead_id)
+    return leads_by, unmatched, unmatched_refunded
 
 
 def kpi_row(*, source: str, leads: int, opps_created: int, sits: int, sales: int) -> dict[str, Any]:
@@ -397,11 +424,9 @@ def build_performance_kpis(
     leftover_sits: set[str] = set()
     pool_created: set[str] = set()
     pool_sits: set[str] = set()
-    leads_by: dict[str, set[str]] = {source.label: set() for source in SOURCES}
-    for index, raw in enumerate(inbound_raws):
-        if not inbound_lead_in_window(raw, start_local, end_local):
-            continue
-        leads_by[raw.bucket].add(inbound_lead_id(raw, index))
+    leads_by, unmatched_inbound, unmatched_inbound_refunded = count_inbound_leads(
+        inbound_raws, start_local, end_local
+    )
     for opp in territory_opps:
         bucket = contact_bucket.get(opp.contact_id)
         if territory_created_in_window(opp, start_local, end_local):
@@ -454,6 +479,8 @@ def build_performance_kpis(
         "created_sits_scope": INBOUND_COHORT_SCOPE,
         "leads_scope": "inbound_pipeline_title_bucket",
         "leads_include_refunded_titles": LEADS_INCLUDE_REFUNDED_TITLES,
+        "unmatched_inbound_in_window": len(unmatched_inbound),
+        "unmatched_inbound_refunded_in_window": len(unmatched_inbound_refunded),
         "join_exists": INBOUND_FOUR_PIPELINE_JOIN_EXISTS,
         "join_field": INBOUND_FOUR_PIPELINE_JOIN_FIELD,
         "join_gap": INBOUND_FOUR_PIPELINE_JOIN_GAP,
@@ -1029,6 +1056,10 @@ def assemble_inbound_cac(
                 f"-> territory {OPP_COLLECTION}.contactId"
             ),
             "territory_opps_loaded": len(territory_opps or []),
+            "unmatched_inbound_in_window": performance_kpis.get("unmatched_inbound_in_window"),
+            "unmatched_inbound_refunded_in_window": performance_kpis.get(
+                "unmatched_inbound_refunded_in_window"
+            ),
             "unattributed_territory_opportunities_created": performance_kpis.get(
                 "unattributed_territory_opportunities_created"
             ),

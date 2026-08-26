@@ -1,4 +1,15 @@
 {
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "api/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api?hs=:path*"
+    }
+  ],
   "crons": [
     {
       "path": "/api/warm_cache",

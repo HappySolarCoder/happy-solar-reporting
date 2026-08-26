@@ -12,18 +12,127 @@ Env vars (set in Vercel):
 Routes:
 - GET /api            -> HTML dashboard
 - GET /api?format=json -> JSON stats
+
+Also restores omitted /api/* handlers. Live chi (PR 17 / ec530bd)
+shipped ~50 Python functions and 404'd the rest (Website Funnel,
+inbound CAC, Essential Sales, bot KPI). Filesystem functions still
+win; vercel.json rewrites only the missing paths here. Dispatch
+reuses the existing handler modules — no new funnel/CAC contract.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import json
 import os
+import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+API_DIR = Path(__file__).resolve().parent
+
+
+def dispatch_route(path: str) -> str | None:
+    """Return api-relative module path (no .py) for an omitted /api/* request."""
+    parsed = urlparse(path)
+    qs = parse_qs(parsed.query)
+    route = (qs.get("hs", [""])[0] or "").strip()
+    if not route:
+        prefix = parsed.path.rstrip("/")
+        if prefix.startswith("/api/") and prefix != "/api":
+            route = prefix[len("/api/") :]
+    if not route or route in {"index"}:
+        return None
+    return route
+
+
+def dispatch_file(route: str) -> Path | None:
+    if not route or ".." in route or route.startswith("/") or route.startswith("\\"):
+        return None
+    candidate = (API_DIR / f"{route}.py").resolve()
+    try:
+        candidate.relative_to(API_DIR)
+    except ValueError:
+        return None
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def handler_path_for_delegate(path: str, route: str) -> str:
+    parsed = urlparse(path)
+    pairs = [
+        (key, value)
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+        if key != "hs"
+        for value in values
+    ]
+    query = urlencode(pairs)
+    dest = f"/api/{route}"
+    return dest + (f"?{query}" if query else "")
+
+
+_MODULE_CACHE: dict[str, object] = {}
+
+
+def _load_api_module(module_path: Path):
+    key = str(module_path)
+    cached = _MODULE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    name = "hs_restore_" + "_".join(module_path.with_suffix("").relative_to(API_DIR).parts)
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    _MODULE_CACHE[key] = module
+    return module
+
+
+def _handler_class(module):
+    cls = getattr(module, "handler", None) or getattr(module, "Handler", None)
+    if inspect.isclass(cls) and issubclass(cls, BaseHTTPRequestHandler):
+        return cls
+    return None
+
+
+def delegate_to_api_module(request_handler: BaseHTTPRequestHandler, route: str) -> bool:
+    module_path = dispatch_file(route)
+    if module_path is None:
+        return False
+    module = _load_api_module(module_path)
+    cls = _handler_class(module)
+    if cls is None:
+        return False
+    inst = cls.__new__(cls)
+    for attr in (
+        "request",
+        "client_address",
+        "server",
+        "rfile",
+        "wfile",
+        "headers",
+        "command",
+        "request_version",
+        "close_connection",
+    ):
+        if hasattr(request_handler, attr):
+            setattr(inst, attr, getattr(request_handler, attr))
+    inst.path = handler_path_for_delegate(request_handler.path, route)
+    inst.requestline = getattr(
+        request_handler, "requestline", f"GET {inst.path} HTTP/1.1"
+    )
+    inst.client_address = getattr(request_handler, "client_address", ("", 0))
+    inst.do_GET()
+    return True
 
 
 def get_db() -> firestore.Client:
@@ -119,6 +228,18 @@ def build_html(stats: dict) -> str:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            route = dispatch_route(self.path)
+            if route:
+                if delegate_to_api_module(self, route):
+                    return
+                body = b"The page could not be found\n"
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             qs = parse_qs(urlparse(self.path).query)
             want_json = qs.get("format", [""])[0].lower() == "json"
 
@@ -148,3 +269,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+
+handler = Handler

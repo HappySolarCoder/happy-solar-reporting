@@ -10,6 +10,12 @@ Purpose:
 - Add prior-day Powerline dials and Raydar doors knocked into each owner bucket
   as a simple "worked yesterday" recap.
 
+Identity join (Powerline / Raydar -> owner row):
+- Prefer roster_people_v1.ghl_user_id / raydar_user_id / display_name.
+- Also index GHL user names, owner-bucket labels, and OWNER_NAME_OVERRIDES.
+- Hyphenated last names accept an unambiguous first+last short form
+  ("April Cornell" -> "April Cornell-DeAngelis"). Do not invent knock counts.
+
 Window semantics:
 - Default window is yesterday in America/New_York.
 - Optional query params:
@@ -233,6 +239,24 @@ def nickname_aliases(name: str) -> set[str]:
     return aliases
 
 
+def identity_name_keys(name: str, *, include_short_form: bool = True) -> set[str]:
+    """Lookup keys for a person name, including an unambiguous first+last short form.
+
+    Hyphenated last names normalize to extra tokens ("April Cornell-DeAngelis" ->
+    "april cornell deangelis"). The short form "april cornell" is also generated
+    so Raydar labels that drop the hyphenated suffix can join when unique.
+    """
+    base = normalize_name_key(name)
+    if not base:
+        return set()
+    keys = set(nickname_aliases(name))
+    if include_short_form:
+        parts = base.split()
+        if len(parts) >= 3:
+            keys.add(" ".join(parts[:2]))
+    return {key for key in keys if key}
+
+
 def first_name_equivalent(left: str, right: str) -> bool:
     if not left or not right:
         return False
@@ -262,6 +286,15 @@ def fuzzy_name_match(left: str, right: str) -> bool:
     # Strong fuzzy rule for person names: same last name + compatible first name.
     if left_parts[-1] == right_parts[-1] and first_name_equivalent(left_parts[0], right_parts[0]):
         return True
+
+    # Hyphenated last names: "April Cornell" vs "April Cornell-DeAngelis".
+    if first_name_equivalent(left_parts[0], right_parts[0]):
+        left_rest = left_parts[1:]
+        right_rest = right_parts[1:]
+        if left_rest and right_rest and (
+            left_rest == right_rest[: len(left_rest)] or right_rest == left_rest[: len(right_rest)]
+        ):
+            return True
 
     return False
 
@@ -375,34 +408,132 @@ def resolve_owner_name(opp: dict[str, Any], owner_id: str, user_names: dict[str,
 
 
 def load_rep_roster(db: firestore.Client, user_names: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Identity rows from roster_people_v1 keyed by ghl_user_id.
+
+    Do not require role=rep. Closers on the recap are GHL opportunity owners;
+    some roster docs omit role/categories even when ghl_user_id and raydar_user_id
+    are populated. People without a GHL owner id cannot join to an owner row.
+    """
     reps: dict[str, dict[str, str]] = {}
     for snap in db.collection("roster_people_v1").stream():
         row = snap.to_dict() or {}
-        role = compact_str(row.get("role")).lower()
-        categories = [compact_str(item).lower() for item in (row.get("categories") or []) if compact_str(item)]
-        if role != "rep" and "rep" not in categories:
-            continue
-        owner_id = compact_str(row.get("ghl_user_id"))
+        owner_id = compact_str(row.get("ghl_user_id") or row.get("ghlUserId"))
         if not owner_id:
             continue
         reps[owner_id] = {
             "owner_id": owner_id,
-            "label": compact_str(row.get("display_name")) or user_names.get(owner_id) or compact_str(row.get("ghl_user_name")) or owner_id,
+            "label": compact_str(row.get("display_name"))
+            or user_names.get(owner_id)
+            or compact_str(row.get("ghl_user_name"))
+            or owner_id,
             "team": compact_str(row.get("team") or row.get("segment")),
             "person_key": compact_str(row.get("person_key") or snap.id),
             "raydar_user_id": compact_str(row.get("raydar_user_id")),
+            "ghl_user_name": compact_str(row.get("ghl_user_name")) or user_names.get(owner_id, ""),
         }
     return reps
 
 
-def build_owner_alias_index(rep_roster: dict[str, dict[str, str]], user_names: dict[str, str]) -> dict[str, str]:
-    aliases: dict[str, str] = {}
+def collect_owner_identities(
+    rep_roster: dict[str, dict[str, str]],
+    user_names: dict[str, str],
+    extra_labels: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Merge roster, GHL user names, overrides, and live owner-bucket labels."""
+    identities: dict[str, dict[str, Any]] = {}
+
+    def upsert(owner_id: str, label: str = "", **extra: Any) -> None:
+        owner_id = compact_str(owner_id)
+        if not owner_id:
+            return
+        current = identities.get(owner_id)
+        incoming_label = compact_str(label)
+        if current is None:
+            identities[owner_id] = {
+                "owner_id": owner_id,
+                "label": incoming_label or compact_str(user_names.get(owner_id)) or owner_id,
+                "team": compact_str(extra.get("team")),
+                "person_key": compact_str(extra.get("person_key")),
+                "raydar_user_id": compact_str(extra.get("raydar_user_id")),
+                "ghl_user_name": compact_str(extra.get("ghl_user_name")) or compact_str(user_names.get(owner_id)),
+                "extra_names": set(),
+            }
+            current = identities[owner_id]
+        elif incoming_label and incoming_label != current.get("label"):
+            current.setdefault("extra_names", set()).add(incoming_label)
+        extra_names = current.setdefault("extra_names", set())
+        extra_incoming = extra.get("extra_names")
+        if isinstance(extra_incoming, (set, list, tuple)):
+            extra_names.update(compact_str(item) for item in extra_incoming if compact_str(item))
+        for key in ("team", "person_key", "raydar_user_id", "ghl_user_name"):
+            value = compact_str(extra.get(key))
+            if value and not current.get(key):
+                current[key] = value
+        if incoming_label and (
+            not current.get("label") or current.get("label") == owner_id or looks_like_identifier(current.get("label"))
+        ):
+            current["label"] = incoming_label
+
     for owner_id, row in rep_roster.items():
-        label = row["label"]
-        targets = {label, user_names.get(owner_id, "")}
-        for target in targets:
-            for alias in nickname_aliases(target):
-                aliases[alias] = owner_id
+        extra = {key: value for key, value in row.items() if key not in {"owner_id", "label"}}
+        upsert(owner_id, compact_str(row.get("label")), **extra)
+
+    for uid, name in user_names.items():
+        upsert(uid, name, ghl_user_name=name)
+
+    for uid, name in OWNER_NAME_OVERRIDES.items():
+        match = next((key for key in identities if key.lower() == uid.lower()), uid)
+        if match in identities:
+            identities[match]["label"] = name
+            identities[match].setdefault("extra_names", set()).add(name)
+        else:
+            upsert(match, name)
+
+    if extra_labels:
+        for owner_id, label in extra_labels.items():
+            upsert(owner_id, label)
+
+    return identities
+
+
+def _identity_display_names(row: dict[str, Any]) -> set[str]:
+    names = {
+        compact_str(row.get("label")),
+        compact_str(row.get("ghl_user_name")),
+    }
+    extra = row.get("extra_names")
+    if isinstance(extra, (set, list, tuple)):
+        names.update(compact_str(item) for item in extra)
+    return {name for name in names if name and not looks_like_identifier(name)}
+
+
+def build_owner_alias_index(identities: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Unique name keys -> owner_id.
+
+    Full-name keys win over hyphenated short forms. "April Cornell" stays on
+    the owner whose full label is April Cornell when a second owner is
+    April Cornell-DeAngelis. A short form is used only when it is unambiguous.
+    """
+    full_claimed: dict[str, set[str]] = defaultdict(set)
+    short_claimed: dict[str, set[str]] = defaultdict(set)
+    for owner_id, row in identities.items():
+        for name in _identity_display_names(row):
+            full_keys = identity_name_keys(name, include_short_form=False)
+            short_keys = identity_name_keys(name, include_short_form=True) - full_keys
+            for alias in full_keys:
+                full_claimed[alias].add(owner_id)
+            for alias in short_keys:
+                short_claimed[alias].add(owner_id)
+
+    aliases: dict[str, str] = {}
+    for alias, owner_ids in full_claimed.items():
+        if len(owner_ids) == 1:
+            aliases[alias] = next(iter(owner_ids))
+    for alias, owner_ids in short_claimed.items():
+        if alias in full_claimed:
+            continue
+        if len(owner_ids) == 1:
+            aliases[alias] = next(iter(owner_ids))
     return aliases
 
 
@@ -445,20 +576,26 @@ def map_powerline_agent_to_owner(label: str, alias_index: dict[str, str]) -> str
 def map_label_to_owner_fuzzy(
     label: str,
     alias_index: dict[str, str],
-    rep_roster: dict[str, dict[str, str]],
-    user_names: dict[str, str],
+    identities: dict[str, dict[str, Any]],
 ) -> str | None:
     owner_key = map_powerline_agent_to_owner(label, alias_index)
     if owner_key:
         return owner_key
 
-    for owner_id, row in rep_roster.items():
+    matches: list[str] = []
+    for owner_id, row in identities.items():
         candidates = {
             compact_str(row.get("label")),
-            compact_str(user_names.get(owner_id, "")),
+            compact_str(row.get("ghl_user_name")),
         }
+        extra = row.get("extra_names")
+        if isinstance(extra, (set, list, tuple)):
+            candidates.update(compact_str(item) for item in extra)
         if any(fuzzy_name_match(label, candidate) for candidate in candidates if candidate):
-            return owner_id
+            if owner_id not in matches:
+                matches.append(owner_id)
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -470,12 +607,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     user_names = user_name_lookup(db)
     pipeline_names, stage_names = pipeline_name_lookup(db)
     rep_roster = load_rep_roster(db, user_names)
-    alias_index = build_owner_alias_index(rep_roster, user_names)
-    raydar_to_owner = {
-        row["raydar_user_id"]: owner_id
-        for owner_id, row in rep_roster.items()
-        if row.get("raydar_user_id")
-    }
+    identities = collect_owner_identities(rep_roster, user_names)
 
     owner_buckets: dict[str, dict[str, Any]] = {}
     contact_cache: dict[str, dict[str, Any]] = {}
@@ -486,7 +618,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         bucket = owner_buckets.get(owner_id)
         if bucket:
             return bucket
-        roster_row = rep_roster.get(owner_id, {})
+        roster_row = identities.get(owner_id) or rep_roster.get(owner_id, {})
         bucket = {
             "owner_id": owner_id,
             "owner_label": label,
@@ -569,6 +701,20 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         else:
             bucket["pending_total"] += 1
 
+    # Register live owner-bucket labels so Powerline/Raydar exact names join
+    # even when roster_people_v1 is missing the person or omits role=rep.
+    identities = collect_owner_identities(
+        rep_roster,
+        user_names,
+        extra_labels={owner_id: bucket["owner_label"] for owner_id, bucket in owner_buckets.items()},
+    )
+    alias_index = build_owner_alias_index(identities)
+    raydar_to_owner = {
+        row["raydar_user_id"]: owner_id
+        for owner_id, row in identities.items()
+        if row.get("raydar_user_id")
+    }
+
     # Powerline calls by agent for the same ET window.
     powerline_available = True
     try:
@@ -591,11 +737,14 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
                 continue
             agent_id = compact_str(row.get("agentId"))
             agent_label = agent_labels.get(agent_id) or (f"Unknown Agent ({agent_id[-6:]})" if agent_id else "Unassigned")
-            owner_key = map_label_to_owner_fuzzy(agent_label, alias_index, rep_roster, user_names)
+            owner_key = map_label_to_owner_fuzzy(agent_label, alias_index, identities)
             if not owner_key:
                 unmapped_powerline[agent_label] += 1
                 continue
-            bucket = ensure_owner_bucket(owner_key, rep_roster.get(owner_key, {}).get("label") or user_names.get(owner_key) or agent_label)
+            bucket = ensure_owner_bucket(
+                owner_key,
+                identities.get(owner_key, {}).get("label") or user_names.get(owner_key) or agent_label,
+            )
             result = compact_str(row.get("result")) or "unknown"
             bucket["powerline_dials"] += 1
             bucket["powerline_results"][result] += 1
@@ -622,11 +771,14 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         actor_name = raydar_users.get(actor, actor)
         if not owner_key:
             # Fallback name match only if the actor name resolves to a rep alias.
-            owner_key = map_label_to_owner_fuzzy(actor_name, alias_index, rep_roster, user_names)
+            owner_key = map_label_to_owner_fuzzy(actor_name, alias_index, identities)
         if not owner_key:
             unmapped_raydar[actor_name] += 1
             continue
-        bucket = ensure_owner_bucket(owner_key, rep_roster.get(owner_key, {}).get("label") or user_names.get(owner_key) or actor_name)
+        bucket = ensure_owner_bucket(
+            owner_key,
+            identities.get(owner_key, {}).get("label") or user_names.get(owner_key) or actor_name,
+        )
         status = compact_str(row.get("status")) or "unknown"
         bucket["doors_knocked"] += 1
         bucket["door_statuses"][status] += 1

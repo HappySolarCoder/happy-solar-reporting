@@ -20,13 +20,18 @@ SC_OVERVIEW_SRC = (API / "sc_overview.py").read_text(encoding="utf-8")
 SALES_SRC = (METRICS / "sales.py").read_text(encoding="utf-8")
 SALES_CANCELLATIONS_SRC = (METRICS / "sales_cancellations.py").read_text(encoding="utf-8")
 
-# Jeff / Maecker window lock — do not invent another owner or ratio.
+# Warehouse lock — Zachary Maecker / assignedTo nFf2FIr40kvWRCVaMej2
+# Window 2026-06-01 to 2026-08-26 America/New_York. Do not invent another owner.
 MAECKER_OWNER_ID = "nFf2FIr40kvWRCVaMej2"
 MAECKER_SOLD = 28
 MAECKER_SALE_CANCELLED = 8
 MAECKER_SALES = 36
 MAECKER_DEMOS = 74
 MAECKER_CLOSE_RATE = 48.6
+MAECKER_COMPLETED = 120
+# Do not use these Sold Date grains for Summary Sales.
+MAECKER_AUGUST_SOLD_DATE = 6
+MAECKER_FULL_WINDOW_SOLD_DATE_CONTACTS = 37
 SOLD_DATE_FIELD_ID = "P9oBjgbZjJdeE0OkBj9T"
 
 
@@ -93,13 +98,29 @@ class MaeckerWindowLockTests(unittest.TestCase):
             "Reschedule Needed": 2,
             "One Legger": 1,
         }
-        self.assertEqual(sum(stage_counts.values()), 120)
+        self.assertEqual(sum(stage_counts.values()), MAECKER_COMPLETED)
         self.assertEqual(sc_overview.completed_sale_count(stage_counts), MAECKER_SALES)
         self.assertEqual(
             sc_overview.close_rate_on_demos(MAECKER_SALES, MAECKER_DEMOS),
             MAECKER_CLOSE_RATE,
         )
-        self.assertNotEqual(sc_overview.close_rate_on_demos(6, MAECKER_DEMOS), MAECKER_CLOSE_RATE)
+        self.assertNotEqual(
+            sc_overview.completed_sale_count(stage_counts),
+            MAECKER_AUGUST_SOLD_DATE,
+        )
+        self.assertNotEqual(
+            sc_overview.completed_sale_count(stage_counts),
+            MAECKER_FULL_WINDOW_SOLD_DATE_CONTACTS,
+        )
+        self.assertNotEqual(
+            sc_overview.close_rate_on_demos(MAECKER_AUGUST_SOLD_DATE, MAECKER_DEMOS),
+            MAECKER_CLOSE_RATE,
+        )
+        self.assertEqual(
+            sc_overview.close_rate_on_demos(MAECKER_FULL_WINDOW_SOLD_DATE_CONTACTS, MAECKER_DEMOS),
+            50.0,
+        )
+        self.assertNotEqual(50.0, MAECKER_CLOSE_RATE)
         self.assertEqual(sc_overview.close_rate_on_demos(28, MAECKER_DEMOS), 37.8)
         self.assertIsNone(sc_overview.close_rate_on_demos(MAECKER_SALES, 0))
 
@@ -132,3 +153,13 @@ class OverviewContractTests(unittest.TestCase):
         self.assertIn(SOLD_DATE_FIELD_ID, SALES_CANCELLATIONS_SRC)
         self.assertNotIn("completed_sale_count", SALES_SRC)
         self.assertNotIn("is_completed_sale_outcome_bucket", SALES_SRC)
+
+    def test_owner_is_assigned_to_and_occurred_at_is_not_recomputed(self):
+        self.assertIn('owner = compact_str(opp.get("assignedTo"))', SC_OVERVIEW_SRC)
+        self.assertIn('.where("appointmentOccurredAt", ">=", start_utc)', SC_OVERVIEW_SRC)
+        self.assertIn('.where("appointmentOccurredAt", "<", end_utc)', SC_OVERVIEW_SRC)
+        self.assertIn('if disposition == "Sit":', SC_OVERVIEW_SRC)
+        self.assertNotIn("sit_timestamp", SC_OVERVIEW_SRC)
+        self.assertNotIn("frozen_sit", SC_OVERVIEW_SRC)
+        self.assertNotIn("dispositionDate", SC_OVERVIEW_SRC)
+        self.assertNotIn("appointmentOccurredAt =", SC_OVERVIEW_SRC)

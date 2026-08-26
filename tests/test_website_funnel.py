@@ -1,1 +1,3 @@
-LOAD_FROM_/workspace/happy-solar-reporting/tests/test_website_funnel.py
+# -*- coding: utf-8 -*-
+
+"""Website Funnel — completed-form contract. Isolated from sales/demo/opps."""

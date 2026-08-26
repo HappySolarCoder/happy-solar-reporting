@@ -10,8 +10,10 @@ Purpose:
 - Default: company overview (all reps).
 
 Canonical metric alignment:
-- Completed appointment outcomes / Opps Ran / Demos use appointmentOccurredAt windows.
-- Sales use Sold Date windows.
+- Completed appointment outcomes / Opps Ran / Demos / Summary Sales use appointmentOccurredAt windows.
+- Summary Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie).
+- Two-Touch stays on Sold Date windows.
+- Company Sales (/api/metrics/sales, P9oBjgbZjJdeE0OkBj9T) stay on Contact Sold Date. This page does not change that contract.
 """
 
 from __future__ import annotations
@@ -180,6 +182,20 @@ def normalize_stage_text(value: Any) -> str:
     while "  " in text:
         text = text.replace("  ", " ")
     return text
+
+
+def is_completed_sale_outcome_bucket(label: Any) -> bool:
+    """Pie buckets that count as Consultant Overview Summary Sales."""
+    stage_low = normalize_stage_text(label)
+    return stage_low in {"sold", "sale cancelled", "sale canceled"}
+
+
+def completed_sale_count(stage_counts: dict[str, int]) -> int:
+    return sum(int(value or 0) for label, value in stage_counts.items() if is_completed_sale_outcome_bucket(label))
+
+
+def close_rate_on_demos(sales: int, demos: int) -> float | None:
+    return round((sales / demos) * 100, 1) if demos > 0 else None
 
 
 def is_new_appointment_stage(stage_name: Any) -> bool:
@@ -805,6 +821,8 @@ def build_payload(
             owner_rows[owner]["ran"] += 1
         if disposition == "Sit":
             owner_rows[owner]["demos"] += 1
+        if is_completed_sale_outcome_bucket(outcome_bucket):
+            owner_rows[owner]["sales"] += 1
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
@@ -823,15 +841,6 @@ def build_payload(
         if not sold_date_in_window(contact, touch_start_local, touch_end_local):
             continue
 
-        if owner not in owner_rows:
-            owner_rows[owner] = {
-                "owner_id": owner,
-                "owner": resolve_owner_name(opp, owner, user_names),
-                "team": owner_directory.get(owner, {}).get("team", ""),
-                "ran": 0,
-                "demos": 0,
-                "sales": 0,
-            }
         if owner not in touch_rows:
             touch_rows[owner] = {
                 "owner_id": owner,
@@ -843,7 +852,6 @@ def build_payload(
                 "stale_touch_opps": 0,
                 "oldest_touch_days": 0,
             }
-        owner_rows[owner]["sales"] += 1
 
         opp_id = compact_str(opp.get("id") or doc.id)
         history_rows = stage_history_by_opp.get(opp_id, [])
@@ -905,7 +913,7 @@ def build_payload(
         demos = int(row["demos"])
         sales = int(row["sales"])
         opp2 = round((sales / ran) * 100, 1) if ran > 0 else None
-        close_rate = round((sales / demos) * 100, 1) if demos > 0 else None
+        close_rate = close_rate_on_demos(sales, demos)
         rows.append(
             {
                 **row,
@@ -944,10 +952,10 @@ def build_payload(
         "completed": sum(stage_counts.values()),
         "opps_ran": sum(int(r["ran"]) for r in rows),
         "demos": sum(int(r["demos"]) for r in rows),
-        "sales": sum(int(r["sales"]) for r in rows),
+        "sales": completed_sale_count(stage_counts),
     }
     totals["opp2prelim"] = round((totals["sales"] / totals["opps_ran"]) * 100, 1) if totals["opps_ran"] > 0 else None
-    totals["close_rate_on_demos"] = round((totals["sales"] / totals["demos"]) * 100, 1) if totals["demos"] > 0 else None
+    totals["close_rate_on_demos"] = close_rate_on_demos(totals["sales"], totals["demos"])
     touch_totals = {
         "two_touch_closes": sum(int(r["two_touch_closes"]) for r in touch_table),
         "sales_total": sum(int(r["sales_total"]) for r in touch_table),
@@ -1414,7 +1422,7 @@ def render_html(
 
       <div class="card span-4">
         <div class="card-title">Summary</div>
-        <div class="meta">Sales and Two-Touch stay on Sold Date. Opps Ran and Demos stay on appointmentOccurredAt.</div>
+        <div class="meta">Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie). Opps Ran, Demos, and Sales stay on appointmentOccurredAt. Two-Touch stays on Sold Date.</div>
         <div class="kpi-grid">
           <div class="kpi"><div class="label">Opps Ran</div><div id="kpiRan" class="kpi-value">—</div></div>
           <div class="kpi"><div class="label">Demos</div><div id="kpiDemos" class="kpi-value">—</div></div>
@@ -1426,7 +1434,7 @@ def render_html(
 
       <div class="card span-12">
         <div class="card-title">Owner Performance</div>
-        <div class="meta">Like the sales dashboard, plus demos and close rate on demos.</div>
+        <div class="meta">Sales and close rate use completed-appointment Sold + Sale Cancelled, not company Sold Date sales.</div>
         <div class="tablewrap">
           <table>
             <thead>

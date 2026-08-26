@@ -32,7 +32,13 @@ def _load_metric():
         raise ImportError(f"Cannot load website_funnel metric from {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    patch_path = Path(__file__).resolve().parent / "metrics" / "funnel_test_address.py"
+    pspec = importlib.util.spec_from_file_location("hs_funnel_test_address", patch_path)
+    if pspec is None or pspec.loader is None:
+        return module
+    patch = importlib.util.module_from_spec(pspec)
+    pspec.loader.exec_module(patch)
+    return patch.install(module)
 
 
 metric = _load_metric()

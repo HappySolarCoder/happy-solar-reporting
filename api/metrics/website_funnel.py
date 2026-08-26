@@ -193,3 +193,299 @@ EMPTY_PAGE_BUCKET = {
     "starts": 0,
     "completed_forms": 0,
 }
+
+
+def get_db() -> firestore.Client:
+    creds_json = os.environ.get(FIREBASE_SERVICE_ACCOUNT_JSON_ENV)
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    database_id = os.environ.get("FIRESTORE_DATABASE_ID")
+
+    if not (creds_json and project_id and database_id):
+        missing = [
+            k
+            for k in (FIREBASE_SERVICE_ACCOUNT_JSON_ENV, "GCP_PROJECT_ID", "FIRESTORE_DATABASE_ID")
+            if not os.environ.get(k)
+        ]
+        raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
+
+    creds_dict = json.loads(creds_json)
+    creds = service_account.Credentials.from_service_account_info(creds_dict)
+    return firestore.Client(project=project_id, database=database_id, credentials=creds)
+
+
+def ny_now() -> datetime:
+    return datetime.now(ZoneInfo(TIMEZONE_NAME))
+
+
+def yesterday_ny_date() -> str:
+    return (ny_now().date() - timedelta(days=1)).isoformat()
+
+
+def parse_date_ymd(value: str | None) -> tuple[int, int, int] | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        year, month, day = [int(part) for part in value.strip().split("-")]
+        datetime(year, month, day)
+        return year, month, day
+    except Exception:
+        return None
+
+
+def resolve_query_date(value: str | None) -> str:
+    text = compact_str(value).casefold()
+    if not text or text == "yesterday":
+        return yesterday_ny_date()
+    parsed = parse_date_ymd(value)
+    if not parsed:
+        raise ValueError("Invalid date; expected YYYY-MM-DD or yesterday")
+    year, month, day = parsed
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def ny_calendar_day_window(date_ymd: str) -> dict[str, str]:
+    parsed = parse_date_ymd(date_ymd)
+    if not parsed:
+        raise ValueError("Invalid date; expected YYYY-MM-DD")
+    year, month, day = parsed
+    tz = ZoneInfo(TIMEZONE_NAME)
+    start = datetime(year, month, day, 0, 0, 0, tzinfo=tz)
+    end = datetime(year, month, day, 23, 59, 59, 999999, tzinfo=tz)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "timezone": TIMEZONE_NAME,
+        "kind": "calendar_day",
+    }
+
+
+def month_dates(year: int, month: int) -> list[str]:
+    last = monthrange(year, month)[1]
+    return [f"{year:04d}-{month:02d}-{day:02d}" for day in range(1, last + 1)]
+
+
+def compact_str(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def normalize_host_name(raw: Any) -> str:
+    text = compact_str(raw).casefold()
+    if not text:
+        return ""
+    if "://" in text or text.startswith("//"):
+        try:
+            parsed = urlparse(text if "://" in text else f"https:{text}")
+            text = compact_str(parsed.hostname).casefold()
+        except Exception:
+            text = text.split("/")[0]
+    text = text.split("/")[0]
+    if "@" in text:
+        text = text.split("@")[-1]
+    if text.startswith("[") and "]" in text:
+        text = text[1 : text.index("]")]
+    else:
+        text = text.split(":")[0]
+    if text.startswith("www.") and text not in LIVE_TOTAL_HOSTS:
+        # keep www.happyslr.com as-is; do not promote other www hosts
+        pass
+    return text.rstrip(".")
+
+
+def classify_host(raw: Any) -> str:
+    """Return total | wny | excluded. Allowlist only — everything else is dropped."""
+    host = normalize_host_name(raw)
+    if host in LIVE_TOTAL_HOSTS:
+        return "total"
+    if host in LIVE_WNY_HOSTS:
+        return "wny"
+    return "excluded"
+
+
+def _flag_true(values: Any) -> bool:
+    if values is None:
+        return False
+    if isinstance(values, (list, tuple)):
+        parts = values
+    else:
+        parts = [values]
+    for raw in parts:
+        text = compact_str(raw).casefold()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _is_internal_traffic_type(value: Any) -> bool:
+    return compact_str(value).casefold() == "internal"
+
+
+def path_from_page_location(raw: Any) -> str:
+    text = compact_str(raw)
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text if "://" in text else f"https://dummy{text if text.startswith('/') else '/' + text}")
+        return parsed.path or "/"
+    except Exception:
+        return text
+
+
+def page_location_flags(raw: Any) -> dict[str, bool]:
+    """Read URL/session flags from pageLocation. Missing param is not a flag."""
+    text = compact_str(raw)
+    out = {"internal": False, "debug_mode": False, "traffic_type_internal": False}
+    if not text:
+        return out
+    try:
+        parsed = urlparse(text if "://" in text else f"https://dummy{text if text.startswith('/') else '/' + text}")
+        query = parse_qs(parsed.query, keep_blank_values=True)
+    except Exception:
+        return out
+    if _flag_true(query.get("internal")):
+        out["internal"] = True
+    if _flag_true(query.get("debug_mode")) or _flag_true(query.get("debugMode")):
+        out["debug_mode"] = True
+    traffic = compact_str((query.get("traffic_type") or query.get("trafficType") or [""])[0])
+    if _is_internal_traffic_type(traffic):
+        out["traffic_type_internal"] = True
+    return out
+
+
+def _normalize_address_haystack(value: Any) -> str:
+    """Collapse whitespace/punctuation and URL encoding for address matching."""
+    text = compact_str(value)
+    if not text:
+        return ""
+    try:
+        text = unquote(text.replace("+", " "))
+    except Exception:
+        text = text.replace("+", " ")
+    cleaned = []
+    for ch in text:
+        cleaned.append(ch if ch.isalnum() or ch.isspace() else " ")
+    return compact_str("".join(cleaned)).casefold()
+
+
+def is_test_address(value: Any) -> bool:
+    """True for 24 Hawkstone Way; 124 Hawkstone Way is not a match."""
+    haystack = _normalize_address_haystack(value)
+    if not haystack:
+        return False
+    return bool(TEST_ADDRESS_PATTERN.search(haystack))
+
+
+def exclusion_reason(
+    *,
+    host_name: Any,
+    page_location: Any = None,
+    debug_mode: Any = None,
+    traffic_type: Any = None,
+    internal: Any = None,
+    address: Any = None,
+    estimate_address: Any = None,
+    page_path: Any = None,
+    custom_event_address: Any = None,
+) -> str | None:
+    """Why a row is dropped. Host allowlist first (drops the known Aug 19 preview form)."""
+    if classify_host(host_name) == "excluded":
+        return "host"
+    if _flag_true(debug_mode):
+        return "debug_mode"
+    if _is_internal_traffic_type(traffic_type) or _flag_true(internal):
+        return "internal"
+    flags = page_location_flags(page_location)
+    if flags["debug_mode"]:
+        return "debug_mode"
+    if flags["internal"] or flags["traffic_type_internal"]:
+        return "internal"
+    for candidate in (address, estimate_address, custom_event_address, page_location, page_path):
+        if is_test_address(candidate):
+            return "test_address"
+    return None
+
+
+def empty_by_page() -> dict[str, dict[str, int]]:
+    return {group: dict(EMPTY_PAGE_BUCKET) for group in PAGE_GROUPS}
+
+
+def normalize_page_group(raw: Any) -> str:
+    text = compact_str(raw).casefold().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "home": "home",
+        "/": "home",
+        "city_buffalo": "city_buffalo",
+        "buffalo": "city_buffalo",
+        "city_rochester": "city_rochester",
+        "rochester": "city_rochester",
+        "city_syracuse": "city_syracuse",
+        "syracuse": "city_syracuse",
+        "ny_incentives": "ny_incentives",
+        "nyincentives": "ny_incentives",
+        "calculator": "calculator",
+        "calculator_direct": "calculator",
+        "contact_me": "contact_me",
+        "contactme": "contact_me",
+        "other": "other",
+    }
+    if text in aliases:
+        return aliases[text]
+    return page_group_from_landing(raw)
+
+
+def page_group_from_landing(raw: Any) -> str:
+    text = compact_str(raw)
+    if not text:
+        return "other"
+    try:
+        parsed = urlparse(text if "://" in text else f"https://x{text if text.startswith('/') else '/' + text}")
+        path = (parsed.path or "/").casefold()
+    except Exception:
+        path = text.casefold()
+    path = path.split("?")[0].rstrip("/") or "/"
+    if path in {"/", "/home", "/index", "/index.html"}:
+        return "home"
+    if "buffalo" in path:
+        return "city_buffalo"
+    if "rochester" in path:
+        return "city_rochester"
+    if "syracuse" in path:
+        return "city_syracuse"
+    if "ny-incentives" in path or "ny_incentives" in path or "nyincentives" in path:
+        return "ny_incentives"
+    if "contact-me" in path or "contact_me" in path or path.endswith("/contact"):
+        return "contact_me"
+    if "calculator" in path:
+        return "calculator"
+    return "other"
+
+
+def ratio(numerator: int | None, denominator: int | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def score_vs_goal(value: float | None, goal: float | None, *, higher_is_better: bool = True) -> str:
+    if value is None or goal is None:
+        return "unknown"
+    if higher_is_better:
+        return "hit" if value + 1e-12 >= goal else "miss"
+    return "hit" if value - 1e-12 <= goal else "miss"
+
+
+def drop_off(from_count: int | None, to_count: int | None) -> float | None:
+    if from_count is None or to_count is None or from_count <= 0:
+        return None
+    return max(float(from_count - to_count) / float(from_count), 0.0)
+
+
+def sum_completed_forms(estimate_submit: int | None, wix_form_submits: int | None) -> int | None:
+    if estimate_submit is None and wix_form_submits is None:
+        return None
+    return int(estimate_submit or 0) + int(wix_form_submits or 0)
+
+
+def ga4_credentials_available() -> bool:
+    property_id = compact_str(os.environ.get(GA4_PROPERTY_ID_ENV))
+    creds_json = os.environ.get(GA4_SERVICE_ACCOUNT_JSON_ENV) or os.environ.get(FIREBASE_SERVICE_ACCOUNT_JSON_ENV)
+    return bool(property_id and creds_json)

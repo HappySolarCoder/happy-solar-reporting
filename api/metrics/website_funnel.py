@@ -60,6 +60,11 @@ Host / QA exclusions (lock):
 - Drop events where debug_mode is true (dimension or pageLocation).
 - Drop events where traffic_type=internal or URL/session flag internal=1
   (pageLocation query or dimension, if present).
+- Drop events where 24 Hawkstone Way appears on address, estimate_address,
+  customEvent:address (if already on the row), pageLocation, or pagePath.
+  Evan test address lock 2026-08-26. Event-level grain, same as debug/internal.
+  Do not add address / estimate_address / customEvent:address / sessionId
+  as Data API dimensions. One runReport per day.
 - debug_mode and traffic_type are not standard Data API dimensions.
   pageLocation can see ?internal=1 when Designer adds that live flag.
   Do not invent a tester IP list.
@@ -68,16 +73,19 @@ Host / QA exclusions (lock):
 - sessions is kept equal to visits_total (scoreboard / yesterday).
 - completed_forms = estimate_submit + wix_form_submit after those filters.
   Preview-host QA forms (Aug 19 estimate_* on *.vercel.app) do not count.
+  24 Hawkstone Way test-address rows never count in completed_forms or the
+  2-week form-goal score that reads completed_forms from this rollup.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
@@ -109,6 +117,9 @@ EXCLUDED_HOST_EXAMPLES = (
 GA4_REPORT_DIMENSIONS = ("eventName", "pagePath", "hostName", "pageLocation")
 # Not standard Data API dimensions today. pageLocation can see ?internal=1.
 GA4_MISSING_EXCLUSION_DIMENSIONS = ("debug_mode", "traffic_type")
+TEST_ADDRESS_STREET = "24 hawkstone way"
+TEST_ADDRESS_LOCK_DATE = "2026-08-26"
+TEST_ADDRESS_PATTERN = re.compile(r"(?<!\d)24 hawkstone way")
 
 PAGE_GROUPS: tuple[str, ...] = (
     "home",
@@ -337,6 +348,27 @@ def page_location_flags(raw: Any) -> dict[str, bool]:
     return out
 
 
+def _normalize_address_haystack(value: Any) -> str:
+    text = compact_str(value)
+    if not text:
+        return ""
+    try:
+        text = unquote(text.replace("+", " "))
+    except Exception:
+        text = text.replace("+", " ")
+    cleaned = []
+    for ch in text:
+        cleaned.append(ch if ch.isalnum() or ch.isspace() else " ")
+    return compact_str("".join(cleaned)).casefold()
+
+
+def is_test_address(value: Any) -> bool:
+    haystack = _normalize_address_haystack(value)
+    if not haystack:
+        return False
+    return bool(TEST_ADDRESS_PATTERN.search(haystack))
+
+
 def exclusion_reason(
     *,
     host_name: Any,
@@ -344,6 +376,10 @@ def exclusion_reason(
     debug_mode: Any = None,
     traffic_type: Any = None,
     internal: Any = None,
+    address: Any = None,
+    estimate_address: Any = None,
+    page_path: Any = None,
+    custom_event_address: Any = None,
 ) -> str | None:
     """Why a row is dropped. Host allowlist first (drops the known Aug 19 preview form)."""
     if classify_host(host_name) == "excluded":
@@ -357,6 +393,9 @@ def exclusion_reason(
         return "debug_mode"
     if flags["internal"] or flags["traffic_type_internal"]:
         return "internal"
+    for candidate in (address, estimate_address, custom_event_address, page_location, page_path):
+        if is_test_address(candidate):
+            return "test_address"
     return None
 
 
@@ -572,6 +611,9 @@ def parse_ga4_report_rows(report: dict[str, Any] | None, dimension_names: tuple[
                 "debug_mode": values.get("debug_mode") or values.get("customEvent:debug_mode"),
                 "traffic_type": values.get("traffic_type") or values.get("customEvent:traffic_type"),
                 "internal": values.get("internal") or values.get("customEvent:internal"),
+                "address": values.get("address"),
+                "estimate_address": values.get("estimate_address"),
+                "custom_event_address": values.get("customEvent:address"),
                 "count": count,
             }
         )
@@ -579,12 +621,12 @@ def parse_ga4_report_rows(report: dict[str, Any] | None, dimension_names: tuple[
 
 
 def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Apply host allowlist + debug/internal flags. Never invent traffic."""
+    """Apply host allowlist + debug/internal/test_address flags. Never invent traffic."""
     totals = {field: 0 for field in EVENT_COUNT_FIELDS.values()}
     visits_total = 0
     visits_wny = 0
     by_page = empty_by_page()
-    dropped = {"host": 0, "debug_mode": 0, "internal": 0}
+    dropped = {"host": 0, "debug_mode": 0, "internal": 0, "test_address": 0}
 
     for row in rows or []:
         event_name = compact_str(row.get("event_name"))
@@ -603,6 +645,10 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             debug_mode=row.get("debug_mode"),
             traffic_type=row.get("traffic_type"),
             internal=row.get("internal"),
+            address=row.get("address"),
+            estimate_address=row.get("estimate_address"),
+            page_path=page_path,
+            custom_event_address=row.get("custom_event_address"),
         )
         if reason:
             dropped[reason] = dropped.get(reason, 0) + count
@@ -652,6 +698,9 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "data_api_dimensions": list(GA4_REPORT_DIMENSIONS),
             "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
             "page_view_held": True,
+            "test_address": TEST_ADDRESS_STREET,
+            "test_address_lock_date": TEST_ADDRESS_LOCK_DATE,
+            "test_address_grain": "event",
         },
     }
 
@@ -1114,12 +1163,14 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
             "visits_total": "page_view on www.happyslr.com + happyslr.com after host allowlist",
             "visits_wny": "page_view on wny.happyslr.com after host allowlist",
             "sessions": "Same as visits_total. page_view eventCount held; not session_start.",
-            "completed_forms": "estimate_submit + wix_form_submit on live hosts only, after debug/internal filters.",
+            "completed_forms": "estimate_submit + wix_form_submit on live hosts only, after debug/internal/test_address filters.",
             "exclusions": {
                 "hosts": sorted(LIVE_FORM_HOSTS),
                 "drop": ["*.vercel.app", "localhost", "yadmada.com", "gtm-msr.appspot.com", "everything else"],
                 "debug_mode": "Dropped when present on the row or pageLocation. Not a standard Data API dimension.",
                 "internal": "Dropped when traffic_type=internal or internal=1. pageLocation can see ?internal=1. traffic_type is not a standard Data API dimension.",
+                "test_address": "Dropped when 24 Hawkstone Way appears on address, estimate_address, customEvent:address (if already on the row), pageLocation, or pagePath. Event-level grain. Not added as a Data API dimension.",
+                "test_address_lock_date": TEST_ADDRESS_LOCK_DATE,
                 "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
                 "no_tester_ip_list": True,
             },

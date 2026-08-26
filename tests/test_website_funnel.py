@@ -914,6 +914,126 @@ class WebsiteFunnelHostSplitTests(unittest.TestCase):
         self.assertNotIn("ip_allowlist", FUNNEL_SRC)
         self.assertNotIn("ipAddress", FUNNEL_SRC)
 
+    def test_hawkstone_test_address_drops_event_level_rows(self):
+        out = funnel.summarize_ga4_event_rows(
+            [
+                {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/", "count": 10},
+                {
+                    "event_name": "page_view",
+                    "host_name": "www.happyslr.com",
+                    "page_path": "/calculator",
+                    "page_location": "https://www.happyslr.com/calculator?address=24+Hawkstone+Way",
+                    "count": 3,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "address": "24 hawkstone way",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "address": "24 Hawkstone Way",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "address": "24 Hawkstone Way, Buffalo, NY 14221",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "address": "124 Hawkstone Way",
+                    "count": 1,
+                },
+                {
+                    "event_name": "estimate_submit",
+                    "host_name": "wny.happyslr.com",
+                    "page_path": "/calculator",
+                    "page_location": "https://wny.happyslr.com/calculator",
+                    "count": 1,
+                },
+            ]
+        )
+        self.assertEqual(out["visits_total"], 10)
+        self.assertEqual(out["sessions"], 10)
+        self.assertEqual(out["estimate_submit"], 2)
+        self.assertEqual(out["completed_forms"], 2)
+        self.assertEqual(out["dropped"]["test_address"], 6)
+        self.assertEqual(out["filters"]["test_address"], "24 hawkstone way")
+        self.assertEqual(out["filters"]["test_address_lock_date"], "2026-08-26")
+        self.assertEqual(out["filters"]["test_address_grain"], "event")
+        self.assertEqual(
+            funnel.exclusion_reason(host_name="wny.happyslr.com", address="24 HAWKSTONE WAY"),
+            "test_address",
+        )
+        self.assertEqual(
+            funnel.exclusion_reason(host_name="wny.happyslr.com", address="  24   Hawkstone   Way  "),
+            "test_address",
+        )
+        self.assertEqual(
+            funnel.exclusion_reason(
+                host_name="wny.happyslr.com",
+                address="24 Hawkstone Way, Buffalo, NY 14221",
+            ),
+            "test_address",
+        )
+        self.assertEqual(
+            funnel.exclusion_reason(
+                host_name="www.happyslr.com",
+                page_location="https://www.happyslr.com/calculator?address=24+Hawkstone+Way",
+            ),
+            "test_address",
+        )
+        self.assertIsNone(funnel.exclusion_reason(host_name="wny.happyslr.com", address="124 Hawkstone Way"))
+        self.assertIsNone(
+            funnel.exclusion_reason(
+                host_name="wny.happyslr.com",
+                page_location="https://wny.happyslr.com/calculator",
+            )
+        )
+        self.assertEqual(inspect.getsource(funnel.fetch_ga4_event_counts).count("runReport"), 1)
+        for name in ("address", "estimate_address", "customEvent:address", "sessionId"):
+            self.assertNotIn(name, funnel.GA4_REPORT_DIMENSIONS)
+        parsed = funnel.parse_ga4_report_rows(
+            {
+                "rows": [
+                    {
+                        "dimensionValues": [
+                            {"value": "estimate_submit"},
+                            {"value": "/calculator"},
+                            {"value": "wny.happyslr.com"},
+                            {"value": "https://wny.happyslr.com/calculator"},
+                            {"value": "24 Hawkstone Way"},
+                            {"value": "24 hawkstone way"},
+                            {"value": "24 Hawkstone Way, Buffalo, NY 14221"},
+                        ],
+                        "metricValues": [{"value": "1"}],
+                    }
+                ]
+            },
+            (
+                "eventName",
+                "pagePath",
+                "hostName",
+                "pageLocation",
+                "address",
+                "estimate_address",
+                "customEvent:address",
+            ),
+        )
+        self.assertEqual(parsed[0]["address"], "24 Hawkstone Way")
+        self.assertEqual(parsed[0]["estimate_address"], "24 hawkstone way")
+        self.assertEqual(parsed[0]["custom_event_address"], "24 Hawkstone Way, Buffalo, NY 14221")
+        self.assertEqual(funnel.GA4_REPORT_DIMENSIONS, ("eventName", "pagePath", "hostName", "pageLocation"))
+
 
 if __name__ == "__main__":
     unittest.main()

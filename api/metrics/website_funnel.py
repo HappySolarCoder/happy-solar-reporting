@@ -79,3 +79,46 @@ Host / QA exclusions (lock):
   estimate_address_complete, estimate_bill_complete, estimate_submit,
   wix_form_submit, completed_forms, or the 2-week form-goal score.
 """
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from calendar import monthrange
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
+from zoneinfo import ZoneInfo
+
+from google.cloud import firestore
+from google.oauth2 import service_account
+
+METRIC_NAME = "Website Funnel"
+TIMEZONE_NAME = "America/New_York"
+DAILY_COLLECTION = "web_funnel_daily_v1"
+
+GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
+GA4_PROPERTY_ID = "408492342"
+GA4_PROPERTY_ID_ENV = "GA4_PROPERTY_ID"
+GA4_SERVICE_ACCOUNT_JSON_ENV = "GA4_SERVICE_ACCOUNT_JSON"
+FIREBASE_SERVICE_ACCOUNT_JSON_ENV = "FIREBASE_SERVICE_ACCOUNT_JSON"
+
+HOST_WWW = "www.happyslr.com"
+HOST_APEX = "happyslr.com"
+HOST_WNY = "wny.happyslr.com"
+LIVE_TOTAL_HOSTS = frozenset({HOST_WWW, HOST_APEX})
+LIVE_WNY_HOSTS = frozenset({HOST_WNY})
+LIVE_FORM_HOSTS = LIVE_TOTAL_HOSTS | LIVE_WNY_HOSTS
+EXCLUDED_HOST_EXAMPLES = (
+    "yadmada.com",
+    "www.yadmada.com",
+    "vercel.app",
+    "localhost",
+    "gtm-msr.appspot.com",
+)
+GA4_REPORT_DIMENSIONS = ("eventName", "pagePath", "hostName", "pageLocation")
+GA4_MISSING_EXCLUSION_DIMENSIONS = ("debug_mode", "traffic_type")
+TEST_ADDRESS_STREET = "24 hawkstone way"
+TEST_ADDRESS_LOCK_DATE = "2026-08-26"
+TEST_ADDRESS_PATTERN = re.compile(r"(?<!\d)24 hawkstone way")

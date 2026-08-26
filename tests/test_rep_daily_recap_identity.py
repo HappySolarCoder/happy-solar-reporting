@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 
-"""Rep Daily Recap identity join — April 8/24 lock.
+"""Rep Daily Recap identity join — April 8/24 warehouse lock.
 
-Live chi 2026-08-24: owner IJrbhufMjsmwdxf252sb April Cornell-DeAngelis had
-powerline_dials 0 / doors_knocked 0. unmapped_activity.powerline had
-April Cornell-DeAngelis 40. unmapped_activity.raydar had April Cornell 17.
+Warehouse + live chi 2026-08-24:
+- Owner IJrbhufMjsmwdxf252sb April Cornell-DeAngelis: Sit 1, powerline 0, doors 0.
+- Unmapped Powerline "April Cornell-DeAngelis" 40.
+- Unmapped Raydar "April Cornell" 17 (10 not-home, 5 not-interested,
+  2 spoke-with-non-homeowner). Not pins. Not Jeff's ~20.
+- April is NOT in roster_people_v1 (23 rows: 9 rep / 14 setter).
+- ghl_users_v2 IJrbhufMjsmwdxf252sb email april@happyslr.com.
+- raydar_users_v1 jLZoREmBADZmWjoUIiwdAf2BnsE3 name April Cornell,
+  same email, role closer.
 
-Do not invent Jeff's ~20 doors. doors_knocked is the mapped Raydar grain.
+Do not invent 20 doors. Do not dump setters onto owner rows.
 """
 
 from __future__ import annotations
@@ -26,12 +32,15 @@ SALES_SRC = (API / "metrics" / "sales.py").read_text(encoding="utf-8")
 APRIL_OWNER_ID = "IJrbhufMjsmwdxf252sb"
 APRIL_OWNER_LABEL = "April Cornell-DeAngelis"
 APRIL_RAYDAR_LABEL = "April Cornell"
+APRIL_EMAIL = "april@happyslr.com"
+APRIL_RAYDAR_ID = "jLZoREmBADZmWjoUIiwdAf2BnsE3"
 WILLIAM_OWNER_ID = "0fhsjcmlntce0cpjyfhj"
 WILLIAM_LABEL = "William Breen"
 RUEBEN_OWNER_ID = "f4udrh1LuU0TEkF4ZFSj"
 POWERLINE_APRIL_DIALS = 40
 RAYDAR_APRIL_KNOCKS = 17
 POWERLINE_WILLIAM_DIALS = 56
+RAYDAR_SAWYER_KNOCKS = 125
 
 
 def _install_google_stubs() -> None:
@@ -61,23 +70,32 @@ recap = load_recap()
 
 
 def _roster_row(owner_id: str, label: str, **extra: str) -> dict[str, str]:
-    row = {
+    return {
         "owner_id": owner_id,
         "label": label,
         "team": extra.get("team", ""),
         "person_key": extra.get("person_key", ""),
         "raydar_user_id": extra.get("raydar_user_id", ""),
         "ghl_user_name": extra.get("ghl_user_name", ""),
+        "email": extra.get("email", ""),
     }
-    return row
 
 
-def _attribute(identities, alias_index, powerline_rows, raydar_rows):
+def _april_ghl_users() -> dict[str, dict[str, str]]:
+    return {
+        APRIL_OWNER_ID: {"name": APRIL_OWNER_LABEL, "email": APRIL_EMAIL},
+        RUEBEN_OWNER_ID: {"name": "Rueben Hand", "email": "rueben@happyslr.com"},
+        WILLIAM_OWNER_ID: {"name": WILLIAM_LABEL, "email": "wbreen@happyslr.com"},
+    }
+
+
+def _attribute(identities, alias_index, powerline_rows, raydar_rows, raydar_users=None):
     owners: dict[str, dict[str, int]] = {}
     unmapped_powerline: dict[str, int] = {}
     unmapped_raydar: dict[str, int] = {}
+    raydar_to_owner = recap.build_raydar_to_owner(identities, raydar_users or {})
 
-    def bump(bucket: dict[str, int], owner_id: str, field: str, count: int) -> None:
+    def bump(bucket: dict[str, dict[str, int]], owner_id: str, field: str, count: int) -> None:
         row = bucket.setdefault(owner_id, {"powerline_dials": 0, "doors_knocked": 0})
         row[field] += count
 
@@ -88,11 +106,6 @@ def _attribute(identities, alias_index, powerline_rows, raydar_rows):
         else:
             unmapped_powerline[label] = unmapped_powerline.get(label, 0) + count
 
-    raydar_to_owner = {
-        row["raydar_user_id"]: owner_id
-        for owner_id, row in identities.items()
-        if row.get("raydar_user_id")
-    }
     for label, count, actor_id in raydar_rows:
         owner_id = raydar_to_owner.get(actor_id) if actor_id else None
         if not owner_id:
@@ -118,19 +131,21 @@ class IdentityKeyTests(unittest.TestCase):
 
 
 class April824IdentityTests(unittest.TestCase):
-    def test_ghl_owner_bucket_joins_powerline_exact_and_raydar_short_name(self):
-        """Live bug: Powerline label equals owner_label but join only searched roster."""
-        user_names = {
-            APRIL_OWNER_ID: APRIL_OWNER_LABEL,
-            RUEBEN_OWNER_ID: "Rueben Hand",
-        }
-        # Rueben is on roster (8/25 mapped). April is not.
+    def test_on_page_owner_gets_powerline_40_and_raydar_17(self):
+        """April is not in roster. Join the GHL owner card already on the page."""
         roster = {
             RUEBEN_OWNER_ID: _roster_row(RUEBEN_OWNER_ID, "Rueben Hand", raydar_user_id="ray-rueben"),
         }
-        extra_labels = {APRIL_OWNER_ID: APRIL_OWNER_LABEL}
-        identities = recap.collect_owner_identities(roster, user_names, extra_labels)
+        identities = recap.collect_owner_identities(
+            roster,
+            extra_labels={APRIL_OWNER_ID: APRIL_OWNER_LABEL},
+            ghl_users=_april_ghl_users(),
+        )
         alias_index = recap.build_owner_alias_index(identities)
+        raydar_users = {
+            APRIL_RAYDAR_ID: {"name": APRIL_RAYDAR_LABEL, "email": APRIL_EMAIL},
+            "ray-sawyer": {"name": "Sawyer Vermeesch", "email": "sawyer@happyslr.com"},
+        }
 
         owners, unmapped_pl, unmapped_rd = _attribute(
             identities,
@@ -140,53 +155,53 @@ class April824IdentityTests(unittest.TestCase):
                 (WILLIAM_LABEL, POWERLINE_WILLIAM_DIALS),
             ],
             [
-                (APRIL_RAYDAR_LABEL, RAYDAR_APRIL_KNOCKS, "ray-april-short"),
-                ("Sawyer Vermeesch", 125, "ray-sawyer"),
+                (APRIL_RAYDAR_LABEL, RAYDAR_APRIL_KNOCKS, APRIL_RAYDAR_ID),
+                ("Sawyer Vermeesch", RAYDAR_SAWYER_KNOCKS, "ray-sawyer"),
             ],
+            raydar_users,
         )
 
         april = owners[APRIL_OWNER_ID]
         self.assertEqual(april["powerline_dials"], POWERLINE_APRIL_DIALS)
         self.assertEqual(april["doors_knocked"], RAYDAR_APRIL_KNOCKS)
+        self.assertNotEqual(april["doors_knocked"], 20)
         self.assertNotIn(APRIL_OWNER_LABEL, unmapped_pl)
         self.assertNotIn(APRIL_RAYDAR_LABEL, unmapped_rd)
+        self.assertNotIn(WILLIAM_OWNER_ID, owners)
+        self.assertEqual(unmapped_pl.get(WILLIAM_LABEL), POWERLINE_WILLIAM_DIALS)
+        self.assertEqual(unmapped_rd.get("Sawyer Vermeesch"), RAYDAR_SAWYER_KNOCKS)
 
-        william = owners[WILLIAM_OWNER_ID]
-        self.assertEqual(william["powerline_dials"], POWERLINE_WILLIAM_DIALS)
-        self.assertNotIn(WILLIAM_LABEL, unmapped_pl)
-
-        self.assertEqual(unmapped_rd.get("Sawyer Vermeesch"), 125)
-
-    def test_roster_without_role_rep_still_joins_raydar_user_id(self):
-        roster = {
-            APRIL_OWNER_ID: _roster_row(
-                APRIL_OWNER_ID,
-                APRIL_OWNER_LABEL,
-                raydar_user_id="ray-april",
-            ),
-        }
-        identities = recap.collect_owner_identities(roster, {}, None)
-        alias_index = recap.build_owner_alias_index(identities)
-        owners, unmapped_pl, unmapped_rd = _attribute(
-            identities,
-            alias_index,
-            [(APRIL_OWNER_LABEL, POWERLINE_APRIL_DIALS)],
-            [(APRIL_RAYDAR_LABEL, RAYDAR_APRIL_KNOCKS, "ray-april")],
+    def test_raydar_email_joins_even_without_name_match(self):
+        identities = recap.collect_owner_identities(
+            {},
+            extra_labels={APRIL_OWNER_ID: APRIL_OWNER_LABEL},
+            ghl_users=_april_ghl_users(),
         )
-        april = owners[APRIL_OWNER_ID]
-        self.assertEqual(april["powerline_dials"], POWERLINE_APRIL_DIALS)
-        self.assertEqual(april["doors_knocked"], RAYDAR_APRIL_KNOCKS)
-        self.assertEqual(unmapped_pl, {})
-        self.assertEqual(unmapped_rd, {})
+        mapping = recap.build_raydar_to_owner(
+            identities,
+            {APRIL_RAYDAR_ID: {"name": "Different Label", "email": APRIL_EMAIL}},
+        )
+        self.assertEqual(mapping[APRIL_RAYDAR_ID], APRIL_OWNER_ID)
 
-    def test_short_name_stays_unmapped_when_two_hyphenated_matches(self):
+    def test_setters_without_owner_card_stay_unmapped(self):
+        identities = recap.collect_owner_identities(
+            {RUEBEN_OWNER_ID: _roster_row(RUEBEN_OWNER_ID, "Rueben Hand")},
+            extra_labels={APRIL_OWNER_ID: APRIL_OWNER_LABEL},
+            ghl_users=_april_ghl_users(),
+        )
+        alias_index = recap.build_owner_alias_index(identities)
+        self.assertIsNone(recap.map_label_to_owner_fuzzy(WILLIAM_LABEL, alias_index, identities))
+        self.assertIsNone(recap.map_label_to_owner_fuzzy("Sawyer Vermeesch", alias_index, identities))
+        self.assertIsNone(recap.map_label_to_owner_fuzzy("Bo Hill", alias_index, identities))
+
+    def test_short_name_stays_on_exact_owner_when_two_matches(self):
         other_id = "otherAprilId00000001"
         identities = recap.collect_owner_identities(
             {
                 APRIL_OWNER_ID: _roster_row(APRIL_OWNER_ID, APRIL_OWNER_LABEL),
                 other_id: _roster_row(other_id, "April Cornell"),
             },
-            {},
+            None,
             None,
         )
         alias_index = recap.build_owner_alias_index(identities)
@@ -201,7 +216,7 @@ class April824IdentityTests(unittest.TestCase):
 
 
 class RosterLoadTests(unittest.TestCase):
-    def test_load_rep_roster_keeps_closer_without_role_rep(self):
+    def test_load_rep_roster_skips_setters_and_roleless_closers(self):
         class Snap:
             def __init__(self, doc_id: str, data: dict):
                 self.id = doc_id
@@ -218,16 +233,28 @@ class RosterLoadTests(unittest.TestCase):
                         {
                             "display_name": APRIL_OWNER_LABEL,
                             "ghl_user_id": APRIL_OWNER_ID,
-                            "raydar_user_id": "ray-april",
                             "role": "closer",
                         },
-                    )
+                    ),
+                    Snap(
+                        "breen-key",
+                        {
+                            "display_name": WILLIAM_LABEL,
+                            "ghl_user_id": WILLIAM_OWNER_ID,
+                            "role": "setter",
+                        },
+                    ),
+                    Snap(
+                        "rueben-key",
+                        {
+                            "display_name": "Rueben Hand",
+                            "ghl_user_id": RUEBEN_OWNER_ID,
+                            "role": "rep",
+                        },
+                    ),
                 ]
 
         class DB:
-            def __init__(self):
-                self.collection_name = ""
-
             def collection(self, name: str):
                 self.collection_name = name
                 return Collection()
@@ -235,14 +262,16 @@ class RosterLoadTests(unittest.TestCase):
         db = DB()
         loaded = recap.load_rep_roster(db, {})
         self.assertEqual(db.collection_name, "roster_people_v1")
-        self.assertEqual(loaded[APRIL_OWNER_ID]["label"], APRIL_OWNER_LABEL)
-        self.assertEqual(loaded[APRIL_OWNER_ID]["raydar_user_id"], "ray-april")
+        self.assertIn(RUEBEN_OWNER_ID, loaded)
+        self.assertNotIn(APRIL_OWNER_ID, loaded)
+        self.assertNotIn(WILLIAM_OWNER_ID, loaded)
 
-    def test_source_does_not_require_role_rep_for_identity(self):
-        self.assertNotIn('if role != "rep" and "rep" not in categories:', RECAP_SRC)
-        self.assertIn("ghl_user_id", RECAP_SRC)
-        self.assertIn("raydar_user_id", RECAP_SRC)
+    def test_source_keeps_role_rep_filter_and_on_page_join(self):
+        self.assertIn('if role != "rep" and "rep" not in categories:', RECAP_SRC)
+        self.assertIn("build_raydar_to_owner", RECAP_SRC)
+        self.assertIn("normalize_email", RECAP_SRC)
         self.assertIn("identity_name_keys", RECAP_SRC)
+        self.assertIn("owners already on the page", RECAP_SRC)
 
 
 class ContractGuardTests(unittest.TestCase):

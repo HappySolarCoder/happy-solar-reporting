@@ -11,10 +11,15 @@ Purpose:
   as a simple "worked yesterday" recap.
 
 Identity join (Powerline / Raydar -> owner row):
-- Prefer roster_people_v1.ghl_user_id / raydar_user_id / display_name.
-- Also index GHL user names, owner-bucket labels, and OWNER_NAME_OVERRIDES.
+- Roster reps (ghl_user_id / raydar_user_id / display_name) keep the existing
+  on-roster join. April 8/24 is not in roster_people_v1.
+- Also map onto owners already on the page (GHL assignedTo / owner_label).
+- Raydar actor id/email joins to ghl_users_v2 email when that GHL user
+  already has an owner card (april@happyslr.com).
 - Hyphenated last names accept an unambiguous first+last short form
-  ("April Cornell" -> "April Cornell-DeAngelis"). Do not invent knock counts.
+  ("April Cornell" -> "April Cornell-DeAngelis").
+- Do not create owner rows for roster setters (Breen, Sawyer, …) unless
+  they already have a GHL owner card. Do not invent knock counts.
 
 Window semantics:
 - Default window is yesterday in America/New_York.
@@ -29,6 +34,7 @@ Data sources:
   - ghl_pipelines_v2
   - ghl_users_v2
   - roster_people_v1
+  - raydar_users_v1
   - raydar_leads_v1
 - Powerline Firestore:
   - powerline_call_history
@@ -359,15 +365,41 @@ def contact_custom_field(contact: dict[str, Any] | None, field_id: str) -> Any:
     return None
 
 
-def user_name_lookup(db: firestore.Client) -> dict[str, str]:
-    names: dict[str, str] = {}
+def normalize_email(value: Any) -> str:
+    text = compact_str(value).lower()
+    return text if "@" in text else ""
+
+
+def load_ghl_user_directory(db: firestore.Client) -> dict[str, dict[str, str]]:
+    users: dict[str, dict[str, str]] = {}
     for snap in db.collection("ghl_users_v2").stream():
         row = snap.to_dict() or {}
         label = best_person_name(row)
+        email = normalize_email(row.get("email") or row.get("emailAddress") or row.get("userEmail"))
+        profile = {"name": label, "email": email}
         for key in {compact_str(row.get("id")), compact_str(row.get("userId")), compact_str(snap.id)}:
-            if key and label:
-                names[key] = label
-    return names
+            if key:
+                users[key] = profile
+    return users
+
+
+def user_name_lookup(db: firestore.Client) -> dict[str, str]:
+    return {
+        uid: row["name"]
+        for uid, row in load_ghl_user_directory(db).items()
+        if row.get("name")
+    }
+
+
+def load_raydar_user_directory(db: firestore.Client) -> dict[str, dict[str, str]]:
+    users: dict[str, dict[str, str]] = {}
+    for snap in db.collection("raydar_users_v1").stream():
+        row = snap.to_dict() or {}
+        users[compact_str(snap.id)] = {
+            "name": compact_str(row.get("name")) or snap.id,
+            "email": normalize_email(row.get("email") or row.get("emailAddress") or row.get("userEmail")),
+        }
+    return users
 
 
 def pipeline_name_lookup(db: firestore.Client) -> tuple[dict[str, str], dict[str, str]]:
@@ -408,15 +440,18 @@ def resolve_owner_name(opp: dict[str, Any], owner_id: str, user_names: dict[str,
 
 
 def load_rep_roster(db: firestore.Client, user_names: dict[str, str]) -> dict[str, dict[str, str]]:
-    """Identity rows from roster_people_v1 keyed by ghl_user_id.
+    """Roster reps keyed by ghl_user_id. Setters stay out of this index.
 
-    Do not require role=rep. Closers on the recap are GHL opportunity owners;
-    some roster docs omit role/categories even when ghl_user_id and raydar_user_id
-    are populated. People without a GHL owner id cannot join to an owner row.
+    Warehouse 2026-08-24: roster_people_v1 has 23 rows (9 rep / 14 setter).
+    April Cornell-DeAngelis is in neither. Do not promote setters to owner rows.
     """
     reps: dict[str, dict[str, str]] = {}
     for snap in db.collection("roster_people_v1").stream():
         row = snap.to_dict() or {}
+        role = compact_str(row.get("role")).lower()
+        categories = [compact_str(item).lower() for item in (row.get("categories") or []) if compact_str(item)]
+        if role != "rep" and "rep" not in categories:
+            continue
         owner_id = compact_str(row.get("ghl_user_id") or row.get("ghlUserId"))
         if not owner_id:
             continue
@@ -430,32 +465,41 @@ def load_rep_roster(db: firestore.Client, user_names: dict[str, str]) -> dict[st
             "person_key": compact_str(row.get("person_key") or snap.id),
             "raydar_user_id": compact_str(row.get("raydar_user_id")),
             "ghl_user_name": compact_str(row.get("ghl_user_name")) or user_names.get(owner_id, ""),
+            "email": normalize_email(row.get("email") or row.get("ghl_email")),
         }
     return reps
 
 
 def collect_owner_identities(
     rep_roster: dict[str, dict[str, str]],
-    user_names: dict[str, str],
     extra_labels: dict[str, str] | None = None,
+    ghl_users: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Merge roster, GHL user names, overrides, and live owner-bucket labels."""
+    """Join targets: roster reps plus owners already on the page.
+
+    Do not index every ghl_users_v2 / OWNER_NAME_OVERRIDES row — that dumps
+    setters such as William Breen onto a new owner card.
+    """
     identities: dict[str, dict[str, Any]] = {}
+    directory = ghl_users or {}
 
     def upsert(owner_id: str, label: str = "", **extra: Any) -> None:
         owner_id = compact_str(owner_id)
         if not owner_id:
             return
+        profile = directory.get(owner_id) or {}
         current = identities.get(owner_id)
-        incoming_label = compact_str(label)
+        incoming_label = compact_str(label) or compact_str(profile.get("name"))
+        incoming_email = normalize_email(extra.get("email") or profile.get("email"))
         if current is None:
             identities[owner_id] = {
                 "owner_id": owner_id,
-                "label": incoming_label or compact_str(user_names.get(owner_id)) or owner_id,
+                "label": incoming_label or owner_id,
                 "team": compact_str(extra.get("team")),
                 "person_key": compact_str(extra.get("person_key")),
                 "raydar_user_id": compact_str(extra.get("raydar_user_id")),
-                "ghl_user_name": compact_str(extra.get("ghl_user_name")) or compact_str(user_names.get(owner_id)),
+                "ghl_user_name": compact_str(extra.get("ghl_user_name")) or compact_str(profile.get("name")),
+                "email": incoming_email,
                 "extra_names": set(),
             }
             current = identities[owner_id]
@@ -465,8 +509,8 @@ def collect_owner_identities(
         extra_incoming = extra.get("extra_names")
         if isinstance(extra_incoming, (set, list, tuple)):
             extra_names.update(compact_str(item) for item in extra_incoming if compact_str(item))
-        for key in ("team", "person_key", "raydar_user_id", "ghl_user_name"):
-            value = compact_str(extra.get(key))
+        for key in ("team", "person_key", "raydar_user_id", "ghl_user_name", "email"):
+            value = compact_str(extra.get(key)) if key != "email" else incoming_email
             if value and not current.get(key):
                 current[key] = value
         if incoming_label and (
@@ -478,22 +522,42 @@ def collect_owner_identities(
         extra = {key: value for key, value in row.items() if key not in {"owner_id", "label"}}
         upsert(owner_id, compact_str(row.get("label")), **extra)
 
-    for uid, name in user_names.items():
-        upsert(uid, name, ghl_user_name=name)
-
-    for uid, name in OWNER_NAME_OVERRIDES.items():
-        match = next((key for key in identities if key.lower() == uid.lower()), uid)
-        if match in identities:
-            identities[match]["label"] = name
-            identities[match].setdefault("extra_names", set()).add(name)
-        else:
-            upsert(match, name)
-
     if extra_labels:
         for owner_id, label in extra_labels.items():
             upsert(owner_id, label)
 
     return identities
+
+
+def build_raydar_to_owner(
+    identities: dict[str, dict[str, Any]],
+    raydar_users: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Map Raydar actor ids onto existing owner identities.
+
+    Prefer roster raydar_user_id, then unambiguous email match
+    (raydar_users_v1.email == ghl_users_v2.email) when that GHL user
+    already has an owner card. Warehouse: jLZoREmBADZmWjoUIiwdAf2BnsE3
+    / april@happyslr.com / IJrbhufMjsmwdxf252sb.
+    """
+    mapping: dict[str, str] = {}
+    email_to_owners: dict[str, set[str]] = defaultdict(set)
+    for owner_id, row in identities.items():
+        rid = compact_str(row.get("raydar_user_id"))
+        if rid:
+            mapping[rid] = owner_id
+        email = normalize_email(row.get("email"))
+        if email:
+            email_to_owners[email].add(owner_id)
+
+    for raydar_id, info in raydar_users.items():
+        rid = compact_str(raydar_id)
+        if not rid or rid in mapping:
+            continue
+        owners = email_to_owners.get(normalize_email((info or {}).get("email")), set())
+        if len(owners) == 1:
+            mapping[rid] = next(iter(owners))
+    return mapping
 
 
 def _identity_display_names(row: dict[str, Any]) -> set[str]:
@@ -604,10 +668,11 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local_excl.astimezone(timezone.utc)
 
-    user_names = user_name_lookup(db)
+    ghl_users = load_ghl_user_directory(db)
+    user_names = {uid: row["name"] for uid, row in ghl_users.items() if row.get("name")}
     pipeline_names, stage_names = pipeline_name_lookup(db)
     rep_roster = load_rep_roster(db, user_names)
-    identities = collect_owner_identities(rep_roster, user_names)
+    identities = collect_owner_identities(rep_roster, ghl_users=ghl_users)
 
     owner_buckets: dict[str, dict[str, Any]] = {}
     contact_cache: dict[str, dict[str, Any]] = {}
@@ -701,19 +766,16 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         else:
             bucket["pending_total"] += 1
 
-    # Register live owner-bucket labels so Powerline/Raydar exact names join
-    # even when roster_people_v1 is missing the person or omits role=rep.
+    # Register live owner-bucket labels so Powerline/Raydar join owners already
+    # on the page (assignedTo / owner_label), not only roster-rep aliases.
     identities = collect_owner_identities(
         rep_roster,
-        user_names,
         extra_labels={owner_id: bucket["owner_label"] for owner_id, bucket in owner_buckets.items()},
+        ghl_users=ghl_users,
     )
     alias_index = build_owner_alias_index(identities)
-    raydar_to_owner = {
-        row["raydar_user_id"]: owner_id
-        for owner_id, row in identities.items()
-        if row.get("raydar_user_id")
-    }
+    raydar_users = load_raydar_user_directory(db)
+    raydar_to_owner = build_raydar_to_owner(identities, raydar_users)
 
     # Powerline calls by agent for the same ET window.
     powerline_available = True
@@ -752,10 +814,6 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         powerline_available = False
 
     # Raydar door knocks by primary actor for the same ET window.
-    raydar_users = {
-        snap.id: compact_str((snap.to_dict() or {}).get("name")) or snap.id
-        for snap in db.collection("raydar_users_v1").stream()
-    }
     for snap in db.collection("raydar_leads_v1").where("dispositionedAt", ">=", start_utc).where("dispositionedAt", "<", end_utc).stream():
         row = snap.to_dict() or {}
         actor = None
@@ -768,7 +826,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             unmapped_raydar["Unassigned"] += 1
             continue
         owner_key = raydar_to_owner.get(actor)
-        actor_name = raydar_users.get(actor, actor)
+        actor_name = (raydar_users.get(actor) or {}).get("name") or actor
         if not owner_key:
             # Fallback name match only if the actor name resolves to a rep alias.
             owner_key = map_label_to_owner_fuzzy(actor_name, alias_index, identities)

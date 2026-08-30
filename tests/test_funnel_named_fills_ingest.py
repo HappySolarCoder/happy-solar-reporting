@@ -382,6 +382,57 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(body["reason"], "gmail_not_configured")
         self.assertEqual(body["collection"], "web_funnel_named_fills_v1")
 
+    def test_handler_has_no_public_post(self):
+        handler_mod = index._load_api_module(API / "web_funnel_named_fills_ingest.py")
+        self.assertFalse(hasattr(handler_mod.handler, "do_POST"))
+
+    def test_get_without_gmail_does_not_write(self):
+        handler_mod = index._load_api_module(API / "web_funnel_named_fills_ingest.py")
+        keys = (
+            "GMAIL_ACCESS_TOKEN",
+            "GMAIL_REFRESH_TOKEN",
+            "GMAIL_CLIENT_ID",
+            "GMAIL_CLIENT_SECRET",
+        )
+        env = {k: v for k, v in os.environ.items() if k not in keys}
+
+        class _W:
+            def __init__(self):
+                self.buf = BytesIO()
+
+            def write(self, data):
+                self.buf.write(data)
+
+        captured = {}
+
+        def send_response(self, code):
+            captured["code"] = code
+
+        def send_header(self, key, value):
+            captured.setdefault("headers", {})[key] = value
+
+        def end_headers(self):
+            captured["ended"] = True
+
+        inst = handler_mod.handler.__new__(handler_mod.handler)
+        inst.path = "/api/web_funnel_named_fills_ingest?date=2026-08-28"
+        inst.wfile = _W()
+        inst.send_response = send_response.__get__(inst)
+        inst.send_header = send_header.__get__(inst)
+        inst.end_headers = end_headers.__get__(inst)
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            handler_mod.funnel, "get_db", side_effect=AssertionError("GET without Gmail must not write")
+        ), patch.object(
+            handler_mod.ingest, "ingest_leads_at", side_effect=AssertionError("GET without Gmail must not ingest")
+        ):
+            inst.do_GET()
+        self.assertEqual(captured["code"], 200)
+        import json
+
+        body = json.loads(inst.wfile.buf.getvalue().decode("utf-8"))
+        self.assertFalse(body["ready"])
+        self.assertEqual(body["reason"], "gmail_not_configured")
+
 
 if __name__ == "__main__":
     unittest.main()

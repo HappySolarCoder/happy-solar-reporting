@@ -5,12 +5,11 @@
 Standing ingest of leads@ WNY calculator notifies into
 web_funnel_named_fills_v1. Filesystem function; not on warm_cache cron.
 
-GET: optional date=YYYY-MM-DD (default yesterday America/New_York).
+GET only. Optional date=YYYY-MM-DD (default yesterday America/New_York).
 Uses Gmail when GMAIL_ACCESS_TOKEN or refresh trio is set. If Gmail is
-not configured, HTTP 200 {ready: false, reason: gmail_not_configured}.
-
-POST: JSON {"messages": [{"plaintext": "...", "received_at": "..."}]}
-for QA without Gmail env. Cap 50. Idempotent merge-write.
+not configured, HTTP 200 {ready: false, reason: gmail_not_configured}
+and does not write. No POST: unauthenticated public POST must not
+write warehouse named fills. ingest_leads_at(messages=) is unit-tests only.
 """
 
 from __future__ import annotations
@@ -95,40 +94,5 @@ class handler(BaseHTTPRequestHandler):
                 "reason": result.get("reason"),
             }
             self._send_json(200, payload)
-        except Exception as e:
-            self._send_json(500, {"error": str(e)})
-
-    def do_POST(self):
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length > 0 else b""
-            try:
-                body = json.loads(raw.decode("utf-8") or "null")
-            except Exception:
-                self._send_json(400, {"error": "invalid_json"})
-                return
-            if not isinstance(body, dict):
-                self._send_json(400, {"error": "invalid_body"})
-                return
-            messages = body.get("messages")
-            if messages is None:
-                messages = []
-            if not isinstance(messages, list):
-                self._send_json(400, {"error": "invalid_messages"})
-                return
-            messages = messages[:50]
-            db = funnel.get_db()
-            result = ingest.ingest_leads_at(db, messages=messages)
-            self._send_json(
-                200,
-                {
-                    "wrote": result.get("wrote", 0),
-                    "skipped": result.get("skipped", 0),
-                    "ids": result.get("ids") or [],
-                    "collection": COLLECTION,
-                    "attempted": result.get("attempted", True),
-                    "reason": result.get("reason"),
-                },
-            )
         except Exception as e:
             self._send_json(500, {"error": str(e)})

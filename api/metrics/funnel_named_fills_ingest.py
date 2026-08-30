@@ -4,6 +4,8 @@
 Parse Label: value notify bodies and merge-write web_funnel_named_fills_v1.
 Id {date}_{email_slug}. Bounded (limit 50). Fail closed without Gmail env.
 Does not stream the collection. Isolated from CRM / sales.
+ingest_leads_at(messages=) is for unit tests only. The public Vercel
+handler is GET-only and must not accept POST writes.
 """
 from __future__ import annotations
 
@@ -300,7 +302,10 @@ def ingest_leads_at(
     messages: list[dict[str, Any]] | None = None,
     date_ymd: str | None = None,
 ) -> dict[str, Any]:
-    """Parse notifies and upsert. Fetch Gmail when configured; else fail closed."""
+    """Parse notifies and upsert. Fetch Gmail when configured; else fail closed.
+
+    messages= is for unit tests only. Do not expose it on a public HTTP POST.
+    """
     if messages is None:
         if not gmail_configured():
             return {

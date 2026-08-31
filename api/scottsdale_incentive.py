@@ -485,7 +485,11 @@ __DASHBOARD_NAV_HTML__
           'Zach Maecker',
           1
         );
-        const demoEntries = filteredEntries((demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {}, true);
+        const demoEntries = addManualCount(
+          filteredEntries((demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {}, true),
+          'Emerson',
+          7
+        );
 
         const totalSales = salesEntries.reduce((sum, [, value]) => sum + value, 0);
         const totalDemos = demoEntries.reduce((sum, [, value]) => sum + value, 0);

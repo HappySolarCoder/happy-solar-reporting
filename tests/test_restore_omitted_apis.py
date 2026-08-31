@@ -37,6 +37,10 @@ class RestoreDispatchTests(unittest.TestCase):
                 "web_funnel_rollup",
                 API / "web_funnel_rollup.py",
             ),
+            "/api/web_funnel_named_fills_ingest": (
+                "web_funnel_named_fills_ingest",
+                API / "web_funnel_named_fills_ingest.py",
+            ),
             "/api/website_funnel_yesterday": (
                 "website_funnel_yesterday",
                 API / "website_funnel_yesterday.py",

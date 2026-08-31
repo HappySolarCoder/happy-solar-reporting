@@ -7,6 +7,7 @@ GA4 rows have no address/name/email.
 """
 from __future__ import annotations
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
@@ -216,6 +217,25 @@ def install(module):
         date_key = date_ymd or module.yesterday_ny_date()
         if not module.parse_date_ymd(date_key):
             raise ValueError("Invalid date; expected YYYY-MM-DD")
+        ingest_info = {"attempted": False, "wrote": 0, "reason": "gmail_not_configured"}
+        try:
+            import importlib.util
+            import sys
+            ingest_path = Path(__file__).resolve().parent / "funnel_named_fills_ingest.py"
+            cached = sys.modules.get("hs_funnel_named_fills_ingest")
+            if cached is not None:
+                ingest_mod = cached
+            else:
+                ispec = importlib.util.spec_from_file_location(
+                    "hs_funnel_named_fills_ingest", ingest_path
+                )
+                ingest_mod = importlib.util.module_from_spec(ispec)
+                sys.modules["hs_funnel_named_fills_ingest"] = ingest_mod
+                ispec.loader.exec_module(ingest_mod)
+            if ingest_mod.gmail_configured():
+                ingest_info = ingest_mod.ingest_leads_at(db, date_ymd=date_key)
+        except Exception:
+            ingest_info = {"attempted": True, "wrote": 0, "reason": "ingest_failed"}
         ga4 = module.fetch_ga4_event_counts(date_key)
         fills = fetch_named_fills(db, date_key)
         ga4 = apply_named_fill_test_day(ga4, fills)
@@ -227,6 +247,7 @@ def install(module):
             "id": date_key,
             "doc": doc,
             "named_fills": len(fills),
+            "ingest": ingest_info,
         }
     module.exclusion_reason = exclusion_reason
     module.summarize_ga4_event_rows = summarize_ga4_event_rows

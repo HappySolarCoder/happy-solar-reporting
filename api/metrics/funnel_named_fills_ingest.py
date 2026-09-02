@@ -86,27 +86,26 @@ def named_fill_doc_id(date_ymd: str, email: str) -> str:
     return f"{compact_str(date_ymd)}_{email_slug(email)}"
 
 
-# Charles 2026-09-02: four live WNY calculator fills. Emails for Pyrce /
-# Goodrich were not in the packet — do not invent them. Art / Richard use
-# id {date}_{email_slug}. Tests (Test Test / Evan Day) stay out of this list.
+# Four live WNY calculator fills Data is merge-writing (reporting SA).
+# Ids are {date}_{email_slug}. Tests (Test Test / Evan Day) stay out.
 LIVE_WNY_CALCULATOR_FILLS: list[dict[str, Any]] = [
     {
         "date": "2026-08-31",
         "name": "Phil Pyrce",
-        "email": "",
+        "email": "pyrce@verizon.net",
         "address": "Getzville",
         "phone": "",
         "source": "leads@",
-        "received_at": "2026-08-31",
+        "received_at": "2026-08-31T13:26:56Z",
     },
     {
         "date": "2026-08-31",
         "name": "Bob Goodrich",
-        "email": "",
+        "email": "bggoodrich@gmail.com",
         "address": "Naples",
         "phone": "",
         "source": "leads@",
-        "received_at": "2026-08-31",
+        "received_at": "2026-08-31T16:45:53Z",
     },
     {
         "date": "2026-09-01",
@@ -115,7 +114,7 @@ LIVE_WNY_CALCULATOR_FILLS: list[dict[str, Any]] = [
         "address": "",
         "phone": "",
         "source": "leads@",
-        "received_at": "2026-09-01T15:13:00-04:00",
+        "received_at": "2026-09-01T19:13:56Z",
     },
     {
         "date": "2026-09-01",
@@ -124,7 +123,7 @@ LIVE_WNY_CALCULATOR_FILLS: list[dict[str, Any]] = [
         "address": "",
         "phone": "",
         "source": "leads@",
-        "received_at": "2026-09-01T17:29:00-04:00",
+        "received_at": "2026-09-01T21:29:02Z",
     },
 ]
 

@@ -175,14 +175,13 @@ def apply_named_fill_test_day(ga4: dict[str, Any] | None, fills: list[dict[str, 
         out["dropped"] = dropped
         return out
     live_count = len(live)
-    prev = _optional_int(out.get("estimate_submit"))
-    prev_int = 0 if prev is None else prev
-    if live_count > prev_int:
-        out["estimate_submit"] = live_count
-        wix = _optional_int(out.get("wix_form_submits"))
-        out["completed_forms"] = live_count + (0 if wix is None else wix)
-        filters["named_fill_counted"] = True
-        filters["named_fill_counted_reason"] = "live_named_fills"
+    ga4_est = _optional_int(out.get("estimate_submit"))
+    estimate = max(0 if ga4_est is None else ga4_est, live_count)
+    wix = _optional_int(out.get("wix_form_submits"))
+    out["estimate_submit"] = estimate
+    out["completed_forms"] = estimate + (0 if wix is None else wix)
+    filters["named_fill_counted"] = True
+    filters["named_fill_counted_reason"] = "live_named_fills"
     out["filters"] = filters
     out["dropped"] = dropped
     return out

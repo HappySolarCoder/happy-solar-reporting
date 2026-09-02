@@ -170,7 +170,7 @@ class UpsertAndIngestTests(unittest.TestCase):
         self.assertEqual(out["ids"], [])
         self.assertEqual(db.sets, [])
 
-    def test_live_wny_fills_are_charles_four_and_skip_missing_email(self):
+    def test_live_wny_fills_are_exactly_charles_four_no_invented_names(self):
         fills = ingest.LIVE_WNY_CALCULATOR_FILLS
         self.assertEqual(len(fills), 4)
         names = [row["name"] for row in fills]
@@ -178,35 +178,35 @@ class UpsertAndIngestTests(unittest.TestCase):
             names,
             ["Phil Pyrce", "Bob Goodrich", "Art Sieczkarek", "Richard Wooliver"],
         )
-        self.assertEqual(fills[0]["date"], "2026-08-31")
-        self.assertEqual(fills[1]["date"], "2026-08-31")
-        self.assertEqual(fills[2]["date"], "2026-09-01")
-        self.assertEqual(fills[3]["date"], "2026-09-01")
-        self.assertEqual(fills[0]["email"], "")
-        self.assertEqual(fills[1]["email"], "")
+        expected_ids = [
+            "2026-08-31_pyrce_verizon_net",
+            "2026-08-31_bggoodrich_gmail_com",
+            "2026-09-01_sieart_msn_com",
+            "2026-09-01_rwooliver_gmail_com",
+        ]
+        self.assertEqual(
+            [ingest.named_fill_doc_id(row["date"], row["email"]) for row in fills],
+            expected_ids,
+        )
+        self.assertEqual(fills[0]["email"], "pyrce@verizon.net")
+        self.assertEqual(fills[1]["email"], "bggoodrich@gmail.com")
         self.assertEqual(fills[2]["email"], "Sieart@msn.com")
         self.assertEqual(fills[3]["email"], "rwooliver@gmail.com")
-        self.assertEqual(
-            ingest.named_fill_doc_id(fills[2]["date"], fills[2]["email"]),
-            "2026-09-01_sieart_msn_com",
-        )
-        self.assertEqual(
-            ingest.named_fill_doc_id(fills[3]["date"], fills[3]["email"]),
-            "2026-09-01_rwooliver_gmail_com",
-        )
+        self.assertEqual(fills[0]["received_at"], "2026-08-31T13:26:56Z")
+        self.assertEqual(fills[1]["received_at"], "2026-08-31T16:45:53Z")
+        self.assertEqual(fills[2]["received_at"], "2026-09-01T19:13:56Z")
+        self.assertEqual(fills[3]["received_at"], "2026-09-01T21:29:02Z")
         for row in fills:
             self.assertNotIn(row["email"].casefold(), {"adchday@gmail.com", "evanrday23@gmail.com"})
             self.assertNotIn(row["name"].casefold(), {"test test", "evan day"})
         db = _fake_db()
         out = ingest.upsert_live_wny_calculator_fills(db)
-        self.assertEqual(out["wrote"], 2)
-        self.assertEqual(out["skipped"], 2)
-        self.assertEqual(
-            out["ids"],
-            ["2026-09-01_sieart_msn_com", "2026-09-01_rwooliver_gmail_com"],
-        )
+        self.assertEqual(out["wrote"], 4)
+        self.assertEqual(out["skipped"], 0)
+        self.assertEqual(out["ids"], expected_ids)
         fixture = json.loads((API / "data" / "web_funnel_named_fills_live.json").read_text())
         self.assertEqual([row["name"] for row in fixture], names)
+        self.assertEqual([row["id"] for row in fixture], expected_ids)
 
     def test_live_fills_are_not_test_address(self):
         patch_mod = load_module(

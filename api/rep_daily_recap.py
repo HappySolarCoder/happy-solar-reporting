@@ -11,15 +11,24 @@ Purpose:
   as a simple "worked yesterday" recap.
 
 Identity join (Powerline / Raydar -> owner row):
-- Roster reps (ghl_user_id / raydar_user_id / display_name) keep the existing
-  on-roster join. April 8/24 is not in roster_people_v1.
-- Also map onto owners already on the page (GHL assignedTo / owner_label).
-- Raydar actor id/email joins to ghl_users_v2 email when that GHL user
-  already has an owner card (april@happyslr.com).
+- Seed owner cards from the full sales roster (role=rep / categories
+  contain rep, plus ghl_user_id). Zero-activity roster reps still render.
+- Warehouse 2026-09-02: roster_people_v1 is still 23 rows (9 rep /
+  14 setter). April is still not a roster rep. Jeff/Mark/Evan Day are
+  also off-roster; they appear only via appointments or this join.
+- Roster reps keep the on-roster join (ghl_user_id / raydar_user_id /
+  display_name).
+- Also map onto owners already on the page (GHL assignedTo / owner_label)
+  and onto non-setter ghl_users_v2 rows so a closer with no appointments
+  that day still gets one owner card.
+- Live warehouse IDs still hold: ghl IJrbhufMjsmwdxf252sb
+  April Cornell-DeAngelis / raydar jLZoREmBADZmWjoUIiwdAf2BnsE3
+  April Cornell. Email comes from ghl_users_v2 (april@happyslr.com).
 - Hyphenated last names accept an unambiguous first+last short form
   ("April Cornell" -> "April Cornell-DeAngelis").
-- Do not create owner rows for roster setters (Breen, Sawyer, …) unless
-  they already have a GHL owner card. Do not invent knock counts.
+- Do not create owner rows for roster setters (Breen, Bo Hill, Emerson,
+  Mancini, Meehan, Frazier, Evan Test Setter, …). Setter name/id/email
+  stay out of the GHL directory sweep.
 
 Window semantics:
 - Default window is yesterday in America/New_York.
@@ -439,46 +448,158 @@ def resolve_owner_name(opp: dict[str, Any], owner_id: str, user_names: dict[str,
     return f"Unknown User ({owner_id[-6:]})"
 
 
-def load_rep_roster(db: firestore.Client, user_names: dict[str, str]) -> dict[str, dict[str, str]]:
-    """Roster reps keyed by ghl_user_id. Setters stay out of this index.
+def empty_setter_blocklist() -> dict[str, set[str]]:
+    return {
+        "ghl_user_ids": set(),
+        "raydar_user_ids": set(),
+        "name_keys": set(),
+        "emails": set(),
+    }
 
-    Warehouse 2026-08-24: roster_people_v1 has 23 rows (9 rep / 14 setter).
-    April Cornell-DeAngelis is in neither. Do not promote setters to owner rows.
+
+def register_setter_identity(
+    blocklist: dict[str, set[str]],
+    *,
+    owner_id: str = "",
+    raydar_id: str = "",
+    label: str = "",
+    email: str = "",
+) -> None:
+    owner_id = compact_str(owner_id)
+    if owner_id:
+        blocklist["ghl_user_ids"].add(owner_id)
+        blocklist["ghl_user_ids"].add(owner_id.lower())
+    raydar_id = compact_str(raydar_id)
+    if raydar_id:
+        blocklist["raydar_user_ids"].add(raydar_id)
+    email_n = normalize_email(email)
+    if email_n:
+        blocklist["emails"].add(email_n)
+    for key in identity_name_keys(label) | {normalize_name_key(label)}:
+        if key:
+            blocklist["name_keys"].add(key)
+
+
+def setter_blocklist_from_names(names: list[str] | tuple[str, ...]) -> dict[str, set[str]]:
+    """Test helper: block setter labels so GHL directory sweep will not promote them."""
+    blocklist = empty_setter_blocklist()
+    for name in names:
+        register_setter_identity(blocklist, label=name)
+    return blocklist
+
+
+def setter_identity_blocked(
+    blocklist: dict[str, set[str]] | None,
+    *,
+    owner_id: str = "",
+    raydar_id: str = "",
+    label: str = "",
+    email: str = "",
+) -> bool:
+    if not blocklist:
+        return False
+    owner_id = compact_str(owner_id)
+    if owner_id and (
+        owner_id in blocklist.get("ghl_user_ids", set())
+        or owner_id.lower() in blocklist.get("ghl_user_ids", set())
+    ):
+        return True
+    raydar_id = compact_str(raydar_id)
+    if raydar_id and raydar_id in blocklist.get("raydar_user_ids", set()):
+        return True
+    email_n = normalize_email(email)
+    if email_n and email_n in blocklist.get("emails", set()):
+        return True
+    for key in identity_name_keys(label) | {normalize_name_key(label)}:
+        if key and key in blocklist.get("name_keys", set()):
+            return True
+    return False
+
+
+def _roster_rep_profile(
+    row: dict[str, Any],
+    snap_id: str,
+    owner_id: str,
+    user_names: dict[str, str],
+) -> dict[str, str]:
+    return {
+        "owner_id": owner_id,
+        "label": compact_str(row.get("display_name"))
+        or user_names.get(owner_id)
+        or compact_str(row.get("ghl_user_name"))
+        or owner_id,
+        "team": compact_str(row.get("team") or row.get("segment")),
+        "person_key": compact_str(row.get("person_key") or snap_id),
+        "raydar_user_id": compact_str(row.get("raydar_user_id")),
+        "ghl_user_name": compact_str(row.get("ghl_user_name")) or user_names.get(owner_id, ""),
+        "email": normalize_email(row.get("email") or row.get("ghl_email")),
+    }
+
+
+def load_roster_partitions(
+    db: firestore.Client, user_names: dict[str, str]
+) -> tuple[dict[str, dict[str, str]], dict[str, set[str]]]:
+    """Sales-roster reps plus a setter blocklist from the same roster stream.
+
+    Warehouse 2026-09-02 bootstrap (live chi settings_api): still 23 rows,
+    9 rep / 14 setter. April Cornell-DeAngelis is in neither. Do not promote
+    setters to owner rows. A person who is both (Rueben Hand) stays a rep.
     """
     reps: dict[str, dict[str, str]] = {}
+    setters = empty_setter_blocklist()
     for snap in db.collection("roster_people_v1").stream():
         row = snap.to_dict() or {}
         role = compact_str(row.get("role")).lower()
         categories = [compact_str(item).lower() for item in (row.get("categories") or []) if compact_str(item)]
-        if role != "rep" and "rep" not in categories:
-            continue
         owner_id = compact_str(row.get("ghl_user_id") or row.get("ghlUserId"))
-        if not owner_id:
-            continue
-        reps[owner_id] = {
-            "owner_id": owner_id,
-            "label": compact_str(row.get("display_name"))
+        label = (
+            compact_str(row.get("display_name"))
             or user_names.get(owner_id)
             or compact_str(row.get("ghl_user_name"))
-            or owner_id,
-            "team": compact_str(row.get("team") or row.get("segment")),
-            "person_key": compact_str(row.get("person_key") or snap.id),
-            "raydar_user_id": compact_str(row.get("raydar_user_id")),
-            "ghl_user_name": compact_str(row.get("ghl_user_name")) or user_names.get(owner_id, ""),
-            "email": normalize_email(row.get("email") or row.get("ghl_email")),
-        }
+            or owner_id
+        )
+        is_rep = role == "rep" or "rep" in categories
+        is_setter = role == "setter" or "setter" in categories
+        if is_setter:
+            register_setter_identity(
+                setters,
+                owner_id=owner_id,
+                raydar_id=compact_str(row.get("raydar_user_id")),
+                label=label,
+                email=row.get("email") or row.get("ghl_email"),
+            )
+        if not is_rep or not owner_id:
+            continue
+        reps[owner_id] = _roster_rep_profile(row, compact_str(snap.id), owner_id, user_names)
+    return reps, setters
+
+
+def load_rep_roster(db: firestore.Client, user_names: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Roster reps keyed by ghl_user_id. Setters stay out of this index."""
+    reps, _ = load_roster_partitions(db, user_names)
     return reps
+
+
+def owner_should_render(bucket: dict[str, Any], roster_ids: set[str]) -> bool:
+    """Roster sales reps always render (zeros). Off-roster rows need activity."""
+    owner_id = compact_str(bucket.get("owner_id"))
+    if owner_id and owner_id in roster_ids:
+        return True
+    return int(bucket.get("work_total") or 0) > 0
 
 
 def collect_owner_identities(
     rep_roster: dict[str, dict[str, str]],
     extra_labels: dict[str, str] | None = None,
     ghl_users: dict[str, dict[str, str]] | None = None,
+    setter_blocklist: dict[str, set[str]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Join targets: roster reps plus owners already on the page.
+    """Join targets: roster reps, on-page owners, and non-setter GHL users.
 
-    Do not index every ghl_users_v2 / OWNER_NAME_OVERRIDES row — that dumps
-    setters such as William Breen onto a new owner card.
+    The GHL directory sweep is opt-in via setter_blocklist. Without that
+    list, indexing every ghl_users_v2 row dumps setters (William Breen,
+    Allen Frazier, Steven Emerson) onto new owner cards. Warehouse 2026-09-02:
+    those three are roster setters and also have ghl_users_v2 rows.
     """
     identities: dict[str, dict[str, Any]] = {}
     directory = ghl_users or {}
@@ -525,6 +646,25 @@ def collect_owner_identities(
     if extra_labels:
         for owner_id, label in extra_labels.items():
             upsert(owner_id, label)
+
+    # Opt-in GHL sweep so an off-roster closer (April) is joinable on a
+    # day with no appointments. Skip when setter_blocklist is omitted so
+    # existing on-page-only callers do not promote every ghl_users_v2 row.
+    if directory and setter_blocklist is not None:
+        for owner_id, profile in directory.items():
+            owner_id = compact_str(owner_id)
+            if not owner_id or owner_id in identities or owner_id in rep_roster:
+                continue
+            label = compact_str((profile or {}).get("name"))
+            email = normalize_email((profile or {}).get("email"))
+            if setter_identity_blocked(
+                setter_blocklist,
+                owner_id=owner_id,
+                label=label,
+                email=email,
+            ):
+                continue
+            upsert(owner_id, label, email=email)
 
     return identities
 
@@ -671,8 +811,12 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     ghl_users = load_ghl_user_directory(db)
     user_names = {uid: row["name"] for uid, row in ghl_users.items() if row.get("name")}
     pipeline_names, stage_names = pipeline_name_lookup(db)
-    rep_roster = load_rep_roster(db, user_names)
-    identities = collect_owner_identities(rep_roster, ghl_users=ghl_users)
+    rep_roster, setter_blocklist = load_roster_partitions(db, user_names)
+    identities = collect_owner_identities(
+        rep_roster,
+        ghl_users=ghl_users,
+        setter_blocklist=setter_blocklist,
+    )
 
     owner_buckets: dict[str, dict[str, Any]] = {}
     contact_cache: dict[str, dict[str, Any]] = {}
@@ -702,6 +846,13 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         }
         owner_buckets[owner_id] = bucket
         return bucket
+
+    # Full sales roster first so zero-day reps still have an owner card.
+    for owner_id, row in rep_roster.items():
+        ensure_owner_bucket(
+            owner_id,
+            compact_str(row.get("label")) or user_names.get(owner_id) or owner_id,
+        )
 
     # GHL appointments by yesterday's scheduled appointment time.
     ghl_query = (
@@ -767,11 +918,13 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             bucket["pending_total"] += 1
 
     # Register live owner-bucket labels so Powerline/Raydar join owners already
-    # on the page (assignedTo / owner_label), not only roster-rep aliases.
+    # on the page (assignedTo / owner_label), plus non-setter GHL users
+    # (April on a day with no appointments).
     identities = collect_owner_identities(
         rep_roster,
         extra_labels={owner_id: bucket["owner_label"] for owner_id, bucket in owner_buckets.items()},
         ghl_users=ghl_users,
+        setter_blocklist=setter_blocklist,
     )
     alias_index = build_owner_alias_index(identities)
     raydar_users = load_raydar_user_directory(db)
@@ -853,7 +1006,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             for label, count in bucket["door_statuses"].most_common(5)
         ]
         bucket["work_total"] = bucket["appointment_total"] + bucket["powerline_dials"] + bucket["doors_knocked"]
-        if bucket["work_total"] > 0:
+        if owner_should_render(bucket, set(rep_roster)):
             owners.append(bucket)
 
     owners.sort(
@@ -876,7 +1029,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         "window_end_local_exclusive": end_local_excl.isoformat(),
         "date_label": start_local.strftime("%Y-%m-%d"),
         "summary": {
-            "owners_with_activity": len(owners),
+            "owners_with_activity": sum(1 for item in owners if int(item["work_total"]) > 0),
+            "owners_total": len(owners),
             "appointments_total": appointment_total,
             "completed_outcomes_total": completed_total,
             "pending_outcomes_total": appointment_total - completed_total,
@@ -1119,7 +1273,8 @@ __DASHBOARD_NAV_HTML__
     </section>
 
     <div class="meta-note">
-      <strong>Worked total:</strong> {html_escape(summary["work_total"])} across {html_escape(summary["owners_with_activity"])} owner buckets.
+      <strong>Worked total:</strong> {html_escape(summary["work_total"])} across {html_escape(summary["owners_with_activity"])} owners with activity
+      ({html_escape(summary.get("owners_total", summary["owners_with_activity"]))} listed, including zero-day sales-roster reps).
       <br />
       {html_escape(unmapped_note)}
     </div>

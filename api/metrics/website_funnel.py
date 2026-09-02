@@ -2,6 +2,27 @@
 
 """Website Funnel metric family.
 
+Written contract (metric → source) — one source of truth per metric.
+See METRIC_SOURCES / TAG_MISS_RULE in funnel_metric_contract.py.
+
+- completed_forms / estimate_submit = live named WNY submits
+  (server / web_funnel_named_fills_v1 / leads@). Tests stay out
+  (Hawkstone, Stonebridge / Gilbert AZ, Test Test, Evan Day,
+  adchday@gmail.com, evanrday23@gmail.com). A named fill is NOT a GA4 visit.
+- visits_wny = GA4 sessions on host wny.happyslr.com
+  (filters.visits_wny_hosts). Do not use by_page.calculator sessions.
+  Do not backfill from named fills.
+- starts / address_complete / bill_complete = existing GA4 event contract.
+  Do not silently replace them with named-fill counts.
+- visits_total / sessions = GA4 on happyslr.com / www as already filtered.
+  Keep them distinct from visits_wny.
+
+Tag-miss: live named fills > 0 and visits_wny == 0 (GA4 ok). Flag the day.
+Rates that would be fills/visits_wny or fills/starts are null — never 2/0,
+never invented visits. 2026-09-01 is the live example; 2026-08-31 is control.
+
+Website Funnel is a separate metric family (not Sales / Opportunities / Sold Date).
+
 Lead = a completed form submit (America/New_York):
 - Calculator: estimate_submit (name/phone/email in contact-complete)
 - /contact-me: wix_form_submit (complete Submit)
@@ -72,16 +93,38 @@ Host / QA exclusions (lock):
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+
+def _load_funnel_contract():
+    path = Path(__file__).resolve().parent / "funnel_metric_contract.py"
+    spec = importlib.util.spec_from_file_location("hs_funnel_metric_contract", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load funnel metric contract from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_contract = _load_funnel_contract()
+METRIC_SOURCES = _contract.METRIC_SOURCES
+TAG_MISS_RULE = _contract.TAG_MISS_RULE
+TEST_TRAFFIC_EXCLUSIONS = _contract.TEST_TRAFFIC_EXCLUSIONS
+is_tag_missed = _contract.is_tag_missed
+named_fill_rate = _contract.named_fill_rate
+tag_missed_from_doc = _contract.tag_missed_from_doc
+apply_tag_miss_filters = _contract.apply_tag_miss_filters
 
 METRIC_NAME = "Website Funnel"
 TIMEZONE_NAME = "America/New_York"
@@ -689,24 +732,34 @@ def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
     visits_total = ga4.get("visits_total")
     visits_wny = ga4.get("visits_wny")
     sessions = visits_total if visits_total is not None else ga4.get("sessions")
+    starts = ga4.get("starts")
+    filters = apply_tag_miss_filters(ga4.get("filters"), visits_wny)
+    tag_missed = bool(filters.get("tag_missed"))
+    # Host-GA4 only. Never copy by_page.calculator.sessions into visits_wny.
+    # Never backfill visits_wny from named fills.
     return {
         "date": date_ymd,
         "sessions": sessions,
         "visits_total": visits_total,
         "visits_wny": visits_wny,
         "cta_clicks": ga4.get("cta_clicks"),
-        "starts": ga4.get("starts"),
+        "starts": starts,
         "address_complete": ga4.get("address_complete"),
         "bill_complete": ga4.get("bill_complete"),
         "estimate_submit": estimate_submit,
         "wix_form_submits": wix_form_submits,
         "completed_forms": completed,
         "by_page": normalize_by_page(ga4.get("by_page")),
+        "tag_missed": tag_missed,
+        "tag_miss": tag_missed,
+        "forms_over_wny": named_fill_rate(completed, visits_wny, tag_missed=tag_missed),
+        "forms_over_starts": named_fill_rate(estimate_submit, starts, tag_missed=tag_missed),
         "ga4": ga4_status,
         "ga4_error": ga4.get("error"),
         "measurement_id": GA4_MEASUREMENT_ID,
-        "filters": ga4.get("filters"),
+        "filters": filters,
         "dropped": ga4.get("dropped"),
+        "metric_sources": METRIC_SOURCES,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
@@ -782,6 +835,9 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         address_complete = _optional_int(doc.get("address_complete"))
         bill_complete = _optional_int(doc.get("bill_complete"))
         estimate_submit = _optional_int(doc.get("estimate_submit"))
+        visits_wny = _optional_int(doc.get("visits_wny"))
+        completed_forms = _optional_int(doc.get("completed_forms"))
+        tag_missed = tag_missed_from_doc(doc)
         metrics.update(
             {
                 "sessions": sessions,
@@ -789,8 +845,22 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
                 "address_complete": address_complete,
                 "bill_complete": bill_complete,
                 "estimate_submit": estimate_submit,
+                "visits_wny": visits_wny,
+                "completed_forms": completed_forms,
+                "tag_missed": tag_missed,
+                "tag_miss": tag_missed,
                 "session_to_submit": ratio(estimate_submit, sessions),
-                "start_to_submit": ratio(estimate_submit, estimate_start),
+                "start_to_submit": named_fill_rate(
+                    estimate_submit, estimate_start, tag_missed=tag_missed
+                ),
+                "forms_over_wny": named_fill_rate(
+                    estimate_submit if estimate_submit is not None else completed_forms,
+                    visits_wny,
+                    tag_missed=tag_missed,
+                ),
+                "forms_over_starts": named_fill_rate(
+                    estimate_submit, estimate_start, tag_missed=tag_missed
+                ),
             }
         )
     payload = {
@@ -819,6 +889,10 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
             "lead_definition": "Calculator contact-complete only (estimate_submit). Monthly scoreboard still counts /contact-me wix_form_submit.",
             "window": "America/New_York 00:00–23:59 calendar day, not rolling 24h, not UTC day.",
             "not_ready": "Missing daily doc or ga4 not_configured/failed returns HTTP 200, ready=false, null metrics. Counts are never invented.",
+            "metric_sources": METRIC_SOURCES,
+            "tag_miss": TAG_MISS_RULE,
+            "visits_wny": METRIC_SOURCES["visits_wny"]["equals"],
+            "completed_forms": METRIC_SOURCES["completed_forms"]["equals"],
         },
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
@@ -826,6 +900,12 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
     payload["starts"] = metrics["estimate_start"]
     payload["session→submit"] = metrics["session_to_submit"]
     payload["start→submit"] = metrics["start_to_submit"]
+    if "tag_missed" not in payload:
+        payload["tag_missed"] = False
+        payload["tag_miss"] = False
+    if "forms_over_wny" not in payload:
+        payload["forms_over_wny"] = None
+        payload["forms_over_starts"] = None
     return payload
 
 
@@ -850,6 +930,9 @@ def chart_day_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         "visits_total": None,
         "visits_wny": None,
         "completed_forms": None,
+        "tag_missed": False,
+        "forms_over_wny": None,
+        "forms_over_starts": None,
     }
     if not doc:
         return empty
@@ -858,11 +941,20 @@ def chart_day_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         return empty
     if doc.get("visits_total") is None and doc.get("visits_wny") is None:
         return empty
+    visits_wny = _optional_int(doc.get("visits_wny"))
+    completed = _optional_int(doc.get("completed_forms"))
+    starts = _optional_int(doc.get("starts"))
+    estimate_submit = _optional_int(doc.get("estimate_submit"))
+    tag_missed = tag_missed_from_doc(doc)
+    fills = estimate_submit if estimate_submit is not None else completed
     return {
         "date": date_key,
         "visits_total": _optional_int(doc.get("visits_total")),
-        "visits_wny": _optional_int(doc.get("visits_wny")),
-        "completed_forms": _optional_int(doc.get("completed_forms")),
+        "visits_wny": visits_wny,
+        "completed_forms": completed,
+        "tag_missed": tag_missed,
+        "forms_over_wny": named_fill_rate(fills, visits_wny, tag_missed=tag_missed),
+        "forms_over_starts": named_fill_rate(fills, starts, tag_missed=tag_missed),
     }
 
 
@@ -955,9 +1047,20 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
                     continue
                 by_page[group][key] += int(bucket.get(key) or 0)
 
+    tag_miss_dates = [compact_str(row.get("date")) for row in days if row.get("tag_missed")]
+    month_tag_miss = bool(tag_miss_dates) and (totals["visits_wny"] or 0) == 0 and (totals["completed_forms"] or 0) > 0
     session_to_form = ratio(totals["completed_forms"], totals["sessions"])
-    start_to_form = ratio(totals["estimate_submit"], totals["starts"])
+    start_to_form = named_fill_rate(
+        totals["estimate_submit"],
+        totals["starts"],
+        tag_missed=month_tag_miss,
+    )
     session_to_start = ratio(totals["starts"], totals["sessions"])
+    forms_over_wny = named_fill_rate(
+        totals["completed_forms"],
+        totals["visits_wny"],
+        tag_missed=month_tag_miss,
+    )
 
     def group_rate(group: str) -> float | None:
         bucket = by_page.get(group) or {}
@@ -995,6 +1098,16 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         notes.append(
             "Charts use host-split daily fields (visits_total / visits_wny / completed_forms). "
             "Days without a host-split rollup are gaps, not zeros. Re-run /api/web_funnel_rollup?date=YYYY-MM-DD."
+        )
+    if tag_miss_dates:
+        notes.append(
+            "Tag missed on "
+            + ", ".join(tag_miss_dates)
+            + ". Live named fills landed while GA4 recorded 0 sessions on wny.happyslr.com. "
+            "This is a data flag, not a conversion from 0 WNY visits. "
+            "fills/visits_wny and fills/starts are omitted for those days. "
+            "visits_wny was not backfilled from named fills. "
+            "by_page.calculator is not WNY visits."
         )
 
     kpis = {
@@ -1081,6 +1194,9 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "totals": totals,
         "days": days,
         "running": running,
+        "tag_miss_dates": tag_miss_dates,
+        "tag_missed": bool(tag_miss_dates),
+        "forms_over_wny": forms_over_wny,
         "kpis": kpis,
         "secondary": secondary,
         "by_page": by_page,
@@ -1106,15 +1222,25 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
             ),
             "contact_me": "Counts as a completed form in volume and sessions → completed form.",
             "scoreboard": SCOREBOARD,
-            "start_to_form": "Calculator-only: estimate_submit / estimate_start. contact-me excluded from numerator.",
+            "start_to_form": "Calculator-only: estimate_submit / estimate_start. contact-me excluded from numerator. Null on a tag-miss day (never 2/0).",
             "warehouse": DAILY_COLLECTION,
             "ga4_measurement_id": GA4_MEASUREMENT_ID,
             "ga4_property_id": GA4_PROPERTY_ID,
             "ga4_env": [GA4_PROPERTY_ID_ENV, GA4_SERVICE_ACCOUNT_JSON_ENV, FIREBASE_SERVICE_ACCOUNT_JSON_ENV],
-            "visits_total": "page_view on www.happyslr.com + happyslr.com after host allowlist",
-            "visits_wny": "page_view on wny.happyslr.com after host allowlist",
-            "sessions": "Same as visits_total. page_view eventCount held; not session_start.",
-            "completed_forms": "estimate_submit + wix_form_submit on live hosts only, after debug/internal filters.",
+            "metric_sources": METRIC_SOURCES,
+            "tag_miss": TAG_MISS_RULE,
+            "visits_total": METRIC_SOURCES["visits_total"]["equals"],
+            "visits_wny": METRIC_SOURCES["visits_wny"]["equals"],
+            "sessions": METRIC_SOURCES["sessions"]["equals"],
+            "completed_forms": METRIC_SOURCES["completed_forms"]["equals"],
+            "estimate_submit": METRIC_SOURCES["estimate_submit"]["equals"],
+            "starts": METRIC_SOURCES["starts"]["equals"],
+            "address_complete": METRIC_SOURCES["address_complete"]["equals"],
+            "bill_complete": METRIC_SOURCES["bill_complete"]["equals"],
+            "by_page_calculator": (
+                "Diagnostic page-group only. Not visits_wny. Not completed_forms. "
+                "Live 2026-08-31: visits_wny=9 and by_page.calculator.sessions=0."
+            ),
             "exclusions": {
                 "hosts": sorted(LIVE_FORM_HOSTS),
                 "drop": ["*.vercel.app", "localhost", "yadmada.com", "gtm-msr.appspot.com", "everything else"],
@@ -1122,6 +1248,7 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
                 "internal": "Dropped when traffic_type=internal or internal=1. pageLocation can see ?internal=1. traffic_type is not a standard Data API dimension.",
                 "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
                 "no_tester_ip_list": True,
+                "test_traffic": list(TEST_TRAFFIC_EXCLUSIONS),
             },
         },
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -1190,7 +1317,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Website Funnel</div>
-        <div class="subtitle">Scoreboard: sessions → start → completed form. A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Sessions → completed form is site-wide. Start → completed form is calculator-only so /contact-me does not distort it. Daily charts use live happyslr hosts only (www + apex + wny). Preview / localhost / yadmada traffic is excluded.</div>
+        <div class="subtitle">Scoreboard: sessions → start → completed form. A lead is a completed form submit. Calculator contact-complete and /contact-me Submit both count. Sessions → completed form is site-wide. Start → completed form is calculator-only so /contact-me does not distort it. Daily charts use live happyslr hosts only (www + apex + wny). Preview / localhost / yadmada traffic is excluded. visits_wny is GA4 on wny.happyslr.com (not by_page.calculator). Completed forms are live named fills. A tag-miss day (live fills with 0 WNY visits) is flagged and has no fills/visits_wny or fills/starts rate.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -1244,7 +1371,7 @@ __DASHBOARD_NAV_HTML__
       <div class="section-label">Daily — live hosts only</div>
       <div class="card span-12">
         <div class="card-title">Daily visits and forms</div>
-        <div class="meta">Total site visits = www.happyslr.com + happyslr.com page views. wny.happyslr.com visits are a separate series. Forms completed = live-host completed forms. Missing or not-configured days are gaps, not zeros.</div>
+        <div class="meta">Total site visits = www.happyslr.com + happyslr.com page views. wny.happyslr.com visits are a separate series (host GA4, not by_page.calculator). Forms completed = live named fills. Missing or not-configured days are gaps, not zeros. Tag-miss days (fills with 0 WNY visits) are flagged — the rate is omitted, not 2/0.</div>
         <div class="legend">
           <span><span class="swatch" style="background:#2196F3"></span>Total site visits</span>
           <span><span class="swatch" style="background:#00C853"></span>wny.happyslr.com visits</span>
@@ -1336,7 +1463,8 @@ async function load() {
     return;
   }
   var notes = data.notes || [];
-  if (!data.days_present || data.ga4 === 'not_configured' || data.ga4 === 'missing_docs' || (data.missing_dates || []).length) {
+  var tagMiss = data.tag_miss_dates || [];
+  if (!data.days_present || data.ga4 === 'not_configured' || data.ga4 === 'missing_docs' || (data.missing_dates || []).length || tagMiss.length) {
     banner.classList.remove('hidden');
     banner.textContent = notes.join(' ');
   } else {
@@ -1394,6 +1522,12 @@ async function load() {
 
   var days = data.days || [];
   var running = data.running || runningFromDays(days);
+  days.forEach(function(row) {
+    if (row && row.tag_missed) {
+      row.forms_over_wny = null;
+      row.forms_over_starts = null;
+    }
+  });
   drawLineChart('visitsChart', days, [
     {key: 'visits_total', label: 'Total site visits', color: '#2196F3'},
     {key: 'visits_wny', label: 'wny.happyslr.com visits', color: '#00C853'},

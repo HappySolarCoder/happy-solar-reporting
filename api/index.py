@@ -38,10 +38,18 @@ from google.cloud import firestore
 API_DIR = Path(__file__).resolve().parent
 
 
-def dispatch_route(path: str) -> str | None:
-    """Return api-relative module path (no .py) for an omitted /api/* request."""
+def dispatch_route(path: str, query_string: str | None = None) -> str | None:
+    """Return api-relative module path (no .py) for an omitted /api/* request.
+
+    Reads `hs=` from the URL, then from an extra query string (Vercel
+    QUERY_STRING), then from `/api/<route>` path prefix.
+    """
     parsed = urlparse(path)
-    qs = parse_qs(parsed.query)
+    merged = parsed.query or ""
+    extra = (query_string or "").strip()
+    if extra and extra != merged:
+        merged = f"{merged}&{extra}" if merged else extra
+    qs = parse_qs(merged)
     route = (qs.get("hs", [""])[0] or "").strip()
     if not route:
         prefix = parsed.path.rstrip("/")
@@ -228,7 +236,7 @@ def build_html(stats: dict) -> str:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            route = dispatch_route(self.path)
+            route = dispatch_route(self.path, os.environ.get("QUERY_STRING"))
             if route:
                 if delegate_to_api_module(self, route):
                     return

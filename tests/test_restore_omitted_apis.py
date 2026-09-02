@@ -9,7 +9,8 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from io import BytesIO
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "api"
@@ -70,6 +71,21 @@ class RestoreDispatchTests(unittest.TestCase):
             self.assertTrue(file_path.is_file())
             module = index._load_api_module(file_path)
             self.assertIsNotNone(index._handler_class(module), file_path.name)
+
+    def test_query_string_fallback_still_resolves_funnel_route(self):
+        self.assertEqual(
+            index.dispatch_route("/api", "hs=website_funnel&format=json"),
+            "website_funnel",
+        )
+        self.assertEqual(
+            index.dispatch_route("/api", "hs=website_funnel_yesterday"),
+            "website_funnel_yesterday",
+        )
+        self.assertEqual(
+            index.dispatch_route("/api", "hs=web_funnel_rollup&date=2026-09-01"),
+            "web_funnel_rollup",
+        )
+        self.assertIsNone(index.dispatch_route("/api", "format=json"))
 
     def test_qa_root_and_helpers_are_not_dispatched(self):
         self.assertIsNone(index.dispatch_route("/api"))
@@ -148,6 +164,100 @@ class RestoreConfigTests(unittest.TestCase):
         self.assertNotIn("website_funnel", vercel_text)
         self.assertNotIn("website_funnel_yesterday", vercel_text)
         self.assertNotIn("inbound_cac", vercel_text)
+
+
+class FunnelHandlerShapeTests(unittest.TestCase):
+    def _invoke_get(self, module, url: str):
+        cls = index._handler_class(module)
+        self.assertIsNotNone(cls)
+        self.assertTrue(hasattr(cls, "do_GET"))
+        self.assertFalse(hasattr(cls, "do_POST"))
+        captured = {}
+
+        class _W:
+            def __init__(self):
+                self.buf = BytesIO()
+
+            def write(self, data):
+                self.buf.write(data)
+
+        inst = cls.__new__(cls)
+        inst.path = url
+        inst.wfile = _W()
+        inst.send_response = lambda code: captured.__setitem__("code", code)
+        inst.send_header = lambda key, value: captured.setdefault("headers", {}).__setitem__(
+            key, value
+        )
+        inst.end_headers = lambda: captured.__setitem__("ended", True)
+        inst.do_GET()
+        body = json.loads(inst.wfile.buf.getvalue().decode("utf-8"))
+        return captured, body
+
+    def test_website_funnel_json_is_funnel_shaped_not_contacts_index(self):
+        payload = {
+            "collection": "web_funnel_daily_v1",
+            "scoreboard": "sessions → start → completed form",
+            "totals": {"completed_forms": None, "estimate_submit": None},
+        }
+        module = index._load_api_module(API / "website_funnel.py")
+        with patch.object(module.metric, "get_db", return_value=object()), patch.object(
+            module.metric, "compute_month", return_value=payload
+        ):
+            captured, body = self._invoke_get(module, "/api/website_funnel?format=json")
+        self.assertEqual(captured["code"], 200)
+        self.assertEqual(body["collection"], "web_funnel_daily_v1")
+        self.assertIn("scoreboard", body)
+        self.assertNotIn("contacts", body)
+        self.assertNotIn("opportunities", body)
+
+    def test_yesterday_and_rollup_handlers_return_funnel_payloads(self):
+        day = {
+            "ready": False,
+            "reason": "source isn't ready",
+            "lead_field": "estimate_submit",
+            "collection": "web_funnel_daily_v1",
+            "sessions": None,
+            "estimate_submit": None,
+        }
+        rollup = {
+            "wrote": True,
+            "collection": "web_funnel_daily_v1",
+            "id": "2026-09-01",
+            "doc": {"date": "2026-09-01", "completed_forms": None},
+        }
+        ymod = index._load_api_module(API / "website_funnel_yesterday.py")
+        with patch.object(ymod.metric, "get_db", return_value=object()), patch.object(
+            ymod.metric, "compute_day_snapshot", return_value=day
+        ):
+            captured, body = self._invoke_get(ymod, "/api/website_funnel_yesterday")
+        self.assertEqual(captured["code"], 200)
+        self.assertEqual(body["lead_field"], "estimate_submit")
+        self.assertNotIn("contacts", body)
+
+        rmod = index._load_api_module(API / "web_funnel_rollup.py")
+        with patch.object(rmod.metric, "get_db", return_value=object()), patch.object(
+            rmod.metric, "rollup_day", return_value=rollup
+        ):
+            captured, body = self._invoke_get(
+                rmod, "/api/web_funnel_rollup?date=2026-09-01"
+            )
+        self.assertEqual(captured["code"], 200)
+        self.assertEqual(body["collection"], "web_funnel_daily_v1")
+        self.assertTrue(body["wrote"])
+        self.assertNotIn("contacts", body)
+
+    def test_api_index_without_funnel_path_still_returns_contacts_counts(self):
+        self.assertIsNone(index.dispatch_route("/api?format=json"))
+        source = (API / "index.py").read_text()
+        self.assertIn('"contacts"', source)
+        self.assertIn('"opportunities"', source)
+        self.assertIn("safe_count(db, \"ghl_contacts\")", source)
+        self.assertIn("dispatch_route", source)
+        self.assertEqual(
+            set(index.build_stats.__code__.co_names) | {"contacts"},
+            set(index.build_stats.__code__.co_names) | {"contacts"},
+        )
+        self.assertIn("ghl_contacts", index.build_stats.__code__.co_consts)
 
 
 if __name__ == "__main__":

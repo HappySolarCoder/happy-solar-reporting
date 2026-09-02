@@ -86,6 +86,48 @@ def named_fill_doc_id(date_ymd: str, email: str) -> str:
     return f"{compact_str(date_ymd)}_{email_slug(email)}"
 
 
+# Four live WNY calculator fills Data is merge-writing (reporting SA).
+# Ids are {date}_{email_slug}. Tests (Test Test / Evan Day) stay out.
+LIVE_WNY_CALCULATOR_FILLS: list[dict[str, Any]] = [
+    {
+        "date": "2026-08-31",
+        "name": "Phil Pyrce",
+        "email": "pyrce@verizon.net",
+        "address": "Getzville",
+        "phone": "",
+        "source": "leads@",
+        "received_at": "2026-08-31T13:26:56Z",
+    },
+    {
+        "date": "2026-08-31",
+        "name": "Bob Goodrich",
+        "email": "bggoodrich@gmail.com",
+        "address": "Naples",
+        "phone": "",
+        "source": "leads@",
+        "received_at": "2026-08-31T16:45:53Z",
+    },
+    {
+        "date": "2026-09-01",
+        "name": "Art Sieczkarek",
+        "email": "Sieart@msn.com",
+        "address": "",
+        "phone": "",
+        "source": "leads@",
+        "received_at": "2026-09-01T19:13:56Z",
+    },
+    {
+        "date": "2026-09-01",
+        "name": "Richard Wooliver",
+        "email": "rwooliver@gmail.com",
+        "address": "",
+        "phone": "",
+        "source": "leads@",
+        "received_at": "2026-09-01T21:29:02Z",
+    },
+]
+
+
 def ny_date_from_received_at(received_at: Any) -> str | None:
     """America/New_York calendar day of received_at. Date-only strings are kept."""
     if received_at is None or received_at == "":
@@ -295,6 +337,13 @@ def upsert_named_fills(db: Any, fills: list[dict[str, Any]] | None) -> dict[str,
         wrote += 1
         ids.append(doc_id)
     return {"wrote": wrote, "skipped": skipped, "ids": ids}
+
+
+def upsert_live_wny_calculator_fills(
+    db: Any, fills: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Merge-write Charles's live fills. Skip missing email (no invented slug)."""
+    return upsert_named_fills(db, list(fills if fills is not None else LIVE_WNY_CALCULATOR_FILLS))
 
 
 def ingest_leads_at(

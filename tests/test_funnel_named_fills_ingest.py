@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import unittest
@@ -168,6 +169,52 @@ class UpsertAndIngestTests(unittest.TestCase):
         self.assertEqual(out["skipped"], 2)
         self.assertEqual(out["ids"], [])
         self.assertEqual(db.sets, [])
+
+    def test_live_wny_fills_are_charles_four_and_skip_missing_email(self):
+        fills = ingest.LIVE_WNY_CALCULATOR_FILLS
+        self.assertEqual(len(fills), 4)
+        names = [row["name"] for row in fills]
+        self.assertEqual(
+            names,
+            ["Phil Pyrce", "Bob Goodrich", "Art Sieczkarek", "Richard Wooliver"],
+        )
+        self.assertEqual(fills[0]["date"], "2026-08-31")
+        self.assertEqual(fills[1]["date"], "2026-08-31")
+        self.assertEqual(fills[2]["date"], "2026-09-01")
+        self.assertEqual(fills[3]["date"], "2026-09-01")
+        self.assertEqual(fills[0]["email"], "")
+        self.assertEqual(fills[1]["email"], "")
+        self.assertEqual(fills[2]["email"], "Sieart@msn.com")
+        self.assertEqual(fills[3]["email"], "rwooliver@gmail.com")
+        self.assertEqual(
+            ingest.named_fill_doc_id(fills[2]["date"], fills[2]["email"]),
+            "2026-09-01_sieart_msn_com",
+        )
+        self.assertEqual(
+            ingest.named_fill_doc_id(fills[3]["date"], fills[3]["email"]),
+            "2026-09-01_rwooliver_gmail_com",
+        )
+        for row in fills:
+            self.assertNotIn(row["email"].casefold(), {"adchday@gmail.com", "evanrday23@gmail.com"})
+            self.assertNotIn(row["name"].casefold(), {"test test", "evan day"})
+        db = _fake_db()
+        out = ingest.upsert_live_wny_calculator_fills(db)
+        self.assertEqual(out["wrote"], 2)
+        self.assertEqual(out["skipped"], 2)
+        self.assertEqual(
+            out["ids"],
+            ["2026-09-01_sieart_msn_com", "2026-09-01_rwooliver_gmail_com"],
+        )
+        fixture = json.loads((API / "data" / "web_funnel_named_fills_live.json").read_text())
+        self.assertEqual([row["name"] for row in fixture], names)
+
+    def test_live_fills_are_not_test_address(self):
+        patch_mod = load_module(
+            "hs_funnel_test_address_live_fills", METRICS / "funnel_test_address.py"
+        )
+        for fill in ingest.LIVE_WNY_CALCULATOR_FILLS:
+            self.assertFalse(patch_mod.fill_is_test(fill), fill["name"])
+        self.assertEqual(len(patch_mod.live_named_fills(ingest.LIVE_WNY_CALCULATOR_FILLS)), 4)
 
     def test_gmail_configured_false_when_env_unset(self):
         keys = (

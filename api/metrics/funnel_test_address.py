@@ -119,38 +119,70 @@ def fetch_named_fills(db: Any, date_ymd: str) -> list[dict[str, Any]]:
     return fills[:NAMED_FILLS_QUERY_LIMIT]
 
 
+def live_named_fills(fills: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Named fills that are not test-address / test-name / test-email."""
+    return [fill for fill in list(fills or []) if isinstance(fill, dict) and not fill_is_test(fill)]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def apply_named_fill_test_day(ga4: dict[str, Any] | None, fills: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """If that ET day's named fills are all on the test list, zero estimate_submit / completed_forms."""
+    """Zero a day when every named fill is a test. Count live named fills that are not.
+
+    Tests (Hawkstone, Stonebridge / Gilbert AZ, Test Test, Evan Day, the two
+    test emails) stay excluded. Live leads@ calculator fills are counted so
+    completed_forms is not left at 0 when GA4 rows have no name/email/address.
+    Does not invent fills. Does not add the test rows on top of the live ones.
+    """
     out = dict(ga4 or {})
     dropped = dict(out.get("dropped") or {})
     filters = dict(out.get("filters") or {})
-    fills = list(fills or [])
+    fills = [fill for fill in list(fills or []) if isinstance(fill, dict)]
+    live = live_named_fills(fills)
     filters["named_fills_collection"] = NAMED_FILLS_COLLECTION
     filters["named_fills_count"] = len(fills)
+    filters["named_fills_live_count"] = len(live)
     filters["named_fill_zeroed"] = False
+    filters["named_fill_counted"] = False
     if not fills:
         out["filters"] = filters
         out["dropped"] = dropped
         return out
-    all_test = all(fill_is_test(fill) for fill in fills)
+    all_test = len(live) == 0
     filters["named_fills_all_test"] = all_test
-    if not all_test:
+    if all_test:
+        try:
+            prev = int(out.get("estimate_submit") or 0)
+        except Exception:
+            prev = 0
+        dropped["test_address"] = dropped.get("test_address", 0) + prev
+        out["estimate_submit"] = 0
+        try:
+            wix = int(out.get("wix_form_submits") or 0)
+        except Exception:
+            wix = 0
+        out["completed_forms"] = wix
+        filters["named_fill_zeroed"] = True
+        filters["named_fill_zeroed_reason"] = "all_named_fills_are_test"
         out["filters"] = filters
         out["dropped"] = dropped
         return out
-    try:
-        prev = int(out.get("estimate_submit") or 0)
-    except Exception:
-        prev = 0
-    dropped["test_address"] = dropped.get("test_address", 0) + prev
-    out["estimate_submit"] = 0
-    try:
-        wix = int(out.get("wix_form_submits") or 0)
-    except Exception:
-        wix = 0
-    out["completed_forms"] = wix
-    filters["named_fill_zeroed"] = True
-    filters["named_fill_zeroed_reason"] = "all_named_fills_are_test"
+    live_count = len(live)
+    prev = _optional_int(out.get("estimate_submit"))
+    prev_int = 0 if prev is None else prev
+    if live_count > prev_int:
+        out["estimate_submit"] = live_count
+        wix = _optional_int(out.get("wix_form_submits"))
+        out["completed_forms"] = live_count + (0 if wix is None else wix)
+        filters["named_fill_counted"] = True
+        filters["named_fill_counted_reason"] = "live_named_fills"
     out["filters"] = filters
     out["dropped"] = dropped
     return out
@@ -253,6 +285,8 @@ def install(module):
     module.summarize_ga4_event_rows = summarize_ga4_event_rows
     module.rollup_day = rollup_day
     module.is_test_address = is_test_address
+    module.fill_is_test = fill_is_test
+    module.live_named_fills = live_named_fills
     module.fetch_named_fills = fetch_named_fills
     module.apply_named_fill_test_day = apply_named_fill_test_day
     module.NAMED_FILLS_COLLECTION = NAMED_FILLS_COLLECTION

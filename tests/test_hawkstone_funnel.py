@@ -314,3 +314,95 @@ class HawkstoneFunnelTests(unittest.TestCase):
         self.assertEqual(out["completed_forms"], 3)
         self.assertFalse(out["filters"]["named_fill_zeroed"])
         self.assertFalse(out["filters"]["named_fills_all_test"])
+
+    def test_live_named_fills_count_when_ga4_is_zero(self):
+        patch_path = ROOT / "api" / "metrics" / "funnel_test_address.py"
+        pspec = importlib.util.spec_from_file_location("hs_funnel_test_address_live", patch_path)
+        patch = importlib.util.module_from_spec(pspec)
+        pspec.loader.exec_module(patch)
+        live = [
+            {"date": "2026-08-31", "name": "Phil Pyrce", "email": "", "address": "Getzville"},
+            {"date": "2026-08-31", "name": "Bob Goodrich", "email": "", "address": "Naples"},
+        ]
+        tests = [
+            {
+                "date": "2026-08-28",
+                "name": "Test Test",
+                "email": "adchday@gmail.com",
+                "address": "313 E Stonebridge Dr, Gilbert, AZ 85234",
+            },
+            {
+                "date": "2026-08-28",
+                "name": "Evan Day",
+                "email": "evanrday23@gmail.com",
+                "address": "24 Hawkstone Way",
+            },
+        ]
+        ga4_zero = {
+            "ga4": "ok",
+            "estimate_submit": 0,
+            "wix_form_submits": 0,
+            "completed_forms": 0,
+            "dropped": {"test_address": 0},
+        }
+        out_31 = patch.apply_named_fill_test_day(ga4_zero, live)
+        self.assertEqual(out_31["estimate_submit"], 2)
+        self.assertEqual(out_31["completed_forms"], 2)
+        self.assertTrue(out_31["filters"]["named_fill_counted"])
+        self.assertFalse(out_31["filters"]["named_fill_zeroed"])
+        out_28 = patch.apply_named_fill_test_day(dict(ga4_zero, estimate_submit=2, completed_forms=2), tests)
+        self.assertEqual(out_28["estimate_submit"], 0)
+        self.assertEqual(out_28["completed_forms"], 0)
+        self.assertTrue(out_28["filters"]["named_fill_zeroed"])
+        sept = [
+            {"date": "2026-09-01", "name": "Art Sieczkarek", "email": "Sieart@msn.com"},
+            {"date": "2026-09-01", "name": "Richard Wooliver", "email": "rwooliver@gmail.com"},
+        ]
+        out_01 = patch.apply_named_fill_test_day(ga4_zero, sept)
+        self.assertEqual(out_01["estimate_submit"], 2)
+        self.assertEqual(out_01["completed_forms"], 2)
+        mixed = patch.apply_named_fill_test_day(ga4_zero, live + tests)
+        self.assertEqual(mixed["estimate_submit"], 2)
+        self.assertEqual(mixed["completed_forms"], 2)
+        self.assertNotEqual(mixed["completed_forms"], 6)
+        self.assertEqual(len(patch.live_named_fills(live + tests + sept)), 4)
+
+    def test_aug21_sep03_window_is_four_live_not_six(self):
+        patch_path = ROOT / "api" / "metrics" / "funnel_test_address.py"
+        pspec = importlib.util.spec_from_file_location("hs_funnel_test_address_window", patch_path)
+        patch = importlib.util.module_from_spec(pspec)
+        pspec.loader.exec_module(patch)
+        by_date = {
+            "2026-08-28": [
+                {"name": "Test Test", "email": "adchday@gmail.com", "address": "313 E Stonebridge Dr"},
+                {"name": "Evan Day", "email": "evanrday23@gmail.com", "address": "24 Hawkstone Way"},
+            ],
+            "2026-08-31": [
+                {"name": "Phil Pyrce", "email": "", "address": "Getzville"},
+                {"name": "Bob Goodrich", "email": "", "address": "Naples"},
+            ],
+            "2026-09-01": [
+                {"name": "Art Sieczkarek", "email": "Sieart@msn.com"},
+                {"name": "Richard Wooliver", "email": "rwooliver@gmail.com"},
+            ],
+        }
+        ga4 = {"ga4": "ok", "estimate_submit": 0, "wix_form_submits": 0, "completed_forms": 0}
+        total = 0
+        day_28 = None
+        from datetime import date, timedelta
+
+        start = date(2026, 8, 21)
+        end = date(2026, 9, 3)
+        day = start
+        while day <= end:
+            key = day.isoformat()
+            out = patch.apply_named_fill_test_day(ga4, by_date.get(key, []))
+            if key == "2026-08-28":
+                day_28 = out
+            total += int(out.get("completed_forms") or 0)
+            day += timedelta(days=1)
+        self.assertEqual(day_28["estimate_submit"], 0)
+        self.assertEqual(day_28["completed_forms"], 0)
+        self.assertEqual(total, 4)
+        self.assertNotEqual(total, 0)
+        self.assertNotEqual(total, 6)

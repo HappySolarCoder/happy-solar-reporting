@@ -51,7 +51,8 @@ GA4 (optional):
 - If creds/property are missing, write nulls and set ga4="not_configured".
   Do not fake traffic.
 - Hold page_view (do not switch sessions to session_start).
-- One runReport per day. Dimensions: eventName + pagePath + hostName + pageLocation.
+- One runReport per day. Dimensions: eventName + pagePath + hostName only.
+  Do not request pageLocation (pagePath + pageLocation together zeros some days).
 
 Host / QA exclusions (lock):
 - Allowlist only: www.happyslr.com, happyslr.com, wny.happyslr.com.
@@ -106,8 +107,10 @@ EXCLUDED_HOST_EXAMPLES = (
     "localhost",
     "gtm-msr.appspot.com",
 )
-GA4_REPORT_DIMENSIONS = ("eventName", "pagePath", "hostName", "pageLocation")
-# Not standard Data API dimensions today. pageLocation can see ?internal=1.
+GA4_REPORT_DIMENSIONS = ("eventName", "pagePath", "hostName")
+# Not standard Data API dimensions today. pageLocation is not requested
+# (pagePath + pageLocation together zeros some days). Parser may still
+# read pageLocation if a row carries it, including ?internal=1.
 GA4_MISSING_EXCLUSION_DIMENSIONS = ("debug_mode", "traffic_type")
 
 PAGE_GROUPS: tuple[str, ...] = (

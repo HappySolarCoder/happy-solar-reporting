@@ -7,6 +7,8 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import json
+import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -715,10 +717,92 @@ class WebsiteFunnelHostSplitTests(unittest.TestCase):
             self.assertEqual(funnel.classify_host(host), "excluded", host)
         self.assertNotIn("session_start", funnel.GA4_EVENT_NAMES)
         self.assertEqual(funnel.EVENT_COUNT_FIELDS["page_view"], "sessions")
+        self.assertEqual(funnel.GA4_REPORT_DIMENSIONS, ("eventName", "pagePath", "hostName"))
         self.assertIn("hostName", funnel.GA4_REPORT_DIMENSIONS)
-        self.assertIn("pageLocation", funnel.GA4_REPORT_DIMENSIONS)
+        self.assertNotIn("pageLocation", funnel.GA4_REPORT_DIMENSIONS)
         self.assertEqual(inspect.getsource(funnel.fetch_ga4_event_counts).count("runReport"), 1)
         self.assertIn('qs.get("date"', ROLLUP_SRC)
+
+    def test_daily_ga4_report_omits_page_location_dimension(self):
+        """pagePath + pageLocation zeros some days (2026-09-02). Request 3 dims only."""
+        self.assertEqual(funnel.GA4_REPORT_DIMENSIONS, ("eventName", "pagePath", "hostName"))
+        self.assertNotIn("pageLocation", funnel.GA4_REPORT_DIMENSIONS)
+        report = {
+            "rows": [
+                {
+                    "dimensionValues": [
+                        {"value": "page_view"},
+                        {"value": "/"},
+                        {"value": "www.happyslr.com"},
+                    ],
+                    "metricValues": [{"value": "3"}],
+                }
+            ]
+        }
+        parsed = funnel.parse_ga4_report_rows(report, funnel.GA4_REPORT_DIMENSIONS)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["page_location"], "")
+        out = funnel.summarize_ga4_event_rows(parsed)
+        self.assertEqual(out["visits_total"], 3)
+        self.assertEqual(out["visits_wny"], 0)
+        self.assertEqual(out["starts"], 0)
+        self.assertEqual(out["estimate_submit"], 0)
+        self.assertEqual(out["ga4"], "ok")
+        self.assertEqual(out["filters"]["data_api_dimensions"], ["eventName", "pagePath", "hostName"])
+        self.assertTrue(out["filters"]["page_view_held"])
+        empty = funnel.summarize_ga4_event_rows(
+            funnel.parse_ga4_report_rows({"rows": []}, funnel.GA4_REPORT_DIMENSIONS)
+        )
+        self.assertEqual(empty["visits_total"], 0)
+        self.assertEqual(empty["visits_wny"], 0)
+        self.assertEqual(empty["starts"], 0)
+        self.assertEqual(empty["estimate_submit"], 0)
+        self.assertEqual(empty["ga4"], "ok")
+        fallback = funnel.summarize_ga4_event_rows(
+            [
+                {
+                    "event_name": "page_view",
+                    "host_name": "www.happyslr.com",
+                    "page_path": "",
+                    "page_location": "https://www.happyslr.com/buffalo",
+                    "count": 2,
+                }
+            ]
+        )
+        self.assertEqual(fallback["visits_total"], 2)
+        self.assertEqual(fallback["by_page"]["city_buffalo"]["sessions"], 2)
+
+    def test_run_report_body_does_not_send_page_location(self):
+        captured = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps({"rows": []}).encode("utf-8")
+
+        def fake_urlopen(req, timeout=25):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResp()
+
+        with (
+            patch.object(funnel, "ga4_credentials_available", return_value=True),
+            patch.object(funnel, "_ga4_access_token", return_value="tok"),
+            patch.dict(os.environ, {funnel.GA4_PROPERTY_ID_ENV: "408492342"}),
+            patch("urllib.request.urlopen", fake_urlopen),
+        ):
+            out = funnel.fetch_ga4_event_counts("2026-09-02")
+        dims = [cell["name"] for cell in captured["body"]["dimensions"]]
+        self.assertEqual(dims, ["eventName", "pagePath", "hostName"])
+        self.assertNotIn("pageLocation", json.dumps(captured["body"]))
+        self.assertIn("runReport", captured["url"])
+        self.assertEqual(out["visits_total"], 0)
+        self.assertEqual(out["ga4"], "ok")
 
     def test_preview_form_and_excluded_hosts_do_not_count(self):
         out = funnel.summarize_ga4_event_rows(

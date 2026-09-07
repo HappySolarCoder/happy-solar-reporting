@@ -6,10 +6,29 @@ Event-row matcher is defense in depth. Named fills the rollup can see
 GA4 rows have no address/name/email.
 """
 from __future__ import annotations
+import importlib.util
 import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
+
+
+def _load_contract():
+    path = Path(__file__).resolve().parent / "funnel_metric_contract.py"
+    spec = importlib.util.spec_from_file_location("hs_funnel_metric_contract_patch", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load funnel metric contract from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_contract = _load_contract()
+METRIC_SOURCES = _contract.METRIC_SOURCES
+TAG_MISS_RULE = _contract.TAG_MISS_RULE
+is_tag_missed = _contract.is_tag_missed
+named_fill_rate = _contract.named_fill_rate
+apply_tag_miss_filters = _contract.apply_tag_miss_filters
 
 def compact_str(value):
     return " ".join(str(value or "").split())
@@ -152,8 +171,11 @@ def apply_named_fill_test_day(ga4: dict[str, Any] | None, fills: list[dict[str, 
     filters["named_fill_zeroed"] = False
     filters["named_fill_counted"] = False
     if not fills:
+        filters = apply_tag_miss_filters(filters, out.get("visits_wny"))
         out["filters"] = filters
         out["dropped"] = dropped
+        out["tag_missed"] = bool(filters.get("tag_missed"))
+        out["tag_miss"] = bool(filters.get("tag_miss"))
         return out
     all_test = len(live) == 0
     filters["named_fills_all_test"] = all_test
@@ -171,8 +193,11 @@ def apply_named_fill_test_day(ga4: dict[str, Any] | None, fills: list[dict[str, 
         out["completed_forms"] = wix
         filters["named_fill_zeroed"] = True
         filters["named_fill_zeroed_reason"] = "all_named_fills_are_test"
+        filters = apply_tag_miss_filters(filters, out.get("visits_wny"))
         out["filters"] = filters
         out["dropped"] = dropped
+        out["tag_missed"] = bool(filters.get("tag_missed"))
+        out["tag_miss"] = bool(filters.get("tag_miss"))
         return out
     live_count = len(live)
     ga4_est = _optional_int(out.get("estimate_submit"))
@@ -182,8 +207,13 @@ def apply_named_fill_test_day(ga4: dict[str, Any] | None, fills: list[dict[str, 
     out["completed_forms"] = estimate + (0 if wix is None else wix)
     filters["named_fill_counted"] = True
     filters["named_fill_counted_reason"] = "live_named_fills"
+    # visits_wny stays host-GA4. Do not backfill from named fills.
+    # starts / address / bill stay the existing GA4 event contract.
+    filters = apply_tag_miss_filters(filters, out.get("visits_wny"))
     out["filters"] = filters
     out["dropped"] = dropped
+    out["tag_missed"] = bool(filters.get("tag_missed"))
+    out["tag_miss"] = bool(filters.get("tag_miss"))
     return out
 
 def install(module):
@@ -289,6 +319,11 @@ def install(module):
     module.fetch_named_fills = fetch_named_fills
     module.apply_named_fill_test_day = apply_named_fill_test_day
     module.NAMED_FILLS_COLLECTION = NAMED_FILLS_COLLECTION
+    module.METRIC_SOURCES = METRIC_SOURCES
+    module.TAG_MISS_RULE = TAG_MISS_RULE
+    module.is_tag_missed = is_tag_missed
+    module.named_fill_rate = named_fill_rate
+    module.apply_tag_miss_filters = apply_tag_miss_filters
     module._orig_rollup_day = orig_rollup
     module._hawkstone_installed = True
     return module

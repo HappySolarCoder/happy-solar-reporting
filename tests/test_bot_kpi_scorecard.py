@@ -296,6 +296,8 @@ class NavTests(unittest.TestCase):
         self.assertNotEqual(website, -1)
         self.assertLess(bot, website)
         self.assertIn('href="/api/website_funnel"', html)
+        self.assertIn('href="/api/website_traffic"', html)
+        self.assertLess(website, html.find("Website Traffic"))
 
 
 class WeekWindowTests(unittest.TestCase):

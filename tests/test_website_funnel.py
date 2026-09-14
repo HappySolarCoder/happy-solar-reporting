@@ -282,6 +282,8 @@ class WebsiteFunnelNavTests(unittest.TestCase):
         self.assertIn("Website Funnel", html)
         self.assertLess(html.find("Project Management"), html.find("Website Funnel"))
         self.assertIn('class="navbtn active" href="/api/website_funnel"', html)
+        self.assertIn('href="/api/website_traffic"', html)
+        self.assertLess(html.find("Website Funnel"), html.find("Website Traffic"))
         self.assertNotIn('summary class="navbtn active"', html)
 
     def test_pm_dropdown_still_active_for_hub(self):

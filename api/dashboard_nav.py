@@ -274,6 +274,7 @@ def render_dashboard_nav(current: str) -> str:
           </details>
           <a class="navbtn{active('bot_kpi_scorecard')}" href="/api/bot_kpi_scorecard">Bot KPI</a>
           <a class="navbtn{active('website_funnel')}" href="/api/website_funnel">Website Funnel</a>
+          <a class="navbtn{active('website_traffic')}" href="/api/website_traffic">Website Traffic</a>
         </div>
         <script>
           (function() {{

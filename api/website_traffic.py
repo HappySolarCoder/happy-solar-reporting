@@ -98,6 +98,7 @@ __DASHBOARD_NAV_CSS__
     .delta { font-weight:900; }
     .delta.up { color:#047857; }
     .delta.down { color:#b45309; }
+    .vs-prior.is-off { display:none !important; }
     .callout { padding:12px 14px; border-radius:12px; border:1px dashed #93c5fd; background:#f8fbff; color:#1e3a8a; font-size:13px; font-weight:700; }
     .callout.warn { border-color:#fcd34d; background:#fffbeb; color:#92400e; }
     .steps { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; }
@@ -189,9 +190,9 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-3"><div class="card-title">New / returning <span class="example-tag">EXAMPLE</span></div><div class="kpi">78% / 22%</div><div class="meta vs-prior">new vs prior <span class="delta up">+2 pts</span></div></div>
         <div class="card span-3"><div class="card-title">Pageviews <span class="example-tag">EXAMPLE</span></div><div class="kpi">9,104</div><div class="meta vs-prior">vs prior <span class="delta up">+5%</span></div></div>
         <div class="card span-3"><div class="card-title">Pages / session <span class="example-tag">EXAMPLE</span></div><div class="kpi">2.16</div><div class="meta vs-prior">vs prior <span class="delta down">−0.04</span></div></div>
-        <div class="card span-3"><div class="card-title">Bounce / engaged <span class="example-tag">GA4</span></div><div class="kpi">41% / 59%</div><div class="meta">GA4 bounce + engaged session rate. vs prior <span class="vs-prior"><span class="delta down">bounce −3 pts</span></span></div></div>
+        <div class="card span-3"><div class="card-title">Bounce / engaged <span class="example-tag">GA4</span></div><div class="kpi">41% / 59%</div><div class="meta">GA4 bounce + engaged session rate. <span class="vs-prior">vs prior <span class="delta down">bounce −3 pts</span></span></div></div>
         <div class="card span-3"><div class="card-title">Avg engagement <span class="example-tag">GA4</span></div><div class="kpi">1m 12s</div><div class="meta vs-prior">vs prior <span class="delta up">+4s</span></div></div>
-        <div class="card span-3"><div class="card-title">Vs prior <span class="example-tag">EXAMPLE</span></div><div class="kpi">+8%</div><div class="meta">Sessions vs prior period (same length, ET). Toggle Compare prior in chrome.</div></div>
+        <div class="card span-3 vs-prior"><div class="card-title">Vs prior <span class="example-tag">EXAMPLE</span></div><div class="kpi">+8%</div><div class="meta">Sessions vs prior period (same length, ET). Toggle Compare prior in chrome.</div></div>
       </div>
     </section>
 
@@ -390,7 +391,7 @@ __DASHBOARD_NAV_HTML__
       ' · test filter ' + (testOn ? 'ON' : 'OFF') + ' · compare prior ' + (compare ? 'ON' : 'OFF') +
       ' · example numbers unchanged';
     document.querySelectorAll('.vs-prior').forEach(function(el) {
-      el.style.display = compare ? '' : 'none';
+      el.classList.toggle('is-off', !compare);
     });
   }
   document.getElementById('apply').addEventListener('click', paintChrome);

@@ -144,6 +144,8 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
         ):
             self.assertIn(label, html)
         self.assertIn("GA4 bounce + engaged session rate", html)
+        self.assertIn('class="card span-3 vs-prior"', html)
+        self.assertIn("classList.toggle('is-off', !compare)", html)
 
     def test_acquisition_content_funnel_audience_named(self):
         html = page.render_html()

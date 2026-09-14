@@ -9,6 +9,10 @@ Sources:
 - Warehouse web_funnel_daily_v1 (≤31 get_all docs, no collection stream)
 - Warehouse web_funnel_named_fills_v1 (bounded per-date queries)
 
+Daily estimate/LP: do not request date+hostName+pagePath together (fails on
+this property). Use dated pagePath on brand hosts plus dated hostName on
+wny, or per-day host+path. Undated KPI path fetch stays host+path only.
+
 Locks:
 - Funnel TOP = estimate/LP visits (/estimate + legacy wny calc), NOT all-site.
 - Brand site sessions = separate Overview KPI.
@@ -346,12 +350,75 @@ def format_seconds(value: float | None) -> str | None:
 
 def live_host_filter() -> dict[str, Any]:
     funnel = funnel_mod()
+    return _host_in_list_filter(funnel.LIVE_FORM_HOSTS)
+
+
+def _host_in_list_filter(hosts: Any) -> dict[str, Any]:
     return {
         "filter": {
             "fieldName": "hostName",
-            "inListFilter": {"values": sorted(funnel.LIVE_FORM_HOSTS)},
+            "inListFilter": {"values": sorted(hosts)},
         }
     }
+
+
+def _page_view_event_filter() -> dict[str, Any]:
+    return {
+        "filter": {
+            "fieldName": "eventName",
+            "inListFilter": {"values": ["page_view"]},
+        }
+    }
+
+
+def _host_and_page_view_filter(hosts: Any) -> dict[str, Any]:
+    return {
+        "andGroup": {
+            "expressions": [
+                _host_in_list_filter(hosts),
+                _page_view_event_filter(),
+            ]
+        }
+    }
+
+
+def _ga4_error_detail(exc: Exception) -> str:
+    detail = compact_str(exc)
+    reader = getattr(exc, "read", None)
+    body = ""
+    if callable(reader):
+        try:
+            raw = reader()
+            if isinstance(raw, (bytes, bytearray)):
+                body = raw.decode("utf-8", errors="replace")
+            else:
+                body = compact_str(raw)
+        except Exception:
+            body = ""
+    text = " ".join(part for part in (detail, compact_str(body)) if part).strip()
+    return text[:800]
+
+
+def _dimension_values(row: dict[str, Any] | None) -> list[Any]:
+    return [cell.get("value") for cell in ((row or {}).get("dimensionValues") or [])]
+
+
+def _metric_event_count(row: dict[str, Any] | None) -> int:
+    mets = [cell.get("value") for cell in ((row or {}).get("metricValues") or [])]
+    return optional_int(mets[0] if mets else 0) or 0
+
+
+def date_range_slot(
+    day: str,
+    start: str,
+    end: str,
+    prior_start: str | None = None,
+    prior_end: str | None = None,
+) -> str:
+    key = compact_str(day)
+    if prior_start and prior_end and prior_start <= key <= prior_end:
+        return "prior"
+    return "current"
 
 
 def parse_ga4_generic_rows(
@@ -376,7 +443,7 @@ def parse_ga4_generic_rows(
     return rows
 
 
-def run_ga4_report(body: dict[str, Any]) -> dict[str, Any]:
+def run_ga4_report(body: dict[str, Any], *, timeout: float = 25) -> dict[str, Any]:
     funnel = funnel_mod()
     if not funnel.ga4_credentials_available():
         return {"ga4": "not_configured", "rows": [], "error": None}
@@ -398,10 +465,10 @@ def run_ga4_report(body: dict[str, Any]) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             report = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
-        return {"ga4": "failed", "rows": [], "error": f"ga4_run_report_failed: {exc}"}
+        return {"ga4": "failed", "rows": [], "error": f"ga4_run_report_failed: {_ga4_error_detail(exc)}"}
     return {"ga4": "ok", "report": report, "error": None}
 
 
@@ -502,35 +569,44 @@ def fetch_ga4_paths(start: str, end: str) -> dict[str, Any]:
         return {"ga4": raw.get("ga4") or "not_configured", "error": raw.get("error"), "rows": []}
     parsed = []
     for row in (raw.get("report") or {}).get("rows") or []:
-        dims = [cell.get("value") for cell in (row.get("dimensionValues") or [])]
-        mets = [cell.get("value") for cell in (row.get("metricValues") or [])]
+        dims = _dimension_values(row)
         parsed.append(
             {
                 "host_name": compact_str(dims[0] if dims else ""),
                 "page_path": compact_str(dims[1] if len(dims) > 1 else ""),
-                "count": optional_int(mets[0] if mets else 0) or 0,
+                "count": _metric_event_count(row),
             }
         )
     return {"ga4": "ok", "error": None, "rows": parsed}
 
 
-def fetch_ga4_paths_daily(
+def _dated_dimension_names(body: dict[str, Any] | None) -> set[str]:
+    return {
+        compact_str(item.get("name"))
+        for item in (body or {}).get("dimensions") or []
+        if compact_str(item.get("name"))
+    }
+
+
+def _combined_date_host_path_is_unsafe(body: dict[str, Any] | None) -> bool:
+    """date + hostName + pagePath in one report fails on this property (PR #35)."""
+    names = _dated_dimension_names(body)
+    return {"date", "hostName", "pagePath"} <= names
+
+
+def _ga4_path_event_body(
     start: str,
     end: str,
-    prior_start: str | None = None,
-    prior_end: str | None = None,
+    *,
+    extra_range: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Optional dated path report for the trend only. Failure must not touch KPIs."""
-    date_ranges = [{"startDate": start, "endDate": end, "name": "current"}]
-    include_prior = bool(prior_start and prior_end)
-    if include_prior:
-        date_ranges.append({"startDate": prior_start, "endDate": prior_end, "name": "prior"})
-    dimensions = [{"name": "hostName"}, {"name": "pagePath"}, {"name": "date"}]
-    if include_prior:
-        dimensions.append({"name": "dateRange"})
-    body = {
+    """Same undated host+path shape as fetch_ga4_paths. Date stays in the range only."""
+    date_ranges = [{"startDate": start, "endDate": end}]
+    if extra_range:
+        date_ranges.append(extra_range)
+    return {
         "dateRanges": date_ranges,
-        "dimensions": dimensions,
+        "dimensions": [{"name": name} for name in PATH_DIMENSIONS],
         "metrics": [{"name": "eventCount"}],
         "limit": GA4_REPORT_LIMIT,
         "dimensionFilter": {
@@ -547,22 +623,162 @@ def fetch_ga4_paths_daily(
             }
         },
     }
-    raw = run_ga4_report(body)
-    if raw.get("ga4") != "ok":
-        return {"ga4": raw.get("ga4") or "not_configured", "error": raw.get("error"), "rows": []}
-    parsed = []
-    for row in (raw.get("report") or {}).get("rows") or []:
-        dims = [cell.get("value") for cell in (row.get("dimensionValues") or [])]
-        mets = [cell.get("value") for cell in (row.get("metricValues") or [])]
-        parsed.append(
+
+
+def fetch_ga4_paths_daily(
+    start: str,
+    end: str,
+    prior_start: str | None = None,
+    prior_end: str | None = None,
+) -> dict[str, Any]:
+    """Dated daily series for the trend only. Failure must not touch KPIs.
+
+    Do not request date+hostName+pagePath together — that combo failed on
+    property 408492342 (PR #35) and still fails as ga4_paths_daily on chi.
+    Prefer two lightweight dated queries that keep the same visit_bucket
+    rules as the undated KPI. If those fail, fall back to per-day host+path
+    (date in the range, not as a dimension — same shape as fetch_ga4_paths).
+    """
+    include_prior = bool(prior_start and prior_end)
+    split = _fetch_ga4_daily_split(
+        start,
+        end,
+        prior_start if include_prior else None,
+        prior_end if include_prior else None,
+    )
+    if split.get("ga4") == "ok":
+        split["strategy"] = "split_page_path_and_wny_host"
+        return split
+    if split.get("ga4") == "not_configured":
+        split["strategy"] = None
+        return split
+    days = dates_inclusive(start, end)
+    if len(days) > PATH_PRIOR_DAY_CAP:
+        split["strategy"] = None
+        return split
+    per_day = _fetch_ga4_daily_per_day(days, slot="current")
+    if per_day.get("ga4") != "ok":
+        if split.get("error") and not per_day.get("error"):
+            per_day["error"] = split.get("error")
+        per_day["strategy"] = None
+        return per_day
+    rows = list(per_day.get("rows") or [])
+    if include_prior and prior_start and prior_end:
+        prior_days = dates_inclusive(prior_start, prior_end)
+        if len(prior_days) <= PATH_PRIOR_DAY_CAP:
+            prior = _fetch_ga4_daily_per_day(prior_days, slot="prior")
+            if prior.get("ga4") == "ok":
+                rows.extend(prior.get("rows") or [])
+    return {
+        "ga4": "ok",
+        "error": split.get("error"),
+        "rows": rows,
+        "strategy": "per_day_host_path",
+    }
+
+
+def _fetch_ga4_daily_split(
+    start: str,
+    end: str,
+    prior_start: str | None = None,
+    prior_end: str | None = None,
+) -> dict[str, Any]:
+    """date+pagePath on brand hosts, date+hostName on wny. Same estimate/LP rules."""
+    funnel = funnel_mod()
+    date_ranges = [{"startDate": start, "endDate": end}]
+    if prior_start and prior_end:
+        date_ranges.append({"startDate": prior_start, "endDate": prior_end})
+    brand_body = {
+        "dateRanges": date_ranges,
+        "dimensions": [{"name": "date"}, {"name": "pagePath"}],
+        "metrics": [{"name": "eventCount"}],
+        "limit": GA4_REPORT_LIMIT,
+        "dimensionFilter": _host_and_page_view_filter(funnel.LIVE_TOTAL_HOSTS),
+    }
+    wny_body = {
+        "dateRanges": date_ranges,
+        "dimensions": [{"name": "date"}, {"name": "hostName"}],
+        "metrics": [{"name": "eventCount"}],
+        "limit": "100",
+        "dimensionFilter": _host_and_page_view_filter(funnel.LIVE_WNY_HOSTS),
+    }
+    if _combined_date_host_path_is_unsafe(brand_body) or _combined_date_host_path_is_unsafe(wny_body):
+        return {
+            "ga4": "failed",
+            "error": "refused_combined_date_host_path",
+            "rows": [],
+        }
+    brand_raw = run_ga4_report(brand_body)
+    if brand_raw.get("ga4") != "ok":
+        return {
+            "ga4": brand_raw.get("ga4") or "failed",
+            "error": brand_raw.get("error"),
+            "rows": [],
+        }
+    wny_raw = run_ga4_report(wny_body)
+    if wny_raw.get("ga4") != "ok":
+        return {
+            "ga4": wny_raw.get("ga4") or "failed",
+            "error": wny_raw.get("error"),
+            "rows": [],
+        }
+    rows: list[dict[str, Any]] = []
+    for row in (brand_raw.get("report") or {}).get("rows") or []:
+        dims = _dimension_values(row)
+        day = normalize_series_date(dims[0] if dims else "")
+        rows.append(
             {
-                "host_name": compact_str(dims[0] if dims else ""),
+                "host_name": funnel.HOST_WWW,
                 "page_path": compact_str(dims[1] if len(dims) > 1 else ""),
-                "date": normalize_series_date(dims[2] if len(dims) > 2 else ""),
-                "date_range": compact_str(dims[3] if len(dims) > 3 else "current") or "current",
-                "count": optional_int(mets[0] if mets else 0) or 0,
+                "date": day,
+                "date_range": date_range_slot(day, start, end, prior_start, prior_end),
+                "count": _metric_event_count(row),
             }
         )
+    for row in (wny_raw.get("report") or {}).get("rows") or []:
+        dims = _dimension_values(row)
+        day = normalize_series_date(dims[0] if dims else "")
+        rows.append(
+            {
+                "host_name": compact_str(dims[1] if len(dims) > 1 else funnel.HOST_WNY),
+                "page_path": "/",
+                "date": day,
+                "date_range": date_range_slot(day, start, end, prior_start, prior_end),
+                "count": _metric_event_count(row),
+            }
+        )
+    return {"ga4": "ok", "error": None, "rows": rows}
+
+
+def _fetch_ga4_daily_per_day(days: list[str], *, slot: str) -> dict[str, Any]:
+    """One host+path report per NY day. Date is the range, not a dimension."""
+    parsed: list[dict[str, Any]] = []
+    for day in days:
+        body = _ga4_path_event_body(day, day)
+        if _combined_date_host_path_is_unsafe(body) or "date" in _dated_dimension_names(body):
+            return {
+                "ga4": "failed",
+                "error": "refused_combined_date_host_path",
+                "rows": [],
+            }
+        raw = run_ga4_report(body, timeout=10)
+        if raw.get("ga4") != "ok":
+            return {
+                "ga4": raw.get("ga4") or "failed",
+                "error": raw.get("error"),
+                "rows": [],
+            }
+        for row in (raw.get("report") or {}).get("rows") or []:
+            dims = _dimension_values(row)
+            parsed.append(
+                {
+                    "host_name": compact_str(dims[0] if dims else ""),
+                    "page_path": compact_str(dims[1] if len(dims) > 1 else ""),
+                    "date": day,
+                    "date_range": slot,
+                    "count": _metric_event_count(row),
+                }
+            )
     return {"ga4": "ok", "error": None, "rows": parsed}
 
 
@@ -1456,15 +1672,29 @@ def compute_website_traffic(
         "Meta spend is not wired and was not invented.",
         "Charles QA before treating preview numbers as live.",
     ]
+    dated_strategy = compact_str((ga4_paths_daily or {}).get("strategy"))
+    dated_error = compact_str((ga4_paths_daily or {}).get("error"))
     if path_summary is None:
         notes.append(
             "Estimate/LP split falls back to warehouse host fields "
             "(visits_total = brand hosts, visits_wny = legacy calc) when the GA4 path report is missing."
         )
     elif dated_status and dated_status != "ok":
-        notes.append(
+        fail_note = (
             "Dated GA4 path report failed; range KPIs still use the undated path split. "
             "Daily trend falls back to warehouse host-split days."
+        )
+        if dated_error:
+            fail_note = f"{fail_note} ({dated_error[:240]})"
+        notes.append(fail_note)
+    elif dated_status == "ok" and dated_strategy == "split_page_path_and_wny_host":
+        notes.append(
+            "Daily trend uses dated GA4 pagePath on brand hosts plus hostName on wny "
+            "(same estimate/LP rules as the undated KPI). date+hostName+pagePath together is not requested."
+        )
+    elif dated_status == "ok" and dated_strategy == "per_day_host_path":
+        notes.append(
+            "Daily trend uses per-day GA4 host+path reports (date in the range, not as a dimension)."
         )
     if overview_status != "ok":
         notes.append("GA4 overview users/bounce/engagement stay EXAMPLE until the Data API report succeeds.")
@@ -1548,6 +1778,7 @@ def compute_website_traffic(
             "ga4_overview": overview_status or "not_configured",
             "ga4_paths": path_status or "not_configured",
             "ga4_paths_daily": dated_status or "not_configured",
+            "ga4_paths_daily_strategy": dated_strategy or None,
             "ga4_acquisition": acq_status or "not_configured",
             "warehouse": "ok" if warehouse_ready else ("missing_docs" if db is not None else "not_configured"),
             "named_fills": "ok" if named_ready else "not_configured",

@@ -154,6 +154,23 @@ def sample_dated_path_rows():
     ]
 
 
+def sample_dated_path_rows_aligned():
+    """Daily rows that sum to sample_path_rows() KPI split (30 / 80 / 110)."""
+    return [
+        {"host_name": "www.happyslr.com", "page_path": "/", "date": "2026-09-07", "count": 70},
+        {"host_name": "www.happyslr.com", "page_path": "/estimate", "date": "2026-09-07", "count": 20},
+        {"host_name": "wny.happyslr.com", "page_path": "/calculator", "date": "2026-09-07", "count": 10},
+        {"host_name": "www.happyslr.com", "page_path": "/buffalo", "date": "2026-09-08", "count": 10},
+    ]
+
+
+def ga4_dim_row(dims, count):
+    return {
+        "dimensionValues": [{"value": value} for value in dims],
+        "metricValues": [{"value": str(count)}],
+    }
+
+
 def sample_fills():
     return [
         {
@@ -745,9 +762,14 @@ class WebsiteTrafficChartTests(unittest.TestCase):
     def test_kpi_path_fetch_does_not_request_date_dimension(self):
         kpi_src = inspect.getsource(traffic.fetch_ga4_paths)
         daily_src = inspect.getsource(traffic.fetch_ga4_paths_daily)
+        split_src = inspect.getsource(traffic._fetch_ga4_daily_split)
         self.assertNotIn('"date"', kpi_src)
         self.assertIn("PATH_DIMENSIONS", kpi_src)
-        self.assertIn('"date"', daily_src)
+        self.assertIn("split_page_path_and_wny_host", daily_src)
+        self.assertIn("date+hostName+pagePath", daily_src)
+        self.assertIn('"date"', split_src)
+        self.assertIn('"pagePath"', split_src)
+        self.assertNotIn('"hostName", {"name": "pagePath"}, {"name": "date"}', split_src)
 
     def test_series_prefers_ga4_path_split_not_visits_wny(self):
         payload = live_payload(
@@ -778,6 +800,37 @@ class WebsiteTrafficChartTests(unittest.TestCase):
         self.assertEqual(prior[-1]["date"], "2026-09-06")
         self.assertFalse(any(row.get("estimate_lp_visits") == 8 for row in prior))
 
+    def test_dated_success_daily_sum_aligns_with_path_kpi(self):
+        payload = live_payload(
+            ga4_paths={"ga4": "ok", "rows": sample_path_rows()},
+            ga4_paths_daily={
+                "ga4": "ok",
+                "strategy": "split_page_path_and_wny_host",
+                "rows": sample_dated_path_rows_aligned(),
+            },
+        )
+        self.assertEqual(payload["sources"]["ga4_paths"], "ok")
+        self.assertEqual(payload["sources"]["ga4_paths_daily"], "ok")
+        self.assertEqual(payload["sources"]["split"], "ga4_page_path")
+        self.assertEqual(payload["series"]["source"], "ga4_page_path")
+        self.assertEqual(payload["series"]["daily_source"], "ga4_page_path")
+        daily = payload["series"]["daily"]
+        estimate_sum = sum(
+            int(row["estimate_lp_visits"])
+            for row in daily
+            if row.get("estimate_lp_visits") is not None
+        )
+        session_sum = sum(
+            int(row["sessions"]) for row in daily if row.get("sessions") is not None
+        )
+        self.assertEqual(estimate_sum, payload["funnel"]["estimate_lp_visits"])
+        self.assertEqual(estimate_sum, 30)
+        self.assertEqual(session_sum, payload["funnel"]["all_site_sessions"])
+        self.assertEqual(session_sum, 110)
+        self.assertNotEqual(estimate_sum, 10)
+        self.assertEqual(daily[0]["estimate_lp_visits"], 30)
+        self.assertEqual(daily[1]["estimate_lp_visits"], 0)
+
     def test_dated_path_failure_keeps_undated_kpi_split(self):
         payload = live_payload(
             ga4_paths={"ga4": "ok", "rows": sample_path_rows()},
@@ -794,6 +847,97 @@ class WebsiteTrafficChartTests(unittest.TestCase):
         self.assertEqual(payload["series"]["daily_source"], "warehouse")
         self.assertEqual(payload["series"]["daily"][0]["estimate_lp_visits"], 9)
         self.assertIn("undated path split", " ".join(payload["notes"]))
+
+    def test_fetch_ga4_paths_request_stays_undated_host_path(self):
+        captured = []
+
+        def fake(body, timeout=25):
+            captured.append(body)
+            return {"ga4": "ok", "report": {"rows": []}, "error": None}
+
+        orig = traffic.run_ga4_report
+        traffic.run_ga4_report = fake
+        try:
+            out = traffic.fetch_ga4_paths("2026-09-07", "2026-09-13")
+        finally:
+            traffic.run_ga4_report = orig
+        self.assertEqual(out["ga4"], "ok")
+        self.assertEqual(len(captured), 1)
+        names = [item["name"] for item in captured[0]["dimensions"]]
+        self.assertEqual(names, ["hostName", "pagePath"])
+        self.assertNotIn("date", names)
+        self.assertEqual(captured[0]["dateRanges"], [{"startDate": "2026-09-07", "endDate": "2026-09-13"}])
+
+    def test_fetch_ga4_paths_daily_split_does_not_combine_date_host_path(self):
+        calls = []
+
+        def fake(body, timeout=25):
+            names = [item["name"] for item in body.get("dimensions") or []]
+            calls.append(names)
+            self.assertFalse({"date", "hostName", "pagePath"} <= set(names))
+            if names == ["date", "pagePath"]:
+                return {
+                    "ga4": "ok",
+                    "report": {
+                        "rows": [
+                            ga4_dim_row(["20260907", "/"], 70),
+                            ga4_dim_row(["20260907", "/estimate"], 20),
+                            ga4_dim_row(["20260908", "/buffalo"], 10),
+                        ]
+                    },
+                    "error": None,
+                }
+            if names == ["date", "hostName"]:
+                return {
+                    "ga4": "ok",
+                    "report": {"rows": [ga4_dim_row(["20260907", "wny.happyslr.com"], 10)]},
+                    "error": None,
+                }
+            self.fail(f"unexpected dimensions {names}")
+
+        orig = traffic.run_ga4_report
+        traffic.run_ga4_report = fake
+        try:
+            out = traffic.fetch_ga4_paths_daily("2026-09-07", "2026-09-08")
+        finally:
+            traffic.run_ga4_report = orig
+        self.assertEqual(out["ga4"], "ok")
+        self.assertEqual(out["strategy"], "split_page_path_and_wny_host")
+        self.assertEqual(calls, [["date", "pagePath"], ["date", "hostName"]])
+        summary = traffic.summarize_path_rows(out["rows"])
+        self.assertEqual(summary["estimate_lp_visits"], 30)
+        self.assertEqual(summary["brand_site_sessions"], 80)
+        self.assertEqual(summary["all_site_sessions"], 110)
+        self.assertEqual(traffic.visit_bucket("www.happyslr.com", "/estimate"), "estimate_lp")
+        self.assertEqual(traffic.visit_bucket("wny.happyslr.com", "/"), "estimate_lp")
+
+    def test_fetch_ga4_paths_daily_per_day_fallback(self):
+        calls = []
+
+        def fake(body, timeout=25):
+            names = [item["name"] for item in body.get("dimensions") or []]
+            calls.append(names)
+            if "date" in names:
+                return {"ga4": "failed", "error": "incompatible dimensions", "rows": []}
+            return {
+                "ga4": "ok",
+                "report": {"rows": [ga4_dim_row(["www.happyslr.com", "/estimate"], 4)]},
+                "error": None,
+            }
+
+        orig = traffic.run_ga4_report
+        traffic.run_ga4_report = fake
+        try:
+            out = traffic.fetch_ga4_paths_daily("2026-09-07", "2026-09-08")
+        finally:
+            traffic.run_ga4_report = orig
+        self.assertEqual(out["ga4"], "ok")
+        self.assertEqual(out["strategy"], "per_day_host_path")
+        self.assertIn(["date", "pagePath"], calls)
+        self.assertIn(["hostName", "pagePath"], calls)
+        self.assertEqual(out["rows"][0]["date"], "2026-09-07")
+        self.assertEqual(out["rows"][0]["page_path"], "/estimate")
+        self.assertEqual(traffic.summarize_path_rows(out["rows"])["estimate_lp_visits"], 8)
 
     def test_series_from_warehouse_days_not_invented_zeros(self):
         payload = live_payload(end="2026-09-09")

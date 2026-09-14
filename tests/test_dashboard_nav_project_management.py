@@ -45,6 +45,8 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotEqual(website, -1)
         self.assertLess(bot, website)
         self.assertIn("/api/website_funnel", html)
+        self.assertIn("/api/website_traffic", html)
+        self.assertLess(website, html.find("Website Traffic"))
         self.assertNotIn("/api/inbound_cac", html)
         self.assertNotIn("Inbound CAC", html)
 

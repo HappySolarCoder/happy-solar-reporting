@@ -2,28 +2,33 @@
 
 """Vercel Python function: /api/website_traffic
 
-Website Traffic Dashboard v1 — WIREFRAME / EXAMPLE DATA stub for
-Marketing + Charles QA. HTML default. Optional ?format=json returns
-{stub:true, example:true}. No live metric wiring in this file.
+Website Traffic Dashboard v1 for Marketing + Charles QA.
+HTML default. Optional ?format=json returns live/stub tile fields.
 
-Do NOT wire GA4 Data API or warehouse document reads here. Do not invent
-Meta spend or claim an Ads connection. Instant Form / 3PL are NOT
-website leads. Form freeze: this page does not change the calculator form.
+Live tiles (warehouse + GA4 Data API, property 408492342 / G-V02RZFR4SZ):
+Overview KPIs + brand vs estimate/calc, Acquisition channel/source/medium
++ FB organic vs paid (GA4 only), Funnel estimate/LP → start → address →
+bill → submit → named fill, Named-fill aggregates.
 
-Later wiring exclude list (do not count as live website leads):
+EXAMPLE until real: Audience, Meta spend, Contact step, paid landing
+mismatch, Content exits. CTA taps / FB post→sessions only if events exist.
+
+Locks: Funnel TOP = /estimate + legacy wny calc, NOT all-site sessions.
+Test filter ON by default. Instant Form / 3PL are NOT website leads.
+Named fills = Marketing aggregates; PII stays gated. Do not invent Meta
+spend. Form freeze: this page does not change the calculator form.
+
+Exclude list (test filter ON):
 Hawkstone Way, 313 E Stonebridge Gilbert, Test Test, Evan Day,
 adchday@gmail.com, evanrday23@gmail.com, preview/debug/internal.
-
-Primary CTA: www.happyslr.com/estimate. Dual-domain history stays
-(www.happyslr.com / happyslr.com + wny.happyslr.com). Warehouse named
-fills later: source=new-site-estimate.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -36,18 +41,43 @@ if str(API_DIR) not in sys.path:
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 NY_TZ = ZoneInfo("America/New_York")
-JSON_STUB = {"stub": True, "example": True}
+
+
+def _load_metric():
+    path = API_DIR / "metrics" / "website_traffic.py"
+    spec = importlib.util.spec_from_file_location("hs_website_traffic_metric", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load website_traffic metric from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+metric = _load_metric()
 
 
 def default_range_et(now: datetime | None = None) -> tuple[str, str]:
-    today = (now or datetime.now(NY_TZ)).date()
-    end = today - timedelta(days=1)
-    start = end - timedelta(days=6)
-    return start.isoformat(), end.isoformat()
+    return metric.default_range(now)
 
 
-def render_html(now: datetime | None = None) -> str:
-    start, end = default_range_et(now)
+def json_for_script(payload: dict) -> str:
+    return json.dumps(payload, default=str).replace("<", "\\u003c")
+
+
+def build_payload(qs: dict[str, list[str]] | None = None, now: datetime | None = None) -> dict:
+    qs = qs or {}
+    db = None
+    try:
+        db = metric.get_db()
+    except Exception:
+        db = None
+    return metric.payload_from_query(qs, db=db, now=now)
+
+
+def render_html(now: datetime | None = None, payload: dict | None = None) -> str:
+    data = payload or metric.compute_website_traffic(None, now=now, fetch_remote=False)
+    start = data.get("start") or default_range_et(now)[0]
+    end = data.get("end") or default_range_et(now)[1]
     html = r"""<!doctype html>
 <html>
 <head>
@@ -81,6 +111,7 @@ __DASHBOARD_NAV_CSS__
     .kpi { font-size:36px; font-weight:950; margin-top:8px; letter-spacing:-.02em; }
     .meta { margin-top:6px; color:var(--muted2); font-size:12px; }
     .example-tag { display:inline-block; margin-left:6px; padding:2px 6px; border-radius:999px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:900; letter-spacing:.03em; vertical-align:middle; }
+    .example-tag.live { background:#dcfce7; color:#166534; }
     .banner { grid-column:span 12; padding:12px 14px; border-radius:12px; border:1px solid #fde68a; background:#fffbeb; color:#92400e; font-size:13px; font-weight:700; }
     .banner.alert { border-color:#fecaca; background:#fef2f2; color:#991b1b; }
     .banner.gate { border-color:#bfdbfe; background:#eff6ff; color:#1e3a8a; }
@@ -121,8 +152,8 @@ __DASHBOARD_NAV_CSS__
   <div class="wrap">
     <div class="topbar">
       <div>
-        <div class="title">Website Traffic <span class="example-tag">EXAMPLE DATA</span></div>
-        <div class="subtitle">Wireframe for Marketing + Charles QA. Primary CTA is <b>www.happyslr.com/estimate</b>. Dual-domain history stays (happyslr.com + wny.happyslr.com). Instant Form / 3PL are not website leads. Numbers below are placeholders — not live GA4, warehouse, or Meta.</div>
+        <div class="title">Website Traffic <span id="titleTag" class="example-tag">EXAMPLE DATA</span></div>
+        <div class="subtitle">Marketing dashboard. Primary CTA is <b>www.happyslr.com/estimate</b>. Dual-domain history stays (happyslr.com + wny.happyslr.com). Instant Form / 3PL are not website leads. Funnel top is estimate/LP visits, not all-site sessions. EXAMPLE tags stay on tiles that are not wired. Charles QA before treating as live.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -142,27 +173,27 @@ __DASHBOARD_NAV_HTML__
     </div>
 
     <div class="grid">
-      <div id="wireframeBanner" class="banner">WIREFRAME / EXAMPLE DATA — not live metrics. Chrome changes the selected range label only. No GA4 Data API, Firestore, or Meta Ads read in this stub.</div>
+      <div id="statusBanner" class="banner">LIVE + EXAMPLE — Overview / Acquisition / Funnel / Named fills wire from GA4 + warehouse when creds exist. Audience, Meta, Contact step, and paid mismatch stay EXAMPLE. Charles QA before treating as live.</div>
       <div class="card span-12">
-        <div class="card-title">Chrome <span class="example-tag">STUB</span></div>
+        <div class="card-title">Chrome</div>
         <div class="meta" id="chromeLabel">Range __START__ → __END__ ET · domain All · test filter ON · compare prior ON</div>
       </div>
 
       <div class="section-label">Strips</div>
       <div class="card span-4">
-        <div class="card-title">Meta spend / reach / clicks <span class="example-tag">WHEN ADS ACTIVE</span></div>
+        <div class="card-title">Meta spend / reach / clicks <span class="example-tag" data-tile="meta_spend">WHEN ADS ACTIVE</span></div>
         <div class="kpi">—</div>
-        <div class="meta">Placeholder only. Meta is not wired. Do not treat the dash as spend. Shown when Ads ACTIVE in a later wiring pass.</div>
+        <div class="meta">Meta is not wired. Do not treat the dash as spend. Shown when Ads ACTIVE in a later wiring pass. Do not invent Ads Manager numbers.</div>
       </div>
       <div class="card span-4">
-        <div class="card-title">Scoreboard <span class="example-tag">EXAMPLE</span></div>
-        <div class="kpi">12</div>
-        <div class="meta">Named fills · session→submit 2.1% · start→submit 24% · CPA when paid — (paid window only; blank until Meta is wired)</div>
+        <div class="card-title">Scoreboard <span class="example-tag" data-tile="funnel">EXAMPLE</span></div>
+        <div class="kpi" id="scoreboardKpi">—</div>
+        <div class="meta" id="scoreboardMeta">Named fills · submit / estimate/LP · start→submit · CPA when paid — (blank until Meta is wired)</div>
       </div>
-      <div class="banner alert span-12">EXAMPLE ALERT: estimate/LP visits ↑ · starts → 0 — leak uses /estimate (or WNY calc) visits, not all-site sessions. Not a live alert.</div>
+      <div id="leakAlert" class="banner alert span-12 is-off">estimate/LP visits ↑ · starts → 0 — leak uses /estimate (or WNY calc) visits, not all-site sessions.</div>
 
       <div class="card span-12">
-        <div class="card-title">Where each question will live</div>
+        <div class="card-title">Where each question lives</div>
         <div class="map" style="margin-top:10px">
           <div><b>Brand site vs estimate/calc sessions</b> → Overview</div>
           <div><b>Channel + FB organic vs Meta paid + CTA taps</b> → Overview / Acquisition</div>
@@ -186,18 +217,18 @@ __DASHBOARD_NAV_HTML__
     <section id="tab-overview" class="tabpanel active" data-tab="overview">
       <div class="grid">
         <div class="section-label">Overview — KPI cards</div>
-        <div class="card span-3"><div class="card-title">Sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">4,218</div><div class="meta vs-prior">vs prior <span class="delta up">+8%</span></div></div>
-        <div class="card span-3"><div class="card-title">Users <span class="example-tag">EXAMPLE</span></div><div class="kpi">3,640</div><div class="meta vs-prior">vs prior <span class="delta up">+6%</span></div></div>
-        <div class="card span-3"><div class="card-title">New / returning <span class="example-tag">EXAMPLE</span></div><div class="kpi">78% / 22%</div><div class="meta vs-prior">new vs prior <span class="delta up">+2 pts</span></div></div>
-        <div class="card span-3"><div class="card-title">Pageviews <span class="example-tag">EXAMPLE</span></div><div class="kpi">9,104</div><div class="meta vs-prior">vs prior <span class="delta up">+5%</span></div></div>
-        <div class="card span-3"><div class="card-title">Pages / session <span class="example-tag">EXAMPLE</span></div><div class="kpi">2.16</div><div class="meta vs-prior">vs prior <span class="delta down">−0.04</span></div></div>
-        <div class="card span-3"><div class="card-title">Bounce / engaged <span class="example-tag">GA4</span></div><div class="kpi">41% / 59%</div><div class="meta">GA4 bounce + engaged session rate. <span class="vs-prior">vs prior <span class="delta down">bounce −3 pts</span></span></div></div>
-        <div class="card span-3"><div class="card-title">Avg engagement <span class="example-tag">GA4</span></div><div class="kpi">1m 12s</div><div class="meta vs-prior">vs prior <span class="delta up">+4s</span></div></div>
-        <div class="card span-3 vs-prior"><div class="card-title">Vs prior <span class="example-tag">EXAMPLE</span></div><div class="kpi">+8%</div><div class="meta">Sessions vs prior period (same length, ET). Toggle Compare prior in chrome.</div></div>
-        <div class="card span-3"><div class="card-title">Brand site sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">2,768</div><div class="meta">happyslr.com / www brand pages. Not the funnel top. <span class="vs-prior">vs prior <span class="delta up">+5%</span></span></div></div>
-        <div class="card span-3"><div class="card-title">Estimate / calc sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">1,450</div><div class="meta">/estimate + legacy wny calculator. Funnel step 1. <span class="vs-prior">vs prior <span class="delta up">+11%</span></span></div></div>
-        <div class="card span-3"><div class="card-title">CTA taps → /estimate <span class="example-tag">EXAMPLE</span></div><div class="kpi">186</div><div class="meta">Brand-page CTA clicks that land on /estimate. Placeholder only.</div></div>
-        <div class="card span-3"><div class="card-title">Organic FB post → sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">94</div><div class="meta">facebook / organic sessions from a post. Placeholder — not Ads Manager.</div></div>
+        <div class="card span-3"><div class="card-title">Sessions <span class="example-tag" data-tile="overview">EXAMPLE</span></div><div class="kpi" id="kpiSessions">—</div><div class="meta vs-prior" id="metaSessions"></div></div>
+        <div class="card span-3"><div class="card-title">Users <span class="example-tag" data-tile="overview_users">EXAMPLE</span></div><div class="kpi" id="kpiUsers">—</div><div class="meta">GA4 totalUsers on allowlisted hosts.</div></div>
+        <div class="card span-3"><div class="card-title">New / returning <span class="example-tag" data-tile="overview_users">EXAMPLE</span></div><div class="kpi" id="kpiNewRet">—</div><div class="meta" id="metaNewRet">new vs returning share</div></div>
+        <div class="card span-3"><div class="card-title">Pageviews <span class="example-tag" data-tile="overview_users">EXAMPLE</span></div><div class="kpi" id="kpiPageviews">—</div><div class="meta">GA4 screenPageViews</div></div>
+        <div class="card span-3"><div class="card-title">Pages / session <span class="example-tag" data-tile="overview_users">EXAMPLE</span></div><div class="kpi" id="kpiPagesPer">—</div><div class="meta">pageviews / sessions</div></div>
+        <div class="card span-3"><div class="card-title">Bounce / engaged <span class="example-tag" data-tile="overview_users">GA4</span></div><div class="kpi" id="kpiBounce">—</div><div class="meta">GA4 bounce + engaged session rate.</div></div>
+        <div class="card span-3"><div class="card-title">Avg engagement <span class="example-tag" data-tile="overview_users">GA4</span></div><div class="kpi" id="kpiEngage">—</div><div class="meta vs-prior">GA4 averageSessionDuration</div></div>
+        <div class="card span-3 vs-prior"><div class="card-title">Vs prior <span class="example-tag" data-tile="overview">EXAMPLE</span></div><div class="kpi" id="kpiVsPrior">—</div><div class="meta">Sessions vs prior period (same length, ET). Toggle Compare prior in chrome.</div></div>
+        <div class="card span-3"><div class="card-title">Brand site sessions <span class="example-tag" data-tile="overview_brand_vs_estimate">EXAMPLE</span></div><div class="kpi" id="kpiBrand">—</div><div class="meta">happyslr.com / www brand pages. Not the funnel top. <span class="vs-prior" id="metaBrand"></span></div></div>
+        <div class="card span-3"><div class="card-title">Estimate / calc sessions <span class="example-tag" data-tile="overview_brand_vs_estimate">EXAMPLE</span></div><div class="kpi" id="kpiEstimate">—</div><div class="meta">/estimate + legacy wny calculator. Funnel step 1. <span class="vs-prior" id="metaEstimate"></span></div></div>
+        <div class="card span-3"><div class="card-title">CTA taps → /estimate <span class="example-tag" data-tile="cta_taps">EXAMPLE</span></div><div class="kpi" id="kpiCta">—</div><div class="meta">Brand-page CTA clicks (estimate_cta_click) when that event exists. Else EXAMPLE.</div></div>
+        <div class="card span-3"><div class="card-title">Organic FB post → sessions <span class="example-tag" data-tile="fb_post_sessions">EXAMPLE</span></div><div class="kpi" id="kpiFbPost">—</div><div class="meta">facebook / organic sessions from GA4 only. Not Ads Manager.</div></div>
       </div>
     </section>
 
@@ -205,40 +236,27 @@ __DASHBOARD_NAV_HTML__
       <div class="grid">
         <div class="section-label">Acquisition</div>
         <div class="card span-8">
-          <div class="card-title">Channel + source / medium <span class="example-tag">EXAMPLE</span></div>
-          <div class="meta" style="margin-bottom:10px">Stub table. Later: GA4 session default channel group + sessionSource / sessionMedium.</div>
+          <div class="card-title">Channel + source / medium <span class="example-tag" data-tile="acquisition">EXAMPLE</span></div>
+          <div class="meta" style="margin-bottom:10px">GA4 sessionDefaultChannelGroup + sessionSource / sessionMedium on allowlisted hosts. Not Meta spend.</div>
           <table>
             <thead><tr><th>Channel</th><th>Source / medium</th><th>Sessions</th><th>Users</th></tr></thead>
-            <tbody>
-              <tr><td>Organic Search</td><td>google / organic</td><td>1,640</td><td>1,410</td></tr>
-              <tr><td>Direct</td><td>(direct) / (none)</td><td>980</td><td>860</td></tr>
-              <tr><td>Paid Social</td><td>facebook / paid</td><td>720</td><td>610</td></tr>
-              <tr><td>Organic Social</td><td>facebook / organic</td><td>410</td><td>360</td></tr>
-              <tr><td>Referral</td><td>wix.com / referral</td><td>180</td><td>150</td></tr>
+            <tbody id="acqBody">
+              <tr><td colspan="4">No GA4 acquisition rows yet.</td></tr>
             </tbody>
           </table>
         </div>
         <div class="card span-4">
           <div class="card-title">FB organic vs Meta paid</div>
-          <div class="callout">Callout slot: Facebook / Instagram organic vs Meta paid. Not live. Do not read this as Ads Manager numbers.</div>
-          <div class="meta" style="margin-top:10px">Organic social 410 · Paid social 720 · example split only.</div>
+          <div class="callout" id="fbCallout">Facebook / Instagram organic vs paid from GA4 source/medium only. Not Ads Manager. Meta spend stays not-wired.</div>
+          <div class="meta" style="margin-top:10px" id="fbSplitMeta">Organic social — · Paid social —</div>
         </div>
-        <div class="card span-12 callout warn">Paid landing mismatch: facebook / paid landed on www (home or city LP) without a calc start. Later wiring flags www-without-estimate_start. Not live Ads numbers.</div>
+        <div class="card span-12 callout warn">Paid landing mismatch: EXAMPLE — landing × source is not queried in v1. Do not read this as Ads numbers. Later wiring flags www-without-estimate_start.</div>
         <div class="card span-12">
-          <div class="card-title">Landing × source — top 10 <span class="example-tag">EXAMPLE</span></div>
+          <div class="card-title">Landing × source — top 10 <span class="example-tag" data-tile="paid_mismatch">EXAMPLE</span></div>
           <table>
             <thead><tr><th>#</th><th>Landing</th><th>Source / medium</th><th>Sessions</th></tr></thead>
             <tbody>
-              <tr><td>1</td><td>/estimate</td><td>google / organic</td><td>540</td></tr>
-              <tr><td>2</td><td>/</td><td>(direct) / (none)</td><td>430</td></tr>
-              <tr><td>3</td><td>/estimate</td><td>facebook / paid</td><td>310</td></tr>
-              <tr><td>4</td><td>/buffalo</td><td>google / organic</td><td>220</td></tr>
-              <tr><td>5</td><td>/rochester</td><td>google / organic</td><td>180</td></tr>
-              <tr><td>6</td><td>wny /calculator</td><td>(direct) / (none)</td><td>160</td></tr>
-              <tr><td>7</td><td>/syracuse</td><td>google / organic</td><td>140</td></tr>
-              <tr><td>8</td><td>/ny-incentives</td><td>facebook / organic</td><td>110</td></tr>
-              <tr><td>9</td><td>/estimate</td><td>facebook / organic</td><td>90</td></tr>
-              <tr><td>10</td><td>/contact-me</td><td>(direct) / (none)</td><td>70</td></tr>
+              <tr><td colspan="4">EXAMPLE — extra landing × source report not pulled. Content/LPs shows path landings when cheap.</td></tr>
             </tbody>
           </table>
         </div>
@@ -250,29 +268,17 @@ __DASHBOARD_NAV_HTML__
         <div class="section-label">Content / LPs</div>
         <div class="card span-12 callout">Call out: primary landing is <b>/estimate</b> on www.happyslr.com. Legacy wny.happyslr.com calculator pages stay in dual-domain history — do not drop them.</div>
         <div class="card span-4">
-          <div class="card-title">Top landings <span class="example-tag">EXAMPLE</span></div>
+          <div class="card-title">Top landings <span class="example-tag" data-tile="content">EXAMPLE</span></div>
           <table>
             <thead><tr><th>Page</th><th>Sessions</th></tr></thead>
-            <tbody>
-              <tr><td>/estimate</td><td>1,210</td></tr>
-              <tr><td>/</td><td>860</td></tr>
-              <tr><td>/buffalo</td><td>310</td></tr>
-              <tr><td>wny /calculator (legacy)</td><td>240</td></tr>
-              <tr><td>/rochester</td><td>210</td></tr>
-            </tbody>
+            <tbody id="landingBody"><tr><td colspan="2">No path report yet.</td></tr></tbody>
           </table>
         </div>
         <div class="card span-4">
-          <div class="card-title">Top pages <span class="example-tag">EXAMPLE</span></div>
+          <div class="card-title">Top pages <span class="example-tag" data-tile="content">EXAMPLE</span></div>
           <table>
             <thead><tr><th>Page</th><th>Views</th></tr></thead>
-            <tbody>
-              <tr><td>/estimate</td><td>2,040</td></tr>
-              <tr><td>/</td><td>1,120</td></tr>
-              <tr><td>/buffalo</td><td>390</td></tr>
-              <tr><td>/rochester</td><td>280</td></tr>
-              <tr><td>wny /calculator (legacy)</td><td>260</td></tr>
-            </tbody>
+            <tbody id="pagesBody"><tr><td colspan="2">Same cheap path report as landings when live.</td></tr></tbody>
           </table>
         </div>
         <div class="card span-4">
@@ -280,13 +286,12 @@ __DASHBOARD_NAV_HTML__
           <table>
             <thead><tr><th>Page</th><th>Exits</th></tr></thead>
             <tbody>
-              <tr><td>/estimate</td><td>640</td></tr>
-              <tr><td>/</td><td>410</td></tr>
-              <tr><td>/contact-me</td><td>90</td></tr>
-              <tr><td>wny /calculator (legacy)</td><td>80</td></tr>
-              <tr><td>/ny-incentives</td><td>60</td></tr>
+              <tr><td>/estimate</td><td>—</td></tr>
+              <tr><td>/</td><td>—</td></tr>
+              <tr><td>wny /calculator (legacy)</td><td>—</td></tr>
             </tbody>
           </table>
+          <div class="meta">Exit report not pulled (not cheap enough for v1).</div>
         </div>
       </div>
     </section>
@@ -295,21 +300,21 @@ __DASHBOARD_NAV_HTML__
       <div class="grid">
         <div class="section-label">Funnel</div>
         <div class="card span-12">
-          <div class="card-title">estimate/LP visits → start → address → bill → contact → submit → named fill <span class="example-tag">STEP % STUBS</span></div>
+          <div class="card-title">estimate/LP visits → start → address → bill → contact → submit → named fill <span class="example-tag" data-tile="funnel">STEP % STUBS</span></div>
           <div class="meta" style="margin-bottom:10px">Funnel top is <b>estimate/LP visits</b> (/estimate + legacy wny calculator), not all-site sessions. All-site sessions as step 1 muddies the visits-without-starts leak. Instant Form / 3PL are NOT website leads.</div>
           <div id="excludeChip" class="chip" style="margin-bottom:12px">Test filter ON — excluded: Hawkstone / Stonebridge / Test Test / Evan Day / test emails / preview</div>
           <div class="steps" style="margin-bottom:10px">
-            <div class="step"><div class="name">Brand-site sessions</div><div class="val">2,768</div><div class="meta">Dual top — not funnel step 1</div></div>
-            <div class="step"><div class="name">Estimate / LP visits</div><div class="val">1,450</div><div class="meta">Funnel step 1 · 100%</div></div>
+            <div class="step"><div class="name">Brand-site sessions</div><div class="val" id="funnelBrand">—</div><div class="meta">Dual top — not funnel step 1</div></div>
+            <div class="step"><div class="name">Estimate / LP visits</div><div class="val" id="funnelTop">—</div><div class="meta">Funnel step 1 · 100%</div></div>
           </div>
           <div class="steps">
-            <div class="step"><div class="name">Estimate / LP visits</div><div class="val">1,450</div><div class="meta">100% of estimate/LP</div></div>
-            <div class="step"><div class="name">Start</div><div class="val">337</div><div class="meta">23.2% of estimate/LP</div></div>
-            <div class="step"><div class="name">Address</div><div class="val">268</div><div class="meta">79.5% of start</div></div>
-            <div class="step"><div class="name">Bill</div><div class="val">214</div><div class="meta">79.9% of address</div></div>
-            <div class="step"><div class="name">Contact</div><div class="val">156</div><div class="meta">72.9% of bill</div></div>
-            <div class="step"><div class="name">Submit</div><div class="val">88</div><div class="meta">56.4% of contact</div></div>
-            <div class="step"><div class="name">Named fill</div><div class="val">12</div><div class="meta">13.6% of submit</div></div>
+            <div class="step"><div class="name">Estimate / LP visits</div><div class="val" id="stepLp">—</div><div class="meta">100% of estimate/LP</div></div>
+            <div class="step"><div class="name">Start</div><div class="val" id="stepStart">—</div><div class="meta" id="metaStart">of estimate/LP</div></div>
+            <div class="step"><div class="name">Address</div><div class="val" id="stepAddress">—</div><div class="meta" id="metaAddress">of start</div></div>
+            <div class="step"><div class="name">Bill</div><div class="val" id="stepBill">—</div><div class="meta" id="metaBill">of address</div></div>
+            <div class="step"><div class="name">Contact</div><div class="val">—</div><div class="meta">EXAMPLE — no contact event</div></div>
+            <div class="step"><div class="name">Submit</div><div class="val" id="stepSubmit">—</div><div class="meta" id="metaSubmit">estimate_submit only</div></div>
+            <div class="step"><div class="name">Named fill</div><div class="val" id="stepNamed">—</div><div class="meta" id="metaNamed">of submit</div></div>
           </div>
         </div>
         <div class="card span-12 callout warn">Instant Form and 3PL bought leads do not belong on this funnel. They are not website leads.</div>
@@ -320,28 +325,30 @@ __DASHBOARD_NAV_HTML__
       <div class="grid">
         <div class="section-label">Audience</div>
         <div class="card span-6">
-          <div class="card-title">WNY metros <span class="example-tag">EXAMPLE</span></div>
+          <div class="card-title">WNY metros <span class="example-tag" data-tile="audience">EXAMPLE</span></div>
           <table>
             <thead><tr><th>Metro</th><th>Sessions</th><th>Share</th></tr></thead>
             <tbody>
-              <tr><td>Buffalo</td><td>1,180</td><td>28%</td></tr>
-              <tr><td>Rochester</td><td>980</td><td>23%</td></tr>
-              <tr><td>Syracuse</td><td>640</td><td>15%</td></tr>
-              <tr><td>Niagara-area</td><td>300</td><td>7%</td></tr>
-              <tr><td>Other NY / unknown</td><td>1,118</td><td>27%</td></tr>
+              <tr><td>Buffalo</td><td>—</td><td>—</td></tr>
+              <tr><td>Rochester</td><td>—</td><td>—</td></tr>
+              <tr><td>Syracuse</td><td>—</td><td>—</td></tr>
+              <tr><td>Niagara-area</td><td>—</td><td>—</td></tr>
+              <tr><td>Other NY / unknown</td><td>—</td><td>—</td></tr>
             </tbody>
           </table>
+          <div class="meta">City report not pulled (not cheap enough for v1).</div>
         </div>
         <div class="card span-6">
-          <div class="card-title">Device / browser <span class="example-tag">EXAMPLE</span></div>
+          <div class="card-title">Device / browser <span class="example-tag" data-tile="audience">EXAMPLE</span></div>
           <table>
             <thead><tr><th>Device</th><th>Sessions</th><th>Browser</th><th>Share</th></tr></thead>
             <tbody>
-              <tr><td>mobile</td><td>2,740</td><td>Chrome</td><td>58%</td></tr>
-              <tr><td>desktop</td><td>1,280</td><td>Safari</td><td>29%</td></tr>
-              <tr><td>tablet</td><td>198</td><td>Other</td><td>13%</td></tr>
+              <tr><td>mobile</td><td>—</td><td>Chrome</td><td>—</td></tr>
+              <tr><td>desktop</td><td>—</td><td>Safari</td><td>—</td></tr>
+              <tr><td>tablet</td><td>—</td><td>Other</td><td>—</td></tr>
             </tbody>
           </table>
+          <div class="meta">Device report not pulled (not cheap enough for v1).</div>
         </div>
       </div>
     </section>
@@ -349,15 +356,15 @@ __DASHBOARD_NAV_HTML__
     <section id="tab-named" class="tabpanel" data-tab="named">
       <div class="grid">
         <div class="section-label">Named fills</div>
-        <div class="banner gate span-12">Role-gated: Marketing sees aggregates only. The PII table is gated for sales. This stub does not authenticate — the blur/disabled table is the intended sales-only slot.</div>
+        <div class="banner gate span-12">Role-gated: Marketing sees aggregates only. The PII table is gated for sales. This page does not authenticate — the blur/disabled table is the intended sales-only slot.</div>
         <div class="card span-6">
-          <div class="card-title">Marketing aggregates <span class="example-tag">EXAMPLE</span></div>
-          <div class="kpi">12</div>
-          <div class="meta">Named fills in range · 8 source=new-site-estimate · 4 legacy wny. Counts only — no names, emails, or phones for Marketing.</div>
+          <div class="card-title">Marketing aggregates <span class="example-tag" data-tile="named_fills">EXAMPLE</span></div>
+          <div class="kpi" id="namedKpi">—</div>
+          <div class="meta" id="namedMeta">Named fills in range. Counts only — no names, emails, or phones for Marketing.</div>
         </div>
         <div class="card span-6">
           <div class="card-title">Warehouse source</div>
-          <div class="meta" style="margin-top:10px">Later wiring reads named fills with <b>source=new-site-estimate</b>. Dual-domain history (wny calculator / leads@) stays for compare. Exclude list is documented in the handler comment — not shown as live rows.</div>
+          <div class="meta" style="margin-top:10px">Reads <b>web_funnel_named_fills_v1</b> (bounded). Prefer source=new-site-estimate when present. Dual-domain history (wny calculator / leads@) stays for compare. Exclude list is documented in the handler comment — not shown as live rows.</div>
         </div>
         <div class="card span-12">
           <div class="card-title">PII table — sales only <span class="example-tag">GATED</span></div>
@@ -372,16 +379,17 @@ __DASHBOARD_NAV_HTML__
             </table>
             <div class="pii-gate">Blurred / disabled PII mock. Sales role unlocks this table in a later pass. Marketing stays on aggregates.</div>
           </div>
-          <div class="meta disabled-note">Disabled in this wireframe. Not live warehouse rows.</div>
+          <div class="meta disabled-note">Disabled. Not live warehouse rows. Marketing JSON never includes PII.</div>
         </div>
       </div>
     </section>
 
     <div class="footer">
-      <div><b>Data sources (later wiring)</b> — GA4 property 408492342 / G-V02RZFR4SZ. Warehouse named fills source=new-site-estimate. Meta if wired (not wired on this stub). Primary CTA: www.happyslr.com/estimate. Dual-domain history: happyslr.com + wny.happyslr.com. Instant Form / 3PL excluded from website leads. <a class="jsonlink" href="/api/website_traffic?format=json">JSON stub</a></div>
+      <div><b>Data sources</b> — GA4 property 408492342 / G-V02RZFR4SZ. Warehouse named fills source=new-site-estimate + leads@. Meta if wired (not wired). Primary CTA: www.happyslr.com/estimate. Dual-domain history: happyslr.com + wny.happyslr.com. Instant Form / 3PL excluded from website leads. <a class="jsonlink" id="jsonLink" href="/api/website_traffic?format=json">JSON</a></div>
     </div>
   </div>
 <script>
+var initialPayload = __PAYLOAD__;
 (function() {
   var tabs = document.querySelectorAll('.tabbtn');
   var panels = document.querySelectorAll('.tabpanel');
@@ -392,7 +400,136 @@ __DASHBOARD_NAV_HTML__
   tabs.forEach(function(btn) {
     btn.addEventListener('click', function() { showTab(btn.getAttribute('data-tab')); });
   });
-  function paintChrome() {
+  function num(v) {
+    if (v == null || v === '') return '—';
+    return String(v);
+  }
+  function pct(v) {
+    if (v == null || v === '') return '—';
+    return (Number(v) * 100).toFixed(1) + '%';
+  }
+  function delta(v) {
+    if (v == null || v === '') return '';
+    var n = Number(v);
+    var cls = n < 0 ? 'down' : 'up';
+    var sign = n > 0 ? '+' : '';
+    return 'vs prior <span class="delta ' + cls + '">' + sign + (n * 100).toFixed(1) + '%</span>';
+  }
+  function setText(id, text) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+  function setHtml(id, html) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+  function tileStatus(data, name) {
+    return ((data.tiles || {})[name] || {}).status || 'example';
+  }
+  function markTiles(data) {
+    document.querySelectorAll('[data-tile]').forEach(function(tag) {
+      var status = tileStatus(data, tag.getAttribute('data-tile'));
+      tag.classList.toggle('live', status === 'live');
+      if (status === 'live') tag.textContent = 'LIVE';
+      else if (status === 'not_wired') tag.textContent = 'NOT WIRED';
+      else if (tag.textContent === 'LIVE') tag.textContent = 'EXAMPLE';
+    });
+    var live = data.live_fields || [];
+    var title = document.getElementById('titleTag');
+    if (title) {
+      title.textContent = live.length ? 'LIVE + EXAMPLE' : 'EXAMPLE DATA';
+      title.classList.toggle('live', live.length > 0);
+    }
+  }
+  function paint(data) {
+    data = data || {};
+    var o = data.overview || {};
+    var f = data.funnel || {};
+    var n = data.named_fills || {};
+    var acq = data.acquisition || {};
+    var content = data.content || {};
+    markTiles(data);
+    setText('kpiSessions', num(o.sessions));
+    setText('kpiUsers', num(o.users));
+    setText('kpiNewRet', (o.new_share == null && o.returning_share == null) ? '—' : (pct(o.new_share) + ' / ' + pct(o.returning_share)));
+    setText('kpiPageviews', num(o.pageviews));
+    setText('kpiPagesPer', o.pages_per_session == null ? '—' : Number(o.pages_per_session).toFixed(2));
+    setText('kpiBounce', (o.bounce_rate == null && o.engaged_rate == null) ? '—' : (pct(o.bounce_rate) + ' / ' + pct(o.engaged_rate)));
+    setText('kpiEngage', o.avg_engagement_label || '—');
+    setText('kpiVsPrior', o.vs_prior_sessions == null ? '—' : ((o.vs_prior_sessions > 0 ? '+' : '') + (o.vs_prior_sessions * 100).toFixed(1) + '%'));
+    setText('kpiBrand', num(o.brand_site_sessions));
+    setText('kpiEstimate', num(o.estimate_calc_sessions));
+    setText('kpiCta', tileStatus(data, 'cta_taps') === 'live' ? num(o.cta_taps) : '—');
+    setText('kpiFbPost', tileStatus(data, 'fb_post_sessions') === 'live' ? num(o.fb_organic_sessions) : '—');
+    setHtml('metaSessions', delta(o.vs_prior_sessions));
+    setHtml('metaBrand', delta(o.vs_prior_brand));
+    setHtml('metaEstimate', delta(o.vs_prior_estimate));
+    setText('funnelBrand', num(f.brand_site_sessions));
+    setText('funnelTop', num(f.estimate_lp_visits));
+    setText('stepLp', num(f.estimate_lp_visits));
+    setText('stepStart', num(f.starts));
+    setText('stepAddress', num(f.address));
+    setText('stepBill', num(f.bill));
+    setText('stepSubmit', num(f.submit));
+    setText('stepNamed', num(f.named_fill));
+    var rates = f.rates || {};
+    setText('metaStart', pct(rates.start_of_estimate_lp) + ' of estimate/LP');
+    setText('metaAddress', pct(rates.address_of_start) + ' of start');
+    setText('metaBill', pct(rates.bill_of_address) + ' of address');
+    setText('metaSubmit', pct(rates.submit_of_bill) + ' of bill · estimate_submit only');
+    setText('metaNamed', pct(rates.named_fill_of_submit) + ' of submit');
+    setText('scoreboardKpi', num(f.named_fill));
+    setText('scoreboardMeta',
+      'Named fills ' + num(f.named_fill) +
+      ' · submit / estimate/LP ' + pct(rates.submit_of_estimate_lp) +
+      ' · start→submit ' + pct(rates.start_to_submit) +
+      ' · CPA when paid — (Meta not wired)');
+    var leak = document.getElementById('leakAlert');
+    if (leak) leak.classList.toggle('is-off', !f.alert_visits_up_starts_zero);
+    setText('namedKpi', num(n.live_count));
+    setText('namedMeta',
+      'Live named fills ' + num(n.live_count) +
+      ' · excluded tests ' + num(n.excluded_count) +
+      ' · new-site-estimate ' + num(n.new_site_estimate) +
+      ' · legacy leads@ ' + num(n.legacy_wny) +
+      '. Counts only — no names, emails, or phones for Marketing.');
+    var acqBody = document.getElementById('acqBody');
+    if (acqBody) {
+      var rows = acq.rows || [];
+      acqBody.innerHTML = rows.length ? rows.map(function(row) {
+        return '<tr><td>' + (row.channel || '') + '</td><td>' + (row.source_medium || '') +
+          '</td><td>' + num(row.sessions) + '</td><td>' + num(row.users) + '</td></tr>';
+      }).join('') : '<tr><td colspan="4">No GA4 acquisition rows yet.</td></tr>';
+    }
+    setText('fbSplitMeta', 'Organic social ' + num(acq.fb_organic) + ' · Paid social ' + num(acq.fb_paid) + ' · GA4 only, not Ads Manager.');
+    var landings = content.top_landings || [];
+    var landingHtml = landings.length ? landings.slice(0, 5).map(function(row) {
+      return '<tr><td>' + (row.page || '') + '</td><td>' + num(row.sessions) + '</td></tr>';
+    }).join('') : '<tr><td colspan="2">No path report yet.</td></tr>';
+    var landingBody = document.getElementById('landingBody');
+    var pagesBody = document.getElementById('pagesBody');
+    if (landingBody) landingBody.innerHTML = landingHtml;
+    if (pagesBody) pagesBody.innerHTML = landingHtml;
+    var banner = document.getElementById('statusBanner');
+    if (banner) {
+      var live = (data.live_fields || []).join(', ') || 'none';
+      var stub = (data.stub_fields || []).join(', ') || 'none';
+      banner.textContent = 'LIVE: ' + live + '. EXAMPLE / not-wired: ' + stub +
+        '. Funnel top is estimate/LP, not all-site. Instant Form / 3PL are not website leads. Meta spend was not invented. Charles QA before treating as live.';
+    }
+    paintChrome(data);
+  }
+  function query() {
+    return new URLSearchParams({
+      start: document.getElementById('startDate').value,
+      end: document.getElementById('endDate').value,
+      domain: document.getElementById('domain').value,
+      test_filter: document.getElementById('testFilter').checked ? '1' : '0',
+      compare_prior: document.getElementById('comparePrior').checked ? '1' : '0',
+      format: 'json'
+    }).toString();
+  }
+  function paintChrome(data) {
     var start = document.getElementById('startDate').value;
     var end = document.getElementById('endDate').value;
     var domain = document.getElementById('domain');
@@ -400,19 +537,31 @@ __DASHBOARD_NAV_HTML__
     var compare = document.getElementById('comparePrior').checked;
     document.getElementById('chromeLabel').textContent =
       'Range ' + start + ' → ' + end + ' ET · domain ' + domain.options[domain.selectedIndex].text +
-      ' · test filter ' + (testOn ? 'ON' : 'OFF') + ' · compare prior ' + (compare ? 'ON' : 'OFF') +
-      ' · example numbers unchanged';
+      ' · test filter ' + (testOn ? 'ON' : 'OFF') + ' · compare prior ' + (compare ? 'ON' : 'OFF');
     document.querySelectorAll('.vs-prior').forEach(function(el) {
       el.classList.toggle('is-off', !compare);
     });
     var chip = document.getElementById('excludeChip');
     if (chip) chip.classList.toggle('is-off', !testOn);
+    var link = document.getElementById('jsonLink');
+    if (link) link.href = '/api/website_traffic?' + query();
   }
-  document.getElementById('apply').addEventListener('click', paintChrome);
-  document.getElementById('testFilter').addEventListener('change', paintChrome);
-  document.getElementById('comparePrior').addEventListener('change', paintChrome);
-  document.getElementById('domain').addEventListener('change', paintChrome);
-  paintChrome();
+  async function load() {
+    var q = query();
+    document.getElementById('jsonLink').href = '/api/website_traffic?' + q;
+    var res = await fetch('/api/website_traffic?' + q);
+    var data = await res.json();
+    if (!res.ok) {
+      document.getElementById('statusBanner').textContent = data.error || 'Failed to load Website Traffic.';
+      return;
+    }
+    paint(data);
+  }
+  document.getElementById('apply').addEventListener('click', load);
+  document.getElementById('testFilter').addEventListener('change', function() { paintChrome(); });
+  document.getElementById('comparePrior').addEventListener('change', function() { paintChrome(); });
+  document.getElementById('domain').addEventListener('change', function() { paintChrome(); });
+  paint(initialPayload);
 })();
 </script>
 </body>
@@ -421,6 +570,7 @@ __DASHBOARD_NAV_HTML__
     return (
         html.replace("__START__", start)
         .replace("__END__", end)
+        .replace("__PAYLOAD__", json_for_script(data))
         .replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css())
         .replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("website_traffic"))
     )
@@ -431,8 +581,9 @@ class handler(BaseHTTPRequestHandler):
         try:
             qs = parse_qs(urlparse(self.path).query)
             want_json = (qs.get("format", [""])[0] or "").lower() == "json"
+            payload = build_payload(qs)
             if want_json:
-                body = json.dumps(JSON_STUB).encode("utf-8")
+                body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
@@ -440,7 +591,7 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
-            body = render_html().encode("utf-8")
+            body = render_html(payload=payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

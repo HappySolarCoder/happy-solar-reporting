@@ -141,11 +141,15 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
             "Bounce / engaged",
             "Avg engagement",
             "Vs prior",
+            "Brand site sessions",
+            "Estimate / calc sessions",
         ):
             self.assertIn(label, html)
         self.assertIn("GA4 bounce + engaged session rate", html)
         self.assertIn('class="card span-3 vs-prior"', html)
         self.assertIn("classList.toggle('is-off', !compare)", html)
+        self.assertIn("CTA taps → /estimate", html)
+        self.assertIn("Organic FB post → sessions", html)
 
     def test_acquisition_content_funnel_audience_named(self):
         html = page.render_html()
@@ -154,9 +158,22 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
         self.assertIn("Landing × source — top 10", html)
         self.assertIn("/estimate", html)
         self.assertIn("legacy wny", html.lower())
-        self.assertIn("visits → start → address → bill → contact → submit → named fill", html)
+        self.assertIn("estimate/LP visits → start → address → bill → contact → submit → named fill", html)
+        self.assertIn("Estimate / LP visits", html)
+        self.assertIn("Brand-site sessions", html)
+        self.assertIn("not all-site sessions", html)
+        self.assertIn("not funnel step 1", html)
+        self.assertIn("23.2% of estimate/LP", html)
+        self.assertIn("Test filter ON — excluded: Hawkstone / Stonebridge / Test Test / Evan Day / test emails / preview", html)
+        self.assertIn("id=\"excludeChip\"", html)
+        self.assertIn("Paid landing mismatch", html)
+        self.assertIn("www-without-estimate_start", html)
         self.assertIn("Instant Form / 3PL are NOT website leads", html)
         self.assertIn("WNY metros", html)
+        self.assertIn("<td>Buffalo</td>", html)
+        self.assertIn("<td>Rochester</td>", html)
+        self.assertIn("<td>Syracuse</td>", html)
+        self.assertIn("<td>Niagara-area</td>", html)
         self.assertIn("Device / browser", html)
         self.assertIn("Role-gated", html)
         self.assertIn("Marketing sees aggregates only", html)
@@ -170,7 +187,7 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
         self.assertIn("Meta is not wired", html)
         self.assertIn("Named fills · session→submit", html)
         self.assertIn("CPA when paid", html)
-        self.assertIn("visits ↑ · starts → 0", html)
+        self.assertIn("estimate/LP visits ↑ · starts → 0", html)
         self.assertIn("408492342", html)
         self.assertIn("G-V02RZFR4SZ", html)
         self.assertIn("source=new-site-estimate", html)
@@ -201,6 +218,12 @@ class WebsiteTrafficIsolationTests(unittest.TestCase):
     def test_instant_form_3pl_are_not_website_leads(self):
         self.assertIn("Instant Form / 3PL are NOT website leads", PAGE_SRC)
         self.assertIn("Form freeze", PAGE_SRC)
+
+    def test_funnel_top_is_not_all_site_sessions(self):
+        html = page.render_html()
+        self.assertNotIn('<div class="name">Visits</div>', html)
+        self.assertIn("Funnel step 1", html)
+        self.assertIn("Dual top — not funnel step 1", html)
 
 
 class WebsiteTrafficHandlerTests(unittest.TestCase):

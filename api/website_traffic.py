@@ -98,9 +98,10 @@ __DASHBOARD_NAV_CSS__
     .delta { font-weight:900; }
     .delta.up { color:#047857; }
     .delta.down { color:#b45309; }
-    .vs-prior.is-off { display:none !important; }
+    .vs-prior.is-off, .is-off { display:none !important; }
     .callout { padding:12px 14px; border-radius:12px; border:1px dashed #93c5fd; background:#f8fbff; color:#1e3a8a; font-size:13px; font-weight:700; }
     .callout.warn { border-color:#fcd34d; background:#fffbeb; color:#92400e; }
+    .chip { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; padding:7px 10px; border-radius:999px; border:1px solid #fde68a; background:#fffbeb; color:#92400e; font-size:12px; font-weight:800; }
     .steps { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; }
     .step { flex:1 1 120px; background:#f8fafc; border:1px solid var(--border); border-radius:12px; padding:12px; }
     .step .name { font-size:12px; font-weight:900; color:#64748b; text-transform:uppercase; letter-spacing:.03em; }
@@ -158,13 +159,13 @@ __DASHBOARD_NAV_HTML__
         <div class="kpi">12</div>
         <div class="meta">Named fills · session→submit 2.1% · start→submit 24% · CPA when paid — (paid window only; blank until Meta is wired)</div>
       </div>
-      <div class="banner alert span-12">EXAMPLE ALERT: visits ↑ · starts → 0 — this is the slot for the visits-up / starts-zero warning. Not a live alert.</div>
+      <div class="banner alert span-12">EXAMPLE ALERT: estimate/LP visits ↑ · starts → 0 — leak uses /estimate (or WNY calc) visits, not all-site sessions. Not a live alert.</div>
 
       <div class="card span-12">
         <div class="card-title">Where each question will live</div>
         <div class="map" style="margin-top:10px">
-          <div><b>Sessions / users / bounce / engagement</b> → Overview</div>
-          <div><b>Channel + FB organic vs Meta paid</b> → Acquisition</div>
+          <div><b>Brand site vs estimate/calc sessions</b> → Overview</div>
+          <div><b>Channel + FB organic vs Meta paid + CTA taps</b> → Overview / Acquisition</div>
           <div><b>/estimate + legacy wny pages</b> → Content/LPs</div>
           <div><b>Step drop-off + named-fill %</b> → Funnel</div>
           <div><b>WNY metros + device/browser</b> → Audience</div>
@@ -193,6 +194,10 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-3"><div class="card-title">Bounce / engaged <span class="example-tag">GA4</span></div><div class="kpi">41% / 59%</div><div class="meta">GA4 bounce + engaged session rate. <span class="vs-prior">vs prior <span class="delta down">bounce −3 pts</span></span></div></div>
         <div class="card span-3"><div class="card-title">Avg engagement <span class="example-tag">GA4</span></div><div class="kpi">1m 12s</div><div class="meta vs-prior">vs prior <span class="delta up">+4s</span></div></div>
         <div class="card span-3 vs-prior"><div class="card-title">Vs prior <span class="example-tag">EXAMPLE</span></div><div class="kpi">+8%</div><div class="meta">Sessions vs prior period (same length, ET). Toggle Compare prior in chrome.</div></div>
+        <div class="card span-3"><div class="card-title">Brand site sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">2,768</div><div class="meta">happyslr.com / www brand pages. Not the funnel top. <span class="vs-prior">vs prior <span class="delta up">+5%</span></span></div></div>
+        <div class="card span-3"><div class="card-title">Estimate / calc sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">1,450</div><div class="meta">/estimate + legacy wny calculator. Funnel step 1. <span class="vs-prior">vs prior <span class="delta up">+11%</span></span></div></div>
+        <div class="card span-3"><div class="card-title">CTA taps → /estimate <span class="example-tag">EXAMPLE</span></div><div class="kpi">186</div><div class="meta">Brand-page CTA clicks that land on /estimate. Placeholder only.</div></div>
+        <div class="card span-3"><div class="card-title">Organic FB post → sessions <span class="example-tag">EXAMPLE</span></div><div class="kpi">94</div><div class="meta">facebook / organic sessions from a post. Placeholder — not Ads Manager.</div></div>
       </div>
     </section>
 
@@ -218,6 +223,7 @@ __DASHBOARD_NAV_HTML__
           <div class="callout">Callout slot: Facebook / Instagram organic vs Meta paid. Not live. Do not read this as Ads Manager numbers.</div>
           <div class="meta" style="margin-top:10px">Organic social 410 · Paid social 720 · example split only.</div>
         </div>
+        <div class="card span-12 callout warn">Paid landing mismatch: facebook / paid landed on www (home or city LP) without a calc start. Later wiring flags www-without-estimate_start. Not live Ads numbers.</div>
         <div class="card span-12">
           <div class="card-title">Landing × source — top 10 <span class="example-tag">EXAMPLE</span></div>
           <table>
@@ -289,11 +295,16 @@ __DASHBOARD_NAV_HTML__
       <div class="grid">
         <div class="section-label">Funnel</div>
         <div class="card span-12">
-          <div class="card-title">visits → start → address → bill → contact → submit → named fill <span class="example-tag">STEP % STUBS</span></div>
-          <div class="meta" style="margin-bottom:12px">Website lead = completed form submit on happyslr hosts. Instant Form / 3PL are NOT website leads.</div>
+          <div class="card-title">estimate/LP visits → start → address → bill → contact → submit → named fill <span class="example-tag">STEP % STUBS</span></div>
+          <div class="meta" style="margin-bottom:10px">Funnel top is <b>estimate/LP visits</b> (/estimate + legacy wny calculator), not all-site sessions. All-site sessions as step 1 muddies the visits-without-starts leak. Instant Form / 3PL are NOT website leads.</div>
+          <div id="excludeChip" class="chip" style="margin-bottom:12px">Test filter ON — excluded: Hawkstone / Stonebridge / Test Test / Evan Day / test emails / preview</div>
+          <div class="steps" style="margin-bottom:10px">
+            <div class="step"><div class="name">Brand-site sessions</div><div class="val">2,768</div><div class="meta">Dual top — not funnel step 1</div></div>
+            <div class="step"><div class="name">Estimate / LP visits</div><div class="val">1,450</div><div class="meta">Funnel step 1 · 100%</div></div>
+          </div>
           <div class="steps">
-            <div class="step"><div class="name">Visits</div><div class="val">4,218</div><div class="meta">100%</div></div>
-            <div class="step"><div class="name">Start</div><div class="val">337</div><div class="meta">8.0% of visits</div></div>
+            <div class="step"><div class="name">Estimate / LP visits</div><div class="val">1,450</div><div class="meta">100% of estimate/LP</div></div>
+            <div class="step"><div class="name">Start</div><div class="val">337</div><div class="meta">23.2% of estimate/LP</div></div>
             <div class="step"><div class="name">Address</div><div class="val">268</div><div class="meta">79.5% of start</div></div>
             <div class="step"><div class="name">Bill</div><div class="val">214</div><div class="meta">79.9% of address</div></div>
             <div class="step"><div class="name">Contact</div><div class="val">156</div><div class="meta">72.9% of bill</div></div>
@@ -313,10 +324,11 @@ __DASHBOARD_NAV_HTML__
           <table>
             <thead><tr><th>Metro</th><th>Sessions</th><th>Share</th></tr></thead>
             <tbody>
-              <tr><td>Buffalo–Niagara Falls</td><td>1,480</td><td>35%</td></tr>
-              <tr><td>Rochester</td><td>1,120</td><td>27%</td></tr>
+              <tr><td>Buffalo</td><td>1,180</td><td>28%</td></tr>
+              <tr><td>Rochester</td><td>980</td><td>23%</td></tr>
               <tr><td>Syracuse</td><td>640</td><td>15%</td></tr>
-              <tr><td>Other NY / unknown</td><td>978</td><td>23%</td></tr>
+              <tr><td>Niagara-area</td><td>300</td><td>7%</td></tr>
+              <tr><td>Other NY / unknown</td><td>1,118</td><td>27%</td></tr>
             </tbody>
           </table>
         </div>
@@ -393,6 +405,8 @@ __DASHBOARD_NAV_HTML__
     document.querySelectorAll('.vs-prior').forEach(function(el) {
       el.classList.toggle('is-off', !compare);
     });
+    var chip = document.getElementById('excludeChip');
+    if (chip) chip.classList.toggle('is-off', !testOn);
   }
   document.getElementById('apply').addEventListener('click', paintChrome);
   document.getElementById('testFilter').addEventListener('change', paintChrome);

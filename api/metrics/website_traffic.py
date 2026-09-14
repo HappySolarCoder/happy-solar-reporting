@@ -69,28 +69,85 @@ PAID_MEDIUM_TOKENS = ("cpc", "ppc", "paid", "paidsocial", "paid_social", "cpm", 
 
 _FUNNEL = None
 _TEST = None
+FUNNEL_MODULE_NAME = "hs_website_funnel_metric"
+_DEGRADE_GA4_PROPERTY_ID = "408492342"
+_DEGRADE_GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
+_DEGRADE_DAILY_COLLECTION = "web_funnel_daily_v1"
+_DEGRADE_NAMED_FILLS_COLLECTION = "web_funnel_named_fills_v1"
+_DEGRADE_HOSTS = ("happyslr.com", "wny.happyslr.com", "www.happyslr.com")
+
+
+def _ready_module(module, name: str | None = None) -> bool:
+    """True only for a finished exec. Never treat a loading/partial module as ready."""
+    if module is None:
+        return False
+    if getattr(module, "_hs_loading", False):
+        return False
+    if name == FUNNEL_MODULE_NAME and not callable(getattr(module, "exclusion_reason", None)):
+        return False
+    if getattr(module, "_hs_exec_complete", False):
+        return True
+    return any(not key.startswith("_") for key in vars(module))
 
 
 def _load_module(name: str, path: Path):
     cached = sys.modules.get(name)
-    if cached is not None:
+    if _ready_module(cached, name):
         return cached
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load {name} from {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    setattr(module, "_hs_loading", True)
+    try:
+        spec.loader.exec_module(module)
+        setattr(module, "_hs_loading", False)
+        setattr(module, "_hs_exec_complete", True)
+        sys.modules[name] = module
+        return module
+    except Exception:
+        current = sys.modules.get(name)
+        if current is module or not _ready_module(current, name):
+            sys.modules.pop(name, None)
+        raise
+
+
+def _funnel_has_exclusion_reason(module) -> bool:
+    return callable(getattr(module, "exclusion_reason", None))
+
+
+def _clear_funnel_load_cache() -> None:
+    global _FUNNEL
+    _FUNNEL = None
+    cached = sys.modules.get(FUNNEL_MODULE_NAME)
+    if cached is not None and not _funnel_has_exclusion_reason(cached):
+        sys.modules.pop(FUNNEL_MODULE_NAME, None)
+
+
+def _load_and_install_funnel():
+    funnel = _load_module(FUNNEL_MODULE_NAME, _METRICS_DIR / "website_funnel.py")
+    if not _funnel_has_exclusion_reason(funnel):
+        return funnel
+    patch = _load_module("hs_funnel_test_address", _METRICS_DIR / "funnel_test_address.py")
+    return patch.install(funnel)
 
 
 def funnel_mod():
     global _FUNNEL
-    if _FUNNEL is not None:
+    if _funnel_has_exclusion_reason(_FUNNEL):
         return _FUNNEL
-    funnel = _load_module("hs_website_funnel_metric", _METRICS_DIR / "website_funnel.py")
-    patch = _load_module("hs_funnel_test_address", _METRICS_DIR / "funnel_test_address.py")
-    _FUNNEL = patch.install(funnel)
+    funnel = _load_and_install_funnel()
+    if _funnel_has_exclusion_reason(funnel):
+        _FUNNEL = funnel
+        return _FUNNEL
+    _clear_funnel_load_cache()
+    funnel = _load_and_install_funnel()
+    if not _funnel_has_exclusion_reason(funnel):
+        _FUNNEL = None
+        raise AttributeError(
+            f"module '{FUNNEL_MODULE_NAME}' has no attribute 'exclusion_reason'"
+        )
+    _FUNNEL = funnel
     return _FUNNEL
 
 
@@ -434,6 +491,43 @@ def fetch_ga4_paths(start: str, end: str) -> dict[str, Any]:
     return {"ga4": "ok", "error": None, "rows": parsed}
 
 
+def _path_row_exclusion_reason(
+    funnel,
+    row: dict[str, Any],
+    host_name: Any,
+    page_path: Any,
+    *,
+    test_filter: bool,
+) -> str | None:
+    """Drop reason for a path row. Never raises if exclusion_reason is missing."""
+    reason_fn = getattr(funnel, "exclusion_reason", None)
+    classify = getattr(funnel, "classify_host", None)
+    if test_filter and callable(reason_fn):
+        try:
+            return reason_fn(
+                host_name=host_name,
+                page_location=row.get("page_location") or row.get("pageLocation"),
+                debug_mode=row.get("debug_mode"),
+                traffic_type=row.get("traffic_type"),
+                internal=row.get("internal"),
+                page_path=page_path,
+                address=row.get("address"),
+                email=row.get("email"),
+                name=row.get("name"),
+            )
+        except TypeError:
+            return reason_fn(
+                host_name=host_name,
+                page_location=row.get("page_location") or row.get("pageLocation"),
+                debug_mode=row.get("debug_mode"),
+                traffic_type=row.get("traffic_type"),
+                internal=row.get("internal"),
+            )
+    if callable(classify) and classify(host_name) == "excluded":
+        return "host"
+    return None
+
+
 def summarize_path_rows(
     rows: list[dict[str, Any]],
     *,
@@ -449,35 +543,14 @@ def summarize_path_rows(
         host_name = row.get("host_name") or row.get("hostName")
         page_path = row.get("page_path") or row.get("pagePath")
         count = optional_int(row.get("count") or row.get("eventCount")) or 0
-        if test_filter:
-            try:
-                reason = funnel.exclusion_reason(
-                    host_name=host_name,
-                    page_location=row.get("page_location") or row.get("pageLocation"),
-                    debug_mode=row.get("debug_mode"),
-                    traffic_type=row.get("traffic_type"),
-                    internal=row.get("internal"),
-                    page_path=page_path,
-                    address=row.get("address"),
-                    email=row.get("email"),
-                    name=row.get("name"),
-                )
-            except TypeError:
-                reason = funnel.exclusion_reason(
-                    host_name=host_name,
-                    page_location=row.get("page_location") or row.get("pageLocation"),
-                    debug_mode=row.get("debug_mode"),
-                    traffic_type=row.get("traffic_type"),
-                    internal=row.get("internal"),
-                )
-            if reason:
-                dropped[reason] = dropped.get(reason, 0) + count
-                continue
-            if test_mod().row_has_test_address(row):
-                dropped["test_address"] = dropped.get("test_address", 0) + count
-                continue
-        elif funnel.classify_host(host_name) == "excluded":
-            dropped["host"] = dropped.get("host", 0) + count
+        reason = _path_row_exclusion_reason(
+            funnel, row, host_name, page_path, test_filter=test_filter
+        )
+        if reason:
+            dropped[reason] = dropped.get(reason, 0) + count
+            continue
+        if test_filter and test_mod().row_has_test_address(row):
+            dropped["test_address"] = dropped.get("test_address", 0) + count
             continue
         if not host_allowed_for_domain(host_name, domain):
             dropped["domain"] = dropped.get("domain", 0) + count
@@ -697,6 +770,141 @@ def empty_overview() -> dict[str, Any]:
         "fb_organic_sessions": None,
         "vs_prior_sessions": None,
     }
+
+
+def example_degrade_payload(
+    *,
+    error: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """EXAMPLE stub when live compute fails. Null counts — do not invent traffic."""
+    start_key, end_key = default_range(now)
+    start_d = date.fromisoformat(start_key)
+    end_d = date.fromisoformat(end_key)
+    length = (end_d - start_d).days + 1
+    prior_end_d = start_d - timedelta(days=1)
+    prior_start_d = prior_end_d - timedelta(days=length - 1)
+    tiles = {
+        "overview": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "overview_users": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "overview_brand_vs_estimate": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "acquisition": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "funnel": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "named_fills": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "content": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "audience": tile(TILE_EXAMPLE, reason="extra_ga4_city_device_report_skipped"),
+        "cta_taps": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "fb_post_sessions": tile(TILE_EXAMPLE, reason="compute_degraded"),
+        "paid_mismatch": tile(TILE_EXAMPLE, reason="landing_x_source_not_queried"),
+        "meta_spend": tile(TILE_NOT_WIRED, reason="do_not_invent_meta_spend"),
+        "contact_step": tile(TILE_EXAMPLE, reason="no_contact_event"),
+    }
+    live_fields: list[str] = []
+    stub_fields = sorted(
+        name for name, info in tiles.items() if info.get("status") in {TILE_EXAMPLE, TILE_NOT_WIRED}
+    )
+    notes = [
+        "EXAMPLE degrade: live payload compute failed. Counts are null; traffic was not invented.",
+        "Funnel top is estimate/LP visits (/estimate + legacy wny calc), not all-site sessions.",
+        "Instant Form / 3PL are not website leads.",
+        "Named fills are Marketing aggregates only. PII stays gated.",
+        "Meta spend is not wired and was not invented.",
+    ]
+    if error:
+        notes.append(f"compute_error: {error}")
+    named = {
+        "live_count": None,
+        "excluded_count": None,
+        "total_count": None,
+        "by_source": {},
+        "by_day": [],
+        "pii_gated": True,
+        "new_site_estimate": None,
+        "legacy_wny": None,
+    }
+    payload = {
+        "metric": METRIC_NAME,
+        "stub": True,
+        "example": True,
+        "timezone": TIMEZONE_NAME,
+        "start": start_key,
+        "end": end_key,
+        "prior_start": prior_start_d.isoformat(),
+        "prior_end": prior_end_d.isoformat(),
+        "domain": "all",
+        "test_filter": True,
+        "compare_prior": True,
+        "ga4_property_id": _DEGRADE_GA4_PROPERTY_ID,
+        "ga4_measurement_id": _DEGRADE_GA4_MEASUREMENT_ID,
+        "collection": _DEGRADE_DAILY_COLLECTION,
+        "named_fills_collection": _DEGRADE_NAMED_FILLS_COLLECTION,
+        "primary_cta": PRIMARY_CTA,
+        "tiles": tiles,
+        "live_fields": live_fields,
+        "stub_fields": stub_fields,
+        "overview": empty_overview(),
+        "acquisition": {"rows": [], "fb_organic": None, "fb_paid": None},
+        "funnel": {
+            "brand_site_sessions": None,
+            "estimate_lp_visits": None,
+            "all_site_sessions": None,
+            "funnel_top": None,
+            "funnel_top_is_all_site": False,
+            "starts": None,
+            "address": None,
+            "bill": None,
+            "contact": None,
+            "submit": None,
+            "named_fill": None,
+            "alert_visits_up_starts_zero": False,
+            "rates": {
+                "start_of_estimate_lp": None,
+                "address_of_start": None,
+                "bill_of_address": None,
+                "submit_of_bill": None,
+                "submit_of_estimate_lp": None,
+                "start_to_submit": None,
+                "named_fill_of_submit": None,
+            },
+        },
+        "named_fills": named,
+        "content": {"top_landings": []},
+        "filters": {
+            "test_filter": True,
+            "hosts": list(_DEGRADE_HOSTS),
+            "estimate_lp": ["/estimate", "wny.happyslr.com legacy calculator"],
+            "test_traffic": [
+                "24 Hawkstone Way",
+                "313 E Stonebridge Dr / 313 East Stonebridge Drive, Gilbert AZ",
+                "Test Test",
+                "Evan Day",
+                "adchday@gmail.com",
+                "evanrday23@gmail.com",
+                "preview/debug/internal",
+            ],
+            "instant_form_3pl_are_website_leads": False,
+        },
+        "sources": {
+            "ga4_overview": "degraded",
+            "ga4_paths": "degraded",
+            "ga4_acquisition": "degraded",
+            "warehouse": "degraded",
+            "named_fills": "degraded",
+            "split": "degraded",
+        },
+        "reads": {
+            "daily_collection": _DEGRADE_DAILY_COLLECTION,
+            "daily_ids": [],
+            "method": "get_all",
+            "count": 0,
+            "named_fills_method": "per_date_where_limit_50",
+        },
+        "notes": notes,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    if error:
+        payload["error"] = error
+    return payload
 
 
 def compute_website_traffic(

@@ -782,7 +782,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-3"><div class="card-title">Organic FB post → sessions __TAG_FB__</div><div class="kpi" id="kpiFbPost">__KPI_FB_POST__</div><div class="meta">facebook / organic sessions from GA4 only. Not Ads Manager.</div></div>
         <div class="card span-12">
           <div class="card-title">Daily trend — all-site sessions + estimate/LP __TAG_OVERVIEW__</div>
-          <div class="meta">Daily all-site sessions and estimate/LP prefer the <b>GA4 path split</b> (same brand vs /estimate + WNY calc as the KPIs) when path rows include dates. Warehouse host-split is the fallback. Missing days are gaps, not zeros. Prior period is dashed when Compare prior is on and same-source prior points exist. Meta spend is not on this chart.</div>
+          <div class="meta">Range KPIs always use the undated GA4 path split when that report is ok (same as master). Daily points prefer a <b>separate</b> path+date request when it succeeds; if that dated report fails, the trend uses warehouse daily docs and KPIs stay on the undated path split. Missing days are gaps, not zeros. Meta spend is not on this chart.</div>
           <div class="legend">
             <span><span class="swatch" style="background:#2196F3"></span>All-site sessions</span>
             <span><span class="swatch" style="background:#00C853"></span>Estimate / LP visits</span>

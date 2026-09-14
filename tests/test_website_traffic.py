@@ -742,12 +742,23 @@ class WebsiteTrafficRaceDegradeTests(unittest.TestCase):
 
 
 class WebsiteTrafficChartTests(unittest.TestCase):
+    def test_kpi_path_fetch_does_not_request_date_dimension(self):
+        kpi_src = inspect.getsource(traffic.fetch_ga4_paths)
+        daily_src = inspect.getsource(traffic.fetch_ga4_paths_daily)
+        self.assertNotIn('"date"', kpi_src)
+        self.assertIn("PATH_DIMENSIONS", kpi_src)
+        self.assertIn('"date"', daily_src)
+
     def test_series_prefers_ga4_path_split_not_visits_wny(self):
         payload = live_payload(
-            ga4_paths={"ga4": "ok", "rows": sample_dated_path_rows()},
+            ga4_paths={"ga4": "ok", "rows": sample_path_rows()},
+            ga4_paths_daily={"ga4": "ok", "rows": sample_dated_path_rows()},
             compare_prior=True,
         )
+        self.assertEqual(payload["sources"]["ga4_paths"], "ok")
+        self.assertEqual(payload["sources"]["split"], "ga4_page_path")
         self.assertEqual(payload["series"]["source"], "ga4_page_path")
+        self.assertEqual(payload["series"]["daily_source"], "ga4_page_path")
         daily = payload["series"]["daily"]
         self.assertEqual(daily[0]["date"], "2026-09-07")
         self.assertEqual(daily[0]["estimate_lp_visits"], 30)
@@ -756,20 +767,39 @@ class WebsiteTrafficChartTests(unittest.TestCase):
         self.assertNotEqual(daily[0]["estimate_lp_visits"], 9)
         self.assertEqual(daily[1]["estimate_lp_visits"], 5)
         self.assertEqual(daily[1]["sessions"], 15)
-        self.assertEqual(payload["funnel"]["estimate_lp_visits"], 35)
+        # Range KPIs stay on the undated path report, not the dated rows.
+        self.assertEqual(payload["funnel"]["estimate_lp_visits"], 30)
         self.assertEqual(payload["funnel"]["brand_site_sessions"], 80)
+        self.assertEqual(payload["funnel"]["all_site_sessions"], 110)
         self.assertFalse(payload["funnel"]["funnel_top_is_all_site"])
         prior = payload["series"]["prior_daily"]
         self.assertEqual(prior[0]["date"], "2026-09-05")
         self.assertIsNone(prior[0]["estimate_lp_visits"])
         self.assertEqual(prior[-1]["date"], "2026-09-06")
-        # prior 2026-08-31 is outside this prior window; no invented overlay
         self.assertFalse(any(row.get("estimate_lp_visits") == 8 for row in prior))
+
+    def test_dated_path_failure_keeps_undated_kpi_split(self):
+        payload = live_payload(
+            ga4_paths={"ga4": "ok", "rows": sample_path_rows()},
+            ga4_paths_daily={"ga4": "failed", "error": "incompatible dimensions", "rows": []},
+        )
+        self.assertEqual(payload["sources"]["ga4_paths"], "ok")
+        self.assertEqual(payload["sources"]["ga4_paths_daily"], "failed")
+        self.assertEqual(payload["sources"]["split"], "ga4_page_path")
+        self.assertEqual(payload["funnel"]["estimate_lp_visits"], 30)
+        self.assertEqual(payload["funnel"]["all_site_sessions"], 110)
+        self.assertEqual(payload["overview"]["sessions"], 110)
+        self.assertNotEqual(payload["funnel"]["estimate_lp_visits"], 10)
+        self.assertEqual(payload["series"]["source"], "ga4_page_path")
+        self.assertEqual(payload["series"]["daily_source"], "warehouse")
+        self.assertEqual(payload["series"]["daily"][0]["estimate_lp_visits"], 9)
+        self.assertIn("undated path split", " ".join(payload["notes"]))
 
     def test_series_from_warehouse_days_not_invented_zeros(self):
         payload = live_payload(end="2026-09-09")
         daily = payload["series"]["daily"]
-        self.assertEqual(payload["series"]["source"], "warehouse")
+        self.assertEqual(payload["series"]["source"], "ga4_page_path")
+        self.assertEqual(payload["series"]["daily_source"], "warehouse")
         self.assertEqual([row["date"] for row in daily], ["2026-09-07", "2026-09-08", "2026-09-09"])
         self.assertEqual(daily[0]["sessions"], 89)
         self.assertEqual(daily[0]["estimate_lp_visits"], 9)
@@ -856,6 +886,7 @@ class WebsiteTrafficChartTests(unittest.TestCase):
         self.assertEqual(series["acquisition"], [])
         self.assertEqual(series["named_fills_by_day"], [])
         self.assertIsNone(series["source"])
+        self.assertIsNone(series["daily_source"])
         html = page.render_html(payload=payload)
         markup = html.split("var initialPayload")[0]
         self.assertIn("EXAMPLE — no daily series", markup)

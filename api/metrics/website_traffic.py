@@ -476,13 +476,51 @@ def path_rows_for_slot(rows: list[dict[str, Any]] | None, slot: str) -> list[dic
     return [row for row in list(rows or []) if isinstance(row, dict) and path_row_slot(row) == want]
 
 
-def fetch_ga4_paths(
+def fetch_ga4_paths(start: str, end: str) -> dict[str, Any]:
+    """Undated host+path report. Used for range KPIs. Do not add date here."""
+    body = {
+        "dateRanges": [{"startDate": start, "endDate": end}],
+        "dimensions": [{"name": name} for name in PATH_DIMENSIONS],
+        "metrics": [{"name": "eventCount"}],
+        "limit": GA4_REPORT_LIMIT,
+        "dimensionFilter": {
+            "andGroup": {
+                "expressions": [
+                    live_host_filter(),
+                    {
+                        "filter": {
+                            "fieldName": "eventName",
+                            "inListFilter": {"values": ["page_view"]},
+                        }
+                    },
+                ]
+            }
+        },
+    }
+    raw = run_ga4_report(body)
+    if raw.get("ga4") != "ok":
+        return {"ga4": raw.get("ga4") or "not_configured", "error": raw.get("error"), "rows": []}
+    parsed = []
+    for row in (raw.get("report") or {}).get("rows") or []:
+        dims = [cell.get("value") for cell in (row.get("dimensionValues") or [])]
+        mets = [cell.get("value") for cell in (row.get("metricValues") or [])]
+        parsed.append(
+            {
+                "host_name": compact_str(dims[0] if dims else ""),
+                "page_path": compact_str(dims[1] if len(dims) > 1 else ""),
+                "count": optional_int(mets[0] if mets else 0) or 0,
+            }
+        )
+    return {"ga4": "ok", "error": None, "rows": parsed}
+
+
+def fetch_ga4_paths_daily(
     start: str,
     end: str,
     prior_start: str | None = None,
     prior_end: str | None = None,
 ) -> dict[str, Any]:
-    """Path report includes date so daily estimate/LP can match the KPI split."""
+    """Optional dated path report for the trend only. Failure must not touch KPIs."""
     date_ranges = [{"startDate": start, "endDate": end, "name": "current"}]
     include_prior = bool(prior_start and prior_end)
     if include_prior:
@@ -789,6 +827,7 @@ def empty_series() -> dict[str, Any]:
         "acquisition": [],
         "named_fills_by_day": [],
         "source": None,
+        "daily_source": None,
     }
 
 
@@ -1026,10 +1065,11 @@ def build_chart_series(
     path_rows: list[dict[str, Any]] | None = None,
     path_ok: bool = False,
     test_filter: bool = True,
+    kpi_split: str | None = None,
 ) -> dict[str, Any]:
     daily = []
     prior_daily: list[dict[str, Any]] = []
-    source = None
+    daily_source = None
     path_current = path_rows_for_slot(path_rows, "current") if path_ok else []
     path_prior = path_rows_for_slot(path_rows, "prior") if path_ok else []
     path_daily = build_daily_series_from_path_rows(
@@ -1037,7 +1077,7 @@ def build_chart_series(
     )
     if path_daily is not None and series_has_values(path_daily, "sessions", "estimate_lp_visits"):
         daily = path_daily
-        source = "ga4_page_path"
+        daily_source = "ga4_page_path"
         if compare_prior:
             path_prior_daily = build_daily_series_from_path_rows(
                 prior_dates, path_prior, domain=domain, test_filter=test_filter
@@ -1046,9 +1086,10 @@ def build_chart_series(
                 prior_daily = path_prior_daily
     else:
         daily = build_daily_series(dates, daily_docs, domain)
-        source = "warehouse" if daily else None
+        daily_source = "warehouse" if daily else None
         if compare_prior:
             prior_daily = build_daily_series(prior_dates, prior_docs, domain)
+    source = "ga4_page_path" if kpi_split == "ga4_page_path" else ("warehouse" if daily else None)
     return {
         "daily": daily,
         "prior_daily": prior_daily,
@@ -1060,6 +1101,7 @@ def build_chart_series(
             named_by_day, live=named_live
         ),
         "source": source,
+        "daily_source": daily_source,
     }
 
 
@@ -1208,6 +1250,7 @@ def example_degrade_payload(
         "sources": {
             "ga4_overview": "degraded",
             "ga4_paths": "degraded",
+            "ga4_paths_daily": "degraded",
             "ga4_acquisition": "degraded",
             "warehouse": "degraded",
             "named_fills": "degraded",
@@ -1242,6 +1285,7 @@ def compute_website_traffic(
     named_fills: list[dict[str, Any]] | None = None,
     ga4_overview: dict[str, Any] | None = None,
     ga4_paths: dict[str, Any] | None = None,
+    ga4_paths_daily: dict[str, Any] | None = None,
     ga4_acquisition: dict[str, Any] | None = None,
     fetch_remote: bool = True,
 ) -> dict[str, Any]:
@@ -1264,13 +1308,7 @@ def compute_website_traffic(
     if ga4_overview is None and fetch_remote:
         ga4_overview = fetch_ga4_overview(start_key, end_key, prior_start, prior_end)
     if ga4_paths is None and fetch_remote:
-        want_prior_paths = compare_prior and len(dates) <= PATH_PRIOR_DAY_CAP
-        ga4_paths = fetch_ga4_paths(
-            start_key,
-            end_key,
-            prior_start if want_prior_paths else None,
-            prior_end if want_prior_paths else None,
-        )
+        ga4_paths = fetch_ga4_paths(start_key, end_key)
     if ga4_acquisition is None and fetch_remote:
         ga4_acquisition = fetch_ga4_acquisition(start_key, end_key)
 
@@ -1281,13 +1319,22 @@ def compute_website_traffic(
     prior_warehouse = warehouse_totals(prior_docs, domain_key) if compare_prior else {}
 
     path_status = compact_str((ga4_paths or {}).get("ga4"))
-    all_path_rows = list((ga4_paths or {}).get("rows") or [])
-    current_path_rows = path_rows_for_slot(all_path_rows, "current")
     path_summary = summarize_path_rows(
-        current_path_rows,
+        (ga4_paths or {}).get("rows") or [],
         domain=domain_key,
         test_filter=test_filter,
     ) if path_status == "ok" else None
+
+    if ga4_paths_daily is None and fetch_remote and path_status == "ok":
+        want_prior_paths = compare_prior and len(dates) <= PATH_PRIOR_DAY_CAP
+        ga4_paths_daily = fetch_ga4_paths_daily(
+            start_key,
+            end_key,
+            prior_start if want_prior_paths else None,
+            prior_end if want_prior_paths else None,
+        )
+    dated_status = compact_str((ga4_paths_daily or {}).get("ga4"))
+    dated_rows = list((ga4_paths_daily or {}).get("rows") or []) if dated_status == "ok" else []
 
     if path_summary is not None:
         brand = path_summary["brand_site_sessions"]
@@ -1414,6 +1461,11 @@ def compute_website_traffic(
             "Estimate/LP split falls back to warehouse host fields "
             "(visits_total = brand hosts, visits_wny = legacy calc) when the GA4 path report is missing."
         )
+    elif dated_status and dated_status != "ok":
+        notes.append(
+            "Dated GA4 path report failed; range KPIs still use the undated path split. "
+            "Daily trend falls back to warehouse host-split days."
+        )
     if overview_status != "ok":
         notes.append("GA4 overview users/bounce/engagement stay EXAMPLE until the Data API report succeeds.")
     if acq_status != "ok":
@@ -1495,6 +1547,7 @@ def compute_website_traffic(
         "sources": {
             "ga4_overview": overview_status or "not_configured",
             "ga4_paths": path_status or "not_configured",
+            "ga4_paths_daily": dated_status or "not_configured",
             "ga4_acquisition": acq_status or "not_configured",
             "warehouse": "ok" if warehouse_ready else ("missing_docs" if db is not None else "not_configured"),
             "named_fills": "ok" if named_ready else "not_configured",
@@ -1523,9 +1576,10 @@ def compute_website_traffic(
         acquisition_live=bool(tiles["acquisition"]["status"] == TILE_LIVE),
         named_by_day=named.get("by_day") or [],
         named_live=bool(tiles["named_fills"]["status"] == TILE_LIVE),
-        path_rows=all_path_rows,
-        path_ok=path_status == "ok",
+        path_rows=dated_rows,
+        path_ok=dated_status == "ok",
         test_filter=bool(test_filter),
+        kpi_split=split_source,
     )
     return payload
 

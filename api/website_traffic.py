@@ -298,11 +298,22 @@ def apply_first_paint(html: str, data: dict, start: str, end: str) -> str:
 def build_payload(qs: dict[str, list[str]] | None = None, now: datetime | None = None) -> dict:
     qs = qs or {}
     db = None
+    db_connected = False
     try:
         db = metric.get_db()
+        db_connected = True
+    except AttributeError as e:
+        return metric.example_degrade_payload(error=str(e), now=now)
     except Exception:
         db = None
-    return metric.payload_from_query(qs, db=db, now=now)
+    try:
+        return metric.payload_from_query(qs, db=db, now=now)
+    except AttributeError as e:
+        return metric.example_degrade_payload(error=str(e), now=now)
+    except Exception as e:
+        if db_connected:
+            return metric.example_degrade_payload(error=str(e), now=now)
+        raise
 
 
 def render_html(now: datetime | None = None, payload: dict | None = None) -> str:
@@ -808,10 +819,25 @@ var initialPayload = __PAYLOAD__;
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        qs = parse_qs(urlparse(self.path).query)
+        want_json = (qs.get("format", [""])[0] or "").lower() == "json"
+        payload = None
         try:
-            qs = parse_qs(urlparse(self.path).query)
-            want_json = (qs.get("format", [""])[0] or "").lower() == "json"
             payload = build_payload(qs)
+        except AttributeError as e:
+            payload = metric.example_degrade_payload(error=str(e))
+        except Exception as e:
+            # Marketing HTML smoke must not 500 after a compute miss.
+            payload = metric.example_degrade_payload(error=str(e))
+            if want_json and "exclusion_reason" not in str(e):
+                body = json.dumps({"error": str(e)}).encode("utf-8")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        try:
             if want_json:
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)

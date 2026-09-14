@@ -9,6 +9,7 @@ import inspect
 import json
 import re
 import sys
+import types
 import unittest
 from datetime import datetime
 from io import BytesIO
@@ -603,6 +604,97 @@ class WebsiteTrafficHandlerTests(unittest.TestCase):
             index.dispatch_route("/api", "hs=website_traffic&format=json"),
             "website_traffic",
         )
+
+
+def _stub_funnel_without_exclusion_reason():
+    def classify_host(host_name):
+        text = " ".join(str(host_name or "").split()).casefold()
+        if text in {"www.happyslr.com", "happyslr.com"}:
+            return "total"
+        if text == "wny.happyslr.com":
+            return "wny"
+        return "excluded"
+
+    stub = types.ModuleType("hs_website_funnel_metric_incomplete")
+    stub.classify_host = classify_host
+    stub.compact_str = lambda value: " ".join(str(value or "").split())
+    return stub
+
+
+class WebsiteTrafficRaceDegradeTests(unittest.TestCase):
+    def tearDown(self):
+        traffic._FUNNEL = None
+        traffic._TEST = None
+        sys.modules.pop("hs_website_funnel_metric", None)
+        traffic.funnel_mod()
+
+    def test_incomplete_module_in_sys_modules_recovers(self):
+        incomplete = types.ModuleType("hs_website_funnel_metric")
+        self.assertFalse(hasattr(incomplete, "exclusion_reason"))
+        traffic._FUNNEL = None
+        sys.modules["hs_website_funnel_metric"] = incomplete
+        loaded = traffic._load_module(
+            "hs_website_funnel_metric", METRICS / "website_funnel.py"
+        )
+        self.assertIsNot(loaded, incomplete)
+        self.assertTrue(callable(getattr(loaded, "exclusion_reason", None)))
+
+        traffic._FUNNEL = None
+        sys.modules["hs_website_funnel_metric"] = types.ModuleType("hs_website_funnel_metric")
+        funnel = traffic.funnel_mod()
+        self.assertTrue(callable(funnel.exclusion_reason))
+        self.assertIsNot(funnel, sys.modules.get("hs_website_funnel_metric_incomplete"))
+
+        out = traffic.summarize_path_rows(sample_path_rows(), test_filter=True)
+        self.assertEqual(out["brand_site_sessions"], 80)
+        self.assertEqual(out["estimate_lp_visits"], 30)
+        self.assertGreater(out["dropped"]["host"], 0)
+
+    def test_summarize_path_rows_missing_exclusion_reason_does_not_raise(self):
+        broken = _stub_funnel_without_exclusion_reason()
+        orig = traffic.funnel_mod
+        traffic.funnel_mod = lambda: broken
+        try:
+            out = traffic.summarize_path_rows(sample_path_rows(), test_filter=True)
+        finally:
+            traffic.funnel_mod = orig
+        self.assertNotIn("exclusion_reason", dir(broken))
+        self.assertEqual(out["dropped"].get("host"), 999)
+        self.assertLess(out["brand_site_sessions"] + out["estimate_lp_visits"], 999)
+        self.assertGreater(out["brand_site_sessions"], 0)
+
+    def test_html_handler_returns_200_when_exclusion_reason_attributeerror(self):
+        err = AttributeError(
+            "module 'hs_website_funnel_metric' has no attribute 'exclusion_reason'"
+        )
+        orig = page.build_payload
+
+        def boom(qs=None, now=None):
+            raise err
+
+        page.build_payload = boom
+        try:
+            captured, raw = invoke_get("/api/website_traffic")
+        finally:
+            page.build_payload = orig
+        self.assertEqual(captured["code"], 200)
+        self.assertNotEqual(captured["code"], 500)
+        self.assertIn("text/html", captured["headers"]["Content-Type"])
+        html = raw.decode("utf-8")
+        markup = html.split("var initialPayload")[0]
+        self.assertIn("EXAMPLE", markup)
+        self.assertIn("EXAMPLE DATA", markup)
+        self.assertNotIn("500", str(captured["code"]))
+
+        page.build_payload = boom
+        try:
+            captured_json, raw_json = invoke_get("/api/website_traffic?format=json")
+        finally:
+            page.build_payload = orig
+        self.assertEqual(captured_json["code"], 200)
+        body = json.loads(raw_json.decode("utf-8"))
+        self.assertTrue(body.get("example") or body.get("stub"))
+        self.assertIn("exclusion_reason", str(body.get("error") or body.get("notes") or ""))
 
 
 if __name__ == "__main__":

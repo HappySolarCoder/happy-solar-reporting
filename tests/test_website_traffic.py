@@ -123,6 +123,37 @@ def sample_path_rows():
     ]
 
 
+def sample_dated_path_rows():
+    return [
+        {"host_name": "www.happyslr.com", "page_path": "/", "date": "20260907", "count": 70},
+        {"host_name": "www.happyslr.com", "page_path": "/estimate", "date": "20260907", "count": 20},
+        {"host_name": "wny.happyslr.com", "page_path": "/calculator", "date": "20260907", "count": 10},
+        {"host_name": "www.happyslr.com", "page_path": "/", "date": "2026-09-08", "count": 10},
+        {"host_name": "www.happyslr.com", "page_path": "/estimate", "date": "2026-09-08", "count": 5},
+        {
+            "host_name": "www.happyslr.com",
+            "page_path": "/estimate",
+            "date": "2026-09-07",
+            "page_location": "https://www.happyslr.com/estimate?internal=1",
+            "count": 50,
+        },
+        {
+            "host_name": "www.happyslr.com",
+            "page_path": "/",
+            "date": "2026-08-31",
+            "date_range": "prior",
+            "count": 30,
+        },
+        {
+            "host_name": "www.happyslr.com",
+            "page_path": "/estimate",
+            "date": "2026-08-31",
+            "date_range": "prior",
+            "count": 8,
+        },
+    ]
+
+
 def sample_fills():
     return [
         {
@@ -711,6 +742,30 @@ class WebsiteTrafficRaceDegradeTests(unittest.TestCase):
 
 
 class WebsiteTrafficChartTests(unittest.TestCase):
+    def test_series_prefers_ga4_path_split_not_visits_wny(self):
+        payload = live_payload(
+            ga4_paths={"ga4": "ok", "rows": sample_dated_path_rows()},
+            compare_prior=True,
+        )
+        self.assertEqual(payload["series"]["source"], "ga4_page_path")
+        daily = payload["series"]["daily"]
+        self.assertEqual(daily[0]["date"], "2026-09-07")
+        self.assertEqual(daily[0]["estimate_lp_visits"], 30)
+        self.assertEqual(daily[0]["brand_site_sessions"], 70)
+        self.assertEqual(daily[0]["sessions"], 100)
+        self.assertNotEqual(daily[0]["estimate_lp_visits"], 9)
+        self.assertEqual(daily[1]["estimate_lp_visits"], 5)
+        self.assertEqual(daily[1]["sessions"], 15)
+        self.assertEqual(payload["funnel"]["estimate_lp_visits"], 35)
+        self.assertEqual(payload["funnel"]["brand_site_sessions"], 80)
+        self.assertFalse(payload["funnel"]["funnel_top_is_all_site"])
+        prior = payload["series"]["prior_daily"]
+        self.assertEqual(prior[0]["date"], "2026-09-05")
+        self.assertIsNone(prior[0]["estimate_lp_visits"])
+        self.assertEqual(prior[-1]["date"], "2026-09-06")
+        # prior 2026-08-31 is outside this prior window; no invented overlay
+        self.assertFalse(any(row.get("estimate_lp_visits") == 8 for row in prior))
+
     def test_series_from_warehouse_days_not_invented_zeros(self):
         payload = live_payload(end="2026-09-09")
         daily = payload["series"]["daily"]

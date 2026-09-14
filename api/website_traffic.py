@@ -782,7 +782,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-3"><div class="card-title">Organic FB post → sessions __TAG_FB__</div><div class="kpi" id="kpiFbPost">__KPI_FB_POST__</div><div class="meta">facebook / organic sessions from GA4 only. Not Ads Manager.</div></div>
         <div class="card span-12">
           <div class="card-title">Daily trend — all-site sessions + estimate/LP __TAG_OVERVIEW__</div>
-          <div class="meta">Warehouse <b>web_funnel_daily_v1</b> host-split (same source as KPI fallback). All-site = brand hosts + WNY. Estimate/LP on this chart is the warehouse host split (WNY/legacy calc). www /estimate is in the range KPI when the GA4 path report is live — that path split is not stored per day. Missing days are gaps, not zeros. Prior period is dashed when Compare prior is on and prior docs exist.</div>
+          <div class="meta">Daily all-site sessions and estimate/LP prefer the <b>GA4 path split</b> (same brand vs /estimate + WNY calc as the KPIs) when path rows include dates. Warehouse host-split is the fallback. Missing days are gaps, not zeros. Prior period is dashed when Compare prior is on and same-source prior points exist. Meta spend is not on this chart.</div>
           <div class="legend">
             <span><span class="swatch" style="background:#2196F3"></span>All-site sessions</span>
             <span><span class="swatch" style="background:#00C853"></span>Estimate / LP visits</span>

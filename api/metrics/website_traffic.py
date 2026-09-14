@@ -45,6 +45,7 @@ GA4_REPORT_LIMIT = "10000"
 PRIMARY_CTA = "www.happyslr.com/estimate"
 NAMED_FILL_SOURCE_NEW_SITE = "new-site-estimate"
 ACQUISITION_CHART_LIMIT = 10
+PATH_PRIOR_DAY_CAP = 14
 
 TILE_LIVE = "live"
 TILE_EXAMPLE = "example"
@@ -455,10 +456,43 @@ def summarize_overview_rows(rows: list[dict[str, Any]], domain: str = "all") -> 
     return {"current": buckets["current"], "prior": buckets["prior"]}
 
 
-def fetch_ga4_paths(start: str, end: str) -> dict[str, Any]:
+def normalize_series_date(raw: Any) -> str:
+    text = compact_str(raw)
+    if not text:
+        return ""
+    digits = text.replace("-", "")
+    if len(digits) == 8 and digits.isdigit():
+        return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}"
+    return text
+
+
+def path_row_slot(row: dict[str, Any] | None) -> str:
+    slot = compact_str((row or {}).get("date_range") or (row or {}).get("dateRange")).casefold()
+    return "prior" if slot == "prior" else "current"
+
+
+def path_rows_for_slot(rows: list[dict[str, Any]] | None, slot: str) -> list[dict[str, Any]]:
+    want = "prior" if slot == "prior" else "current"
+    return [row for row in list(rows or []) if isinstance(row, dict) and path_row_slot(row) == want]
+
+
+def fetch_ga4_paths(
+    start: str,
+    end: str,
+    prior_start: str | None = None,
+    prior_end: str | None = None,
+) -> dict[str, Any]:
+    """Path report includes date so daily estimate/LP can match the KPI split."""
+    date_ranges = [{"startDate": start, "endDate": end, "name": "current"}]
+    include_prior = bool(prior_start and prior_end)
+    if include_prior:
+        date_ranges.append({"startDate": prior_start, "endDate": prior_end, "name": "prior"})
+    dimensions = [{"name": "hostName"}, {"name": "pagePath"}, {"name": "date"}]
+    if include_prior:
+        dimensions.append({"name": "dateRange"})
     body = {
-        "dateRanges": [{"startDate": start, "endDate": end}],
-        "dimensions": [{"name": name} for name in PATH_DIMENSIONS],
+        "dateRanges": date_ranges,
+        "dimensions": dimensions,
         "metrics": [{"name": "eventCount"}],
         "limit": GA4_REPORT_LIMIT,
         "dimensionFilter": {
@@ -486,6 +520,8 @@ def fetch_ga4_paths(start: str, end: str) -> dict[str, Any]:
             {
                 "host_name": compact_str(dims[0] if dims else ""),
                 "page_path": compact_str(dims[1] if len(dims) > 1 else ""),
+                "date": normalize_series_date(dims[2] if len(dims) > 2 else ""),
+                "date_range": compact_str(dims[3] if len(dims) > 3 else "current") or "current",
                 "count": optional_int(mets[0] if mets else 0) or 0,
             }
         )
@@ -800,6 +836,53 @@ def build_daily_series(
     return [daily_point_from_doc(by_date.get(day), day, domain) for day in dates]
 
 
+def empty_daily_point(date_ymd: str) -> dict[str, Any]:
+    return {
+        "date": date_ymd,
+        "sessions": None,
+        "estimate_lp_visits": None,
+        "brand_site_sessions": None,
+    }
+
+
+def build_daily_series_from_path_rows(
+    dates: list[str],
+    rows: list[dict[str, Any]] | None,
+    *,
+    domain: str = "all",
+    test_filter: bool = True,
+) -> list[dict[str, Any]] | None:
+    """Daily brand vs estimate/LP from dated GA4 path rows. None = no dates (use warehouse)."""
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    dated = False
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        day = normalize_series_date(row.get("date") or row.get("date_ymd"))
+        if not day:
+            continue
+        dated = True
+        by_date.setdefault(day, []).append(row)
+    if not dated:
+        return None
+    points: list[dict[str, Any]] = []
+    for day in dates:
+        day_rows = by_date.get(day) or []
+        if not day_rows:
+            points.append(empty_daily_point(day))
+            continue
+        summary = summarize_path_rows(day_rows, domain=domain, test_filter=test_filter)
+        points.append(
+            {
+                "date": day,
+                "sessions": summary["all_site_sessions"],
+                "estimate_lp_visits": summary["estimate_lp_visits"],
+                "brand_site_sessions": summary["brand_site_sessions"],
+            }
+        )
+    return points
+
+
 def series_has_values(points: list[dict[str, Any]] | None, *keys: str) -> bool:
     wanted = keys or ("sessions", "estimate_lp_visits", "brand_site_sessions", "live", "value")
     for row in points or []:
@@ -940,12 +1023,32 @@ def build_chart_series(
     acquisition_live: bool,
     named_by_day: list[dict[str, Any]] | None,
     named_live: bool,
+    path_rows: list[dict[str, Any]] | None = None,
+    path_ok: bool = False,
+    test_filter: bool = True,
 ) -> dict[str, Any]:
-    daily = build_daily_series(dates, daily_docs, domain)
-    prior_daily = (
-        build_daily_series(prior_dates, prior_docs, domain) if compare_prior else []
+    daily = []
+    prior_daily: list[dict[str, Any]] = []
+    source = None
+    path_current = path_rows_for_slot(path_rows, "current") if path_ok else []
+    path_prior = path_rows_for_slot(path_rows, "prior") if path_ok else []
+    path_daily = build_daily_series_from_path_rows(
+        dates, path_current, domain=domain, test_filter=test_filter
     )
-    source = "warehouse" if daily else None
+    if path_daily is not None and series_has_values(path_daily, "sessions", "estimate_lp_visits"):
+        daily = path_daily
+        source = "ga4_page_path"
+        if compare_prior:
+            path_prior_daily = build_daily_series_from_path_rows(
+                prior_dates, path_prior, domain=domain, test_filter=test_filter
+            )
+            if path_prior_daily is not None:
+                prior_daily = path_prior_daily
+    else:
+        daily = build_daily_series(dates, daily_docs, domain)
+        source = "warehouse" if daily else None
+        if compare_prior:
+            prior_daily = build_daily_series(prior_dates, prior_docs, domain)
     return {
         "daily": daily,
         "prior_daily": prior_daily,
@@ -1161,7 +1264,13 @@ def compute_website_traffic(
     if ga4_overview is None and fetch_remote:
         ga4_overview = fetch_ga4_overview(start_key, end_key, prior_start, prior_end)
     if ga4_paths is None and fetch_remote:
-        ga4_paths = fetch_ga4_paths(start_key, end_key)
+        want_prior_paths = compare_prior and len(dates) <= PATH_PRIOR_DAY_CAP
+        ga4_paths = fetch_ga4_paths(
+            start_key,
+            end_key,
+            prior_start if want_prior_paths else None,
+            prior_end if want_prior_paths else None,
+        )
     if ga4_acquisition is None and fetch_remote:
         ga4_acquisition = fetch_ga4_acquisition(start_key, end_key)
 
@@ -1172,8 +1281,10 @@ def compute_website_traffic(
     prior_warehouse = warehouse_totals(prior_docs, domain_key) if compare_prior else {}
 
     path_status = compact_str((ga4_paths or {}).get("ga4"))
+    all_path_rows = list((ga4_paths or {}).get("rows") or [])
+    current_path_rows = path_rows_for_slot(all_path_rows, "current")
     path_summary = summarize_path_rows(
-        (ga4_paths or {}).get("rows") or [],
+        current_path_rows,
         domain=domain_key,
         test_filter=test_filter,
     ) if path_status == "ok" else None
@@ -1412,6 +1523,9 @@ def compute_website_traffic(
         acquisition_live=bool(tiles["acquisition"]["status"] == TILE_LIVE),
         named_by_day=named.get("by_day") or [],
         named_live=bool(tiles["named_fills"]["status"] == TILE_LIVE),
+        path_rows=all_path_rows,
+        path_ok=path_status == "ok",
+        test_filter=bool(test_filter),
     )
     return payload
 

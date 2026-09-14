@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import json
+import re
 import sys
 import unittest
 from datetime import datetime
@@ -308,6 +309,78 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
     def test_page_handler_uses_traffic_nav(self):
         html = page.render_html()
         self.assertIn('class="navbtn active" href="/api/website_traffic"', html)
+
+    def test_html_first_paint_shows_live_numbers_not_example_tags(self):
+        payload = live_payload(
+            ga4_paths={
+                "ga4": "ok",
+                "rows": [
+                    {"host_name": "www.happyslr.com", "page_path": "/", "count": 80},
+                    {"host_name": "www.happyslr.com", "page_path": "/estimate", "count": 400},
+                ],
+            }
+        )
+        self.assertEqual(payload["funnel"]["estimate_lp_visits"], 400)
+        self.assertEqual(payload["named_fills"]["live_count"], 2)
+        for name in ("acquisition", "funnel", "named_fills", "overview"):
+            self.assertEqual(payload["tiles"][name]["status"], "live", name)
+
+        html = page.render_html(payload=payload)
+        markup = html.split("var initialPayload")[0]
+        self.assertIn('id="funnelTop">400<', markup)
+        self.assertIn('id="stepLp">400<', markup)
+        self.assertIn('id="kpiEstimate">400<', markup)
+        self.assertIn('id="stepNamed">2<', markup)
+        self.assertIn('id="namedKpi">2<', markup)
+        self.assertIn('id="scoreboardKpi">2<', markup)
+        self.assertIn("Organic Search", markup)
+        self.assertIn("google / organic", markup)
+        self.assertIn("<td>/estimate</td>", markup)
+        self.assertIn("<td>400</td>", markup)
+
+        for name in ("acquisition", "funnel", "named_fills", "overview"):
+            labels = re.findall(rf'data-tile="{name}">([^<]+)<', markup)
+            self.assertTrue(labels, name)
+            for text in labels:
+                self.assertEqual(text, "LIVE", name)
+                self.assertNotEqual(text, "EXAMPLE", name)
+
+        self.assertNotIn("STEP % STUBS", html)
+        self.assertIn('data-tile="audience">EXAMPLE<', markup)
+        self.assertIn('data-tile="paid_mismatch">EXAMPLE<', markup)
+        self.assertIn('data-tile="meta_spend">NOT WIRED<', markup)
+        self.assertIn("EXAMPLE — no contact event", markup)
+        self.assertIn('id="titleTag" class="example-tag live">LIVE + EXAMPLE<', markup)
+        banner = markup.split('id="statusBanner"', 1)[1].split("</div>", 1)[0]
+        self.assertIn("LIVE:", banner)
+        self.assertIn("named_fills", banner)
+        self.assertIn("audience", banner)
+        self.assertIn("function paint(", html)
+        self.assertIn("var initialPayload", html)
+        self.assertIn('"estimate_lp_visits": 400', html)
+        self.assertNotIn("__TAG_", markup)
+        self.assertNotIn("__KPI_", markup)
+
+    def test_html_first_paint_keeps_example_when_tile_not_live(self):
+        payload = live_payload(
+            ga4_overview={"ga4": "not_configured", "current": {}, "prior": {}}
+        )
+        self.assertEqual(payload["tiles"]["overview_users"]["status"], "example")
+        self.assertEqual(payload["tiles"]["audience"]["status"], "example")
+        self.assertEqual(payload["tiles"]["paid_mismatch"]["status"], "example")
+        self.assertEqual(payload["tiles"]["meta_spend"]["status"], "not_wired")
+        self.assertEqual(payload["tiles"]["contact_step"]["status"], "example")
+        html = page.render_html(payload=payload)
+        markup = html.split("var initialPayload")[0]
+        for name in ("overview_users", "audience", "paid_mismatch"):
+            labels = re.findall(rf'data-tile="{name}">([^<]+)<', markup)
+            self.assertTrue(labels, name)
+            for text in labels:
+                self.assertEqual(text, "EXAMPLE", name)
+        self.assertIn('data-tile="meta_spend">NOT WIRED<', markup)
+        self.assertIn("EXAMPLE — no contact event", markup)
+        self.assertEqual(payload["tiles"]["overview"]["status"], "live")
+        self.assertIn('data-tile="overview">LIVE<', markup)
 
 
 class WebsiteTrafficIsolationTests(unittest.TestCase):

@@ -149,6 +149,266 @@ def html_landing_body(rows: list | None) -> str:
     return "".join(parts)
 
 
+def _series(data: dict | None) -> dict:
+    return (data or {}).get("series") or {}
+
+
+def series_has_values(points: list | None, *keys: str) -> bool:
+    wanted = keys or ("sessions", "estimate_lp_visits", "live", "value")
+    for row in points or []:
+        if not isinstance(row, dict):
+            continue
+        for key in wanted:
+            if row.get(key) is not None:
+                return True
+    return False
+
+
+def html_empty_chart(message: str) -> str:
+    return f'<div class="chartEmpty">{escape(message)}</div>'
+
+
+def html_trend_body(daily: list | None, prior_daily: list | None, *, compare: bool) -> str:
+    rows = list(daily or [])
+    prior = list(prior_daily or []) if compare else []
+    if not series_has_values(rows, "sessions", "estimate_lp_visits"):
+        return '<tr><td colspan="5">No daily warehouse points yet. Missing days are gaps, not zeros.</td></tr>'
+    parts = []
+    for i, row in enumerate(rows):
+        prev = prior[i] if i < len(prior) else {}
+        parts.append(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                escape(str(row.get("date") or "")),
+                escape(fmt_num(row.get("sessions"))),
+                escape(fmt_num(row.get("estimate_lp_visits"))),
+                escape(fmt_num(prev.get("sessions")) if compare else "—"),
+                escape(fmt_num(prev.get("estimate_lp_visits")) if compare else "—"),
+            )
+        )
+    return "".join(parts)
+
+
+def _svg_line_path(xs: list[float], ys: list[float], values: list) -> str:
+    parts = []
+    drawing = False
+    for x, y, value in zip(xs, ys, values):
+        if value is None:
+            drawing = False
+            continue
+        parts.append(f"{'L' if drawing else 'M'}{x:.1f} {y:.1f}")
+        drawing = True
+    return " ".join(parts)
+
+
+def render_trend_svg(daily: list | None, prior_daily: list | None, *, compare: bool) -> str:
+    """Lightweight inline SVG. Missing days are path gaps, not zeros."""
+    rows = [row for row in list(daily or []) if isinstance(row, dict)]
+    prior = [row for row in list(prior_daily or []) if isinstance(row, dict)] if compare else []
+
+    def column(points: list, key: str) -> list:
+        return [row.get(key) if isinstance(row, dict) else None for row in points]
+
+    sess = column(rows, "sessions")
+    est = column(rows, "estimate_lp_visits")
+    prior_sess = column(prior, "sessions")
+    prior_est = column(prior, "estimate_lp_visits")
+    present = [v for v in sess + est + prior_sess + prior_est if v is not None]
+    if not rows or not present:
+        return html_empty_chart(
+            "No daily warehouse points yet. Missing days are gaps, not zeros."
+        )
+    width, height = 760, 220
+    left, right, top, bottom = 48, 14, 16, 32
+    inner_w = width - left - right
+    inner_h = height - top - bottom
+    n = max(len(rows), 1)
+    max_val = max(float(v) for v in present)
+    max_val = max(max_val, 1.0)
+
+    def x_at(i: int) -> float:
+        return left + (inner_w / 2 if n <= 1 else (i / (n - 1)) * inner_w)
+
+    def y_at(v) -> float:
+        return top + inner_h - (float(v) / max_val) * inner_h
+
+    xs = [x_at(i) for i in range(n)]
+    grid = []
+    for g in range(5):
+        gv = (max_val / 4) * g
+        gy = y_at(gv)
+        grid.append(
+            f'<line x1="{left}" y1="{gy:.1f}" x2="{width - right}" y2="{gy:.1f}" stroke="#eef2f7" />'
+        )
+        grid.append(
+            f'<text x="{left - 6}" y="{gy + 3:.1f}" text-anchor="end" font-size="10" fill="#94a3b8">{int(round(gv))}</text>'
+        )
+    labels = []
+    step = max(1, n // 8)
+    for i in range(0, n, step):
+        label = str((rows[i] or {}).get("date") or "")[8:]
+        labels.append(
+            f'<text x="{xs[i]:.1f}" y="{height - 10}" text-anchor="middle" font-size="10" fill="#64748b">{escape(label)}</text>'
+        )
+    if n > 1 and (n - 1) % step != 0:
+        label = str((rows[-1] or {}).get("date") or "")[8:]
+        labels.append(
+            f'<text x="{xs[-1]:.1f}" y="{height - 10}" text-anchor="middle" font-size="10" fill="#64748b">{escape(label)}</text>'
+        )
+
+    def path_and_dots(values: list, color: str, dashed: bool, title: str) -> str:
+        ys = [y_at(v) if v is not None else 0.0 for v in values]
+        d = _svg_line_path(xs, ys, values)
+        if not d:
+            return ""
+        dash = ' stroke-dasharray="6 4" stroke-opacity="0.55"' if dashed else ""
+        dots = []
+        for i, value in enumerate(values):
+            if value is None or i >= len(rows):
+                continue
+            tip = f"{rows[i].get('date') or ''} — {title} {fmt_num(value)}"
+            if dashed and i < len(prior):
+                tip = f"{prior[i].get('date') or ''} — {title} {fmt_num(value)}"
+            opacity = ' fill-opacity="0.55"' if dashed else ""
+            dots.append(
+                f'<circle cx="{xs[i]:.1f}" cy="{y_at(value):.1f}" r="3" fill="{color}"{opacity}>'
+                f"<title>{escape(tip)}</title></circle>"
+            )
+        return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="2.5"{dash} />' + "".join(dots)
+
+    paths = [
+        path_and_dots(sess, "#2196F3", False, "sessions"),
+        path_and_dots(est, "#00C853", False, "estimate/LP"),
+    ]
+    if compare and series_has_values(prior, "sessions", "estimate_lp_visits"):
+        paths.append(path_and_dots(prior_sess, "#93c5fd", True, "prior sessions"))
+        paths.append(path_and_dots(prior_est, "#86efac", True, "prior estimate/LP"))
+    return (
+        f'<svg viewBox="0 0 {width} {height}" width="100%" height="220" role="img" '
+        f'aria-label="Daily sessions and estimate/LP trend">'
+        f'{"".join(grid)}{"".join(paths)}{"".join(labels)}</svg>'
+    )
+
+
+def _hbar_width(value, max_value) -> float:
+    if value is None or max_value in (None, 0):
+        return 0.0
+    return max(0.0, min(100.0, 100.0 * float(value) / float(max_value)))
+
+
+def html_hbar_row(
+    label: str,
+    value,
+    width_pct: float,
+    *,
+    example: bool = False,
+    meta: str = "",
+) -> str:
+    tag = ' <span class="example-tag">EXAMPLE</span>' if example else ""
+    shown = "—" if value is None or example else fmt_num(value)
+    if meta and not example:
+        shown = f"{shown} · {meta}"
+    fill = ""
+    if not example and value is not None:
+        fill = f'<div class="hbar-fill" style="width:{width_pct:.1f}%"></div>'
+    return (
+        f'<div class="hbar{" example" if example else ""}">'
+        f'<div class="hbar-label">{escape(label)}{tag}</div>'
+        f'<div class="hbar-track">{fill}</div>'
+        f'<div class="hbar-val">{escape(shown)}</div>'
+        f"</div>"
+    )
+
+
+def html_funnel_bars(steps: list | None, *, live: bool) -> str:
+    rows = [row for row in list(steps or []) if isinstance(row, dict)]
+    if not live or not series_has_values(rows, "value"):
+        return html_empty_chart("EXAMPLE — funnel chart waits on live counts. Contact is not wired.")
+    max_value = next((row.get("value") for row in rows if row.get("wired") and row.get("value") is not None), None)
+    parts = []
+    for row in rows:
+        example = not row.get("wired", True)
+        rate = row.get("rate")
+        meta = fmt_pct(rate) if rate is not None and not example else ""
+        parts.append(
+            html_hbar_row(
+                str(row.get("label") or row.get("key") or ""),
+                row.get("value"),
+                _hbar_width(row.get("value"), max_value),
+                example=example,
+                meta=meta,
+            )
+        )
+    return "".join(parts)
+
+
+def html_acq_bars(rows: list | None, *, live: bool) -> str:
+    items = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not live or not series_has_values(items, "sessions"):
+        return html_empty_chart("EXAMPLE — acquisition chart waits on live GA4 rows. Meta spend is not wired.")
+    max_value = max((int(row.get("sessions") or 0) for row in items if row.get("sessions") is not None), default=None)
+    parts = []
+    for row in items:
+        label = str(row.get("label") or row.get("source_medium") or row.get("channel") or "")
+        parts.append(
+            html_hbar_row(
+                label,
+                row.get("sessions"),
+                _hbar_width(row.get("sessions"), max_value),
+            )
+        )
+    return "".join(parts)
+
+
+def html_named_bars(rows: list | None, *, live: bool) -> str:
+    items = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not live or not series_has_values(items, "live"):
+        return html_empty_chart("EXAMPLE — named-fill chart waits on live warehouse counts. PII stays gated.")
+    max_value = max((int(row.get("live") or 0) for row in items if row.get("live") is not None), default=None)
+    parts = []
+    for row in items:
+        parts.append(
+            html_hbar_row(
+                str(row.get("date") or ""),
+                row.get("live"),
+                _hbar_width(row.get("live"), max_value),
+            )
+        )
+    return "".join(parts)
+
+
+def html_named_day_body(rows: list | None, *, live: bool) -> str:
+    items = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not live or not items:
+        return '<tr><td colspan="3">No named-fill days in range. Counts only — no PII.</td></tr>'
+    parts = []
+    for row in items:
+        parts.append(
+            "<tr><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                escape(str(row.get("date") or "")),
+                escape(fmt_num(row.get("live"))),
+                escape(fmt_num(row.get("excluded"))),
+            )
+        )
+    return "".join(parts)
+
+
+def html_funnel_chart_body(steps: list | None, *, live: bool) -> str:
+    rows = [row for row in list(steps or []) if isinstance(row, dict)]
+    if not live or not rows:
+        return '<tr><td colspan="3">EXAMPLE — no live funnel series. Contact is not wired.</td></tr>'
+    parts = []
+    for row in rows:
+        example = not row.get("wired", True)
+        parts.append(
+            "<tr><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                escape(str(row.get("label") or "")),
+                escape("—" if example else fmt_num(row.get("value"))),
+                escape("EXAMPLE" if example else fmt_pct(row.get("rate"))),
+            )
+        )
+    return "".join(parts)
+
+
 def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str]:
     """HTML first paint from the same payload as initialPayload. Mirrors client paint()."""
     overview = data.get("overview") or {}
@@ -187,6 +447,17 @@ def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str
         else "—"
     )
     landings = html_landing_body(content.get("top_landings") or [])
+    series = _series(data)
+    daily = series.get("daily") or []
+    prior_daily = series.get("prior_daily") or []
+    funnel_steps = series.get("funnel") or []
+    acq_series = series.get("acquisition") or []
+    named_days = series.get("named_fills_by_day") or []
+    overview_live = tile_status(data, "overview") == "live"
+    funnel_live = tile_status(data, "funnel") == "live"
+    acq_live = tile_status(data, "acquisition") == "live"
+    named_live = tile_status(data, "named_fills") == "live"
+    trend_ready = overview_live and series_has_values(daily, "sessions", "estimate_lp_visits")
     return {
         "START": start,
         "END": end,
@@ -284,6 +555,29 @@ def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str
         ),
         "LANDING_BODY": landings,
         "PAGES_BODY": landings,
+        "TREND_SVG": (
+            render_trend_svg(daily, prior_daily, compare=compare)
+            if trend_ready
+            else html_empty_chart(
+                "EXAMPLE — daily trend waits on live warehouse days. Missing days are gaps, not zeros."
+                if not overview_live
+                else "No daily warehouse points yet. Missing days are gaps, not zeros."
+            )
+        ),
+        "TREND_BODY": (
+            html_trend_body(daily, prior_daily, compare=compare)
+            if trend_ready
+            else (
+                '<tr><td colspan="5">EXAMPLE — no daily series. Traffic was not invented.</td></tr>'
+                if not overview_live
+                else '<tr><td colspan="5">No daily warehouse points yet. Missing days are gaps, not zeros.</td></tr>'
+            )
+        ),
+        "FUNNEL_BARS": html_funnel_bars(funnel_steps, live=funnel_live),
+        "FUNNEL_CHART_BODY": html_funnel_chart_body(funnel_steps, live=funnel_live),
+        "ACQ_BARS": html_acq_bars(acq_series, live=acq_live),
+        "NAMED_BARS": html_named_bars(named_days, live=named_live),
+        "NAMED_DAY_BODY": html_named_day_body(named_days, live=named_live),
     }
 
 
@@ -386,7 +680,22 @@ __DASHBOARD_NAV_CSS__
     .pii-mock { filter:blur(7px); user-select:none; pointer-events:none; opacity:.72; }
     .pii-gate { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:16px; font-size:13px; font-weight:800; color:#1e3a8a; background:rgba(255,255,255,.55); border-radius:12px; }
     .disabled-note { color:#94a3b8; font-weight:800; }
-    @media (max-width:980px) { .span-3,.span-4,.span-6,.span-8,.span-12 { grid-column:span 12; } .map { grid-template-columns:1fr; } }
+    .legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:10px 0 6px; font-size:12px; font-weight:800; color:#334155; }
+    .swatch { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
+    .swatch.dash { background:repeating-linear-gradient(90deg,#93c5fd 0 6px,transparent 6px 10px); border-radius:2px; height:3px; width:16px; }
+    .chartBox { width:100%; min-height:160px; }
+    .chartBox svg { width:100%; height:220px; display:block; }
+    .chartEmpty { color:var(--muted); font-size:13px; font-weight:700; padding:18px 0; }
+    .chart-fallback { margin-top:10px; }
+    .chart-fallback table { font-size:12px; }
+    .hbars { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+    .hbar { display:grid; grid-template-columns:minmax(110px,180px) 1fr minmax(72px,140px); gap:10px; align-items:center; }
+    .hbar-label { font-size:12px; font-weight:800; color:#334155; }
+    .hbar-track { height:12px; border-radius:999px; background:#f1f5f9; overflow:hidden; }
+    .hbar-fill { height:100%; border-radius:999px; background:linear-gradient(90deg,var(--blue),var(--green)); }
+    .hbar.example .hbar-track { background:#f8fafc; border:1px dashed #e2e8f0; }
+    .hbar-val { font-size:12px; font-weight:800; color:#64748b; text-align:right; }
+    @media (max-width:980px) { .span-3,.span-4,.span-6,.span-8,.span-12 { grid-column:span 12; } .map { grid-template-columns:1fr; } .hbar { grid-template-columns:1fr; gap:4px; } .hbar-val { text-align:left; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:28px; } }
   </style>
 </head>
@@ -471,6 +780,22 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-3"><div class="card-title">Estimate / calc sessions __TAG_OVERVIEW_BRAND__</div><div class="kpi" id="kpiEstimate">__KPI_ESTIMATE__</div><div class="meta">/estimate + legacy wny calculator. Funnel step 1. <span class="__VS_PRIOR__" id="metaEstimate">__META_ESTIMATE__</span></div></div>
         <div class="card span-3"><div class="card-title">CTA taps → /estimate __TAG_CTA__</div><div class="kpi" id="kpiCta">__KPI_CTA__</div><div class="meta">Brand-page CTA clicks (estimate_cta_click) when that event exists. Else EXAMPLE.</div></div>
         <div class="card span-3"><div class="card-title">Organic FB post → sessions __TAG_FB__</div><div class="kpi" id="kpiFbPost">__KPI_FB_POST__</div><div class="meta">facebook / organic sessions from GA4 only. Not Ads Manager.</div></div>
+        <div class="card span-12">
+          <div class="card-title">Daily trend — all-site sessions + estimate/LP __TAG_OVERVIEW__</div>
+          <div class="meta">Warehouse <b>web_funnel_daily_v1</b> host-split (same source as KPI fallback). All-site = brand hosts + WNY. Estimate/LP on this chart is the warehouse host split (WNY/legacy calc). www /estimate is in the range KPI when the GA4 path report is live — that path split is not stored per day. Missing days are gaps, not zeros. Prior period is dashed when Compare prior is on and prior docs exist.</div>
+          <div class="legend">
+            <span><span class="swatch" style="background:#2196F3"></span>All-site sessions</span>
+            <span><span class="swatch" style="background:#00C853"></span>Estimate / LP visits</span>
+            <span class="__VS_PRIOR__"><span class="swatch dash"></span>Prior period</span>
+          </div>
+          <div class="chartBox" id="trendChart">__TREND_SVG__</div>
+          <div class="chart-fallback">
+            <table>
+              <thead><tr><th>Date ET</th><th>Sessions</th><th>Estimate / LP</th><th>Prior sessions</th><th>Prior estimate/LP</th></tr></thead>
+              <tbody id="trendBody">__TREND_BODY__</tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -479,7 +804,8 @@ __DASHBOARD_NAV_HTML__
         <div class="section-label">Acquisition</div>
         <div class="card span-8">
           <div class="card-title">Channel + source / medium __TAG_ACQUISITION__</div>
-          <div class="meta" style="margin-bottom:10px">GA4 sessionDefaultChannelGroup + sessionSource / sessionMedium on allowlisted hosts. Not Meta spend.</div>
+          <div class="meta" style="margin-bottom:10px">GA4 sessionDefaultChannelGroup + sessionSource / sessionMedium on allowlisted hosts. Not Meta spend. Bars are the top source/medium rows (cap 10).</div>
+          <div class="hbars" id="acqBars">__ACQ_BARS__</div>
           <table>
             <thead><tr><th>Channel</th><th>Source / medium</th><th>Sessions</th><th>Users</th></tr></thead>
             <tbody id="acqBody">
@@ -558,6 +884,15 @@ __DASHBOARD_NAV_HTML__
             <div class="step"><div class="name">Submit</div><div class="val" id="stepSubmit">__STEP_SUBMIT__</div><div class="meta" id="metaSubmit">__META_SUBMIT__</div></div>
             <div class="step"><div class="name">Named fill</div><div class="val" id="stepNamed">__STEP_NAMED__</div><div class="meta" id="metaNamed">__META_NAMED__</div></div>
           </div>
+          <div class="card-title" style="margin-top:16px">Funnel bars __TAG_FUNNEL__</div>
+          <div class="meta">Live counts only. Funnel top is estimate/LP visits, not all-site sessions. Contact stays EXAMPLE — no invented step.</div>
+          <div class="hbars" id="funnelBars">__FUNNEL_BARS__</div>
+          <div class="chart-fallback">
+            <table>
+              <thead><tr><th>Step</th><th>Count</th><th>Rate</th></tr></thead>
+              <tbody id="funnelChartBody">__FUNNEL_CHART_BODY__</tbody>
+            </table>
+          </div>
         </div>
         <div class="card span-12 callout warn">Instant Form and 3PL bought leads do not belong on this funnel. They are not website leads.</div>
       </div>
@@ -603,6 +938,17 @@ __DASHBOARD_NAV_HTML__
           <div class="card-title">Marketing aggregates __TAG_NAMED__</div>
           <div class="kpi" id="namedKpi">__NAMED_KPI__</div>
           <div class="meta" id="namedMeta">__NAMED_META__</div>
+        </div>
+        <div class="card span-6">
+          <div class="card-title">Named fills by day __TAG_NAMED__</div>
+          <div class="meta">Live counts from <b>named_fills.by_day</b>. Days without fills are omitted, not zeroed. PII stays gated.</div>
+          <div class="hbars" id="namedBars">__NAMED_BARS__</div>
+          <div class="chart-fallback">
+            <table>
+              <thead><tr><th>Date ET</th><th>Live</th><th>Excluded</th></tr></thead>
+              <tbody id="namedDayBody">__NAMED_DAY_BODY__</tbody>
+            </table>
+          </div>
         </div>
         <div class="card span-6">
           <div class="card-title">Warehouse source</div>
@@ -759,7 +1105,156 @@ var initialPayload = __PAYLOAD__;
       banner.textContent = 'LIVE: ' + live + '. EXAMPLE / not-wired: ' + stub +
         '. Funnel top is estimate/LP, not all-site. Instant Form / 3PL are not website leads. Meta spend was not invented. Charles QA before treating as live.';
     }
+    paintCharts(data);
     paintChrome(data);
+  }
+  function seriesHas(rows, keys) {
+    keys = keys || [];
+    return (rows || []).some(function(row) {
+      return keys.some(function(key) { return row && row[key] != null; });
+    });
+  }
+  function emptyChart(msg) {
+    return '<div class="chartEmpty">' + msg + '</div>';
+  }
+  function hbarRow(label, value, width, example, meta) {
+    var tag = example ? ' <span class="example-tag">EXAMPLE</span>' : '';
+    var shown = (value == null || example) ? '—' : num(value);
+    if (meta && !example) shown += ' · ' + meta;
+    var fill = (!example && value != null) ? '<div class="hbar-fill" style="width:' + width.toFixed(1) + '%"></div>' : '';
+    return '<div class="hbar' + (example ? ' example' : '') + '"><div class="hbar-label">' + label + tag +
+      '</div><div class="hbar-track">' + fill + '</div><div class="hbar-val">' + shown + '</div></div>';
+  }
+  function barWidth(value, max) {
+    if (value == null || !max) return 0;
+    return Math.max(0, Math.min(100, 100 * Number(value) / Number(max)));
+  }
+  function drawTrend(daily, prior, compare, overviewLive) {
+    var el = document.getElementById('trendChart');
+    var body = document.getElementById('trendBody');
+    daily = daily || [];
+    prior = compare ? (prior || []) : [];
+    var ready = seriesHas(daily, ['sessions', 'estimate_lp_visits']);
+    var emptyMsg = overviewLive
+      ? 'No daily warehouse points yet. Missing days are gaps, not zeros.'
+      : 'EXAMPLE — daily trend waits on live warehouse days. Missing days are gaps, not zeros.';
+    var emptyRow = overviewLive
+      ? '<tr><td colspan="5">No daily warehouse points yet. Missing days are gaps, not zeros.</td></tr>'
+      : '<tr><td colspan="5">EXAMPLE — no daily series. Traffic was not invented.</td></tr>';
+    if (body) {
+      body.innerHTML = ready ? daily.map(function(row, i) {
+        var prev = prior[i] || {};
+        return '<tr><td>' + (row.date || '') + '</td><td>' + num(row.sessions) + '</td><td>' + num(row.estimate_lp_visits) +
+          '</td><td>' + (compare ? num(prev.sessions) : '—') + '</td><td>' + (compare ? num(prev.estimate_lp_visits) : '—') + '</td></tr>';
+      }).join('') : emptyRow;
+    }
+    if (!el) return;
+    if (!ready) {
+      el.innerHTML = emptyChart(emptyMsg);
+      return;
+    }
+    var sess = daily.map(function(r) { return r.sessions == null ? null : Number(r.sessions); });
+    var est = daily.map(function(r) { return r.estimate_lp_visits == null ? null : Number(r.estimate_lp_visits); });
+    var pSess = prior.map(function(r) { return r && r.sessions == null ? null : Number(r.sessions); });
+    var pEst = prior.map(function(r) { return r && r.estimate_lp_visits == null ? null : Number(r.estimate_lp_visits); });
+    var present = sess.concat(est, pSess, pEst).filter(function(v) { return v != null; });
+    var W = 760, H = 220, m = {l: 48, r: 14, t: 16, b: 32};
+    var iw = W - m.l - m.r, ih = H - m.t - m.b, n = daily.length || 1;
+    var max = Math.max(1, Math.max.apply(null, present.length ? present : [1]));
+    function x(i) { return m.l + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw); }
+    function y(v) { return m.t + ih - (v / max) * ih; }
+    var grid = '';
+    for (var g = 0; g <= 4; g++) {
+      var gv = (max / 4) * g, gy = y(gv);
+      grid += '<line x1="' + m.l + '" y1="' + gy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + gy.toFixed(1) + '" stroke="#eef2f7" />';
+      grid += '<text x="' + (m.l - 6) + '" y="' + (gy + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="#94a3b8">' + Math.round(gv) + '</text>';
+    }
+    var xlabels = '', step = Math.max(1, Math.floor(n / 8));
+    for (var i = 0; i < n; i += step) {
+      xlabels += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="#64748b">' + String((daily[i] || {}).date || '').slice(8) + '</text>';
+    }
+    if ((n - 1) % step !== 0) {
+      xlabels += '<text x="' + x(n - 1).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="#64748b">' + String((daily[n - 1] || {}).date || '').slice(8) + '</text>';
+    }
+    function line(values, color, dashed, title, dates) {
+      var d = '', drawing = false, dots = '';
+      values.forEach(function(v, i) {
+        if (v == null) { drawing = false; return; }
+        var px = x(i).toFixed(1), py = y(v).toFixed(1);
+        d += (drawing ? ' L' : 'M') + px + ' ' + py;
+        drawing = true;
+        var tip = String((dates[i] || {}).date || '') + ' — ' + title + ' ' + num(v);
+        dots += '<circle cx="' + px + '" cy="' + py + '" r="3" fill="' + color + '"' + (dashed ? ' fill-opacity="0.55"' : '') + '><title>' + tip + '</title></circle>';
+      });
+      if (!d) return '';
+      return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2.5"' + (dashed ? ' stroke-dasharray="6 4" stroke-opacity="0.55"' : '') + ' />' + dots;
+    }
+    var paths = line(sess, '#2196F3', false, 'sessions', daily) + line(est, '#00C853', false, 'estimate/LP', daily);
+    if (compare && seriesHas(prior, ['sessions', 'estimate_lp_visits'])) {
+      paths += line(pSess, '#93c5fd', true, 'prior sessions', prior) + line(pEst, '#86efac', true, 'prior estimate/LP', prior);
+    }
+    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="220" role="img" aria-label="Daily sessions and estimate/LP trend">' + grid + paths + xlabels + '</svg>';
+  }
+  function paintCharts(data) {
+    data = data || {};
+    var s = data.series || {};
+    var compare = !!(data.compare_prior);
+    var overviewLive = tileStatus(data, 'overview') === 'live';
+    var funnelLive = tileStatus(data, 'funnel') === 'live';
+    var acqLive = tileStatus(data, 'acquisition') === 'live';
+    var namedLive = tileStatus(data, 'named_fills') === 'live';
+    drawTrend(overviewLive ? (s.daily || []) : [], s.prior_daily || [], compare, overviewLive);
+    var funnelEl = document.getElementById('funnelBars');
+    var funnelBody = document.getElementById('funnelChartBody');
+    var funnelRows = s.funnel || [];
+    if (funnelEl) {
+      if (!funnelLive || !seriesHas(funnelRows, ['value'])) {
+        funnelEl.innerHTML = emptyChart('EXAMPLE — funnel chart waits on live counts. Contact is not wired.');
+      } else {
+        var fmax = null;
+        funnelRows.forEach(function(row) { if (row.wired && row.value != null && fmax == null) fmax = Number(row.value); });
+        funnelEl.innerHTML = funnelRows.map(function(row) {
+          return hbarRow(row.label || row.key || '', row.value, barWidth(row.value, fmax), !row.wired, row.rate != null && row.wired ? pct(row.rate) : '');
+        }).join('');
+      }
+    }
+    if (funnelBody) {
+      funnelBody.innerHTML = (funnelLive && funnelRows.length) ? funnelRows.map(function(row) {
+        return '<tr><td>' + (row.label || '') + '</td><td>' + (!row.wired ? '—' : num(row.value)) + '</td><td>' + (!row.wired ? 'EXAMPLE' : pct(row.rate)) + '</td></tr>';
+      }).join('') : '<tr><td colspan="3">EXAMPLE — no live funnel series. Contact is not wired.</td></tr>';
+    }
+    var acqEl = document.getElementById('acqBars');
+    var acqRows = s.acquisition || [];
+    if (acqEl) {
+      if (!acqLive || !seriesHas(acqRows, ['sessions'])) {
+        acqEl.innerHTML = emptyChart('EXAMPLE — acquisition chart waits on live GA4 rows. Meta spend is not wired.');
+      } else {
+        var amax = 0;
+        acqRows.forEach(function(row) { if (row.sessions != null && row.sessions > amax) amax = Number(row.sessions); });
+        acqEl.innerHTML = acqRows.map(function(row) {
+          return hbarRow(row.label || row.source_medium || row.channel || '', row.sessions, barWidth(row.sessions, amax), false, '');
+        }).join('');
+      }
+    }
+    var namedEl = document.getElementById('namedBars');
+    var namedBody = document.getElementById('namedDayBody');
+    var namedRows = s.named_fills_by_day || [];
+    if (namedEl) {
+      if (!namedLive || !seriesHas(namedRows, ['live'])) {
+        namedEl.innerHTML = emptyChart('EXAMPLE — named-fill chart waits on live warehouse counts. PII stays gated.');
+      } else {
+        var nmax = 0;
+        namedRows.forEach(function(row) { if (row.live != null && row.live > nmax) nmax = Number(row.live); });
+        namedEl.innerHTML = namedRows.map(function(row) {
+          return hbarRow(row.date || '', row.live, barWidth(row.live, nmax), false, '');
+        }).join('');
+      }
+    }
+    if (namedBody) {
+      namedBody.innerHTML = (namedLive && namedRows.length) ? namedRows.map(function(row) {
+        return '<tr><td>' + (row.date || '') + '</td><td>' + num(row.live) + '</td><td>' + num(row.excluded) + '</td></tr>';
+      }).join('') : '<tr><td colspan="3">No named-fill days in range. Counts only — no PII.</td></tr>';
+    }
   }
   function query() {
     return new URLSearchParams({

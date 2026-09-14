@@ -44,6 +44,7 @@ NAMED_FILLS_RANGE_LIMIT = 200
 GA4_REPORT_LIMIT = "10000"
 PRIMARY_CTA = "www.happyslr.com/estimate"
 NAMED_FILL_SOURCE_NEW_SITE = "new-site-estimate"
+ACQUISITION_CHART_LIMIT = 10
 
 TILE_LIVE = "live"
 TILE_EXAMPLE = "example"
@@ -743,6 +744,222 @@ def warehouse_totals(docs: list[dict[str, Any]], domain: str = "all") -> dict[st
     }
 
 
+def empty_series() -> dict[str, Any]:
+    """Chart payload with no invented points. EXAMPLE / degrade uses this."""
+    return {
+        "daily": [],
+        "prior_daily": [],
+        "funnel": [],
+        "acquisition": [],
+        "named_fills_by_day": [],
+        "source": None,
+    }
+
+
+def daily_point_from_doc(
+    doc: dict[str, Any] | None,
+    date_ymd: str,
+    domain: str = "all",
+) -> dict[str, Any]:
+    """One warehouse day. Missing / not-ok / pre-split docs are nulls, not zeros."""
+    date_key = compact_str((doc or {}).get("date") or date_ymd)
+    empty = {
+        "date": date_key,
+        "sessions": None,
+        "estimate_lp_visits": None,
+        "brand_site_sessions": None,
+    }
+    if not isinstance(doc, dict):
+        return empty
+    ga4 = compact_str(doc.get("ga4")).casefold()
+    if ga4 and ga4 != "ok":
+        return empty
+    if doc.get("visits_total") is None and doc.get("visits_wny") is None:
+        return empty
+    totals = warehouse_totals([doc], domain)
+    return {
+        "date": date_key,
+        "sessions": totals["all_site_sessions"],
+        "estimate_lp_visits": totals["estimate_lp_visits"],
+        "brand_site_sessions": totals["brand_site_sessions"],
+    }
+
+
+def build_daily_series(
+    dates: list[str],
+    docs: list[dict[str, Any]] | None,
+    domain: str = "all",
+) -> list[dict[str, Any]]:
+    """Range-aligned warehouse series. No docs → empty (not a fake zero series)."""
+    rows = [row for row in list(docs or []) if isinstance(row, dict)]
+    if not rows:
+        return []
+    by_date = {
+        compact_str(row.get("date")): row for row in rows if compact_str(row.get("date"))
+    }
+    return [daily_point_from_doc(by_date.get(day), day, domain) for day in dates]
+
+
+def series_has_values(points: list[dict[str, Any]] | None, *keys: str) -> bool:
+    wanted = keys or ("sessions", "estimate_lp_visits", "brand_site_sessions", "live", "value")
+    for row in points or []:
+        if not isinstance(row, dict):
+            continue
+        for key in wanted:
+            if row.get(key) is not None:
+                return True
+    return False
+
+
+def build_funnel_chart_series(funnel: dict[str, Any] | None, *, live: bool) -> list[dict[str, Any]]:
+    """Live funnel counts only. Contact stays unwired — no invented step."""
+    if not live:
+        return []
+    f = funnel or {}
+    rates = f.get("rates") or {}
+    return [
+        {
+            "key": "estimate_lp",
+            "label": "Estimate / LP visits",
+            "value": f.get("estimate_lp_visits"),
+            "rate": 1.0 if f.get("estimate_lp_visits") is not None else None,
+            "wired": True,
+        },
+        {
+            "key": "start",
+            "label": "Start",
+            "value": f.get("starts"),
+            "rate": rates.get("start_of_estimate_lp"),
+            "wired": True,
+        },
+        {
+            "key": "address",
+            "label": "Address",
+            "value": f.get("address"),
+            "rate": rates.get("address_of_start"),
+            "wired": True,
+        },
+        {
+            "key": "bill",
+            "label": "Bill",
+            "value": f.get("bill"),
+            "rate": rates.get("bill_of_address"),
+            "wired": True,
+        },
+        {
+            "key": "contact",
+            "label": "Contact",
+            "value": None,
+            "rate": None,
+            "wired": False,
+            "status": TILE_EXAMPLE,
+        },
+        {
+            "key": "submit",
+            "label": "Submit",
+            "value": f.get("submit"),
+            "rate": rates.get("submit_of_bill"),
+            "wired": True,
+        },
+        {
+            "key": "named_fill",
+            "label": "Named fill",
+            "value": f.get("named_fill"),
+            "rate": rates.get("named_fill_of_submit"),
+            "wired": True,
+        },
+    ]
+
+
+def build_acquisition_chart_series(
+    rows: list[dict[str, Any]] | None,
+    *,
+    live: bool,
+    limit: int = ACQUISITION_CHART_LIMIT,
+) -> list[dict[str, Any]]:
+    """Top source/medium bars from live acquisition.rows. No Meta spend."""
+    if not live:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in list(rows or [])[: max(int(limit), 0)]:
+        if not isinstance(row, dict):
+            continue
+        sessions = optional_int(row.get("sessions"))
+        if sessions is None:
+            continue
+        source_medium = compact_str(row.get("source_medium"))
+        channel = compact_str(row.get("channel"))
+        out.append(
+            {
+                "channel": channel,
+                "source_medium": source_medium,
+                "label": source_medium or channel or "(other)",
+                "sessions": sessions,
+                "users": optional_int(row.get("users")),
+            }
+        )
+    return out
+
+
+def build_named_fills_chart_series(
+    by_day: list[dict[str, Any]] | None,
+    *,
+    live: bool,
+) -> list[dict[str, Any]]:
+    """Existing named_fills.by_day only. No invented days. No PII."""
+    if not live:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in by_day or []:
+        if not isinstance(row, dict):
+            continue
+        day = compact_str(row.get("date"))
+        if not day:
+            continue
+        out.append(
+            {
+                "date": day,
+                "live": optional_int(row.get("live")),
+                "excluded": optional_int(row.get("excluded")),
+            }
+        )
+    return out
+
+
+def build_chart_series(
+    *,
+    dates: list[str],
+    prior_dates: list[str],
+    daily_docs: list[dict[str, Any]] | None,
+    prior_docs: list[dict[str, Any]] | None,
+    domain: str,
+    compare_prior: bool,
+    funnel: dict[str, Any] | None,
+    funnel_live: bool,
+    acquisition_rows: list[dict[str, Any]] | None,
+    acquisition_live: bool,
+    named_by_day: list[dict[str, Any]] | None,
+    named_live: bool,
+) -> dict[str, Any]:
+    daily = build_daily_series(dates, daily_docs, domain)
+    prior_daily = (
+        build_daily_series(prior_dates, prior_docs, domain) if compare_prior else []
+    )
+    source = "warehouse" if daily else None
+    return {
+        "daily": daily,
+        "prior_daily": prior_daily,
+        "funnel": build_funnel_chart_series(funnel, live=funnel_live),
+        "acquisition": build_acquisition_chart_series(
+            acquisition_rows, live=acquisition_live
+        ),
+        "named_fills_by_day": build_named_fills_chart_series(
+            named_by_day, live=named_live
+        ),
+        "source": source,
+    }
+
+
 def visits_up_starts_zero(estimate_lp: int | None, starts: int | None) -> bool:
     """Alert uses estimate/LP visits, never all-site sessions."""
     if estimate_lp is None or starts is None:
@@ -869,6 +1086,7 @@ def example_degrade_payload(
         },
         "named_fills": named,
         "content": {"top_landings": []},
+        "series": empty_series(),
         "filters": {
             "test_filter": True,
             "hosts": list(_DEGRADE_HOSTS),
@@ -1147,6 +1365,7 @@ def compute_website_traffic(
         "content": {
             "top_landings": (path_summary or {}).get("top_landings") or [],
         },
+        "series": empty_series(),
         "filters": {
             "test_filter": bool(test_filter),
             "hosts": sorted(funnel.LIVE_FORM_HOSTS),
@@ -1180,6 +1399,20 @@ def compute_website_traffic(
         "notes": notes,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    payload["series"] = build_chart_series(
+        dates=dates,
+        prior_dates=prior_dates,
+        daily_docs=daily_docs,
+        prior_docs=prior_docs if compare_prior else [],
+        domain=domain_key,
+        compare_prior=compare_prior,
+        funnel=payload["funnel"],
+        funnel_live=bool(tiles["funnel"]["status"] == TILE_LIVE),
+        acquisition_rows=acq.get("rows") or [],
+        acquisition_live=bool(tiles["acquisition"]["status"] == TILE_LIVE),
+        named_by_day=named.get("by_day") or [],
+        named_live=bool(tiles["named_fills"]["status"] == TILE_LIVE),
+    )
     return payload
 
 

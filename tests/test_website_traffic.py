@@ -361,6 +361,19 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
         self.assertIn('"estimate_lp_visits": 400', html)
         self.assertNotIn("__TAG_", markup)
         self.assertNotIn("__KPI_", markup)
+        self.assertIn('id="trendChart"', markup)
+        self.assertIn('id="funnelBars"', markup)
+        self.assertIn('id="acqBars"', markup)
+        self.assertIn('id="namedBars"', markup)
+        self.assertIn("Daily trend", markup)
+        self.assertIn("<td>2026-09-07</td>", markup)
+        self.assertIn("<td>89</td>", markup)
+        self.assertIn("google / organic", markup)
+        self.assertIn("Estimate / LP visits", markup)
+        self.assertIn("function paintCharts(", html)
+        self.assertIn('"daily"', html)
+        self.assertNotIn("__TREND_", markup)
+        self.assertNotIn("__FUNNEL_BARS__", markup)
 
     def test_html_first_paint_keeps_example_when_tile_not_live(self):
         payload = live_payload(
@@ -695,6 +708,138 @@ class WebsiteTrafficRaceDegradeTests(unittest.TestCase):
         body = json.loads(raw_json.decode("utf-8"))
         self.assertTrue(body.get("example") or body.get("stub"))
         self.assertIn("exclusion_reason", str(body.get("error") or body.get("notes") or ""))
+
+
+class WebsiteTrafficChartTests(unittest.TestCase):
+    def test_series_from_warehouse_days_not_invented_zeros(self):
+        payload = live_payload(end="2026-09-09")
+        daily = payload["series"]["daily"]
+        self.assertEqual(payload["series"]["source"], "warehouse")
+        self.assertEqual([row["date"] for row in daily], ["2026-09-07", "2026-09-08", "2026-09-09"])
+        self.assertEqual(daily[0]["sessions"], 89)
+        self.assertEqual(daily[0]["estimate_lp_visits"], 9)
+        self.assertEqual(daily[0]["brand_site_sessions"], 80)
+        self.assertEqual(daily[1]["sessions"], 21)
+        self.assertEqual(daily[1]["estimate_lp_visits"], 1)
+        self.assertIsNone(daily[2]["sessions"])
+        self.assertIsNone(daily[2]["estimate_lp_visits"])
+        self.assertNotEqual(daily[2]["sessions"], 0)
+        self.assertFalse(payload["funnel"]["funnel_top_is_all_site"])
+
+    def test_prior_series_only_when_docs_exist(self):
+        prior = [
+            {
+                "date": "2026-09-05",
+                "ga4": "ok",
+                "visits_total": 40,
+                "visits_wny": 4,
+                "starts": 1,
+                "address_complete": 1,
+                "bill_complete": 1,
+                "estimate_submit": 0,
+                "cta_clicks": 0,
+            }
+        ]
+        on = live_payload(prior_docs=prior, compare_prior=True)
+        self.assertEqual(len(on["series"]["prior_daily"]), 2)
+        self.assertEqual(on["series"]["prior_daily"][0]["sessions"], 44)
+        self.assertEqual(on["series"]["prior_daily"][0]["estimate_lp_visits"], 4)
+        self.assertIsNone(on["series"]["prior_daily"][1]["sessions"])
+        off = live_payload(prior_docs=prior, compare_prior=False)
+        self.assertEqual(off["series"]["prior_daily"], [])
+
+    def test_ga4_not_ok_day_is_gap_not_zero(self):
+        payload = live_payload(
+            daily_docs=[
+                {
+                    "date": "2026-09-07",
+                    "ga4": "not_configured",
+                    "visits_total": 80,
+                    "visits_wny": 9,
+                },
+                sample_docs()[1],
+            ]
+        )
+        daily = payload["series"]["daily"]
+        self.assertIsNone(daily[0]["sessions"])
+        self.assertIsNone(daily[0]["estimate_lp_visits"])
+        self.assertEqual(daily[1]["sessions"], 21)
+
+    def test_funnel_and_acquisition_series_are_live_counts(self):
+        payload = live_payload()
+        steps = payload["series"]["funnel"]
+        keys = [row["key"] for row in steps]
+        self.assertEqual(
+            keys,
+            ["estimate_lp", "start", "address", "bill", "contact", "submit", "named_fill"],
+        )
+        self.assertEqual(steps[0]["value"], 30)
+        self.assertNotEqual(steps[0]["value"], payload["funnel"]["all_site_sessions"])
+        contact = next(row for row in steps if row["key"] == "contact")
+        self.assertFalse(contact["wired"])
+        self.assertIsNone(contact["value"])
+        self.assertEqual(contact["status"], "example")
+        acq = payload["series"]["acquisition"]
+        self.assertEqual(acq[0]["label"], "google / organic")
+        self.assertEqual(acq[0]["sessions"], 40)
+        self.assertLessEqual(len(acq), 10)
+        named = payload["series"]["named_fills_by_day"]
+        self.assertEqual(named, payload["named_fills"]["by_day"])
+        self.assertTrue(traffic.named_fill_payload_is_clean(payload))
+        blob = json.dumps(payload["series"])
+        self.assertNotIn("adchday@gmail.com", blob)
+        self.assertNotIn("pyrce@verizon.net", blob)
+
+    def test_example_tiles_do_not_invent_series(self):
+        payload = traffic.compute_website_traffic(
+            None, start="2026-09-07", end="2026-09-08", fetch_remote=False
+        )
+        series = payload["series"]
+        self.assertEqual(series["daily"], [])
+        self.assertEqual(series["prior_daily"], [])
+        self.assertEqual(series["funnel"], [])
+        self.assertEqual(series["acquisition"], [])
+        self.assertEqual(series["named_fills_by_day"], [])
+        self.assertIsNone(series["source"])
+        html = page.render_html(payload=payload)
+        markup = html.split("var initialPayload")[0]
+        self.assertIn("EXAMPLE — no daily series", markup)
+        self.assertIn("EXAMPLE — funnel chart waits on live counts", markup)
+        self.assertIn("EXAMPLE — acquisition chart waits on live GA4 rows", markup)
+        self.assertIn("EXAMPLE — named-fill chart waits on live warehouse counts", markup)
+        self.assertNotIn("<td>89</td>", markup)
+        self.assertNotIn("google / organic", markup)
+
+    def test_html_first_paint_charts_use_fixture_series(self):
+        payload = live_payload()
+        html = page.render_html(payload=payload)
+        markup = html.split("var initialPayload")[0]
+        self.assertIn('aria-label="Daily sessions and estimate/LP trend"', markup)
+        self.assertIn("<td>2026-09-07</td>", markup)
+        self.assertIn("<td>89</td>", markup)
+        self.assertIn("<td>9</td>", markup)
+        self.assertIn("Estimate / LP visits", markup)
+        self.assertIn("google / organic", markup)
+        self.assertIn("2026-09-08", markup)
+        funnel_bars = markup.split('id="funnelBars"', 1)[1].split('id="funnelChartBody"', 1)[0]
+        self.assertIn("hbar-fill", funnel_bars)
+        self.assertIn("Estimate / LP visits", funnel_bars)
+        self.assertIn("EXAMPLE", funnel_bars)
+        self.assertIn("Contact", funnel_bars)
+        self.assertIn("—", funnel_bars)
+        named_bars = markup.split('id="namedBars"', 1)[1].split('id="namedDayBody"', 1)[0]
+        self.assertIn("2026-09-07", named_bars)
+        self.assertNotIn("Phil Pyrce", named_bars)
+        self.assertNotIn("@", named_bars)
+
+    def test_json_handler_includes_series(self):
+        captured, raw = invoke_get("/api/website_traffic?format=json")
+        self.assertEqual(captured["code"], 200)
+        body = json.loads(raw.decode("utf-8"))
+        self.assertIn("series", body)
+        self.assertEqual(body["series"]["funnel"], [])
+        self.assertEqual(body["series"]["daily"], [])
+        self.assertFalse(body["funnel"]["funnel_top_is_all_site"])
 
 
 if __name__ == "__main__":

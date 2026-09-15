@@ -82,6 +82,7 @@ OWNER_NAME_OVERRIDES = {
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
 SETTER_LAST_NAME_FALLBACK_FIELD_ID = "Xhy6k4xfHRJ6s5IbfA5x"
 LEAD_SOURCE_FIELD_ID = "hd5QqHEOVSsPom5bJ32P"
+SELF_GEN_LEAD_SOURCE = "Self Gen"
 
 NICKNAME_EQUIVALENTS = {
     "josh": "joshua",
@@ -197,7 +198,7 @@ def normalize_lead_source(value: Any) -> str:
     if low == "virtual":
         return "Phones"
     if low == "selfgen":
-        return "Self Gen"
+        return SELF_GEN_LEAD_SOURCE
     if low == "inbound":
         return "Inbound"
     if low == "3pl/inbound":
@@ -209,8 +210,18 @@ def normalize_lead_source(value: Any) -> str:
     if low == "3pl":
         return "3PL"
     if low == "self gen":
-        return "Self Gen"
+        return SELF_GEN_LEAD_SOURCE
     return text
+
+
+def is_self_gen_lead_source(value: Any) -> bool:
+    """True when a recap appointment already carries normalized Self Gen."""
+    return compact_str(value) == SELF_GEN_LEAD_SOURCE
+
+
+def count_self_gen_appointments(appointments: list[dict[str, Any]] | None) -> int:
+    """Count Self Gen rows already on an owner card. No extra Firestore stream."""
+    return sum(1 for row in (appointments or []) if is_self_gen_lead_source((row or {}).get("lead_source")))
 
 
 def format_local_datetime(value: Any) -> str:
@@ -835,6 +846,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             "team": compact_str(roster_row.get("team")) or "",
             "appointments": [],
             "appointment_total": 0,
+            "self_gen_appointment_total": 0,
             "completed_total": 0,
             "sit_total": 0,
             "no_sit_total": 0,
@@ -997,6 +1009,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     owners = []
     for bucket in owner_buckets.values():
         bucket["appointments"].sort(key=lambda item: item["appointment_at"])
+        bucket["self_gen_appointment_total"] = count_self_gen_appointments(bucket["appointments"])
         bucket["powerline_results_top"] = [
             {"label": label, "count": count}
             for label, count in bucket["powerline_results"].most_common(5)
@@ -1018,6 +1031,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     )
 
     appointment_total = sum(int(item["appointment_total"]) for item in owners)
+    self_gen_appointments_total = sum(int(item["self_gen_appointment_total"]) for item in owners)
     completed_total = sum(int(item["completed_total"]) for item in owners)
     powerline_total = sum(int(item["powerline_dials"]) for item in owners)
     raydar_total = sum(int(item["doors_knocked"]) for item in owners)
@@ -1032,6 +1046,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             "owners_with_activity": sum(1 for item in owners if int(item["work_total"]) > 0),
             "owners_total": len(owners),
             "appointments_total": appointment_total,
+            "self_gen_appointments_total": self_gen_appointments_total,
             "completed_outcomes_total": completed_total,
             "pending_outcomes_total": appointment_total - completed_total,
             "powerline_dials_total": powerline_total,
@@ -1073,7 +1088,7 @@ def render_owner_card(owner: dict[str, Any]) -> str:
     if appointments:
         appointment_rows = "".join(
             f"""
-              <tr>
+              <tr{" class='self-gen-row'" if is_self_gen_lead_source(row.get("lead_source")) else ""}>
                 <td>{html_escape(row['time_local'])}</td>
                 <td>{html_escape(row['contact_name'])}</td>
                 <td><span class="outcome-pill {html_escape(row['outcome_class'])}">{html_escape(row['outcome'])}</span></td>
@@ -1104,6 +1119,7 @@ def render_owner_card(owner: dict[str, Any]) -> str:
         </div>
         <div class="owner-stats">
           <div class="mini-stat"><span>Appointments</span><strong>{html_escape(owner['appointment_total'])}</strong></div>
+          <div class="mini-stat"><span>Self Gen</span><strong>{html_escape(owner.get('self_gen_appointment_total', 0))}</strong></div>
           <div class="mini-stat"><span>Completed</span><strong>{html_escape(owner['completed_total'])}</strong></div>
           <div class="mini-stat"><span>Sits</span><strong>{html_escape(owner['sit_total'])}</strong></div>
           <div class="mini-stat"><span>No Sits</span><strong>{html_escape(owner['no_sit_total'])}</strong></div>
@@ -1216,7 +1232,7 @@ __DASHBOARD_NAV_CSS__
     .owner-title {{ font-size:22px; font-weight:950; letter-spacing:-0.02em; }}
     .owner-sub {{ margin-top:4px; color:var(--muted); font-size:13px; }}
     .owner-total {{ min-width:64px; text-align:center; font-size:40px; font-weight:950; line-height:1; color:#be185d; }}
-    .owner-stats {{ display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:10px; margin-top:16px; }}
+    .owner-stats {{ display:grid; grid-template-columns:repeat(8, minmax(0,1fr)); gap:10px; margin-top:16px; }}
     .mini-stat {{ border:1px solid var(--border); border-radius:16px; background:#fbfcfe; padding:12px; }}
     .mini-stat span {{ display:block; color:var(--muted); font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.05em; }}
     .mini-stat strong {{ display:block; margin-top:8px; font-size:24px; font-weight:950; }}
@@ -1233,10 +1249,12 @@ __DASHBOARD_NAV_CSS__
     .outcome-pill.good {{ background:rgba(16,185,129,0.12); color:#047857; }}
     .outcome-pill.warn {{ background:rgba(245,158,11,0.14); color:#b45309; }}
     .outcome-pill.pending {{ background:rgba(148,163,184,0.18); color:#475569; }}
+    tr.self-gen-row td {{ background:rgba(236,72,153,0.06); }}
     .empty-state {{ color:var(--muted); text-align:center; padding:28px 12px; }}
+    .footer-note {{ margin-top:18px; color:var(--muted); font-size:13px; line-height:1.5; }}
     @media (max-width: 1180px) {{
       .grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); }}
-      .owner-stats {{ grid-template-columns:repeat(3, minmax(0,1fr)); }}
+      .owner-stats {{ grid-template-columns:repeat(4, minmax(0,1fr)); }}
     }}
     @media (max-width: 760px) {{
       .wrap {{ padding:14px; }}
@@ -1276,12 +1294,16 @@ __DASHBOARD_NAV_HTML__
       <strong>Worked total:</strong> {html_escape(summary["work_total"])} across {html_escape(summary["owners_with_activity"])} owners with activity
       ({html_escape(summary.get("owners_total", summary["owners_with_activity"]))} listed, including zero-day sales-roster reps).
       <br />
+      <strong>Self Gen appointments:</strong> {html_escape(summary.get("self_gen_appointments_total", 0))}
+      (contact lead source Self Gen on appointments scheduled that ET day).
+      <br />
       {html_escape(unmapped_note)}
     </div>
 
     <section class="owners">
       {owner_cards}
     </section>
+    <div class="footer-note">Self Gen = contact lead source Self Gen (hd5QqHEOVSsPom5bJ32P) on appointments scheduled that ET day.</div>
   </div>
 
   <script>

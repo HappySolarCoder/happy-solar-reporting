@@ -28,7 +28,7 @@ jobs:
           git fetch origin master
           git show origin/master:api/company_overview.py > api/company_overview.py
           rm -rf api/_co_z64
-          python3 -c 'import json,pathlib; parts=sorted(pathlib.Path("patches/leadgen-inbound-3pl.split.patch.d").glob("p*.json")); text="".join(json.loads(p.read_text()) for p in parts); pathlib.Path("/tmp/leadgen.split.patch").write_text(text)'
+          python3 -c 'import pathlib; parts=sorted(pathlib.Path("patches/leadgen-inbound-3pl.split.patch.d").glob("p*.hex")); raw=b"".join(bytes.fromhex(p.read_text().strip()) for p in parts); pathlib.Path("/tmp/leadgen.split.patch").write_bytes(raw)'
           patch -p1 < /tmp/leadgen.split.patch
           grep -q "Inbound Funnel" api/company_overview.py
           grep -q "3PL Funnel" api/company_overview.py

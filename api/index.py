@@ -135,11 +135,18 @@ def delegate_to_api_module(request_handler: BaseHTTPRequestHandler, route: str) 
         if hasattr(request_handler, attr):
             setattr(inst, attr, getattr(request_handler, attr))
     inst.path = handler_path_for_delegate(request_handler.path, route)
+    command = getattr(request_handler, "command", "GET")
+    if not isinstance(command, str) or not command.strip():
+        command = "GET"
+    method_name = f"do_{command.upper()}"
+    method = getattr(inst, method_name, None)
+    if method is None:
+        return False
     inst.requestline = getattr(
-        request_handler, "requestline", f"GET {inst.path} HTTP/1.1"
+        request_handler, "requestline", f"{command.upper()} {inst.path} HTTP/1.1"
     )
     inst.client_address = getattr(request_handler, "client_address", ("", 0))
-    inst.do_GET()
+    method()
     return True
 
 
@@ -234,18 +241,23 @@ def build_html(stats: dict) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _delegate_or_404(self) -> bool:
+        route = dispatch_route(self.path, os.environ.get("QUERY_STRING"))
+        if not route:
+            return False
+        if delegate_to_api_module(self, route):
+            return True
+        body = b"The page could not be found\n"
+        self.send_response(404)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_GET(self):
         try:
-            route = dispatch_route(self.path, os.environ.get("QUERY_STRING"))
-            if route:
-                if delegate_to_api_module(self, route):
-                    return
-                body = b"The page could not be found\n"
-                self.send_response(404)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(body)
+            if self._delegate_or_404():
                 return
 
             qs = parse_qs(urlparse(self.path).query)
@@ -277,6 +289,27 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+    def do_POST(self):
+        try:
+            if self._delegate_or_404():
+                return
+            body = b"The page could not be found\n"
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            body = ("ERROR: " + str(e)).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+    def do_PATCH(self):
+        self.do_POST()
 
 
 handler = Handler

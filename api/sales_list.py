@@ -23,9 +23,23 @@ if str(API_DIR) not in sys.path:
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
-def render_html(year: int, month: int, installer: str = "all", salesperson: str = "") -> str:
+def render_html(
+    timeframe: str = "all",
+    year: int | None = None,
+    month: int | None = None,
+    quarter: int | None = None,
+    installer: str = "all",
+    salesperson: str = "",
+) -> str:
     nav_css = dashboard_nav_css()
     nav_html = render_dashboard_nav("sales_list")
+    now = datetime.now(ZoneInfo("America/New_York"))
+    year = int(year) if year else now.year
+    month = int(month) if month else now.month
+    quarter = int(quarter) if quarter else ((month - 1) // 3) + 1
+    timeframe = (timeframe or "all").strip().lower()
+    if timeframe not in {"all", "month", "quarter"}:
+        timeframe = "all"
     html = r"""<!doctype html>
 <html>
 <head>
@@ -80,7 +94,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Sales List</div>
-        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes save to Firestore only — GHL notes stay read-only.</div>
+        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Defaults to all-time sales and All installers. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes save to Firestore only — GHL notes stay read-only.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -93,9 +107,17 @@ __DASHBOARD_NAV_HTML__
             <button type="button" class="tab" data-installer="3rd_roc">3rd Roc</button>
           </div>
         </div>
+        <div class="filter"><div class="filter-label">Timeframe</div>
+          <div class="tabs" id="timeframeTabs">
+            <button type="button" class="tab" data-timeframe="all">All time</button>
+            <button type="button" class="tab" data-timeframe="month">Month</button>
+            <button type="button" class="tab" data-timeframe="quarter">Quarter</button>
+          </div>
+        </div>
         <div class="filter"><div class="filter-label">Salesperson</div><select id="salesperson"></select></div>
-        <div class="filter"><div class="filter-label">Year</div><select id="year"></select></div>
-        <div class="filter"><div class="filter-label">Month</div><select id="month"></select></div>
+        <div class="filter" id="yearFilter"><div class="filter-label">Year</div><select id="year"></select></div>
+        <div class="filter" id="monthFilter"><div class="filter-label">Month</div><select id="month"></select></div>
+        <div class="filter" id="quarterFilter"><div class="filter-label">Quarter</div><select id="quarter"></select></div>
         <button id="apply">Apply</button>
       </div>
     </div>
@@ -122,12 +144,16 @@ __DASHBOARD_NAV_HTML__
 <script>
 var defaultYear = __YEAR__;
 var defaultMonth = __MONTH__;
+var defaultQuarter = __QUARTER__;
+var defaultTimeframe = "__TIMEFRAME__";
 var defaultInstaller = "__INSTALLER__";
 var defaultSalesperson = "__SALESPERSON__";
 var yearSel = document.getElementById('year');
 var monthSel = document.getElementById('month');
+var quarterSel = document.getElementById('quarter');
 var salespersonSel = document.getElementById('salesperson');
 var installer = defaultInstaller || 'all';
+var timeframe = defaultTimeframe || 'all';
 function setOptions(sel, options, value) {
   sel.innerHTML = '';
   options.forEach(function(opt) {
@@ -144,6 +170,12 @@ var months = [];
 for (var i = 0; i < 12; i++) months.push({value: i + 1, label: new Date(2000, i, 1).toLocaleString('en-US', {month: 'long'})});
 setOptions(yearSel, years, defaultYear);
 setOptions(monthSel, months, defaultMonth);
+setOptions(quarterSel, [
+  {value: 1, label: 'Q1'},
+  {value: 2, label: 'Q2'},
+  {value: 3, label: 'Q3'},
+  {value: 4, label: 'Q4'}
+], defaultQuarter);
 setOptions(salespersonSel, [{value: '', label: 'All'}], defaultSalesperson);
 function esc(v) {
   return String(v == null ? '' : v)
@@ -153,13 +185,26 @@ function markTabs() {
   document.querySelectorAll('#installerTabs .tab').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-installer') === installer);
   });
+  document.querySelectorAll('#timeframeTabs .tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-timeframe') === timeframe);
+  });
+  var showYear = timeframe === 'month' || timeframe === 'quarter';
+  document.getElementById('yearFilter').style.display = showYear ? '' : 'none';
+  document.getElementById('monthFilter').style.display = timeframe === 'month' ? '' : 'none';
+  document.getElementById('quarterFilter').style.display = timeframe === 'quarter' ? '' : 'none';
 }
 function query() {
   var params = new URLSearchParams({
-    year: yearSel.value,
-    month: monthSel.value,
+    timeframe: timeframe,
     installer: installer
   });
+  if (timeframe === 'month') {
+    params.set('year', yearSel.value);
+    params.set('month', monthSel.value);
+  } else if (timeframe === 'quarter') {
+    params.set('year', yearSel.value);
+    params.set('quarter', quarterSel.value);
+  }
   if (salespersonSel.value) params.set('salesperson', salespersonSel.value);
   return params.toString();
 }
@@ -240,7 +285,8 @@ async function load() {
   var start = String(data.window_start_local || '').slice(0, 10);
   var end = String(data.window_end_local || '').slice(0, 10);
   var locked = data.debug && data.debug.sales_result != null ? data.debug.sales_result : data.result;
-  document.getElementById('windowMeta').textContent = start + ' to ' + end + ' (' + (data.timezone || '') + ')';
+  var frame = data.timeframe === 'all' ? 'All time' : (data.timeframe === 'quarter' ? 'Quarter' : (data.timeframe === 'month' ? 'Month' : (data.timeframe || '')));
+  document.getElementById('windowMeta').textContent = (frame ? frame + ' · ' : '') + start + ' to ' + end + ' (' + (data.timezone || '') + ')';
   document.getElementById('rowMeta').textContent = 'Locked grain ' + String(locked) + ' · filtered ' + String((data.rows || []).length);
   var people = [{value: '', label: 'All'}].concat((data.salespeople || []).map(function(name) {
     return {value: name, label: name};
@@ -258,6 +304,13 @@ document.querySelectorAll('#installerTabs .tab').forEach(function(btn) {
     load();
   });
 });
+document.querySelectorAll('#timeframeTabs .tab').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    timeframe = btn.getAttribute('data-timeframe') || 'all';
+    markTabs();
+    load();
+  });
+});
 markTabs();
 load();
 </script>
@@ -267,6 +320,8 @@ load();
     return (
         html.replace("__YEAR__", str(year))
         .replace("__MONTH__", str(month))
+        .replace("__QUARTER__", str(quarter))
+        .replace("__TIMEFRAME__", timeframe.replace('"', ""))
         .replace("__INSTALLER__", installer.replace('"', ""))
         .replace("__SALESPERSON__", salesperson.replace('"', "").replace("<", ""))
         .replace("__DASHBOARD_NAV_CSS__", nav_css)
@@ -279,11 +334,16 @@ class handler(BaseHTTPRequestHandler):
         try:
             qs = parse_qs(urlparse(self.path).query)
             now = datetime.now(ZoneInfo("America/New_York"))
-            year = int(qs.get("year", [str(now.year)])[0])
-            month = int(qs.get("month", [str(now.month)])[0])
+            timeframe = (qs.get("timeframe", ["all"])[0] or "all").strip() or "all"
+            year_raw = (qs.get("year", [""])[0] or "").strip()
+            month_raw = (qs.get("month", [""])[0] or "").strip()
+            quarter_raw = (qs.get("quarter", [""])[0] or "").strip()
+            year = int(year_raw) if year_raw else now.year
+            month = int(month_raw) if month_raw else now.month
+            quarter = int(quarter_raw) if quarter_raw.isdigit() else None
             installer = (qs.get("installer", ["all"])[0] or "all").strip() or "all"
             salesperson = (qs.get("salesperson", [""])[0] or "").strip()
-            body = render_html(year, month, installer, salesperson).encode("utf-8")
+            body = render_html(timeframe, year, month, quarter, installer, salesperson).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")

@@ -12,13 +12,15 @@ sales_list_notes_v1, keyed by contactId. GHL Appointment Notes stay read-only.
 
 from __future__ import annotations
 
+import calendar
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
@@ -28,6 +30,9 @@ from essential_sales import ESSENTIAL_COLUMNS, compute_essential_sales
 from sales import SalesMetricContract, get_db
 
 NOTES_COLLECTION = "sales_list_notes_v1"
+ALL_TIME_START = "2018-01-01"
+DEFAULT_TZ = "America/New_York"
+TIMEFRAMES: tuple[str, ...] = ("all", "month", "quarter")
 
 INSTALLER_TABS: tuple[tuple[str, str], ...] = (
     ("all", "All"),
@@ -117,6 +122,115 @@ def parse_salesperson_filter(value: Any) -> str:
     if not text or text.lower() == "all":
         return ""
     return text
+
+
+def parse_timeframe(value: Any) -> str:
+    text = compact_text(value).lower().replace("_", "-")
+    if text in {"month"}:
+        return "month"
+    if text in {"quarter", "q"}:
+        return "quarter"
+    if text in {"range", "custom"}:
+        return "range"
+    return "all"
+
+
+def current_quarter(month: int) -> int:
+    return ((int(month) - 1) // 3) + 1
+
+
+def parse_quarter(value: Any, *, default: int | None = None) -> int:
+    raw = compact_text(value).upper().replace("QTR", "Q")
+    if raw in {"1", "Q1"}:
+        return 1
+    if raw in {"2", "Q2"}:
+        return 2
+    if raw in {"3", "Q3"}:
+        return 3
+    if raw in {"4", "Q4"}:
+        return 4
+    if default is not None:
+        return default
+    return 1
+
+
+def quarter_date_bounds(year: int, quarter: int) -> tuple[str, str]:
+    q = parse_quarter(quarter, default=1)
+    start_month = (q - 1) * 3 + 1
+    end_month = start_month + 2
+    last_day = calendar.monthrange(int(year), end_month)[1]
+    return f"{int(year):04d}-{start_month:02d}-01", f"{int(year):04d}-{end_month:02d}-{last_day:02d}"
+
+
+def all_time_date_bounds(now: datetime | None = None, tz: str = DEFAULT_TZ) -> tuple[str, str]:
+    """Wide sold-date window: 2018-01-01 through now+1 day (end inclusive in compute_sales)."""
+    zone = ZoneInfo(tz)
+    current = now.astimezone(zone) if now is not None else datetime.now(zone)
+    end = (current.date() + timedelta(days=1)).isoformat()
+    return ALL_TIME_START, end
+
+
+def resolve_sales_list_window(
+    *,
+    timeframe: str = "all",
+    year: int | None = None,
+    month: int | None = None,
+    quarter: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    tz: str = DEFAULT_TZ,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Resolve timeframe to compute_sales start/end (or year/month for Month mode)."""
+    zone = ZoneInfo(tz)
+    current = now.astimezone(zone) if now is not None else datetime.now(zone)
+    tf = parse_timeframe(timeframe)
+    resolved_year = int(year) if year else current.year
+    resolved_month = int(month) if month else current.month
+    resolved_quarter = parse_quarter(quarter, default=current_quarter(current.month))
+    custom_start = compact_text(start) or None
+    custom_end = compact_text(end) or None
+
+    if custom_start and custom_end:
+        out_tf = tf if tf in TIMEFRAMES else "range"
+        if tf == "range":
+            out_tf = "range"
+        return {
+            "timeframe": out_tf,
+            "year": resolved_year,
+            "month": resolved_month,
+            "quarter": resolved_quarter,
+            "start": custom_start,
+            "end": custom_end,
+        }
+    if tf == "month":
+        return {
+            "timeframe": "month",
+            "year": resolved_year,
+            "month": resolved_month,
+            "quarter": current_quarter(resolved_month),
+            "start": None,
+            "end": None,
+        }
+    if tf == "quarter":
+        q_start, q_end = quarter_date_bounds(resolved_year, resolved_quarter)
+        return {
+            "timeframe": "quarter",
+            "year": resolved_year,
+            "month": (resolved_quarter - 1) * 3 + 1,
+            "quarter": resolved_quarter,
+            "start": q_start,
+            "end": q_end,
+        }
+    all_start, all_end = all_time_date_bounds(current, tz)
+    return {
+        "timeframe": "all",
+        "year": current.year,
+        "month": current.month,
+        "quarter": current_quarter(current.month),
+        "start": all_start,
+        "end": all_end,
+    }
 
 
 def installer_matches(raw_installer: Any, installer_filter: str) -> bool:
@@ -220,26 +334,39 @@ def compute_sales_list(
     db,
     contract: SalesMetricContract,
     *,
-    year: int,
-    month: int,
-    tz: str,
+    tz: str = DEFAULT_TZ,
+    year: int | None = None,
+    month: int | None = None,
+    quarter: int | None = None,
+    timeframe: str = "all",
     start: str | None = None,
     end: str | None = None,
     installer: str = "all",
     salesperson: str = "",
     notes_by_contact: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     installer_key = parse_installer_filter(installer)
     salesperson_key = parse_salesperson_filter(salesperson)
+    window = resolve_sales_list_window(
+        timeframe=timeframe,
+        year=year,
+        month=month,
+        quarter=quarter,
+        start=start,
+        end=end,
+        tz=tz,
+        now=now,
+    )
 
     base = compute_essential_sales(
         db,
         contract,
-        year=year,
-        month=month,
+        year=window["year"],
+        month=window["month"],
         tz=tz,
-        start=start,
-        end=end,
+        start=window["start"],
+        end=window["end"],
     )
     base_rows = list(base.get("rows") or [])
     stored_notes = (
@@ -260,8 +387,10 @@ def compute_sales_list(
     return {
         "metric": "Sales List",
         "unit": "count",
+        "timeframe": window["timeframe"],
         "year": base.get("year"),
         "month": base.get("month"),
+        "quarter": window["quarter"] if window["timeframe"] == "quarter" else None,
         "timezone": base.get("timezone"),
         "window_start_local": base.get("window_start_local"),
         "window_end_local": base.get("window_end_local"),
@@ -272,6 +401,9 @@ def compute_sales_list(
         "filters": {
             "installer": installer_key,
             "salesperson": salesperson_key,
+            "timeframe": window["timeframe"],
+            "start": window["start"],
+            "end": window["end"],
         },
         "installer_tabs": [{"key": key, "label": label} for key, label in INSTALLER_TABS],
         "salespeople": salespeople,
@@ -284,6 +416,9 @@ def compute_sales_list(
             "filtered_row_count": len(filtered),
             "installer_filter": installer_key,
             "salesperson_filter": salesperson_key,
+            "timeframe": window["timeframe"],
+            "resolved_start": window["start"],
+            "resolved_end": window["end"],
             "notes_collection": NOTES_COLLECTION,
             "notes_loaded": len(stored_notes),
         },
@@ -315,26 +450,33 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             qs = parse_qs(urlparse(self.path).query)
-            now = datetime.utcnow()
-            year = int(qs.get("year", [str(now.year)])[0])
-            month = int(qs.get("month", [str(now.month)])[0])
-            start = (qs.get("start", [""])[0] or "").strip() or None
-            end = (qs.get("end", [""])[0] or "").strip() or None
+            tz = DEFAULT_TZ
+            now = datetime.now(ZoneInfo(tz))
+            timeframe = parse_timeframe(qs.get("timeframe", ["all"])[0])
+            year_raw = compact_text(qs.get("year", [""])[0])
+            month_raw = compact_text(qs.get("month", [""])[0])
+            year = int(year_raw) if year_raw else None
+            month = int(month_raw) if month_raw else None
+            quarter = parse_quarter(qs.get("quarter", [""])[0], default=None) if compact_text(qs.get("quarter", [""])[0]) else None
+            start = compact_text(qs.get("start", [""])[0]) or None
+            end = compact_text(qs.get("end", [""])[0]) or None
             installer = parse_installer_filter(qs.get("installer", ["all"])[0])
             salesperson = parse_salesperson_filter(qs.get("salesperson", [""])[0])
-            tz = "America/New_York"
 
             contract = SalesMetricContract()
             payload = compute_sales_list(
                 get_db(),
                 contract,
+                tz=tz,
                 year=year,
                 month=month,
-                tz=tz,
+                quarter=quarter,
+                timeframe=timeframe,
                 start=start,
                 end=end,
                 installer=installer,
                 salesperson=salesperson,
+                now=now,
             )
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)

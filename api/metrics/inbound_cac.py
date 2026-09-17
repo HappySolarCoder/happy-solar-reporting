@@ -67,6 +67,9 @@ data. Lead Locker / Solar Reviews / Overall keep the unclamped window.
   since/until (META_ADS_ACCESS_TOKEN + META_ADS_ACCOUNT_ID act_…). Missing env,
   expired token, or Graph 401/403 → spend null, spend_status=unavailable. Do
   not invent EXAMPLE dollars. Empty clamped window → spend 0 / null CAC.
+- Cost per lead (CPL) = Meta spend / form-fill leads. leads==0 or spend
+  unavailable → JSON null, never invented $0 CPL. Lead Locker / Solar Reviews
+  keep fixed unit costs $45 / $70 (also exposed as cost_per_lead).
 - Setter $500 / TAC same formula. CAC/TAC null when spend is null or sales=0.
 - Overall stays Lead Locker + Solar Reviews only (do not fold Inbound in).
 
@@ -281,6 +284,13 @@ def compute_cac(spend: float | int, sales: int) -> float | None:
     if sales == 0:
         return None
     return spend / sales
+
+
+def compute_cost_per_lead(spend: float | int | None, leads: int) -> float | None:
+    """CPL = spend / leads. leads==0 or spend missing → JSON null, never 0."""
+    if spend is None or int(leads) == 0:
+        return None
+    return spend / int(leads)
 
 
 def compute_setter_spend(sales: int, setter_unit_cost: int = SETTER_UNIT_COST) -> int:
@@ -578,10 +588,12 @@ def build_inbound_source_row(
     ok = spend_result.spend_status == "ok" and spend_result.spend is not None
     spend = spend_result.spend if ok else None
     costs = compute_inbound_acquisition(spend, sales)
+    leads = int(nr_leads)
     return {
         "source": INBOUND_CF_SOURCE,
         "unit_cost": None,
-        "opp_count": int(nr_leads),
+        "cost_per_lead": compute_cost_per_lead(spend, leads),
+        "opp_count": leads,
         "refunded_excluded_count": 0,
         "spend": spend,
         "spend_status": "ok" if ok else "unavailable",
@@ -1224,6 +1236,7 @@ def build_source_rows(
                 {
                     "source": source.label,
                     "unit_cost": source.unit_cost,
+                    "cost_per_lead": source.unit_cost,
                     "opp_count": opp_count,
                     "refunded_excluded_count": refunded_excluded_count,
                     "spend": spend,
@@ -1657,6 +1670,9 @@ def assemble_inbound_cac(
             "Inbound sits/sales keep CF-grain rules on the clamped window; "
             "spend is Meta Ads account insights for the same clamped since/until "
             "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
+            "Inbound cost_per_lead = Meta spend / form-fill leads "
+            "(null if leads=0 or spend unavailable; never invented $0 CPL); "
+            "Lead Locker / Solar Reviews cost_per_lead is the fixed $45 / $70 unit cost; "
             "Overall stays Lead Locker + Solar Reviews only"
         ),
         "contract": {
@@ -1737,6 +1753,10 @@ def assemble_inbound_cac(
                     "Virtual; not pipeline 7nSEgeo; no refunded-stage filter"
                 ),
                 "opps_pct": "opps_created / nr_leads (null if nr_leads=0); not forced 1.0",
+                "cost_per_lead": (
+                    "Meta spend / form-fill leads (null if leads=0 or spend "
+                    "unavailable; never invented $0 CPL). Not $45/$70"
+                ),
                 "sits": (
                     "territory Sit + appointmentOccurredAt in the clamped Inbound "
                     "window + CF=Inbound (same sit rules as LL/SR KPI sits)"

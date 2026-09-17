@@ -95,6 +95,8 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(locker["spend"], 45)
         self.assertEqual(locker["sales"], 1)
         self.assertEqual(locker["cac"], 45.0)
+        self.assertEqual(locker["unit_cost"], 45)
+        self.assertEqual(locker["cost_per_lead"], 45)
         self.assertEqual(locker["setter_unit_cost"], 500)
         self.assertEqual(locker["setter_spend"], 500)
         self.assertEqual(locker["tac"], 545.0)
@@ -106,6 +108,7 @@ class RefundedAndCacTests(unittest.TestCase):
         reviews = {row["source"]: row for row in rows}["Solar Reviews"]
         self.assertEqual(reviews["spend"], 70)
         self.assertEqual(reviews["sales"], 0)
+        self.assertEqual(reviews["cost_per_lead"], 70)
         self.assertIsNone(reviews["cac"])
         self.assertEqual(reviews["setter_unit_cost"], 500)
         self.assertEqual(reviews["setter_spend"], 0)
@@ -121,6 +124,8 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual([row["source"] for row in rows], ["Lead Locker", "Solar Reviews"])
         self.assertEqual(rows[0]["unit_cost"], 45)
         self.assertEqual(rows[1]["unit_cost"], 70)
+        self.assertEqual(rows[0]["cost_per_lead"], 45)
+        self.assertEqual(rows[1]["cost_per_lead"], 70)
         self.assertTrue(all(row["cac"] is None for row in rows))
         self.assertTrue(all(row["tac"] is None for row in rows))
         self.assertTrue(all(row["setter_unit_cost"] == 500 for row in rows))
@@ -982,6 +987,7 @@ class InboundCfMetaTests(unittest.TestCase):
         )
         self.assertEqual(row["source"], "Inbound")
         self.assertIsNone(row["unit_cost"])
+        self.assertIsNone(row["cost_per_lead"])
         self.assertIsNone(row["spend"])
         self.assertEqual(row["spend_status"], "unavailable")
         self.assertEqual(row["spend_source"], "meta_ads")
@@ -994,8 +1000,10 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertIn('"spend": null', encoded)
         self.assertIn('"cac": null', encoded)
         self.assertIn('"tac": null', encoded)
+        self.assertIn('"cost_per_lead": null', encoded)
         self.assertNotIn('"spend": 0', encoded)
         self.assertNotIn('"cac": 0', encoded)
+        self.assertNotIn('"cost_per_lead": 0', encoded)
 
     def test_spend_1000_sales_2_is_cac_500_tac_1000(self):
         row = metric.build_inbound_source_row(
@@ -1007,6 +1015,7 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertEqual(row["spend_status"], "ok")
         self.assertFalse(row["example_banner"])
         self.assertEqual(row["cac"], 500)
+        self.assertEqual(row["cost_per_lead"], 250)
         self.assertEqual(row["setter_spend"], 1000)
         self.assertEqual(row["tac"], 1000)
 
@@ -1207,6 +1216,10 @@ class InboundCfMetaTests(unittest.TestCase):
         page_html = page.render_html(2026)
         self.assertIn('id="inboundCac"', page_html)
         self.assertIn('id="inboundTac"', page_html)
+        self.assertIn('id="inboundCpl"', page_html)
+        self.assertIn("Cost per lead", page_html)
+        self.assertIn("Meta spend ÷ website form fills", page_html)
+        self.assertNotIn("Lead unit", page_html)
         self.assertIn("EXAMPLE / spend unavailable", page_html)
         self.assertIn("Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.", page_html)
         self.assertIn("hd5QqHEOVSsPom5bJ32P", page_html)
@@ -1320,6 +1333,9 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         self.assertEqual(by_source["Inbound"]["opp_count"], 2)
         self.assertEqual(by_source["Inbound"]["sales"], 1)
         self.assertEqual(by_source["Inbound"]["spend"], 800)
+        self.assertEqual(by_source["Inbound"]["cost_per_lead"], 400)
+        self.assertEqual(by_source["Lead Locker"]["cost_per_lead"], 45)
+        self.assertEqual(by_source["Solar Reviews"]["cost_per_lead"], 70)
         inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
         self.assertEqual(inbound_kpi["nr_leads"], 2)
         self.assertEqual(inbound_kpi["opps_created"], 1)
@@ -1368,6 +1384,7 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         self.assertEqual(inbound["sales"], 0)
         self.assertEqual(inbound["spend"], 0)
         self.assertIsNone(inbound["cac"])
+        self.assertIsNone(inbound["cost_per_lead"])
         self.assertEqual(inbound["spend_status"], "ok")
         inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
         self.assertEqual(inbound_kpi["nr_leads"], 0)
@@ -1549,6 +1566,75 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         page_html = page.render_html(2026)
         self.assertIn("Inbound data starts 2026-08-01 ET", page_html)
         self.assertIn("website form fills", page_html)
+
+
+class InboundCostPerLeadTests(unittest.TestCase):
+    def test_inbound_cpl_is_spend_over_leads_when_both_ok(self):
+        self.assertEqual(metric.compute_cost_per_lead(800, 2), 400)
+        self.assertEqual(metric.compute_cost_per_lead(1000, 4), 250)
+        row = metric.build_inbound_source_row(
+            nr_leads=4,
+            sales=1,
+            spend_result=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+        )
+        self.assertEqual(row["spend"], 1000)
+        self.assertEqual(row["opp_count"], 4)
+        self.assertEqual(row["cost_per_lead"], 250)
+        self.assertIsNone(row["unit_cost"])
+        self.assertEqual(row["cac"], 1000)
+
+    def test_inbound_cpl_is_null_when_leads_zero(self):
+        self.assertIsNone(metric.compute_cost_per_lead(500, 0))
+        row = metric.build_inbound_source_row(
+            nr_leads=0,
+            sales=0,
+            spend_result=metric.MetaSpendResult(spend=500, spend_status="ok"),
+        )
+        self.assertEqual(row["spend"], 500)
+        self.assertEqual(row["opp_count"], 0)
+        self.assertIsNone(row["cost_per_lead"])
+        encoded = json.dumps(row)
+        self.assertIn('"cost_per_lead": null', encoded)
+        self.assertNotIn('"cost_per_lead": 0', encoded)
+
+    def test_inbound_cpl_is_null_when_spend_unavailable(self):
+        self.assertIsNone(metric.compute_cost_per_lead(None, 3))
+        row = metric.build_inbound_source_row(
+            nr_leads=5,
+            sales=2,
+            spend_result=metric.unavailable_meta_spend("missing_env"),
+        )
+        self.assertIsNone(row["spend"])
+        self.assertIsNone(row["cost_per_lead"])
+        encoded = json.dumps(row)
+        self.assertIn('"cost_per_lead": null', encoded)
+        self.assertNotIn('"cost_per_lead": 0', encoded)
+
+    def test_ll_sr_cost_per_lead_stays_fixed_unit_costs(self):
+        rows = metric.build_source_rows(
+            [
+                metric.InboundOppRecord("Lead Locker", True, False, "c1"),
+                metric.InboundOppRecord("Lead Locker", True, False, "c2"),
+                metric.InboundOppRecord("Solar Reviews", True, False, "c3"),
+            ],
+            {"c1", "c3"},
+        )
+        by_source = {row["source"]: row for row in rows}
+        self.assertEqual(by_source["Lead Locker"]["unit_cost"], 45)
+        self.assertEqual(by_source["Lead Locker"]["cost_per_lead"], 45)
+        self.assertEqual(by_source["Lead Locker"]["spend"], 90)
+        self.assertEqual(by_source["Solar Reviews"]["unit_cost"], 70)
+        self.assertEqual(by_source["Solar Reviews"]["cost_per_lead"], 70)
+        self.assertEqual(by_source["Solar Reviews"]["spend"], 70)
+        empty = metric.build_source_rows([], set())
+        self.assertEqual(empty[0]["cost_per_lead"], 45)
+        self.assertEqual(empty[1]["cost_per_lead"], 70)
+
+    def test_page_copy_says_inbound_cpl_is_spend_over_form_fills(self):
+        page_html = page.render_html(2026)
+        self.assertIn("Inbound cost per lead is Meta spend ÷ form fills", page_html)
+        self.assertIn("cost_per_lead", page_html)
+        self.assertIn("Inbound CPL", page_html)
 
 
 if __name__ == "__main__":

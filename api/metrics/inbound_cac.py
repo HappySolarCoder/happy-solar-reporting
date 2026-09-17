@@ -36,21 +36,37 @@ Metric per row (same rules for YTD window or a single NY month):
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
    series. Months with sales=0 are JSON null gaps, never 0.
 
-Inbound CF-grain section (third row; not title-bucket; not 3PL; not pipeline
-7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P normalized → Inbound
-(same strip/none helper as sales.py / opportunities_created.py).
-- NR Leads = COUNT_DISTINCT territory-pipeline (Buffalo / Rochester / Syracuse /
-  Virtual) ghl_opportunities_v2.id with createdAt in window AND contact CF =
-  Inbound. No refunded-stage filter on this CF grain.
-- Opps created = the same set as NR Leads (no bought-lead hop). opps_pct = 1.0
-  when NR>0.
-- Sits = territory Sit + appointmentOccurredAt in window + CF = Inbound
-  (same sits rules as existing inbound_cac performance KPIs).
+Inbound CF-grain / Meta section (third row; not title-bucket; not 3PL; not
+pipeline 7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P normalized →
+Inbound (same strip/none helper as sales.py / opportunities_created.py).
+Inbound window is the selected LL/SR window intersected with
+inbound_window_floor 2026-08-01 America/New_York → existing window end
+("now" = request time ET using ytd/month exclusive-end semantics). A selected
+window entirely before the floor is empty (zeros / null CAC), never pre-Aug
+data. Lead Locker / Solar Reviews / Overall keep the unclamped window.
+- Leads (nr_leads / CAC table Leads) = live website form fills from
+  web_funnel_named_fills_v1 in the clamped window. Same warehouse source as
+  Website Traffic named fills. Exclude test fills via funnel_test_address
+  (24 Hawkstone Way, 313 E Stonebridge, Test Test / Evan Day,
+  adchday@gmail.com / evanrday23@gmail.com) and host/preview/internal
+  exclusion_reason when host/page_location is present. NOT territory opp
+  counts and NOT Inbound/Lead Locker title-bucket NR leads.
+- Opps created = COUNT_DISTINCT territory-pipeline (Buffalo
+  GQtUlcTmLJ61HZjrGEPC / Rochester qJNvqKWp8Xc7DaBr8QYc / Syracuse
+  etLURrEVxupngZZRlISG / Virtual r1b9pwgliYj7WyWBchTV)
+  ghl_opportunities_v2.id with createdAt in the clamped window AND contact CF
+  = Inbound. Do not use pipeline 7nSEgeoBYXZiIS7x41Jy. No refunded-stage
+  filter on this CF grain.
+- opps_pct = opps_created / leads (null if leads=0). Not forced 1.0.
+- Sits = territory Sit + appointmentOccurredAt in the clamped window + CF =
+  Inbound (same sits rules as existing inbound_cac performance KPIs).
 - Sales = distinct contactId among Sold / Sale Cancelled stage IDs with Contact
-  Sold Date in window AND CF = Inbound (same as /api/metrics/sales?lead_source=Inbound).
-- Spend = Meta Marketing API account insights spend (META_ADS_ACCESS_TOKEN +
-  META_ADS_ACCOUNT_ID act_…). Missing env, expired token, or Graph 401/403 →
-  spend null, spend_status=unavailable. Do not invent EXAMPLE dollars.
+  Sold Date in the clamped window AND CF = Inbound (same as
+  /api/metrics/sales?lead_source=Inbound).
+- Spend = Meta Marketing API account insights spend for the same clamped
+  since/until (META_ADS_ACCESS_TOKEN + META_ADS_ACCOUNT_ID act_…). Missing env,
+  expired token, or Graph 401/403 → spend null, spend_status=unavailable. Do
+  not invent EXAMPLE dollars. Empty clamped window → spend 0 / null CAC.
 - Setter $500 / TAC same formula. CAC/TAC null when spend is null or sales=0.
 - Overall stays Lead Locker + Solar Reviews only (do not fold Inbound in).
 
@@ -110,6 +126,11 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from funnel_test_address import (
+    NAMED_FILLS_COLLECTION,
+    fetch_named_fills,
+    fill_is_test,
+)
 from sales import SalesMetricContract, get_db
 
 TIMEZONE_NAME = "America/New_York"
@@ -134,6 +155,7 @@ TERRITORY_PIPELINE_ID_SET = set(TERRITORY_PIPELINE_IDS)
 LEAD_GEN_SOURCE_CONTACT_CF_ID = "hd5QqHEOVSsPom5bJ32P"
 INBOUND_CF_SOURCE = "Inbound"
 INBOUND_CF_SOURCE_KEY = "inbound"
+INBOUND_WINDOW_FLOOR = "2026-08-01"
 META_ADS_ACCESS_TOKEN_ENV = "META_ADS_ACCESS_TOKEN"
 META_ADS_ACCOUNT_ID_ENV = "META_ADS_ACCOUNT_ID"
 META_ADS_SPEND_SOURCE = "meta_ads"
@@ -584,6 +606,8 @@ def count_inbound_cf_performance(
     created: set[str] = set()
     sits: set[str] = set()
     for opp in territory_opps:
+        if not is_territory_pipeline(opp.pipeline_id):
+            continue
         if not contact_is_inbound(contacts_map.get(opp.contact_id)):
             continue
         if territory_created_in_window(opp, start_local, end_local):
@@ -980,6 +1004,125 @@ def ytd_window(year: int, tz_name: str, now: datetime) -> tuple[datetime, dateti
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
+def inbound_window_floor_local(tz_name: str = TIMEZONE_NAME) -> datetime:
+    """America/New_York midnight of inbound_window_floor (2026-08-01)."""
+    tz = ZoneInfo(tz_name)
+    year, month, day = (int(part) for part in INBOUND_WINDOW_FLOOR.split("-"))
+    return datetime(year, month, day, 0, 0, 0, tzinfo=tz)
+
+
+def clamp_inbound_window(
+    start_local: datetime,
+    end_local: datetime,
+    tz_name: str = TIMEZONE_NAME,
+) -> tuple[datetime, datetime]:
+    """Inbound/Meta effective window: never starts before 2026-08-01 ET.
+
+    End stays the selected window's exclusive end. Entirely-before-floor
+    windows collapse to an empty [end, end) (or [floor, floor) if end<=floor).
+    Does not change Lead Locker / Solar Reviews / Overall windowing.
+    """
+    floor = inbound_window_floor_local(tz_name)
+    if end_local <= start_local:
+        return start_local, start_local
+    if end_local <= floor:
+        return floor, floor
+    start = start_local if start_local >= floor else floor
+    if start >= end_local:
+        return end_local, end_local
+    return start, end_local
+
+
+def inbound_window_is_empty(start_local: datetime, end_local: datetime) -> bool:
+    return end_local <= start_local
+
+
+def empty_inbound_spend() -> MetaSpendResult:
+    """Selected window is entirely before the Inbound floor — zeros, not EXAMPLE."""
+    return MetaSpendResult(
+        spend=0.0,
+        spend_status="ok",
+        reason="inbound_window_before_floor",
+        since=INBOUND_WINDOW_FLOOR,
+        until=INBOUND_WINDOW_FLOOR,
+    )
+
+
+def ymd_dates_in_window(start_local: datetime, end_local: datetime) -> list[str]:
+    """Inclusive start date through exclusive end date (America/New_York days)."""
+    if end_local <= start_local:
+        return []
+    dates: list[str] = []
+    day = start_local.date()
+    last = end_local.date()
+    while day < last:
+        dates.append(day.isoformat())
+        day += timedelta(days=1)
+    return dates
+
+
+def named_fill_in_window(fill: dict[str, Any], start_local: datetime, end_local: datetime) -> bool:
+    day = compact_str(fill.get("date"))
+    if len(day) < 10:
+        return False
+    start_ymd = start_local.date().isoformat()
+    end_ymd = end_local.date().isoformat()
+    return start_ymd <= day[:10] < end_ymd
+
+
+def named_fill_host_excluded(fill: dict[str, Any]) -> bool:
+    """Drop preview/internal hosts when the fill carries host/page_location."""
+    host = fill.get("host") or fill.get("host_name") or fill.get("hostName")
+    page_location = fill.get("page_location") or fill.get("pageLocation") or fill.get("url")
+    if not host and not page_location:
+        return False
+    try:
+        from website_funnel import exclusion_reason
+    except Exception:
+        return False
+    return bool(exclusion_reason(host_name=host, page_location=page_location))
+
+
+def inbound_named_fill_is_live(fill: dict[str, Any]) -> bool:
+    """True for a counted website form fill. Test / preview / internal stay out."""
+    if not isinstance(fill, dict):
+        return False
+    if fill_is_test(fill):
+        return False
+    if named_fill_host_excluded(fill):
+        return False
+    return True
+
+
+def count_inbound_named_fills(
+    fills: list[dict[str, Any]] | None,
+    start_local: datetime,
+    end_local: datetime,
+) -> int:
+    """Live named website fills in [start, end). Empty window → 0."""
+    if inbound_window_is_empty(start_local, end_local):
+        return 0
+    count = 0
+    for fill in fills or []:
+        if not inbound_named_fill_is_live(fill):
+            continue
+        if named_fill_in_window(fill, start_local, end_local):
+            count += 1
+    return count
+
+
+def fetch_inbound_named_fills(
+    db: Any,
+    start_local: datetime,
+    end_local: datetime,
+) -> list[dict[str, Any]]:
+    """Bounded per-date reads of web_funnel_named_fills_v1. No collection stream."""
+    fills: list[dict[str, Any]] = []
+    for day in ymd_dates_in_window(start_local, end_local):
+        fills.extend(fetch_named_fills(db, day))
+    return fills
+
+
 def created_at_in_window(created_at: Any, start_local: datetime, end_local: datetime) -> bool:
     created = parse_iso_dt(created_at)
     if not created:
@@ -1139,7 +1282,11 @@ def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
         solar_reviews_tac.append(None if reviews is None else reviews.get("tac"))
         inbound_cac.append(None if inbound is None else inbound.get("cac"))
         inbound_tac.append(None if inbound is None else inbound.get("tac"))
-        if inbound and inbound.get("spend_status") == "ok":
+        if (
+            inbound
+            and inbound.get("spend_status") == "ok"
+            and inbound.get("spend_reason") != "inbound_window_before_floor"
+        ):
             inbound_spend_ok = True
     chart = {
         "months": months,
@@ -1357,6 +1504,7 @@ def assemble_inbound_cac(
     territory_opps: list[TerritoryOpp] | None = None,
     inbound_spend: MetaSpendResult | None = None,
     inbound_monthly_spend: dict[str, MetaSpendResult] | None = None,
+    named_fills: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -1374,22 +1522,28 @@ def assemble_inbound_cac(
         raws, contacts_map, sold_stage_ids, start_local, end_local
     )
     now_utc = now.astimezone(timezone.utc)
-    spend_result = inbound_spend or unavailable_meta_spend("missing_env")
+    inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
+    inbound_empty = inbound_window_is_empty(inbound_start, inbound_end)
+    if inbound_empty:
+        spend_result = empty_inbound_spend()
+    else:
+        spend_result = inbound_spend or unavailable_meta_spend("missing_env")
     inbound_created, inbound_sits = count_inbound_cf_performance(
-        territory_opps or [], contacts_map, start_local, end_local, now_utc
+        territory_opps or [], contacts_map, inbound_start, inbound_end, now_utc
     )
     inbound_sold = inbound_sales_contact_ids(
-        contacts_map, sold_stage_ids, start_local, end_local
+        contacts_map, sold_stage_ids, inbound_start, inbound_end
     )
+    inbound_leads = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
     inbound_row = build_inbound_source_row(
-        nr_leads=len(inbound_created),
+        nr_leads=inbound_leads,
         sales=len(inbound_sold),
         spend_result=spend_result,
     )
     inbound_kpi = kpi_row(
         source=INBOUND_CF_SOURCE,
-        nr_leads=len(inbound_created),
-        leads=len(inbound_created),
+        nr_leads=inbound_leads,
+        leads=inbound_leads,
         opps_created=len(inbound_created),
         sits=len(inbound_sits),
         sales=len(inbound_sold),
@@ -1402,14 +1556,22 @@ def assemble_inbound_cac(
             _m_records, m_rows, m_overall, _ = _window_bundle(
                 raws, contacts_map, sold_stage_ids, m_start, m_end
             )
+            inbound_m_start, inbound_m_end = clamp_inbound_window(m_start, m_end, tz)
             m_created, _m_sits = count_inbound_cf_performance(
-                territory_opps or [], contacts_map, m_start, m_end, now_utc
+                territory_opps or [], contacts_map, inbound_m_start, inbound_m_end, now_utc
             )
-            m_sold = inbound_sales_contact_ids(contacts_map, sold_stage_ids, m_start, m_end)
+            m_sold = inbound_sales_contact_ids(
+                contacts_map, sold_stage_ids, inbound_m_start, inbound_m_end
+            )
+            m_leads = count_inbound_named_fills(named_fills, inbound_m_start, inbound_m_end)
+            if inbound_window_is_empty(inbound_m_start, inbound_m_end):
+                m_spend = unavailable_meta_spend("inbound_window_before_floor")
+            else:
+                m_spend = month_spend_result(year, chart_month, inbound_monthly_spend)
             m_inbound = build_inbound_source_row(
-                nr_leads=len(m_created),
+                nr_leads=m_leads,
                 sales=len(m_sold),
-                spend_result=month_spend_result(year, chart_month, inbound_monthly_spend),
+                spend_result=m_spend,
             )
             monthly.append(
                 {
@@ -1450,6 +1612,9 @@ def assemble_inbound_cac(
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
+        "inbound_window_start_local": inbound_start.isoformat(),
+        "inbound_window_end_local": inbound_end.isoformat(),
+        "inbound_window_floor": INBOUND_WINDOW_FLOOR,
         "rows": rows + [inbound_row],
         "inbound": inbound_row,
         "overall": overall,
@@ -1481,7 +1646,16 @@ def assemble_inbound_cac(
             "unattributed territory opps are JSON leftover, not Overall; "
             "Inbound row is contact CF hd5QqHEOVSsPom5bJ32P=Inbound on territory "
             "pipelines (not title-bucket, not 3PL, not pipeline 7nSEgeo); "
-            "Inbound NR Leads = Opps created; spend is Meta Ads account insights "
+            "Inbound window is clamped to inbound_window_floor 2026-08-01 ET "
+            "through the selected window end (empty if the selected window is "
+            "entirely before the floor); "
+            "Inbound leads = live web_funnel_named_fills_v1 form fills in that "
+            "clamped window (test/preview/internal excluded); "
+            "Inbound opps_created = territory-pipeline createdAt + CF=Inbound "
+            "in the same clamped window; "
+            "Inbound opps_pct = opps_created / leads (null if leads=0); "
+            "Inbound sits/sales keep CF-grain rules on the clamped window; "
+            "spend is Meta Ads account insights for the same clamped since/until "
             "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
             "Overall stays Lead Locker + Solar Reviews only"
         ),
@@ -1528,6 +1702,9 @@ def assemble_inbound_cac(
             "inbound_meta_spend": {
                 "channel_key": INBOUND_CF_SOURCE_KEY,
                 "source": INBOUND_CF_SOURCE,
+                "inbound_window_floor": INBOUND_WINDOW_FLOOR,
+                "inbound_window_timezone": TIMEZONE_NAME,
+                "named_fills_collection": NAMED_FILLS_COLLECTION,
                 "spend_source": META_ADS_SPEND_SOURCE,
                 "env": [META_ADS_ACCESS_TOKEN_ENV, META_ADS_ACCOUNT_ID_ENV],
                 "graph": (
@@ -1548,15 +1725,26 @@ def assemble_inbound_cac(
                     "not title-bucket; not 3PL; not pipeline 7nSEgeo"
                 ),
                 "nr_leads": (
-                    "COUNT_DISTINCT territory ghl_opportunities_v2.id createdAt in "
-                    "window + CF=Inbound; no refunded-stage filter"
+                    "COUNT live web_funnel_named_fills_v1 website form fills in the "
+                    "clamped Inbound window; exclude Hawkstone / Stonebridge / "
+                    "Test Test / Evan Day / adchday@gmail.com / evanrday23@gmail.com "
+                    "and preview/internal hosts when host fields are present. "
+                    "Not territory opp counts; not Inbound/Lead Locker title-bucket NR"
                 ),
-                "opps_created": "same set as nr_leads (CF grain has no bought-lead hop)",
-                "opps_pct": "1.0 when nr_leads>0 else null",
-                "sits": "territory Sit + appointmentOccurredAt in window + CF=Inbound",
+                "opps_created": (
+                    "COUNT_DISTINCT territory ghl_opportunities_v2.id createdAt in "
+                    "the clamped window + CF=Inbound on Buffalo/Rochester/Syracuse/"
+                    "Virtual; not pipeline 7nSEgeo; no refunded-stage filter"
+                ),
+                "opps_pct": "opps_created / nr_leads (null if nr_leads=0); not forced 1.0",
+                "sits": (
+                    "territory Sit + appointmentOccurredAt in the clamped Inbound "
+                    "window + CF=Inbound (same sit rules as LL/SR KPI sits)"
+                ),
                 "sales": (
                     "COUNT_DISTINCT contactId Sold/Sale Cancelled + Contact Sold Date "
-                    "in window + CF=Inbound (same as /api/metrics/sales?lead_source=Inbound)"
+                    "in the clamped Inbound window + CF=Inbound "
+                    "(same as /api/metrics/sales?lead_source=Inbound)"
                 ),
                 "overall_excludes_inbound": True,
             },
@@ -1586,9 +1774,12 @@ def assemble_inbound_cac(
                 "territory_pool_opportunities_created"
             ),
             "inbound_cf_nr_leads": inbound_row["opp_count"],
+            "inbound_named_fills": inbound_leads,
+            "inbound_cf_opps": len(inbound_created),
             "inbound_cf_sales": inbound_row["sales"],
             "inbound_spend_status": inbound_row["spend_status"],
             "inbound_spend_reason": inbound_row.get("spend_reason"),
+            "inbound_window_empty": inbound_empty,
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -1628,19 +1819,29 @@ def compute_inbound_cac(
             needed_contacts.add(opp.contact_id)
     contacts_map = load_contacts_by_ids(db, needed_contacts)
 
+    inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
+    if start and end:
+        fill_start, fill_end = inbound_start, inbound_end
+    else:
+        ytd_start, ytd_end, _, _ = ytd_window(year, tz, now)
+        fill_start, fill_end = clamp_inbound_window(ytd_start, ytd_end, tz)
+    named_fills = fetch_inbound_named_fills(db, fill_start, fill_end)
+
     token, account_id, cred_reason = read_meta_ads_credentials()
-    if cred_reason:
+    if inbound_window_is_empty(inbound_start, inbound_end):
+        inbound_spend = empty_inbound_spend()
+        inbound_monthly_spend = {}
+    elif cred_reason:
         inbound_spend = unavailable_meta_spend(cred_reason)
         inbound_monthly_spend = None
     else:
         inbound_spend = fetch_meta_ads_spend(
-            start_local, end_local, token=token, account_id=account_id
+            inbound_start, inbound_end, token=token, account_id=account_id
         )
         inbound_monthly_spend = None
         if not (start and end) and inbound_spend.spend_status == "ok":
-            ytd_start, ytd_end, _, _ = ytd_window(year, tz, now)
             inbound_monthly_spend = fetch_meta_ads_spend_by_month(
-                ytd_start, ytd_end, token=token, account_id=account_id
+                fill_start, fill_end, token=token, account_id=account_id
             )
 
     return assemble_inbound_cac(
@@ -1657,6 +1858,7 @@ def compute_inbound_cac(
         territory_opps=territory_opps,
         inbound_spend=inbound_spend,
         inbound_monthly_spend=inbound_monthly_spend,
+        named_fills=named_fills,
     )
 
 

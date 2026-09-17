@@ -6,6 +6,7 @@ Leadership Inbound CAC / TAC dashboard for Lead Locker, Solar Reviews, and Inbou
 Not listed on the main dashboard Lead Generation nav.
 Setter unit cost is $500 per sale. TAC = lead CAC + $500.
 Inbound uses contact CF hd5QqHEOVSsPom5bJ32P + Meta Ads spend (not $45/$70).
+Inbound leads are website form fills; Inbound data starts 2026-08-01 ET.
 Overall stays Lead Locker + Solar Reviews only.
 Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
 """
@@ -93,7 +94,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Inbound leads are website form fills (named estimate fills); Inbound opps are territory + CF Inbound. Inbound data starts 2026-08-01 ET (YTD Inbound is Aug 1 → now, not Jan 1). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -148,7 +149,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-3">
         <div class="card-title">Inbound CAC</div>
         <div class="kpi" id="inboundCac">—</div>
-        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales</div>
+        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales · window starts 2026-08-01 ET</div>
       </div>
       <div class="card span-3">
         <div class="card-title">Inbound TAC</div>
@@ -161,12 +162,12 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">YTD totals</div>
-        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Inbound spend is Meta Ads (blank when auth is not ready — never a fake $0 CAC). Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Inbound spend is Meta Ads for 2026-08-01 ET → now (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are website form fills, not bought-lead titles. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = that row’s opps created. Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads. Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. Inbound KPIs use 2026-08-01 ET → now. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = website form fills (named estimate fills), not territory opp counts. Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>

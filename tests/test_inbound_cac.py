@@ -1035,6 +1035,10 @@ class InboundCfMetaTests(unittest.TestCase):
                 "Sit",
             ),
         ]
+        fills = [
+            {"date": "2026-09-04", "name": "Pat Lee", "email": "pat@example.com", "address": "1 Main"},
+            {"date": "2026-09-05", "name": "Ada Lovelace", "email": "ada@example.com", "address": "2 Main"},
+        ]
         payload = metric.assemble_inbound_cac(
             raws,
             contacts_map,
@@ -1044,18 +1048,19 @@ class InboundCfMetaTests(unittest.TestCase):
             now=now,
             territory_opps=territory,
             inbound_spend=metric.unavailable_meta_spend("missing_env"),
+            named_fills=fills,
         )
         by_source = {row["source"]: row for row in payload["rows"]}
         self.assertIn("Inbound", by_source)
         self.assertEqual(by_source["Lead Locker"]["opp_count"], 1)
         self.assertEqual(by_source["Lead Locker"]["sales"], 1)
-        self.assertEqual(by_source["Inbound"]["opp_count"], 1)
+        self.assertEqual(by_source["Inbound"]["opp_count"], 2)
         self.assertEqual(by_source["Inbound"]["sales"], 1)
-        self.assertNotEqual(by_source["Inbound"]["opp_count"], by_source["Lead Locker"]["opp_count"] + 1)
+        self.assertNotEqual(by_source["Inbound"]["opp_count"], by_source["Lead Locker"]["opp_count"])
         inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
-        self.assertEqual(inbound_kpi["nr_leads"], 1)
+        self.assertEqual(inbound_kpi["nr_leads"], 2)
         self.assertEqual(inbound_kpi["opps_created"], 1)
-        self.assertEqual(inbound_kpi["opps_pct"], 1.0)
+        self.assertEqual(inbound_kpi["opps_pct"], 0.5)
         self.assertEqual(inbound_kpi["sits"], 1)
         self.assertEqual(inbound_kpi["sales"], 1)
         self.assertNotIn("c-ll-title", metric.inbound_sales_contact_ids(
@@ -1106,25 +1111,25 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertNotIn("inbound_cac", payload["chart"])
 
     def test_chart_includes_inbound_series_only_when_monthly_spend_ok(self):
-        now = datetime(2026, 2, 15, tzinfo=NY)
+        now = datetime(2026, 9, 15, tzinfo=NY)
         raws = [
             metric.RawInboundOpp(
                 "Lead Locker",
-                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                datetime(2026, 9, 10, 12, 0, tzinfo=NY),
                 False,
                 "c-ll",
                 "opp-ll",
             )
         ]
         contacts_map = {
-            "c-in": self._cf("Inbound", "2026-02-11"),
+            "c-in": self._cf("Inbound", "2026-09-11"),
         }
         territory = [
-            self._territory("t-in", "c-in", datetime(2026, 2, 10, 12, 0, tzinfo=NY)),
+            self._territory("t-in", "c-in", datetime(2026, 9, 10, 12, 0, tzinfo=NY)),
         ]
         monthly = {
-            "2026-01": metric.unavailable_meta_spend("missing_env"),
-            "2026-02": metric.MetaSpendResult(spend=1000, spend_status="ok"),
+            "2026-08": metric.unavailable_meta_spend("missing_env"),
+            "2026-09": metric.MetaSpendResult(spend=1000, spend_status="ok"),
         }
         payload = metric.assemble_inbound_cac(
             raws,
@@ -1139,9 +1144,11 @@ class InboundCfMetaTests(unittest.TestCase):
         )
         self.assertIn("inbound_cac", payload["chart"])
         self.assertIn("inbound_tac", payload["chart"])
-        self.assertIsNone(payload["chart"]["inbound_cac"][0])
-        self.assertEqual(payload["chart"]["inbound_cac"][1], 1000)
-        self.assertEqual(payload["chart"]["inbound_tac"][1], 1500)
+        self.assertEqual(payload["chart"]["months"][7], "2026-08")
+        self.assertEqual(payload["chart"]["months"][8], "2026-09")
+        self.assertIsNone(payload["chart"]["inbound_cac"][7])
+        self.assertEqual(payload["chart"]["inbound_cac"][8], 1000)
+        self.assertEqual(payload["chart"]["inbound_tac"][8], 1500)
         empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
         self.assertNotIn("inbound_cac", empty["chart"])
         self.assertNotIn("inbound_tac", empty["chart"])
@@ -1205,11 +1212,343 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertIn("hd5QqHEOVSsPom5bJ32P", page_html)
         self.assertIn("Inbound uses contact CF", page_html)
         self.assertIn("Overall stays Lead Locker + Solar Reviews only", page_html)
+        self.assertIn("2026-08-01", page_html)
+        self.assertIn("website form fills", page_html)
         self.assertIn("legendInboundCac", page_html)
         self.assertIn("inbound.spend_status", page_html)
         self.assertIn("composio", METRIC_SRC.lower())
         self.assertIn("does not call Composio", METRIC_SRC)
         self.assertNotIn("from composio", METRIC_SRC.lower())
+
+
+class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
+    def _cf(self, lead_source, sold_ymd=None):
+        fields = [{"id": "hd5QqHEOVSsPom5bJ32P", "value": lead_source}]
+        if sold_ymd:
+            fields.append({"id": "P9oBjgbZjJdeE0OkBj9T", "value": sold_ymd})
+        return {"customFields": fields}
+
+    def _territory(self, oid, contact_id, created, pipeline=None, occurred=None, disposition=None):
+        return metric.TerritoryOpp(
+            opportunity_id=oid,
+            contact_id=contact_id,
+            pipeline_id=pipeline or metric.TERRITORY_PIPELINE_IDS[0],
+            created_local=created,
+            occurred_utc=occurred,
+            disposition=disposition,
+        )
+
+    def _fill(self, day, email="pat@example.com", name="Pat Lee", address="1 Main St", **extra):
+        row = {"date": day, "name": name, "email": email, "address": address}
+        row.update(extra)
+        return row
+
+    def test_clamp_ytd_starts_aug_1_and_july_empty_september_unchanged(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        ytd_start, ytd_end, _, _ = metric.ytd_window(2026, "America/New_York", now)
+        inbound_start, inbound_end = metric.clamp_inbound_window(ytd_start, ytd_end)
+        self.assertEqual(ytd_start, datetime(2026, 1, 1, 0, 0, 0, tzinfo=NY))
+        self.assertEqual(inbound_start, datetime(2026, 8, 1, 0, 0, 0, tzinfo=NY))
+        self.assertEqual(inbound_end, ytd_end)
+        self.assertEqual(metric.INBOUND_WINDOW_FLOOR, "2026-08-01")
+
+        jul_start, jul_end, _, _ = metric.month_window(2026, 7, "America/New_York")
+        jul_in_start, jul_in_end = metric.clamp_inbound_window(jul_start, jul_end)
+        self.assertTrue(metric.inbound_window_is_empty(jul_in_start, jul_in_end))
+
+        sep_start, sep_end, _, _ = metric.month_window(2026, 9, "America/New_York")
+        sep_in_start, sep_in_end = metric.clamp_inbound_window(sep_start, sep_end)
+        self.assertEqual((sep_in_start, sep_in_end), (sep_start, sep_end))
+
+    def test_ytd_clamps_inbound_start_to_aug_1_and_ll_sr_stay_full_year(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 1, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-ll-jan",
+                "opp-ll-jan",
+            ),
+            metric.RawInboundOpp(
+                "Solar Reviews",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-sr-feb",
+                "opp-sr-feb",
+            ),
+        ]
+        contacts_map = {
+            "c-ll-jan": self._cf("3PL", "2026-01-12"),
+            "c-sr-feb": self._cf("3PL", "2026-02-12"),
+            "c-july": self._cf("Inbound", "2026-07-15"),
+            "c-aug": self._cf("Inbound", "2026-08-15"),
+        }
+        territory = [
+            self._territory("t-july", "c-july", datetime(2026, 7, 10, 12, 0, tzinfo=NY)),
+            self._territory("t-aug", "c-aug", datetime(2026, 8, 10, 12, 0, tzinfo=NY)),
+        ]
+        fills = [
+            self._fill("2026-07-20", email="july@example.com"),
+            self._fill("2026-08-12", email="aug@example.com"),
+            self._fill("2026-08-13", email="aug2@example.com"),
+        ]
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-ll-jan", "c-sr-feb", "c-july", "c-aug"},
+            year=2026,
+            month=None,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=800, spend_status="ok"),
+            named_fills=fills,
+        )
+        self.assertEqual(payload["window_start_local"][:10], "2026-01-01")
+        self.assertEqual(payload["inbound_window_start_local"][:10], "2026-08-01")
+        self.assertEqual(payload["inbound_window_end_local"], payload["window_end_local"])
+        self.assertEqual(payload["inbound_window_floor"], "2026-08-01")
+        self.assertEqual(payload["contract"]["inbound_meta_spend"]["inbound_window_floor"], "2026-08-01")
+
+        by_source = {row["source"]: row for row in payload["rows"]}
+        self.assertEqual(by_source["Lead Locker"]["opp_count"], 1)
+        self.assertEqual(by_source["Lead Locker"]["sales"], 1)
+        self.assertEqual(by_source["Solar Reviews"]["opp_count"], 1)
+        self.assertEqual(by_source["Solar Reviews"]["sales"], 1)
+        self.assertEqual(payload["overall"]["spend"], 115)
+        self.assertEqual(payload["overall"]["sales"], 2)
+        self.assertEqual(by_source["Inbound"]["opp_count"], 2)
+        self.assertEqual(by_source["Inbound"]["sales"], 1)
+        self.assertEqual(by_source["Inbound"]["spend"], 800)
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound_kpi["nr_leads"], 2)
+        self.assertEqual(inbound_kpi["opps_created"], 1)
+        self.assertEqual(inbound_kpi["opps_pct"], 0.5)
+        self.assertEqual(inbound_kpi["sales"], 1)
+        ll_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Lead Locker"]
+        self.assertEqual(ll_kpi["nr_leads"], 1)
+        self.assertEqual(payload["performance_kpis"]["overall"]["nr_leads"], 2)
+
+    def test_july_month_inbound_is_empty_ll_sr_keep_july(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 7, 8, 12, 0, tzinfo=NY),
+                False,
+                "c-ll-jul",
+                "opp-ll-jul",
+            )
+        ]
+        contacts_map = {
+            "c-ll-jul": self._cf("3PL", "2026-07-09"),
+            "c-july": self._cf("Inbound", "2026-07-15"),
+        }
+        territory = [
+            self._territory("t-july", "c-july", datetime(2026, 7, 10, 12, 0, tzinfo=NY)),
+        ]
+        fills = [self._fill("2026-07-12", email="july@example.com")]
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-ll-jul", "c-july"},
+            year=2026,
+            month=7,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=9999, spend_status="ok"),
+            named_fills=fills,
+        )
+        locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
+        inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
+        self.assertEqual(locker["opp_count"], 1)
+        self.assertEqual(locker["sales"], 1)
+        self.assertEqual(locker["spend"], 45)
+        self.assertEqual(inbound["opp_count"], 0)
+        self.assertEqual(inbound["sales"], 0)
+        self.assertEqual(inbound["spend"], 0)
+        self.assertIsNone(inbound["cac"])
+        self.assertEqual(inbound["spend_status"], "ok")
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound_kpi["nr_leads"], 0)
+        self.assertEqual(inbound_kpi["opps_created"], 0)
+        self.assertIsNone(inbound_kpi["opps_pct"])
+        self.assertTrue(payload["debug"]["inbound_window_empty"])
+
+    def test_september_month_inbound_is_unchanged(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 9, 2, 12, 0, tzinfo=NY),
+                False,
+                "c-ll",
+                "opp-ll",
+            )
+        ]
+        contacts_map = {
+            "c-ll": self._cf("3PL", "2026-09-03"),
+            "c-in": self._cf("Inbound", "2026-09-08"),
+        }
+        territory = [
+            self._territory(
+                "t-in",
+                "c-in",
+                datetime(2026, 9, 4, 12, 0, tzinfo=NY),
+                occurred=datetime(2026, 9, 5, 17, 0, tzinfo=timezone.utc),
+                disposition="Sit",
+            )
+        ]
+        fills = [
+            self._fill("2026-08-20", email="aug@example.com"),
+            self._fill("2026-09-04", email="sep@example.com"),
+            self._fill("2026-09-05", email="sep2@example.com"),
+        ]
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-ll", "c-in"},
+            year=2026,
+            month=9,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=400, spend_status="ok"),
+            named_fills=fills,
+        )
+        inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
+        self.assertEqual(payload["inbound_window_start_local"][:10], "2026-09-01")
+        self.assertEqual(inbound["opp_count"], 2)
+        self.assertEqual(inbound["sales"], 1)
+        self.assertEqual(inbound["spend"], 400)
+        self.assertEqual(inbound["cac"], 400)
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound_kpi["nr_leads"], 2)
+        self.assertEqual(inbound_kpi["opps_created"], 1)
+        self.assertEqual(inbound_kpi["sits"], 1)
+        self.assertEqual(inbound_kpi["opps_pct"], 0.5)
+
+    def test_leads_come_from_named_fills_not_opp_count_and_exclude_tests(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        contacts_map = {
+            "c-in": self._cf("Inbound", "2026-09-08"),
+        }
+        territory = [
+            self._territory("t-in-1", "c-in", datetime(2026, 9, 4, 12, 0, tzinfo=NY)),
+            self._territory("t-in-2", "c-in", datetime(2026, 9, 5, 12, 0, tzinfo=NY)),
+        ]
+        fills = [
+            self._fill("2026-09-04", email="live1@example.com"),
+            self._fill("2026-09-05", email="live2@example.com"),
+            self._fill("2026-09-05", email="live3@example.com"),
+            self._fill("2026-09-06", email="adchday@gmail.com", name="Test Test", address="24 Hawkstone Way"),
+            self._fill("2026-09-06", email="evanrday23@gmail.com", name="Evan Day"),
+            self._fill(
+                "2026-09-06",
+                email="preview@example.com",
+                host="happy-solar.vercel.app",
+                page_location="https://happy-solar.vercel.app/estimate",
+            ),
+        ]
+        payload = metric.assemble_inbound_cac(
+            [],
+            contacts_map,
+            {"c-in"},
+            year=2026,
+            month=9,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=300, spend_status="ok"),
+            named_fills=fills,
+        )
+        inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound["opp_count"], 3)
+        self.assertNotEqual(inbound["opp_count"], 2)
+        self.assertEqual(inbound_kpi["nr_leads"], 3)
+        self.assertEqual(inbound_kpi["opps_created"], 2)
+        self.assertEqual(inbound_kpi["opps_pct"], 2 / 3)
+        self.assertEqual(inbound_kpi["leads"], 3)
+
+    def test_opps_filter_territory_pipelines_and_cf_inbound(self):
+        now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
+        contacts_map = {
+            "c-in": self._cf("Inbound"),
+            "c-3pl": self._cf("3PL"),
+            "c-ll": self._cf("Inbound"),
+        }
+        territory = [
+            self._territory(
+                "t-buffalo",
+                "c-in",
+                datetime(2026, 9, 4, 12, 0, tzinfo=NY),
+                pipeline=metric.TERRITORY_PIPELINE_IDS[0],
+            ),
+            self._territory(
+                "t-rochester",
+                "c-in",
+                datetime(2026, 9, 5, 12, 0, tzinfo=NY),
+                pipeline=metric.TERRITORY_PIPELINE_IDS[1],
+            ),
+            self._territory(
+                "t-locker-pipe",
+                "c-ll",
+                datetime(2026, 9, 6, 12, 0, tzinfo=NY),
+                pipeline=metric.INBOUND_PIPELINE_ID,
+            ),
+            self._territory(
+                "t-3pl",
+                "c-3pl",
+                datetime(2026, 9, 6, 12, 0, tzinfo=NY),
+                pipeline=metric.TERRITORY_PIPELINE_IDS[2],
+            ),
+        ]
+        created, sits = metric.count_inbound_cf_performance(
+            territory,
+            contacts_map,
+            datetime(2026, 9, 1, tzinfo=NY),
+            datetime(2026, 10, 1, tzinfo=NY),
+            now.astimezone(timezone.utc),
+        )
+        self.assertEqual(created, {"t-buffalo", "t-rochester"})
+        self.assertNotIn("t-locker-pipe", created)
+        self.assertNotIn("t-3pl", created)
+        self.assertEqual(sits, set())
+
+        payload = metric.assemble_inbound_cac(
+            [],
+            contacts_map,
+            set(),
+            year=2026,
+            month=9,
+            now=now,
+            territory_opps=territory,
+            named_fills=[self._fill("2026-09-04")],
+        )
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound_kpi["opps_created"], 2)
+        self.assertEqual(inbound_kpi["nr_leads"], 1)
+        self.assertEqual(inbound_kpi["opps_pct"], 2.0)
+
+    def test_meta_date_bounds_use_clamped_inbound_window(self):
+        ytd_start, ytd_end, _, _ = metric.ytd_window(
+            2026, "America/New_York", datetime(2026, 9, 17, tzinfo=NY)
+        )
+        inbound_start, inbound_end = metric.clamp_inbound_window(ytd_start, ytd_end)
+        bounds = metric.meta_date_bounds(inbound_start, inbound_end)
+        self.assertEqual(bounds[0], "2026-08-01")
+        self.assertNotEqual(bounds[0], "2026-01-01")
+        jul_start, jul_end, _, _ = metric.month_window(2026, 7, "America/New_York")
+        empty_start, empty_end = metric.clamp_inbound_window(jul_start, jul_end)
+        self.assertIsNone(metric.meta_date_bounds(empty_start, empty_end))
+
+    def test_page_and_contract_document_floor_and_form_fills(self):
+        self.assertIn("inbound_window_floor", METRIC_SRC)
+        self.assertIn('INBOUND_WINDOW_FLOOR = "2026-08-01"', METRIC_SRC)
+        self.assertIn("web_funnel_named_fills_v1", METRIC_SRC)
+        self.assertIn("not forced 1.0", METRIC_SRC)
+        page_html = page.render_html(2026)
+        self.assertIn("Inbound data starts 2026-08-01 ET", page_html)
+        self.assertIn("website form fills", page_html)
 
 
 if __name__ == "__main__":

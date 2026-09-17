@@ -229,11 +229,11 @@ __DASHBOARD_NAV_CSS__
       min-height: 120px;
     }
 
-    /* Demo rate row: 5 cards on one line */
+    /* Demo rate row: 6 cards on one line (Inbound + 3PL split) */
     .demoRow {
       grid-column: span 12;
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 14px;
     }
     .demoCard { padding: 14px 14px; min-height: 104px; }
@@ -541,8 +541,17 @@ __DASHBOARD_NAV_HTML__
           <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgPhonesSales">—</div><div class="funnelSub">Sales in range</div></div>
         </div>
 
+        <!-- Lead Gen Pipelines: Inbound and 3PL are separate CF channels (hd5QqHEOVSsPom5bJ32P); CAC LL/SR is separate. -->
         <div class="card demoCard funnelCard">
-          <div class="card-header"><div class="card-title">3PL/Inbound Funnel</div></div>
+          <div class="card-header"><div class="card-title">Inbound Funnel</div></div>
+          <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lgInboundCreated">—</div><div class="funnelSub">Created in range</div></div>
+          <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lgInboundDemo">—</div><div class="funnelSub" id="lgInboundDemoCounts">Demos: — • Ran: —</div></div>
+          <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lgInboundOpp2">—</div><div class="funnelSub" id="lgInboundOpp2Counts">Sales: — • Ran: —</div></div>
+          <div class="funnelStage stage-sales"><div class="funnelLabel">Sales</div><div class="funnelValue" id="lgInboundSales">—</div><div class="funnelSub">Sales in range</div></div>
+        </div>
+
+        <div class="card demoCard funnelCard">
+          <div class="card-header"><div class="card-title">3PL Funnel</div></div>
           <div class="funnelStage stage-top"><div class="funnelLabel">Opps Created</div><div class="funnelValue" id="lg3plCreated">—</div><div class="funnelSub">Created in range</div></div>
           <div class="funnelStage stage-mid"><div class="funnelLabel">Demo Rate</div><div class="funnelValue" id="lg3plDemo">—</div><div class="funnelSub" id="lg3plDemoCounts">Demos: — • Ran: —</div></div>
           <div class="funnelStage stage-bottom"><div class="funnelLabel">Opp2Prelim</div><div class="funnelValue" id="lg3plOpp2">—</div><div class="funnelSub" id="lg3plOpp2Counts">Sales: — • Ran: —</div></div>
@@ -859,16 +868,19 @@ __DASHBOARD_NAV_HTML__
     const demoDoorsUrl = `${demoBase}&lead_source=Doors`;
     const demoSelfGenUrl = `${demoBase}&lead_source=Self%20Gen`;
     const demoVirtualUrl = `${demoBase}&lead_source=Phones`;
+    const demoInboundUrl = `${demoBase}&lead_source=Inbound`;
     const demo3plUrl = `${demoBase}&lead_source=3PL`;
 
     const salesDoorsUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Doors`;
     const salesSelfGenUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Self%20Gen`;
     const salesPhonesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Phones`;
+    const salesInboundUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Inbound`;
     const sales3plUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=3PL`;
 
     const ranDoorsUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Doors`;
     const ranSelfGenUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Self%20Gen`;
     const ranPhonesUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Phones`;
+    const ranInboundUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=Inbound`;
     const ran3plUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=3PL`;
 
     document.getElementById('totalSales').textContent = '…';
@@ -886,32 +898,38 @@ __DASHBOARD_NAV_HTML__
     document.getElementById('lgDoorsDemo').textContent = '…';
     document.getElementById('lgSelfGenDemo').textContent = '…';
     document.getElementById('lgPhonesDemo').textContent = '…';
+    document.getElementById('lgInboundDemo').textContent = '…';
     document.getElementById('lg3plDemo').textContent = '…';
 
     document.getElementById('lgCompanyDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lgDoorsDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lgSelfGenDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lgPhonesDemoCounts').textContent = 'Demos: … • Ran: …';
+    document.getElementById('lgInboundDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lg3plDemoCounts').textContent = 'Demos: … • Ran: …';
     document.getElementById('lgCompanyOpp2').textContent = '…';
     document.getElementById('lgDoorsOpp2').textContent = '…';
     document.getElementById('lgSelfGenOpp2').textContent = '…';
     document.getElementById('lgPhonesOpp2').textContent = '…';
+    document.getElementById('lgInboundOpp2').textContent = '…';
     document.getElementById('lg3plOpp2').textContent = '…';
     document.getElementById('lgCompanyOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgCompanyCreated').textContent = '…';
     document.getElementById('lgDoorsCreated').textContent = '…';
     document.getElementById('lgSelfGenCreated').textContent = '…';
     document.getElementById('lgPhonesCreated').textContent = '…';
+    document.getElementById('lgInboundCreated').textContent = '…';
     document.getElementById('lg3plCreated').textContent = '…';
     document.getElementById('lgCompanySales').textContent = '…';
     document.getElementById('lgDoorsSales').textContent = '…';
     document.getElementById('lgSelfGenSales').textContent = '…';
     document.getElementById('lgPhonesSales').textContent = '…';
+    document.getElementById('lgInboundSales').textContent = '…';
     document.getElementById('lg3plSales').textContent = '…';
     document.getElementById('lgDoorsOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgSelfGenOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lgPhonesOpp2Counts').textContent = 'Sales: … • Ran: …';
+    document.getElementById('lgInboundOpp2Counts').textContent = 'Sales: … • Ran: …';
     document.getElementById('lg3plOpp2Counts').textContent = 'Sales: … • Ran: …';
 
     document.getElementById('salesByPipelineV').innerHTML = '<div class="skeleton">Loading…</div>';
@@ -948,12 +966,14 @@ __DASHBOARD_NAV_HTML__
     const sumByAliases = (obj, aliases) => aliases.reduce((sum, key) => sum + Number((obj && obj[key]) || 0), 0);
     const SELF_GEN_KEYS = ['Self Gen', 'self gen', 'selfgen', 'SelfGen'];
     const PHONES_KEYS = ['Phones', 'Virtual'];
-    const THREE_PL_INBOUND_KEYS = ['3PL', 'Inbound'];
+    const INBOUND_KEYS = ['Inbound'];
+    const THREE_PL_KEYS = ['3PL'];
     document.getElementById('lgCompanySales').textContent = String(Number((salesData && salesData.result) || 0));
     document.getElementById('lgDoorsSales').textContent = String(sumByAliases(salesByLead, ['Doors']));
     document.getElementById('lgSelfGenSales').textContent = String(sumByAliases(salesByLead, SELF_GEN_KEYS));
     document.getElementById('lgPhonesSales').textContent = String(sumByAliases(salesByLead, PHONES_KEYS));
-    document.getElementById('lg3plSales').textContent = String(sumByAliases(salesByLead, THREE_PL_INBOUND_KEYS));
+    document.getElementById('lgInboundSales').textContent = String(sumByAliases(salesByLead, INBOUND_KEYS));
+    document.getElementById('lg3plSales').textContent = String(sumByAliases(salesByLead, THREE_PL_KEYS));
 
     const ranByLead = (ranData && ranData.breakdowns && ranData.breakdowns.ran_by_lead_gen_source) ? ranData.breakdowns.ran_by_lead_gen_source : {};
 
@@ -965,7 +985,8 @@ __DASHBOARD_NAV_HTML__
     document.getElementById('lgDoorsCreated').textContent = String(sumByAliases(createdByLead, ['Doors']));
     document.getElementById('lgSelfGenCreated').textContent = String(sumByAliases(createdByLead, SELF_GEN_KEYS));
     document.getElementById('lgPhonesCreated').textContent = String(sumByAliases(createdByLead, PHONES_KEYS));
-    document.getElementById('lg3plCreated').textContent = String(sumByAliases(createdByLead, THREE_PL_INBOUND_KEYS));
+    document.getElementById('lgInboundCreated').textContent = String(sumByAliases(createdByLead, INBOUND_KEYS));
+    document.getElementById('lg3plCreated').textContent = String(sumByAliases(createdByLead, THREE_PL_KEYS));
 
     const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
     const fmtCounts = (d) => {
@@ -994,18 +1015,21 @@ __DASHBOARD_NAV_HTML__
     const demoDoorsData = mkDemoObj(['Doors']);
     const demoSelfGenData = mkDemoObj(SELF_GEN_KEYS);
     const demoPhonesData = mkDemoObj(PHONES_KEYS);
-    const demo3plData = mkDemoObj(THREE_PL_INBOUND_KEYS);
+    const demoInboundData = mkDemoObj(INBOUND_KEYS);
+    const demo3plData = mkDemoObj(THREE_PL_KEYS);
 
     document.getElementById('lgCompanyDemo').textContent = fmtPct(demoData);
     document.getElementById('lgDoorsDemo').textContent = fmtPct(demoDoorsData);
     document.getElementById('lgSelfGenDemo').textContent = fmtPct(demoSelfGenData);
     document.getElementById('lgPhonesDemo').textContent = fmtPct(demoPhonesData);
+    document.getElementById('lgInboundDemo').textContent = fmtPct(demoInboundData);
     document.getElementById('lg3plDemo').textContent = fmtPct(demo3plData);
 
     document.getElementById('lgCompanyDemoCounts').textContent = fmtCounts(demoData);
     document.getElementById('lgDoorsDemoCounts').textContent = fmtCounts(demoDoorsData);
     document.getElementById('lgSelfGenDemoCounts').textContent = fmtCounts(demoSelfGenData);
     document.getElementById('lgPhonesDemoCounts').textContent = fmtCounts(demoPhonesData);
+    document.getElementById('lgInboundDemoCounts').textContent = fmtCounts(demoInboundData);
     document.getElementById('lg3plDemoCounts').textContent = fmtCounts(demo3plData);
 
     function setOpp2PrelimCard(kpiId, countsId, sData, rData) {
@@ -1023,7 +1047,8 @@ __DASHBOARD_NAV_HTML__
     setOpp2PrelimCard('lgDoorsOpp2', 'lgDoorsOpp2Counts', mkSalesObj(['Doors']), mkRanObj(['Doors']));
     setOpp2PrelimCard('lgSelfGenOpp2', 'lgSelfGenOpp2Counts', mkSalesObj(SELF_GEN_KEYS), mkRanObj(SELF_GEN_KEYS));
     setOpp2PrelimCard('lgPhonesOpp2', 'lgPhonesOpp2Counts', mkSalesObj(PHONES_KEYS), mkRanObj(PHONES_KEYS));
-    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj(THREE_PL_INBOUND_KEYS), mkRanObj(THREE_PL_INBOUND_KEYS));
+    setOpp2PrelimCard('lgInboundOpp2', 'lgInboundOpp2Counts', mkSalesObj(INBOUND_KEYS), mkRanObj(INBOUND_KEYS));
+    setOpp2PrelimCard('lg3plOpp2', 'lg3plOpp2Counts', mkSalesObj(THREE_PL_KEYS), mkRanObj(THREE_PL_KEYS));
 
     // Monthly trend chart (Aug 2025 onward)
     const trendRes = await fetch(`/api/metrics/company_trends?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}&start_year=2025&start_month=8`);

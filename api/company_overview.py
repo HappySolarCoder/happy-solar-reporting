@@ -1,1 +1,1 @@
-file:///workspace/hsr-leadgen-split/api/company_overview.py
+https://raw.githubusercontent.com/HappySolarCoder/happy-solar-reporting/master/api/company_overview.py

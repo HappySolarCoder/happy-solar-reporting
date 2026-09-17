@@ -36,6 +36,24 @@ Metric per row (same rules for YTD window or a single NY month):
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
    series. Months with sales=0 are JSON null gaps, never 0.
 
+Inbound CF-grain section (third row; not title-bucket; not 3PL; not pipeline
+7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P normalized → Inbound
+(same strip/none helper as sales.py / opportunities_created.py).
+- NR Leads = COUNT_DISTINCT territory-pipeline (Buffalo / Rochester / Syracuse /
+  Virtual) ghl_opportunities_v2.id with createdAt in window AND contact CF =
+  Inbound. No refunded-stage filter on this CF grain.
+- Opps created = the same set as NR Leads (no bought-lead hop). opps_pct = 1.0
+  when NR>0.
+- Sits = territory Sit + appointmentOccurredAt in window + CF = Inbound
+  (same sits rules as existing inbound_cac performance KPIs).
+- Sales = distinct contactId among Sold / Sale Cancelled stage IDs with Contact
+  Sold Date in window AND CF = Inbound (same as /api/metrics/sales?lead_source=Inbound).
+- Spend = Meta Marketing API account insights spend (META_ADS_ACCESS_TOKEN +
+  META_ADS_ACCOUNT_ID act_…). Missing env, expired token, or Graph 401/403 →
+  spend null, spend_status=unavailable. Do not invent EXAMPLE dollars.
+- Setter $500 / TAC same formula. CAC/TAC null when spend is null or sales=0.
+- Overall stays Lead Locker + Solar Reviews only (do not fold Inbound in).
+
 Performance KPIs (same window; table under YTD totals, same rows as CAC):
 - Pipeline 7nSEgeoBYXZiIS7x41Jy is bought leads only — not opportunities.
 - nr_leads = COUNT_DISTINCT inbound/3PL title-bucket ids (ghl_opportunities_v2.name
@@ -61,7 +79,7 @@ Queries:
 - Territory sits: bounded appointmentOccurredAt range, dispositionValue==Sit,
   keep the 4 pipeline IDs.
 - Sales: pipelineStageId IN the 8 locked stage IDs, then get_all those
-  intersection contacts only.
+  contacts (LL/SR still intersect inbound title-bucket spend contacts).
 - No full-stream of ghl_opportunities_v2 or ghl_contacts_v2.
 
 Params:
@@ -73,7 +91,11 @@ Params:
 from __future__ import annotations
 
 import json
+import os
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
@@ -110,6 +132,13 @@ TERRITORY_PIPELINE_IDS: tuple[str, ...] = (
 TERRITORY_PIPELINE_ID_SET = set(TERRITORY_PIPELINE_IDS)
 # Contact lead-gen source. Can be Inbound on territory opps. Not the LL/SR split.
 LEAD_GEN_SOURCE_CONTACT_CF_ID = "hd5QqHEOVSsPom5bJ32P"
+INBOUND_CF_SOURCE = "Inbound"
+INBOUND_CF_SOURCE_KEY = "inbound"
+META_ADS_ACCESS_TOKEN_ENV = "META_ADS_ACCESS_TOKEN"
+META_ADS_ACCOUNT_ID_ENV = "META_ADS_ACCOUNT_ID"
+META_ADS_SPEND_SOURCE = "meta_ads"
+META_GRAPH_API_VERSION = "v21.0"
+META_GRAPH_API_HOST = "https://graph.facebook.com"
 
 # Join: inbound bought-lead title-bucket on the same contactId as a later
 # territory opp. Investigated 2026-08-25 — this hop exists; do not invent a
@@ -166,6 +195,17 @@ SOURCES: tuple[InboundSource, ...] = (
 )
 
 SOURCE_LABELS: tuple[str, ...] = tuple(source.label for source in SOURCES)
+
+
+@dataclass(frozen=True)
+class MetaSpendResult:
+    spend: float | None
+    spend_status: str
+    spend_source: str = META_ADS_SPEND_SOURCE
+    reason: str | None = None
+    account_id: str | None = None
+    since: str | None = None
+    until: str | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +287,333 @@ def attach_acquisition_costs(
     row["setter_spend"] = compute_setter_spend(sales, setter_unit_cost)
     row["tac"] = compute_tac(spend, sales, setter_unit_cost)
     return row
+
+
+def contact_custom_field(contact: dict[str, Any] | None, cf_id: str) -> Any:
+    if not isinstance(contact, dict):
+        return None
+    for cf in contact.get("customFields") or []:
+        if isinstance(cf, dict) and compact_str(cf.get("id")) == cf_id:
+            return cf.get("value")
+    return None
+
+
+def normalize_lead_gen_source(value: Any) -> str:
+    """Same strip/none helper as sales.py / opportunities_created.normalize_channel."""
+    if value is None:
+        return "none"
+    if isinstance(value, str):
+        norm = value.strip()
+        if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
+            return "none"
+        return norm
+    return str(value)
+
+
+def is_inbound_lead_source(value: Any) -> bool:
+    """True only for CF Inbound. 3PL and title-buckets do not match."""
+    return normalize_lead_gen_source(value).strip().lower() == INBOUND_CF_SOURCE.lower()
+
+
+def contact_is_inbound(contact: dict[str, Any] | None) -> bool:
+    return is_inbound_lead_source(contact_custom_field(contact, LEAD_GEN_SOURCE_CONTACT_CF_ID))
+
+
+def unavailable_meta_spend(reason: str, **kwargs: Any) -> MetaSpendResult:
+    return MetaSpendResult(spend=None, spend_status="unavailable", reason=reason, **kwargs)
+
+
+def meta_ads_account_id(raw: Any) -> str:
+    text = compact_str(raw)
+    if not text:
+        return ""
+    return text if text.startswith("act_") else f"act_{text}"
+
+
+def read_meta_ads_credentials() -> tuple[str | None, str | None, str | None]:
+    token = compact_str(os.environ.get(META_ADS_ACCESS_TOKEN_ENV))
+    account_raw = compact_str(os.environ.get(META_ADS_ACCOUNT_ID_ENV))
+    if not token or not account_raw:
+        return None, None, "missing_env"
+    account = meta_ads_account_id(account_raw)
+    if not account.startswith("act_") or account == "act_":
+        return None, None, "account_id_not_act_prefixed"
+    return token, account, None
+
+
+def meta_date_bounds(start_local: datetime, end_local: datetime) -> tuple[str, str] | None:
+    if end_local <= start_local:
+        return None
+    since = start_local.date().isoformat()
+    until = (end_local - timedelta(days=1)).date().isoformat()
+    if until < since:
+        return None
+    return since, until
+
+
+def parse_meta_spend_value(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_meta_ads_spend(
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    token: str | None = None,
+    account_id: str | None = None,
+    urlopen: Any = None,
+) -> MetaSpendResult:
+    """Account-level Meta insights spend. Never invents dollars on auth/env failure."""
+    bounds = meta_date_bounds(start_local, end_local)
+    if bounds is None:
+        return unavailable_meta_spend("empty_window")
+    since, until = bounds
+    if token is None or account_id is None:
+        token, account_id, reason = read_meta_ads_credentials()
+        if reason:
+            return unavailable_meta_spend(reason, since=since, until=until)
+    return _graph_insights_spend(
+        token=token,
+        account_id=account_id,
+        since=since,
+        until=until,
+        urlopen=urlopen,
+    )
+
+
+def fetch_meta_ads_spend_by_month(
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    token: str | None = None,
+    account_id: str | None = None,
+    urlopen: Any = None,
+) -> dict[str, MetaSpendResult] | None:
+    """Monthly account spend. None = unavailable. Dict = available (missing month → $0)."""
+    bounds = meta_date_bounds(start_local, end_local)
+    if bounds is None:
+        return None
+    since, until = bounds
+    if token is None or account_id is None:
+        token, account_id, reason = read_meta_ads_credentials()
+        if reason:
+            return None
+    try:
+        payload = _graph_insights_payload(
+            token=token,
+            account_id=account_id,
+            since=since,
+            until=until,
+            urlopen=urlopen,
+            time_increment="monthly",
+        )
+    except urllib.error.HTTPError:
+        return None
+    if payload is None:
+        return None
+    if payload.get("error"):
+        return None
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return None
+    out: dict[str, MetaSpendResult] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        parsed = parse_meta_spend_value(row.get("spend"))
+        if parsed is None:
+            continue
+        start = compact_str(row.get("date_start"))
+        if len(start) < 7:
+            continue
+        out[start[:7]] = MetaSpendResult(
+            spend=parsed,
+            spend_status="ok",
+            account_id=account_id,
+            since=start,
+            until=compact_str(row.get("date_stop")) or None,
+        )
+    return out
+
+
+def _graph_insights_payload(
+    *,
+    token: str,
+    account_id: str,
+    since: str,
+    until: str,
+    urlopen: Any = None,
+    time_increment: str | None = None,
+) -> dict[str, Any] | None:
+    params = {
+        "fields": "spend",
+        "level": "account",
+        "access_token": token,
+        "time_range": json.dumps({"since": since, "until": until}, separators=(",", ":")),
+    }
+    if time_increment:
+        params["time_increment"] = time_increment
+    url = (
+        f"{META_GRAPH_API_HOST}/{META_GRAPH_API_VERSION}/{urllib.parse.quote(account_id)}/insights?"
+        + urllib.parse.urlencode(params)
+    )
+    opener = urlopen or urllib.request.urlopen
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with opener(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError:
+        raise
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _graph_insights_spend(
+    *,
+    token: str,
+    account_id: str,
+    since: str,
+    until: str,
+    urlopen: Any = None,
+) -> MetaSpendResult:
+    try:
+        payload = _graph_insights_payload(
+            token=token,
+            account_id=account_id,
+            since=since,
+            until=until,
+            urlopen=urlopen,
+        )
+    except urllib.error.HTTPError as exc:
+        code = getattr(exc, "code", None)
+        reason = "graph_auth_error" if code in (401, 403) else f"graph_http_{code}"
+        return unavailable_meta_spend(reason, account_id=account_id, since=since, until=until)
+    if payload is None:
+        return unavailable_meta_spend("graph_request_failed", account_id=account_id, since=since, until=until)
+    error = payload.get("error")
+    if error:
+        code = error.get("code") if isinstance(error, dict) else None
+        reason = "graph_auth_error" if code in (190, 102, 10) else "graph_error"
+        return unavailable_meta_spend(reason, account_id=account_id, since=since, until=until)
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return unavailable_meta_spend("graph_spend_unparsed", account_id=account_id, since=since, until=until)
+    if not rows:
+        return MetaSpendResult(
+            spend=0.0, spend_status="ok", account_id=account_id, since=since, until=until
+        )
+    total = 0.0
+    seen = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        parsed = parse_meta_spend_value(row.get("spend"))
+        if parsed is None:
+            continue
+        total += parsed
+        seen = True
+    if not seen:
+        return unavailable_meta_spend("graph_spend_unparsed", account_id=account_id, since=since, until=until)
+    return MetaSpendResult(
+        spend=round(total, 2), spend_status="ok", account_id=account_id, since=since, until=until
+    )
+
+
+def compute_inbound_acquisition(
+    spend: float | None,
+    sales: int,
+    setter_unit_cost: int = SETTER_UNIT_COST,
+) -> dict[str, Any]:
+    sale_count = int(sales)
+    setter_spend = compute_setter_spend(sale_count, setter_unit_cost)
+    if spend is None or sale_count == 0:
+        return {
+            "setter_unit_cost": setter_unit_cost,
+            "setter_spend": setter_spend,
+            "cac": None,
+            "tac": None,
+        }
+    return {
+        "setter_unit_cost": setter_unit_cost,
+        "setter_spend": setter_spend,
+        "cac": compute_cac(spend, sale_count),
+        "tac": compute_tac(spend, sale_count, setter_unit_cost),
+    }
+
+
+def build_inbound_source_row(
+    *,
+    nr_leads: int,
+    sales: int,
+    spend_result: MetaSpendResult,
+) -> dict[str, Any]:
+    ok = spend_result.spend_status == "ok" and spend_result.spend is not None
+    spend = spend_result.spend if ok else None
+    costs = compute_inbound_acquisition(spend, sales)
+    return {
+        "source": INBOUND_CF_SOURCE,
+        "unit_cost": None,
+        "opp_count": int(nr_leads),
+        "refunded_excluded_count": 0,
+        "spend": spend,
+        "spend_status": "ok" if ok else "unavailable",
+        "spend_source": spend_result.spend_source,
+        "spend_reason": None if ok else spend_result.reason,
+        "sales": int(sales),
+        "cac": costs["cac"],
+        "setter_unit_cost": costs["setter_unit_cost"],
+        "setter_spend": costs["setter_spend"],
+        "tac": costs["tac"],
+        "example_banner": not ok,
+    }
+
+
+def count_inbound_cf_performance(
+    territory_opps: list[TerritoryOpp],
+    contacts_map: dict[str, dict],
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> tuple[set[str], set[str]]:
+    created: set[str] = set()
+    sits: set[str] = set()
+    for opp in territory_opps:
+        if not contact_is_inbound(contacts_map.get(opp.contact_id)):
+            continue
+        if territory_created_in_window(opp, start_local, end_local):
+            created.add(opp.opportunity_id)
+        if territory_sit_in_window(opp, start_local, end_local, now_utc):
+            sits.add(opp.opportunity_id)
+    return created, sits
+
+
+def inbound_sales_contact_ids(
+    contacts_map: dict[str, dict],
+    candidate_ids: set[str],
+    start_local: datetime,
+    end_local: datetime,
+) -> set[str]:
+    sold = sold_contacts_in_window(contacts_map, candidate_ids, start_local, end_local)
+    return {cid for cid in sold if contact_is_inbound(contacts_map.get(cid))}
+
+
+def month_spend_result(
+    year: int,
+    month: int,
+    monthly_spend: dict[str, MetaSpendResult] | None,
+) -> MetaSpendResult:
+    if monthly_spend is None:
+        return unavailable_meta_spend("month_spend_unavailable")
+    hit = monthly_spend.get(f"{year}-{month:02d}")
+    if hit is not None:
+        return hit
+    return MetaSpendResult(spend=0.0, spend_status="ok", reason="month_zero_fill")
 
 
 def parse_inbound_cac_params(qs: dict[str, list[str]], now: datetime) -> tuple[int, int | None]:
@@ -757,16 +1124,24 @@ def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
     solar_reviews_cac: list[float | None] = []
     lead_locker_tac: list[float | None] = []
     solar_reviews_tac: list[float | None] = []
+    inbound_cac: list[float | None] = []
+    inbound_tac: list[float | None] = []
+    inbound_spend_ok = False
     for item in monthly:
         months.append(item["label"])
         labels.append(item["month_label"])
         locker = row_by_source(item.get("rows") or [], "Lead Locker")
         reviews = row_by_source(item.get("rows") or [], "Solar Reviews")
+        inbound = row_by_source(item.get("rows") or [], INBOUND_CF_SOURCE)
         lead_locker_cac.append(None if locker is None else locker.get("cac"))
         solar_reviews_cac.append(None if reviews is None else reviews.get("cac"))
         lead_locker_tac.append(None if locker is None else locker.get("tac"))
         solar_reviews_tac.append(None if reviews is None else reviews.get("tac"))
-    return {
+        inbound_cac.append(None if inbound is None else inbound.get("cac"))
+        inbound_tac.append(None if inbound is None else inbound.get("tac"))
+        if inbound and inbound.get("spend_status") == "ok":
+            inbound_spend_ok = True
+    chart = {
         "months": months,
         "labels": labels,
         "lead_locker_cac": lead_locker_cac,
@@ -774,6 +1149,10 @@ def build_chart(monthly: list[dict[str, Any]]) -> dict[str, Any]:
         "lead_locker_tac": lead_locker_tac,
         "solar_reviews_tac": solar_reviews_tac,
     }
+    if inbound_spend_ok:
+        chart["inbound_cac"] = inbound_cac
+        chart["inbound_tac"] = inbound_tac
+    return chart
 
 
 def load_contacts_by_ids(db: firestore.Client, contact_ids) -> dict[str, dict]:
@@ -910,9 +1289,16 @@ def merge_territory_opps(*groups: list[TerritoryOpp]) -> list[TerritoryOpp]:
     return list(merged.values())
 
 
-def load_sold_stage_contact_ids(db: firestore.Client, inbound_contact_ids: set[str]) -> set[str]:
-    """Sold/Sale Cancelled contacts that also appear on spend-scope inbound opps."""
-    if not inbound_contact_ids:
+def load_sold_stage_contact_ids(
+    db: firestore.Client, inbound_contact_ids: set[str] | None = None
+) -> set[str]:
+    """Sold/Sale Cancelled contacts.
+
+    When inbound_contact_ids is a set, keep the LL/SR intersection.
+    When omitted (None), return every sold-stage contactId so CF-grain Inbound
+    sales can match /api/metrics/sales?lead_source=Inbound.
+    """
+    if inbound_contact_ids is not None and not inbound_contact_ids:
         return set()
     contract = SalesMetricContract()
     stage_ids = list(contract.stage_ids)
@@ -924,7 +1310,7 @@ def load_sold_stage_contact_ids(db: firestore.Client, inbound_contact_ids: set[s
         if opp.get(STAGE_FIELD) not in stage_set:
             continue
         cid = compact_str(opp.get("contactId"))
-        if cid and cid in inbound_contact_ids:
+        if cid and (inbound_contact_ids is None or cid in inbound_contact_ids):
             sold_ids.add(cid)
     return sold_ids
 
@@ -969,6 +1355,8 @@ def assemble_inbound_cac(
     start: str | None = None,
     end: str | None = None,
     territory_opps: list[TerritoryOpp] | None = None,
+    inbound_spend: MetaSpendResult | None = None,
+    inbound_monthly_spend: dict[str, MetaSpendResult] | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -985,6 +1373,27 @@ def assemble_inbound_cac(
     records, rows, overall, sold_in_window = _window_bundle(
         raws, contacts_map, sold_stage_ids, start_local, end_local
     )
+    now_utc = now.astimezone(timezone.utc)
+    spend_result = inbound_spend or unavailable_meta_spend("missing_env")
+    inbound_created, inbound_sits = count_inbound_cf_performance(
+        territory_opps or [], contacts_map, start_local, end_local, now_utc
+    )
+    inbound_sold = inbound_sales_contact_ids(
+        contacts_map, sold_stage_ids, start_local, end_local
+    )
+    inbound_row = build_inbound_source_row(
+        nr_leads=len(inbound_created),
+        sales=len(inbound_sold),
+        spend_result=spend_result,
+    )
+    inbound_kpi = kpi_row(
+        source=INBOUND_CF_SOURCE,
+        nr_leads=len(inbound_created),
+        leads=len(inbound_created),
+        opps_created=len(inbound_created),
+        sits=len(inbound_sits),
+        sales=len(inbound_sold),
+    )
 
     monthly: list[dict[str, Any]] = []
     if timeframe != "range":
@@ -992,6 +1401,15 @@ def assemble_inbound_cac(
             m_start, m_end, _, _ = month_window(year, chart_month, tz)
             _m_records, m_rows, m_overall, _ = _window_bundle(
                 raws, contacts_map, sold_stage_ids, m_start, m_end
+            )
+            m_created, _m_sits = count_inbound_cf_performance(
+                territory_opps or [], contacts_map, m_start, m_end, now_utc
+            )
+            m_sold = inbound_sales_contact_ids(contacts_map, sold_stage_ids, m_start, m_end)
+            m_inbound = build_inbound_source_row(
+                nr_leads=len(m_created),
+                sales=len(m_sold),
+                spend_result=month_spend_result(year, chart_month, inbound_monthly_spend),
             )
             monthly.append(
                 {
@@ -1001,7 +1419,7 @@ def assemble_inbound_cac(
                     "month_label": datetime(year, chart_month, 1).strftime("%b"),
                     "window_start_local": m_start.isoformat(),
                     "window_end_local": m_end.isoformat(),
-                    "rows": m_rows,
+                    "rows": m_rows + [m_inbound],
                     "overall": m_overall,
                 }
             )
@@ -1012,9 +1430,14 @@ def assemble_inbound_cac(
         territory_opps or [],
         start_local,
         end_local,
-        now.astimezone(timezone.utc),
+        now_utc,
         sales_by_source,
     )
+    performance_kpis = {
+        **performance_kpis,
+        "rows": list(performance_kpis.get("rows") or []) + [inbound_kpi],
+        "inbound": inbound_kpi,
+    }
 
     contract = SalesMetricContract()
     spend_ids = spend_contact_ids(records)
@@ -1027,7 +1450,8 @@ def assemble_inbound_cac(
         "timezone": tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
-        "rows": rows,
+        "rows": rows + [inbound_row],
+        "inbound": inbound_row,
         "overall": overall,
         "performance_kpis": performance_kpis,
         "chart": chart,
@@ -1054,7 +1478,12 @@ def assemble_inbound_cac(
             "opp_to_prelim = that source's inbound_cac.sales / opps_created; "
             "demo_rate = that source's territory sits / opps_created "
             "(null if opps_created=0; not Bot KPI Sit/(Sit+No Sit)); "
-            "unattributed territory opps are JSON leftover, not Overall"
+            "unattributed territory opps are JSON leftover, not Overall; "
+            "Inbound row is contact CF hd5QqHEOVSsPom5bJ32P=Inbound on territory "
+            "pipelines (not title-bucket, not 3PL, not pipeline 7nSEgeo); "
+            "Inbound NR Leads = Opps created; spend is Meta Ads account insights "
+            "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
+            "Overall stays Lead Locker + Solar Reviews only"
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -1096,6 +1525,41 @@ def assemble_inbound_cac(
                 "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
                 "lead_gen_source_is_not_the_split": True,
             },
+            "inbound_meta_spend": {
+                "channel_key": INBOUND_CF_SOURCE_KEY,
+                "source": INBOUND_CF_SOURCE,
+                "spend_source": META_ADS_SPEND_SOURCE,
+                "env": [META_ADS_ACCESS_TOKEN_ENV, META_ADS_ACCOUNT_ID_ENV],
+                "graph": (
+                    f"{META_GRAPH_API_HOST}/{META_GRAPH_API_VERSION}/"
+                    "{act_account_id}/insights"
+                ),
+                "level": "account",
+                "fields": ["spend"],
+                "composio": "ops QA only; this Vercel function does not call Composio",
+                "missing_or_auth_error": (
+                    "spend=null, spend_status=unavailable, cac/tac=null; "
+                    "no invented dollars"
+                ),
+                "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
+                "lead_definition": (
+                    "contact CF hd5QqHEOVSsPom5bJ32P normalized to Inbound; "
+                    "territory pipelines Buffalo/Rochester/Syracuse/Virtual; "
+                    "not title-bucket; not 3PL; not pipeline 7nSEgeo"
+                ),
+                "nr_leads": (
+                    "COUNT_DISTINCT territory ghl_opportunities_v2.id createdAt in "
+                    "window + CF=Inbound; no refunded-stage filter"
+                ),
+                "opps_created": "same set as nr_leads (CF grain has no bought-lead hop)",
+                "opps_pct": "1.0 when nr_leads>0 else null",
+                "sits": "territory Sit + appointmentOccurredAt in window + CF=Inbound",
+                "sales": (
+                    "COUNT_DISTINCT contactId Sold/Sale Cancelled + Contact Sold Date "
+                    "in window + CF=Inbound (same as /api/metrics/sales?lead_source=Inbound)"
+                ),
+                "overall_excludes_inbound": True,
+            },
         },
         "debug": {
             "inbound_opps_scanned": inbound_opps_scanned if inbound_opps_scanned is not None else len(raws),
@@ -1121,6 +1585,10 @@ def assemble_inbound_cac(
             "territory_pool_opportunities_created": performance_kpis.get(
                 "territory_pool_opportunities_created"
             ),
+            "inbound_cf_nr_leads": inbound_row["opp_count"],
+            "inbound_cf_sales": inbound_row["sales"],
+            "inbound_spend_status": inbound_row["spend_status"],
+            "inbound_spend_reason": inbound_row.get("spend_reason"),
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -1148,19 +1616,33 @@ def compute_inbound_cac(
     else:
         start_local, end_local, _, _ = month_window(year, month, tz)
 
-    spend_ids = spend_contact_ids(records_for_window(raws, start_local, end_local))
-    if not (start and end):
-        for chart_month in ytd_months(year, now):
-            m_start, m_end, _, _ = month_window(year, chart_month, tz)
-            spend_ids |= spend_contact_ids(records_for_window(raws, m_start, m_end))
-
-    sold_stage_ids = load_sold_stage_contact_ids(db, spend_ids)
-    contacts_map = load_contacts_by_ids(db, sold_stage_ids)
+    sold_stage_ids = load_sold_stage_contact_ids(db)
     now_utc = now.astimezone(timezone.utc)
     territory_opps = merge_territory_opps(
         load_territory_created(db, start_local, end_local),
         load_territory_sits(db, start_local, end_local, now_utc),
     )
+    needed_contacts = set(sold_stage_ids)
+    for opp in territory_opps:
+        if opp.contact_id:
+            needed_contacts.add(opp.contact_id)
+    contacts_map = load_contacts_by_ids(db, needed_contacts)
+
+    token, account_id, cred_reason = read_meta_ads_credentials()
+    if cred_reason:
+        inbound_spend = unavailable_meta_spend(cred_reason)
+        inbound_monthly_spend = None
+    else:
+        inbound_spend = fetch_meta_ads_spend(
+            start_local, end_local, token=token, account_id=account_id
+        )
+        inbound_monthly_spend = None
+        if not (start and end) and inbound_spend.spend_status == "ok":
+            ytd_start, ytd_end, _, _ = ytd_window(year, tz, now)
+            inbound_monthly_spend = fetch_meta_ads_spend_by_month(
+                ytd_start, ytd_end, token=token, account_id=account_id
+            )
+
     return assemble_inbound_cac(
         raws,
         contacts_map,
@@ -1173,6 +1655,8 @@ def compute_inbound_cac(
         start=start,
         end=end,
         territory_opps=territory_opps,
+        inbound_spend=inbound_spend,
+        inbound_monthly_spend=inbound_monthly_spend,
     )
 
 

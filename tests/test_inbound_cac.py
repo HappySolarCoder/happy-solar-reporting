@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import unittest
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -943,6 +945,271 @@ class WarehouseYtdLockTests(unittest.TestCase):
         self.assertNotEqual(locker["nr_leads"], 960)
         self.assertNotEqual(reviews["nr_leads"], 255)
         self.assertNotEqual(kpis["overall"]["nr_leads"], 1215)
+
+
+class InboundCfMetaTests(unittest.TestCase):
+    def _cf(self, lead_source, sold_ymd=None):
+        fields = [{"id": "hd5QqHEOVSsPom5bJ32P", "value": lead_source}]
+        if sold_ymd:
+            fields.append({"id": "P9oBjgbZjJdeE0OkBj9T", "value": sold_ymd})
+        return {"customFields": fields}
+
+    def _territory(self, oid, contact_id, created, occurred=None, disposition=None):
+        return metric.TerritoryOpp(
+            opportunity_id=oid,
+            contact_id=contact_id,
+            pipeline_id=metric.TERRITORY_PIPELINE_IDS[0],
+            created_local=created,
+            occurred_utc=occurred,
+            disposition=disposition,
+        )
+
+    def test_normalize_matches_sales_created_inbound_not_3pl(self):
+        self.assertTrue(metric.is_inbound_lead_source("Inbound"))
+        self.assertTrue(metric.is_inbound_lead_source(" inbound "))
+        self.assertTrue(metric.is_inbound_lead_source("INBOUND"))
+        self.assertFalse(metric.is_inbound_lead_source("3PL"))
+        self.assertFalse(metric.is_inbound_lead_source("3pl/inbound"))
+        self.assertFalse(metric.is_inbound_lead_source("Lead Locker"))
+        self.assertEqual(metric.normalize_lead_gen_source(""), "none")
+        self.assertEqual(metric.normalize_lead_gen_source("Inbound"), "Inbound")
+
+    def test_spend_null_keeps_cac_tac_null_and_sets_banner(self):
+        row = metric.build_inbound_source_row(
+            nr_leads=3,
+            sales=2,
+            spend_result=metric.unavailable_meta_spend("missing_env"),
+        )
+        self.assertEqual(row["source"], "Inbound")
+        self.assertIsNone(row["unit_cost"])
+        self.assertIsNone(row["spend"])
+        self.assertEqual(row["spend_status"], "unavailable")
+        self.assertEqual(row["spend_source"], "meta_ads")
+        self.assertEqual(row["sales"], 2)
+        self.assertEqual(row["setter_spend"], 1000)
+        self.assertIsNone(row["cac"])
+        self.assertIsNone(row["tac"])
+        self.assertTrue(row["example_banner"])
+        encoded = json.dumps(row)
+        self.assertIn('"spend": null', encoded)
+        self.assertIn('"cac": null', encoded)
+        self.assertIn('"tac": null', encoded)
+        self.assertNotIn('"spend": 0', encoded)
+        self.assertNotIn('"cac": 0', encoded)
+
+    def test_spend_1000_sales_2_is_cac_500_tac_1000(self):
+        row = metric.build_inbound_source_row(
+            nr_leads=4,
+            sales=2,
+            spend_result=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+        )
+        self.assertEqual(row["spend"], 1000)
+        self.assertEqual(row["spend_status"], "ok")
+        self.assertFalse(row["example_banner"])
+        self.assertEqual(row["cac"], 500)
+        self.assertEqual(row["setter_spend"], 1000)
+        self.assertEqual(row["tac"], 1000)
+
+    def test_lead_locker_title_is_not_inbound_unless_cf_inbound(self):
+        now = datetime(2026, 9, 15, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 9, 2, 12, 0, tzinfo=NY),
+                False,
+                "c-ll-title",
+                "opp-ll-title",
+            )
+        ]
+        contacts_map = {
+            "c-ll-title": self._cf("3PL", "2026-09-04"),
+            "c-inbound": self._cf("Inbound", "2026-09-05"),
+        }
+        territory = [
+            self._territory("t-ll-title", "c-ll-title", datetime(2026, 9, 3, 12, 0, tzinfo=NY)),
+            self._territory(
+                "t-inbound",
+                "c-inbound",
+                datetime(2026, 9, 4, 12, 0, tzinfo=NY),
+                datetime(2026, 9, 5, 17, 0, tzinfo=timezone.utc),
+                "Sit",
+            ),
+        ]
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-ll-title", "c-inbound"},
+            year=2026,
+            month=9,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.unavailable_meta_spend("missing_env"),
+        )
+        by_source = {row["source"]: row for row in payload["rows"]}
+        self.assertIn("Inbound", by_source)
+        self.assertEqual(by_source["Lead Locker"]["opp_count"], 1)
+        self.assertEqual(by_source["Lead Locker"]["sales"], 1)
+        self.assertEqual(by_source["Inbound"]["opp_count"], 1)
+        self.assertEqual(by_source["Inbound"]["sales"], 1)
+        self.assertNotEqual(by_source["Inbound"]["opp_count"], by_source["Lead Locker"]["opp_count"] + 1)
+        inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
+        self.assertEqual(inbound_kpi["nr_leads"], 1)
+        self.assertEqual(inbound_kpi["opps_created"], 1)
+        self.assertEqual(inbound_kpi["opps_pct"], 1.0)
+        self.assertEqual(inbound_kpi["sits"], 1)
+        self.assertEqual(inbound_kpi["sales"], 1)
+        self.assertNotIn("c-ll-title", metric.inbound_sales_contact_ids(
+            contacts_map, {"c-ll-title", "c-inbound"}, *metric.month_window(2026, 9, "America/New_York")[:2]
+        ))
+
+    def test_overall_excludes_inbound_spend_and_sales(self):
+        now = datetime(2026, 9, 15, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 9, 2, 12, 0, tzinfo=NY),
+                False,
+                "c-ll",
+                "opp-ll",
+            )
+        ]
+        contacts_map = {
+            "c-ll": self._cf("Lead Locker", "2026-09-03"),
+            "c-in": self._cf("Inbound", "2026-09-04"),
+        }
+        territory = [
+            self._territory("t-in", "c-in", datetime(2026, 9, 4, 12, 0, tzinfo=NY)),
+        ]
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-ll", "c-in"},
+            year=2026,
+            month=9,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+        )
+        inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
+        locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
+        self.assertEqual(inbound["spend"], 1000)
+        self.assertEqual(inbound["sales"], 1)
+        self.assertEqual(locker["sales"], 1)
+        self.assertEqual(payload["overall"]["sales"], 1)
+        self.assertEqual(payload["overall"]["spend"], 45)
+        self.assertNotEqual(payload["overall"]["sales"], locker["sales"] + inbound["sales"])
+        self.assertNotEqual(payload["overall"]["spend"], locker["spend"] + inbound["spend"])
+        self.assertEqual(payload["performance_kpis"]["sales"], 1)
+        self.assertEqual(payload["performance_kpis"]["overall"]["sales"], 1)
+        self.assertEqual(payload["performance_kpis"]["inbound"]["sales"], 1)
+        self.assertTrue(payload["contract"]["inbound_meta_spend"]["overall_excludes_inbound"])
+        self.assertNotIn("inbound_cac", payload["chart"])
+
+    def test_chart_includes_inbound_series_only_when_monthly_spend_ok(self):
+        now = datetime(2026, 2, 15, tzinfo=NY)
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 2, 10, 12, 0, tzinfo=NY),
+                False,
+                "c-ll",
+                "opp-ll",
+            )
+        ]
+        contacts_map = {
+            "c-in": self._cf("Inbound", "2026-02-11"),
+        }
+        territory = [
+            self._territory("t-in", "c-in", datetime(2026, 2, 10, 12, 0, tzinfo=NY)),
+        ]
+        monthly = {
+            "2026-01": metric.unavailable_meta_spend("missing_env"),
+            "2026-02": metric.MetaSpendResult(spend=1000, spend_status="ok"),
+        }
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts_map,
+            {"c-in"},
+            year=2026,
+            month=None,
+            now=now,
+            territory_opps=territory,
+            inbound_spend=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+            inbound_monthly_spend=monthly,
+        )
+        self.assertIn("inbound_cac", payload["chart"])
+        self.assertIn("inbound_tac", payload["chart"])
+        self.assertIsNone(payload["chart"]["inbound_cac"][0])
+        self.assertEqual(payload["chart"]["inbound_cac"][1], 1000)
+        self.assertEqual(payload["chart"]["inbound_tac"][1], 1500)
+        empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
+        self.assertNotIn("inbound_cac", empty["chart"])
+        self.assertNotIn("inbound_tac", empty["chart"])
+
+    def test_meta_env_missing_and_401_are_unavailable_not_invented(self):
+        start, end, _, _ = metric.month_window(2026, 9, "America/New_York")
+        old_token = os.environ.pop("META_ADS_ACCESS_TOKEN", None)
+        old_act = os.environ.pop("META_ADS_ACCOUNT_ID", None)
+        try:
+            missing = metric.fetch_meta_ads_spend(start, end)
+            self.assertIsNone(missing.spend)
+            self.assertEqual(missing.spend_status, "unavailable")
+            self.assertEqual(missing.reason, "missing_env")
+
+            os.environ["META_ADS_ACCESS_TOKEN"] = "token"
+            os.environ["META_ADS_ACCOUNT_ID"] = "act_123"
+
+            def raise_401(_req, timeout=15):
+                raise urllib.error.HTTPError(
+                    "https://graph.facebook.com/v21.0/act_123/insights",
+                    401,
+                    "Unauthorized",
+                    hdrs=None,
+                    fp=None,
+                )
+
+            auth = metric.fetch_meta_ads_spend(start, end, urlopen=raise_401)
+            self.assertIsNone(auth.spend)
+            self.assertEqual(auth.spend_status, "unavailable")
+            self.assertEqual(auth.reason, "graph_auth_error")
+
+            class _Resp:
+                def read(self):
+                    return json.dumps({"data": [{"spend": "250.40"}]}).encode("utf-8")
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            ok = metric.fetch_meta_ads_spend(start, end, urlopen=lambda _req, timeout=15: _Resp())
+            self.assertEqual(ok.spend_status, "ok")
+            self.assertEqual(ok.spend, 250.4)
+        finally:
+            if old_token is None:
+                os.environ.pop("META_ADS_ACCESS_TOKEN", None)
+            else:
+                os.environ["META_ADS_ACCESS_TOKEN"] = old_token
+            if old_act is None:
+                os.environ.pop("META_ADS_ACCOUNT_ID", None)
+            else:
+                os.environ["META_ADS_ACCOUNT_ID"] = old_act
+
+    def test_page_has_inbound_cards_banner_and_no_fake_zero(self):
+        page_html = page.render_html(2026)
+        self.assertIn('id="inboundCac"', page_html)
+        self.assertIn('id="inboundTac"', page_html)
+        self.assertIn("EXAMPLE / spend unavailable", page_html)
+        self.assertIn("Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.", page_html)
+        self.assertIn("hd5QqHEOVSsPom5bJ32P", page_html)
+        self.assertIn("Inbound uses contact CF", page_html)
+        self.assertIn("Overall stays Lead Locker + Solar Reviews only", page_html)
+        self.assertIn("legendInboundCac", page_html)
+        self.assertIn("inbound.spend_status", page_html)
+        self.assertIn("composio", METRIC_SRC.lower())
+        self.assertIn("does not call Composio", METRIC_SRC)
+        self.assertNotIn("from composio", METRIC_SRC.lower())
 
 
 if __name__ == "__main__":

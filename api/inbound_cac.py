@@ -2,9 +2,11 @@
 
 """Vercel Python function: /api/inbound_cac
 
-Leadership Inbound CAC / TAC dashboard for Lead Locker and Solar Reviews.
+Leadership Inbound CAC / TAC dashboard for Lead Locker, Solar Reviews, and Inbound.
 Not listed on the main dashboard Lead Generation nav.
 Setter unit cost is $500 per sale. TAC = lead CAC + $500.
+Inbound uses contact CF hd5QqHEOVSsPom5bJ32P + Meta Ads spend (not $45/$70).
+Overall stays Lead Locker + Solar Reviews only.
 Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
 """
 
@@ -63,7 +65,7 @@ __DASHBOARD_NAV_CSS__
     button { background:var(--green); border-color:var(--green); color:#fff; font-weight:900; cursor:pointer; }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; margin-top:14px; }
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:0 1px 3px rgba(17,24,39,.06); }
-    .span-3 { grid-column:span 3; } .span-4 { grid-column:span 4; } .span-12 { grid-column:span 12; }
+    .span-3 { grid-column:span 3; } .span-4 { grid-column:span 4; } .span-6 { grid-column:span 6; } .span-12 { grid-column:span 12; }
     .card-title { font-size:13px; font-weight:800; color:var(--muted); }
     .kpi { font-size:42px; font-weight:950; margin-top:8px; letter-spacing:-.02em; }
     .meta { margin-top:6px; color:var(--muted2); font-size:12px; }
@@ -79,7 +81,10 @@ __DASHBOARD_NAV_CSS__
     .chartBox { width:100%; min-height:240px; }
     .chartBox svg { width:100%; height:240px; display:block; }
     .chartEmpty { color:var(--muted); font-size:13px; font-weight:700; padding:18px 0; }
-    @media (max-width:980px) { .span-3,.span-4,.span-12 { grid-column:span 12; } }
+    .example-tag { display:inline-block; margin-left:8px; padding:2px 8px; border-radius:999px; background:#fff7ed; color:#9a3412; border:1px solid #fdba74; font-size:11px; font-weight:900; letter-spacing:.02em; }
+    .banner { background:#fff7ed; border-color:#fdba74; }
+    .banner .card-title { color:#9a3412; }
+    @media (max-width:980px) { .span-3,.span-4,.span-6,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:34px; } }
   </style>
 </head>
@@ -88,7 +93,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -140,25 +145,41 @@ __DASHBOARD_NAV_HTML__
         <div class="kpi" id="setterUnitKpi">$500</div>
         <div class="meta" id="setterUnitMeta">$500 per sale (constant)</div>
       </div>
+      <div class="card span-3">
+        <div class="card-title">Inbound CAC</div>
+        <div class="kpi" id="inboundCac">—</div>
+        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales</div>
+      </div>
+      <div class="card span-3">
+        <div class="card-title">Inbound TAC</div>
+        <div class="kpi" id="inboundTac">—</div>
+        <div class="meta" id="inboundTacMeta">lead CAC + $500 setter</div>
+      </div>
+      <div class="card span-6 banner" id="inboundSpendBanner">
+        <div class="card-title">EXAMPLE / spend unavailable <span class="example-tag">EXAMPLE</span></div>
+        <div class="meta" id="inboundSpendBannerMeta">Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.</div>
+      </div>
       <div class="card span-12">
         <div class="card-title">YTD totals</div>
-        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, and overall. Refunded-stage leads are excluded from lead spend. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Inbound spend is Meta Ads (blank when auth is not ready — never a fake $0 CAC). Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table). Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title. Opps % = opps created ÷ NR Leads. Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = that row’s opps created. Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads. Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Month-by-month CAC and TAC</div>
         <div class="meta">YTD months in America/New_York. Months with sales=0 are gaps, never plotted as 0.</div>
-        <div class="legend">
+        <div class="legend" id="cacLegend">
           <span><span class="swatch" style="background:#2196F3"></span>Lead Locker CAC</span>
           <span><span class="swatch" style="background:#00C853"></span>Solar Reviews CAC</span>
           <span><span class="swatch" style="background:#1565C0"></span>Lead Locker TAC</span>
           <span><span class="swatch" style="background:#2E7D32"></span>Solar Reviews TAC</span>
+          <span id="legendInboundCac" style="display:none"><span class="swatch" style="background:#7C3AED"></span>Inbound CAC</span>
+          <span id="legendInboundTac" style="display:none"><span class="swatch" style="background:#5B21B6"></span>Inbound TAC</span>
         </div>
         <div class="chartBox" id="cacChart"></div>
       </div>
@@ -291,13 +312,22 @@ function drawCacChart(chart) {
   var reviews = chart.solar_reviews_cac || [];
   var lockerTac = chart.lead_locker_tac || [];
   var reviewsTac = chart.solar_reviews_tac || [];
+  var inbound = Object.prototype.hasOwnProperty.call(chart, 'inbound_cac') ? chart.inbound_cac : null;
+  var inboundTac = Object.prototype.hasOwnProperty.call(chart, 'inbound_tac') ? chart.inbound_tac : null;
+  var showInbound = Array.isArray(inbound);
+  var legendCac = document.getElementById('legendInboundCac');
+  var legendTac = document.getElementById('legendInboundTac');
+  if (legendCac) legendCac.style.display = showInbound ? '' : 'none';
+  if (legendTac) legendTac.style.display = showInbound ? '' : 'none';
   var rows = labels.map(function(label, i) {
     return {
       date: label,
       lead_locker_cac: (locker[i] === undefined ? null : locker[i]),
       solar_reviews_cac: (reviews[i] === undefined ? null : reviews[i]),
       lead_locker_tac: (lockerTac[i] === undefined ? null : lockerTac[i]),
-      solar_reviews_tac: (reviewsTac[i] === undefined ? null : reviewsTac[i])
+      solar_reviews_tac: (reviewsTac[i] === undefined ? null : reviewsTac[i]),
+      inbound_cac: (inbound && inbound[i] === undefined ? null : (inbound ? inbound[i] : null)),
+      inbound_tac: (inboundTac && inboundTac[i] === undefined ? null : (inboundTac ? inboundTac[i] : null))
     };
   });
   var series = [
@@ -306,6 +336,10 @@ function drawCacChart(chart) {
     {key: 'lead_locker_tac', label: 'Lead Locker TAC', color: '#1565C0', dash: '6 4'},
     {key: 'solar_reviews_tac', label: 'Solar Reviews TAC', color: '#2E7D32', dash: '6 4'}
   ];
+  if (showInbound) {
+    series.push({key: 'inbound_cac', label: 'Inbound CAC', color: '#7C3AED', dash: ''});
+    series.push({key: 'inbound_tac', label: 'Inbound TAC', color: '#5B21B6', dash: '6 4'});
+  }
   var hasPoint = false;
   var values = series.map(function(s) {
     return rows.map(function(row) {
@@ -385,12 +419,15 @@ async function load() {
     document.getElementById('leadLockerTac').textContent = '—';
     document.getElementById('solarReviewsTac').textContent = '—';
     document.getElementById('overallTac').textContent = '—';
+    document.getElementById('inboundCac').textContent = '—';
+    document.getElementById('inboundTac').textContent = '—';
     document.getElementById('windowKpi').textContent = '—';
     document.getElementById('windowMeta').textContent = data.error || 'Failed to load';
     return;
   }
   var locker = rowBySource(data.rows, 'Lead Locker');
   var reviews = rowBySource(data.rows, 'Solar Reviews');
+  var inbound = rowBySource(data.rows, 'Inbound') || data.inbound;
   var overall = data.overall || {};
   var setterUnit = (overall.setter_unit_cost != null) ? overall.setter_unit_cost : (data.contract && data.contract.setter_unit_cost);
   document.getElementById('leadLockerCac').textContent = locker ? fmtMoney(locker.cac) : '—';
@@ -413,6 +450,18 @@ async function load() {
     : 'lead CAC + $500 setter';
   document.getElementById('overallTac').textContent = fmtMoney(overall.tac);
   document.getElementById('overallTacMeta').textContent = (fmtMoney(overall.setter_spend) + ' setter spend · ' + (overall.sales == null ? '—' : overall.sales) + ' sales');
+  document.getElementById('inboundCac').textContent = inbound ? fmtMoney(inbound.cac) : '—';
+  document.getElementById('inboundCacMeta').textContent = inbound
+    ? ((inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable') + ' lead spend · ' + inbound.sales + ' sales')
+    : 'Meta Ads spend / Inbound sales';
+  document.getElementById('inboundTac').textContent = inbound ? fmtMoney(inbound.tac) : '—';
+  document.getElementById('inboundTacMeta').textContent = inbound
+    ? (inbound.spend_status === 'ok'
+      ? (fmtMoney(inbound.setter_spend) + ' setter · TAC = CAC + $500')
+      : (fmtMoney(inbound.setter_spend) + ' setter · TAC blank until spend is live'))
+    : 'lead CAC + $500 setter';
+  var banner = document.getElementById('inboundSpendBanner');
+  if (banner) banner.style.display = (!inbound || inbound.spend_status !== 'ok') ? '' : 'none';
   document.getElementById('setterUnitKpi').textContent = fmtMoney(setterUnit != null ? setterUnit : 500);
   document.getElementById('setterUnitMeta').textContent = (overall.setter_spend == null ? '$500 per sale (constant)' : (fmtMoney(overall.setter_spend) + ' setter spend YTD'));
   var start = String(data.window_start_local || '').slice(0, 10);

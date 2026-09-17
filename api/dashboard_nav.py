@@ -228,6 +228,7 @@ def render_dashboard_nav(current: str) -> str:
         "sales_dashboard",
         "sale_cancellation_report",
         "essential_sales",
+        "sales_list",
         "rep_daily_recap",
     }
     lead_gen_active = current in {
@@ -251,6 +252,7 @@ def render_dashboard_nav(current: str) -> str:
             <summary class="navbtn{' active' if sales_active else ''}">Sales <span class="navmenu-caret">▾</span></summary>
             <div class="navmenu-list">
               <a class="navmenu-item{active('sales_dashboard')}" href="/api/sales_dashboard">Sales Dashboard</a>
+              <a class="navmenu-item{active('sales_list')}" href="/api/sales_list">Sales List</a>
               <a class="navmenu-item{active('essential_sales')}" href="/api/essential_sales">Essential Sales</a>
               <a class="navmenu-item{active('sale_cancellation_report')}" href="/api/sale_cancellation_report">Sale Cancellations</a>
               <a class="navmenu-item{active('rep_daily_recap')}" href="/api/rep_daily_recap">Rep Daily Recap</a>

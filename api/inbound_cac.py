@@ -6,7 +6,8 @@ Leadership Inbound CAC / TAC dashboard for Lead Locker, Solar Reviews, and Inbou
 Not listed on the main dashboard Lead Generation nav.
 Setter unit cost is $500 per sale. TAC = lead CAC + $500.
 Inbound uses contact CF hd5QqHEOVSsPom5bJ32P + Meta Ads spend (not $45/$70).
-Inbound leads are website form fills; Inbound data starts 2026-08-01 ET.
+Inbound leads are website form fills; Inbound CPL is Meta spend ÷ form fills.
+Inbound data starts 2026-08-01 ET.
 Overall stays Lead Locker + Solar Reviews only.
 Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
 """
@@ -94,7 +95,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Inbound leads are website form fills (named estimate fills); Inbound opps are territory + CF Inbound. Inbound data starts 2026-08-01 ET (YTD Inbound is Aug 1 → now, not Jan 1). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Inbound leads are website form fills (named estimate fills); Inbound cost per lead is Meta spend ÷ form fills (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound opps are territory + CF Inbound. Inbound data starts 2026-08-01 ET (YTD Inbound is Aug 1 → now, not Jan 1). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -156,13 +157,18 @@ __DASHBOARD_NAV_HTML__
         <div class="kpi" id="inboundTac">—</div>
         <div class="meta" id="inboundTacMeta">lead CAC + $500 setter</div>
       </div>
-      <div class="card span-6 banner" id="inboundSpendBanner">
+      <div class="card span-3">
+        <div class="card-title">Inbound CPL</div>
+        <div class="kpi" id="inboundCpl">—</div>
+        <div class="meta" id="inboundCplMeta">Meta spend ÷ website form fills</div>
+      </div>
+      <div class="card span-3 banner" id="inboundSpendBanner">
         <div class="card-title">EXAMPLE / spend unavailable <span class="example-tag">EXAMPLE</span></div>
         <div class="meta" id="inboundSpendBannerMeta">Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.</div>
       </div>
       <div class="card span-12">
         <div class="card-title">YTD totals</div>
-        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Inbound spend is Meta Ads for 2026-08-01 ET → now (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are website form fills, not bought-lead titles. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Cost per lead is $45 / $70 for Lead Locker / Solar Reviews. Inbound CPL is Meta Ads spend ÷ website form fills (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound spend is Meta Ads for 2026-08-01 ET → now (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are website form fills, not bought-lead titles. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
@@ -235,7 +241,7 @@ function rowBySource(rows, name) {
 function renderTable(el, rows, overall) {
   var html = '<thead><tr>';
   html += '<th>Source</th>';
-  html += '<th class="num">Lead unit</th>';
+  html += '<th class="num">Cost per lead</th>';
   html += '<th class="num">Leads</th>';
   html += '<th class="num">Refunded excluded</th>';
   html += '<th class="num">Lead spend</th>';
@@ -253,7 +259,7 @@ function renderTable(el, rows, overall) {
     all.forEach(function(r) {
       html += '<tr>';
       html += '<td>' + esc(r.source) + '</td>';
-      html += '<td class="num">' + (r.unit_cost == null ? '—' : fmtMoney(r.unit_cost)) + '</td>';
+      html += '<td class="num">' + fmtMoney(r.cost_per_lead != null ? r.cost_per_lead : r.unit_cost) + '</td>';
       html += '<td class="num">' + esc(r.opp_count) + '</td>';
       html += '<td class="num">' + esc(r.refunded_excluded_count) + '</td>';
       html += '<td class="num">' + fmtMoney(r.spend) + '</td>';
@@ -422,6 +428,7 @@ async function load() {
     document.getElementById('overallTac').textContent = '—';
     document.getElementById('inboundCac').textContent = '—';
     document.getElementById('inboundTac').textContent = '—';
+    document.getElementById('inboundCpl').textContent = '—';
     document.getElementById('windowKpi').textContent = '—';
     document.getElementById('windowMeta').textContent = data.error || 'Failed to load';
     return;
@@ -461,6 +468,14 @@ async function load() {
       ? (fmtMoney(inbound.setter_spend) + ' setter · TAC = CAC + $500')
       : (fmtMoney(inbound.setter_spend) + ' setter · TAC blank until spend is live'))
     : 'lead CAC + $500 setter';
+  var inboundCpl = inbound
+    ? (inbound.cost_per_lead != null ? inbound.cost_per_lead : inbound.unit_cost)
+    : null;
+  document.getElementById('inboundCpl').textContent = fmtMoney(inboundCpl);
+  document.getElementById('inboundCplMeta').textContent = inbound
+    ? ((inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable')
+      + ' ÷ ' + (inbound.opp_count == null ? '—' : inbound.opp_count) + ' form fills')
+    : 'Meta spend ÷ website form fills';
   var banner = document.getElementById('inboundSpendBanner');
   if (banner) banner.style.display = (!inbound || inbound.spend_status !== 'ok') ? '' : 'none';
   document.getElementById('setterUnitKpi').textContent = fmtMoney(setterUnit != null ? setterUnit : 500);

@@ -23,6 +23,28 @@ if str(API_DIR) not in sys.path:
 
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
+MONTH_DROPDOWN_COUNT = 24
+
+
+def recent_month_options(now: datetime, count: int = MONTH_DROPDOWN_COUNT) -> list[dict[str, object]]:
+    year = now.year
+    month = now.month
+    options: list[dict[str, object]] = []
+    for _ in range(max(0, int(count))):
+        options.append(
+            {
+                "year": year,
+                "month": month,
+                "value": f"{year:04d}-{month:02d}",
+                "label": datetime(year, month, 1).strftime("%b %Y"),
+            }
+        )
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return options
+
 
 def render_html(
     timeframe: str = "all",
@@ -38,9 +60,30 @@ def render_html(
     year = int(year) if year else now.year
     month = int(month) if month else now.month
     quarter = int(quarter) if quarter else ((month - 1) // 3) + 1
-    timeframe = (timeframe or "all").strip().lower()
-    if timeframe not in {"all", "month", "quarter"}:
+    timeframe = (timeframe or "all").strip().lower().replace("_", "-")
+    if timeframe in {"this-year", "thisyear"}:
+        timeframe = "year"
+    if timeframe not in {"all", "year", "month"}:
         timeframe = "all"
+    selected_month = f"{year:04d}-{month:02d}" if timeframe == "month" else ""
+    month_options = recent_month_options(now)
+    if selected_month and selected_month not in {item["value"] for item in month_options}:
+        month_options.append(
+            {
+                "year": year,
+                "month": month,
+                "value": selected_month,
+                "label": datetime(year, month, 1).strftime("%b %Y"),
+            }
+        )
+    month_options_html = '<option value="">Month…</option>' + "".join(
+        (
+            f'<option value="{item["value"]}"'
+            f'{" selected" if item["value"] == selected_month else ""}>'
+            f'{item["label"]}</option>'
+        )
+        for item in month_options
+    )
     html = r"""<!doctype html>
 <html>
 <head>
@@ -65,6 +108,7 @@ __DASHBOARD_NAV_CSS__
     .filter { display:flex; align-items:center; gap:8px; }
     .filter-label { font-size:12px; color:var(--muted); background:#f0f2f5; padding:9px 10px; border-radius:10px; border:1px solid var(--border); }
     select, button, textarea, input[type="search"], input.dash-field { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }
+    select.monthpick { min-width:132px; }
     button { background:var(--green); border-color:var(--green); color:#fff; font-weight:900; cursor:pointer; }
     button.tab { background:#fff; color:#1f2937; border-color:var(--border); font-weight:800; }
     button.tab.active { background:rgba(0,200,83,.10); border-color:rgba(0,200,83,.45); color:#0a7a34; }
@@ -121,14 +165,13 @@ __DASHBOARD_NAV_HTML__
         <div class="filter"><div class="filter-label">Timeframe</div>
           <div class="tabs" id="timeframeTabs">
             <button type="button" class="tab" data-timeframe="all">All time</button>
-            <button type="button" class="tab" data-timeframe="month">Month</button>
-            <button type="button" class="tab" data-timeframe="quarter">Quarter</button>
+            <button type="button" class="tab" data-timeframe="year">This year</button>
           </div>
         </div>
+        <div class="filter" id="monthFilter">
+          <select id="month" class="monthpick" aria-label="Month">__MONTH_OPTIONS__</select>
+        </div>
         <div class="filter"><div class="filter-label">Salesperson</div><select id="salesperson"></select></div>
-        <div class="filter" id="yearFilter"><div class="filter-label">Year</div><select id="year"></select></div>
-        <div class="filter" id="monthFilter"><div class="filter-label">Month</div><select id="month"></select></div>
-        <div class="filter" id="quarterFilter"><div class="filter-label">Quarter</div><select id="quarter"></select></div>
         <button id="apply">Apply</button>
       </div>
     </div>
@@ -163,15 +206,13 @@ __DASHBOARD_NAV_HTML__
   </div>
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 <script>
+var currentYear = __NOW_YEAR__;
 var defaultYear = __YEAR__;
 var defaultMonth = __MONTH__;
-var defaultQuarter = __QUARTER__;
 var defaultTimeframe = "__TIMEFRAME__";
 var defaultInstaller = "__INSTALLER__";
 var defaultSalesperson = "__SALESPERSON__";
-var yearSel = document.getElementById('year');
 var monthSel = document.getElementById('month');
-var quarterSel = document.getElementById('quarter');
 var salespersonSel = document.getElementById('salesperson');
 var installer = defaultInstaller || 'all';
 var timeframe = defaultTimeframe || 'all';
@@ -192,18 +233,14 @@ function setOptions(sel, options, value) {
     sel.appendChild(o);
   });
 }
-var years = [];
-for (var y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
-var months = [];
-for (var i = 0; i < 12; i++) months.push({value: i + 1, label: new Date(2000, i, 1).toLocaleString('en-US', {month: 'long'})});
-setOptions(yearSel, years, defaultYear);
-setOptions(monthSel, months, defaultMonth);
-setOptions(quarterSel, [
-  {value: 1, label: 'Q1'},
-  {value: 2, label: 'Q2'},
-  {value: 3, label: 'Q3'},
-  {value: 4, label: 'Q4'}
-], defaultQuarter);
+function selectedMonthValue() {
+  return String(monthSel.value || '').trim();
+}
+function parseMonthValue(value) {
+  var match = /^(\d{4})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return null;
+  return { year: match[1], month: String(parseInt(match[2], 10)) };
+}
 setOptions(salespersonSel, [{value: '', label: 'All'}], defaultSalesperson);
 function esc(v) {
   return String(v == null ? '' : v)
@@ -216,10 +253,7 @@ function markTabs() {
   document.querySelectorAll('#timeframeTabs .tab').forEach(function(btn) {
     btn.classList.toggle('active', btn.getAttribute('data-timeframe') === timeframe);
   });
-  var showYear = timeframe === 'month' || timeframe === 'quarter';
-  document.getElementById('yearFilter').style.display = showYear ? '' : 'none';
-  document.getElementById('monthFilter').style.display = timeframe === 'month' ? '' : 'none';
-  document.getElementById('quarterFilter').style.display = timeframe === 'quarter' ? '' : 'none';
+  if (timeframe !== 'month' && selectedMonthValue()) monthSel.value = '';
 }
 function query() {
   var params = new URLSearchParams({
@@ -227,14 +261,21 @@ function query() {
     installer: installer
   });
   if (timeframe === 'month') {
-    params.set('year', yearSel.value);
-    params.set('month', monthSel.value);
-  } else if (timeframe === 'quarter') {
-    params.set('year', yearSel.value);
-    params.set('quarter', quarterSel.value);
+    var picked = parseMonthValue(selectedMonthValue());
+    if (picked) {
+      params.set('year', picked.year);
+      params.set('month', picked.month);
+    }
+  } else if (timeframe === 'year') {
+    params.set('year', String(currentYear));
   }
   if (salespersonSel.value) params.set('salesperson', salespersonSel.value);
   return params.toString();
+}
+function syncPageUrl() {
+  if (!window.history || !window.history.replaceState) return;
+  var next = '/api/sales_list' + (query() ? '?' + query() : '');
+  window.history.replaceState({}, '', next);
 }
 function viewQuery() {
   var params = new URLSearchParams(query());
@@ -426,8 +467,12 @@ async function load() {
   var end = String(data.window_end_local || '').slice(0, 10);
   var locked = data.debug && data.debug.sales_result != null ? data.debug.sales_result : data.result;
   grainResult = locked == null ? grainResult : locked;
-  var frame = data.timeframe === 'all' ? 'All time' : (data.timeframe === 'quarter' ? 'Quarter' : (data.timeframe === 'month' ? 'Month' : (data.timeframe || '')));
+  var frame = data.timeframe === 'all' ? 'All time' : (data.timeframe === 'year' ? 'This year' : (data.timeframe === 'month' ? 'Month' : (data.timeframe === 'quarter' ? 'Quarter' : (data.timeframe || ''))));
+  if (data.timeframe === 'month' && data.year && data.month) {
+    frame = new Date(Number(data.year), Number(data.month) - 1, 1).toLocaleString('en-US', {month: 'short', year: 'numeric'});
+  }
   document.getElementById('windowMeta').textContent = (frame ? frame + ' · ' : '') + start + ' to ' + end + ' (' + (data.timezone || '') + ')';
+  syncPageUrl();
   var people = [{value: '', label: 'All'}].concat((data.salespeople || []).map(function(name) {
     return {value: name, label: name};
   }));
@@ -460,9 +505,22 @@ document.querySelectorAll('#installerTabs .tab').forEach(function(btn) {
 document.querySelectorAll('#timeframeTabs .tab').forEach(function(btn) {
   btn.addEventListener('click', function() {
     timeframe = btn.getAttribute('data-timeframe') || 'all';
+    monthSel.value = '';
     markTabs();
     load();
   });
+});
+monthSel.addEventListener('change', function() {
+  var picked = parseMonthValue(selectedMonthValue());
+  if (!picked) {
+    timeframe = 'all';
+  } else {
+    timeframe = 'month';
+    defaultYear = Number(picked.year);
+    defaultMonth = Number(picked.month);
+  }
+  markTabs();
+  load();
 });
 markTabs();
 load();
@@ -471,9 +529,10 @@ load();
 </html>
 """
     return (
-        html.replace("__YEAR__", str(year))
+        html.replace("__NOW_YEAR__", str(now.year))
+        .replace("__YEAR__", str(year))
         .replace("__MONTH__", str(month))
-        .replace("__QUARTER__", str(quarter))
+        .replace("__MONTH_OPTIONS__", month_options_html)
         .replace("__TIMEFRAME__", timeframe.replace('"', ""))
         .replace("__INSTALLER__", installer.replace('"', ""))
         .replace("__SALESPERSON__", salesperson.replace('"', "").replace("<", ""))

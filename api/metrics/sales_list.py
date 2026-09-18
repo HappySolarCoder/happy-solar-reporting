@@ -36,7 +36,8 @@ ALL_TIME_START = "2018-01-01"
 DEFAULT_TZ = "America/New_York"
 GHL_APP_ORIGIN = "https://app.gohighlevel.com"
 DEFAULT_GHL_LOCATION_ID = "MMKRDviKggXzlcHQTnvZ"
-TIMEFRAMES: tuple[str, ...] = ("all", "month", "quarter")
+TIMEFRAMES: tuple[str, ...] = ("all", "year", "month", "quarter")
+MONTH_DROPDOWN_COUNT = 24
 OVERLAY_UNSET = object()
 SEARCH_FIELDS: tuple[str, ...] = (
     "client",
@@ -199,6 +200,8 @@ def parse_timeframe(value: Any) -> str:
     text = compact_text(value).lower().replace("_", "-")
     if text in {"month"}:
         return "month"
+    if text in {"year", "this-year", "thisyear"}:
+        return "year"
     if text in {"quarter", "q"}:
         return "quarter"
     if text in {"range", "custom"}:
@@ -231,6 +234,40 @@ def quarter_date_bounds(year: int, quarter: int) -> tuple[str, str]:
     end_month = start_month + 2
     last_day = calendar.monthrange(int(year), end_month)[1]
     return f"{int(year):04d}-{start_month:02d}-01", f"{int(year):04d}-{end_month:02d}-{last_day:02d}"
+
+
+def year_date_bounds(year: int) -> tuple[str, str]:
+    """Inclusive calendar-year sold-date bounds (Jan 1 → Dec 31)."""
+    y = int(year)
+    return f"{y:04d}-01-01", f"{y:04d}-12-31"
+
+
+def recent_calendar_months(
+    now: datetime | None = None,
+    *,
+    count: int = MONTH_DROPDOWN_COUNT,
+    tz: str = DEFAULT_TZ,
+) -> list[dict[str, Any]]:
+    """Newest-first calendar months for the Sales List month dropdown."""
+    zone = ZoneInfo(tz)
+    current = now.astimezone(zone) if now is not None else datetime.now(zone)
+    year = current.year
+    month = current.month
+    months: list[dict[str, Any]] = []
+    for _ in range(max(0, int(count))):
+        months.append(
+            {
+                "year": year,
+                "month": month,
+                "value": f"{year:04d}-{month:02d}",
+                "label": datetime(year, month, 1).strftime("%b %Y"),
+            }
+        )
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return months
 
 
 def all_time_date_bounds(now: datetime | None = None, tz: str = DEFAULT_TZ) -> tuple[str, str]:
@@ -282,6 +319,16 @@ def resolve_sales_list_window(
             "quarter": current_quarter(resolved_month),
             "start": None,
             "end": None,
+        }
+    if tf == "year":
+        y_start, y_end = year_date_bounds(resolved_year)
+        return {
+            "timeframe": "year",
+            "year": resolved_year,
+            "month": 1,
+            "quarter": current_quarter(current.month) if resolved_year == current.year else 1,
+            "start": y_start,
+            "end": y_end,
         }
     if tf == "quarter":
         q_start, q_end = quarter_date_bounds(resolved_year, resolved_quarter)

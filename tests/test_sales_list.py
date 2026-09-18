@@ -449,6 +449,65 @@ class TimeframeWindowTests(unittest.TestCase):
         self.assertIsNone(window["start"])
         self.assertIsNone(window["end"])
 
+    def test_year_window_is_calendar_year_in_new_york(self):
+        now = datetime(2026, 9, 17, 15, 0, tzinfo=ZoneInfo("America/New_York"))
+        self.assertEqual(sales_list.parse_timeframe("year"), "year")
+        self.assertEqual(sales_list.parse_timeframe("this-year"), "year")
+        self.assertEqual(sales_list.parse_timeframe("this_year"), "year")
+        self.assertEqual(sales_list.year_date_bounds(2026), ("2026-01-01", "2026-12-31"))
+        self.assertEqual(sales_list.year_date_bounds(2024), ("2024-01-01", "2024-12-31"))
+
+        window = sales_list.resolve_sales_list_window(timeframe="year", now=now)
+        self.assertEqual(window["timeframe"], "year")
+        self.assertEqual(window["year"], 2026)
+        self.assertEqual(window["start"], "2026-01-01")
+        self.assertEqual(window["end"], "2026-12-31")
+
+        explicit = sales_list.resolve_sales_list_window(timeframe="year", year=2025, now=now)
+        self.assertEqual(explicit["year"], 2025)
+        self.assertEqual(explicit["start"], "2025-01-01")
+        self.assertEqual(explicit["end"], "2025-12-31")
+
+        captured = {}
+
+        def fake_compute_essential_sales(db, contract, **kwargs):
+            captured.update(kwargs)
+            captured["stages"] = contract.stage_ids
+            return sample_essential_payload()
+
+        original = sales_list.compute_essential_sales
+        sales_list.compute_essential_sales = fake_compute_essential_sales
+        try:
+            payload = sales_list.compute_sales_list(
+                db=FakeDb(),
+                contract=sales.SalesMetricContract(),
+                timeframe="year",
+                tz="America/New_York",
+                now=now,
+                notes_by_contact={},
+            )
+        finally:
+            sales_list.compute_essential_sales = original
+
+        self.assertEqual(payload["timeframe"], "year")
+        self.assertEqual(payload["filters"]["timeframe"], "year")
+        self.assertEqual(captured["start"], "2026-01-01")
+        self.assertEqual(captured["end"], "2026-12-31")
+        self.assertEqual(captured["stages"], sales.SalesMetricContract().stage_ids)
+        self.assertEqual(payload["debug"]["resolved_start"], "2026-01-01")
+        self.assertEqual(payload["debug"]["resolved_end"], "2026-12-31")
+
+    def test_recent_calendar_months_lists_last_24(self):
+        now = datetime(2026, 9, 17, tzinfo=ZoneInfo("America/New_York"))
+        months = sales_list.recent_calendar_months(now)
+        self.assertEqual(len(months), 24)
+        self.assertEqual(months[0]["value"], "2026-09")
+        self.assertEqual(months[0]["label"], "Sep 2026")
+        self.assertEqual(months[1]["value"], "2026-08")
+        self.assertEqual(months[1]["label"], "Aug 2026")
+        self.assertEqual(months[-1]["value"], "2024-10")
+        self.assertEqual(months[-1]["label"], "Oct 2024")
+
     def test_quarter_window_maps_to_start_end(self):
         q1 = sales_list.resolve_sales_list_window(timeframe="quarter", year=2026, quarter=1)
         self.assertEqual(q1["start"], "2026-01-01")
@@ -671,12 +730,26 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn('var defaultTimeframe = "all";', html)
         self.assertIn('var defaultInstaller = "all";', html)
         self.assertIn('data-timeframe="all"', html)
-        self.assertIn('data-timeframe="month"', html)
-        self.assertIn('data-timeframe="quarter"', html)
+        self.assertIn('data-timeframe="year"', html)
+        self.assertIn("This year", html)
+        self.assertIn("Month…", html)
+        self.assertNotIn('data-timeframe="quarter"', html)
+        self.assertNotIn('id="yearFilter"', html)
+        self.assertNotIn('id="quarterFilter"', html)
         self.assertIn("params.set('year'", html)
         self.assertIn("timeframe: timeframe", html)
         self.assertIn("if (timeframe === 'month')", html)
+        self.assertIn("monthSel.value = ''", html)
         self.assertNotIn("year: yearSel.value,\n    month: monthSel.value,\n    installer: installer", html)
+        options = page.recent_month_options(datetime.now(ZoneInfo("America/New_York")))
+        self.assertEqual(len(options), 24)
+        self.assertIn(f'value="{options[0]["value"]}"', html)
+        self.assertIn(str(options[0]["label"]), html)
+        self.assertNotIn(f'value="{options[0]["value"]}" selected', html)
+        fixed = page.recent_month_options(datetime(2026, 9, 17, tzinfo=ZoneInfo("America/New_York")))
+        self.assertEqual(fixed[0]["label"], "Sep 2026")
+        self.assertEqual(fixed[0]["value"], "2026-09")
+        self.assertEqual(fixed[-1]["value"], "2024-10")
 
     def test_page_wires_metrics_and_notes_write(self):
         html = page.render_html(
@@ -692,6 +765,8 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("Dashboard notes", html)
         self.assertIn("var defaultInstaller = \"essential\";", html)
         self.assertIn('var defaultTimeframe = "month";', html)
+        self.assertIn('value="2026-08" selected', html)
+        self.assertIn("Aug 2026", html)
         self.assertIn("Alex Rivera", html)
         self.assertIn("renderVisible()", html)
         self.assertIn('id="searchBox"', html)
@@ -708,8 +783,10 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn('rel="noopener"', html)
         self.assertIn("c.key === 'client'", html)
         self.assertIn('data-installer="essential"', html)
-        self.assertIn('data-timeframe="quarter"', html)
+        self.assertIn('data-timeframe="year"', html)
         self.assertIn("textarea class=\"dash-note\"", html)
+        self.assertIn('id="month"', html)
+        self.assertIn("This year", html)
 
 
 class DispatchTests(unittest.TestCase):

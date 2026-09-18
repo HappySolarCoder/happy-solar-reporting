@@ -6,14 +6,16 @@ JSON grain for the Sales List dashboard (Essential / Momentum / 3rd Roc / All).
 Reuses compute_essential_sales → compute_sales. Does not invent a new sales grain,
 does not change locked stage IDs or the Sold Date field, and does not write to GHL.
 
-Dashboard notes live in Firestore named DB happy-solar, collection
-sales_list_notes_v1, keyed by contactId. GHL Appointment Notes stay read-only.
+Dashboard overlays (notes, email, phone) live in Firestore named DB happy-solar,
+collection sales_list_notes_v1, keyed by contactId. GHL Appointment Notes stay
+read-only. Email/phone fall back to ghl_contacts_v2 until an overlay is saved.
 """
 
 from __future__ import annotations
 
 import calendar
 import json
+import os
 import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
@@ -32,7 +34,21 @@ from sales import SalesMetricContract, get_db
 NOTES_COLLECTION = "sales_list_notes_v1"
 ALL_TIME_START = "2018-01-01"
 DEFAULT_TZ = "America/New_York"
+GHL_APP_ORIGIN = "https://app.gohighlevel.com"
+DEFAULT_GHL_LOCATION_ID = "MMKRDviKggXzlcHQTnvZ"
 TIMEFRAMES: tuple[str, ...] = ("all", "month", "quarter")
+OVERLAY_UNSET = object()
+SEARCH_FIELDS: tuple[str, ...] = (
+    "client",
+    "address",
+    "email",
+    "phone",
+    "salesperson",
+    "installer",
+    "contactId",
+    "notes",
+    "dashboardNote",
+)
 
 INSTALLER_TABS: tuple[tuple[str, str], ...] = (
     ("all", "All"),
@@ -78,15 +94,70 @@ INSTALLER_ALIASES: dict[str, frozenset[str]] = {
     ),
 }
 
+# Date sold stays first. Evan: client name 2nd, installer 3rd. Remaining
+# Essential-tab fields keep their prior relative order, plus dashboard notes.
+_ESSENTIAL_LABELS = {key: label for key, label in ESSENTIAL_COLUMNS}
+SALES_LIST_COLUMN_KEYS: tuple[str, ...] = (
+    "submissionDate",
+    "client",
+    "installer",
+    "financeType",
+    "salesperson",
+    "wc",
+    "asi",
+    "esco",
+    "cdg",
+    "size",
+    "phone",
+    "email",
+    "address",
+    "notes",
+    "dashboardNote",
+    "retentionRep",
+    "systemChecks",
+    "qp",
+)
 SALES_LIST_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    list(ESSENTIAL_COLUMNS[:13])
-    + [("dashboardNote", "Dashboard notes")]
-    + list(ESSENTIAL_COLUMNS[13:])
+    (key, "Dashboard notes" if key == "dashboardNote" else _ESSENTIAL_LABELS[key])
+    for key in SALES_LIST_COLUMN_KEYS
 )
 
 
 def compact_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def ghl_location_id(value: Any = None) -> str:
+    """Happy Solar GHL location. Same default as data_cleanup / buffalo_overrides."""
+    return compact_text(value) or compact_text(os.environ.get("GHL_LOCATION_ID")) or DEFAULT_GHL_LOCATION_ID
+
+
+def is_ghl_id(value: Any) -> bool:
+    text = compact_text(value)
+    return bool(text) and all(ch.isalnum() or ch in "-_" for ch in text)
+
+
+def ghl_contact_url(contact_id: Any, location_id: Any = None) -> str:
+    """Deep link used by buffalo_overrides / missing_dispos / data_cleanup."""
+    cid = compact_text(contact_id)
+    loc = ghl_location_id(location_id)
+    if not is_ghl_id(cid) or not is_ghl_id(loc):
+        return ""
+    return f"{GHL_APP_ORIGIN}/v2/location/{loc}/contacts/detail/{cid}"
+
+
+def attach_ghl_contact_urls(
+    rows: Iterable[dict[str, Any]],
+    *,
+    location_id: Any = None,
+) -> list[dict[str, Any]]:
+    loc = ghl_location_id(location_id)
+    attached: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["ghlContactUrl"] = ghl_contact_url(item.get("contactId"), loc)
+        attached.append(item)
+    return attached
 
 
 def normalize_installer_tab(value: Any) -> str | None:
@@ -274,27 +345,77 @@ def unique_salespeople(rows: Iterable[dict[str, Any]]) -> list[str]:
     return [names[key] for key in sorted(names)]
 
 
+def overlay_text(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def normalize_overlays(notes_by_contact: dict[str, Any] | None) -> dict[str, dict[str, str]]:
+    """Accept legacy {contactId: note} maps or full {contactId: {note, email, phone}} overlays."""
+    overlays: dict[str, dict[str, str]] = {}
+    for raw_id, value in (notes_by_contact or {}).items():
+        contact_id = compact_text(raw_id)
+        if not contact_id:
+            continue
+        if isinstance(value, dict):
+            overlay: dict[str, str] = {"note": overlay_text(value.get("note"))}
+            if "email" in value:
+                overlay["email"] = overlay_text(value.get("email"))
+            if "phone" in value:
+                overlay["phone"] = overlay_text(value.get("phone"))
+            overlays[contact_id] = overlay
+        else:
+            overlays[contact_id] = {"note": overlay_text(value)}
+    return overlays
+
+
 def merge_dashboard_notes(
     rows: Iterable[dict[str, Any]],
-    notes_by_contact: dict[str, str] | None,
+    notes_by_contact: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    stored = notes_by_contact or {}
+    return merge_contact_overlays(rows, notes_by_contact)
+
+
+def merge_contact_overlays(
+    rows: Iterable[dict[str, Any]],
+    notes_by_contact: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    stored = normalize_overlays(notes_by_contact)
     merged: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
         contact_id = compact_text(item.get("contactId"))
-        note = stored.get(contact_id, "")
-        item["dashboardNote"] = "" if note is None else str(note)
+        overlay = stored.get(contact_id) or {}
+        item["dashboardNote"] = overlay.get("note", "")
+        if "email" in overlay:
+            item["email"] = overlay["email"]
+        if "phone" in overlay:
+            item["phone"] = overlay["phone"]
         merged.append(item)
     return merged
 
 
-def load_notes_by_contact_ids(db: Any, contact_ids: Iterable[Any]) -> dict[str, str]:
+def _overlay_from_snap(snap: Any) -> tuple[str, dict[str, str]] | None:
+    if snap is None or not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() if hasattr(snap, "to_dict") else None
+    data = data if isinstance(data, dict) else {}
+    contact_id = compact_text(data.get("contactId") or getattr(snap, "id", ""))
+    if not contact_id:
+        return None
+    overlay: dict[str, str] = {"note": overlay_text(data.get("note"))}
+    if "email" in data:
+        overlay["email"] = overlay_text(data.get("email"))
+    if "phone" in data:
+        overlay["phone"] = overlay_text(data.get("phone"))
+    return contact_id, overlay
+
+
+def load_overlays_by_contact_ids(db: Any, contact_ids: Iterable[Any]) -> dict[str, dict[str, str]]:
     ids = [compact_text(cid) for cid in contact_ids]
     unique_ids = [cid for cid in dict.fromkeys(ids) if cid]
-    notes: dict[str, str] = {}
+    overlays: dict[str, dict[str, str]] = {}
     if not unique_ids or db is None:
-        return notes
+        return overlays
     refs = [db.collection(NOTES_COLLECTION).document(cid) for cid in unique_ids]
     snaps: list[Any]
     if hasattr(db, "get_all"):
@@ -304,30 +425,98 @@ def load_notes_by_contact_ids(db: Any, contact_ids: Iterable[Any]) -> dict[str, 
     else:
         snaps = [ref.get() for ref in refs]
     for snap in snaps:
-        if snap is None or not getattr(snap, "exists", False):
+        parsed = _overlay_from_snap(snap)
+        if parsed is None:
             continue
-        data = snap.to_dict() if hasattr(snap, "to_dict") else None
-        data = data if isinstance(data, dict) else {}
-        contact_id = compact_text(data.get("contactId") or getattr(snap, "id", ""))
-        if not contact_id:
-            continue
-        note = data.get("note")
-        notes[contact_id] = "" if note is None else str(note)
-    return notes
+        contact_id, overlay = parsed
+        overlays[contact_id] = overlay
+    return overlays
 
 
-def upsert_sales_list_note(db: Any, *, contact_id: Any, note: Any) -> dict[str, str]:
+def load_notes_by_contact_ids(db: Any, contact_ids: Iterable[Any]) -> dict[str, str]:
+    overlays = load_overlays_by_contact_ids(db, contact_ids)
+    return {cid: overlay.get("note", "") for cid, overlay in overlays.items()}
+
+
+def upsert_sales_list_overlay(
+    db: Any,
+    *,
+    contact_id: Any,
+    note: Any = OVERLAY_UNSET,
+    email: Any = OVERLAY_UNSET,
+    phone: Any = OVERLAY_UNSET,
+) -> dict[str, str]:
     cid = compact_text(contact_id)
     if not cid:
         raise ValueError("contactId is required")
-    text = "" if note is None else str(note)
-    payload = {
+    if note is OVERLAY_UNSET and email is OVERLAY_UNSET and phone is OVERLAY_UNSET:
+        raise ValueError("note, email, or phone is required")
+    payload: dict[str, str] = {
         "contactId": cid,
-        "note": text,
         "updated_at": datetime.utcnow().isoformat() + "Z",
     }
+    if note is not OVERLAY_UNSET:
+        payload["note"] = overlay_text(note)
+    if email is not OVERLAY_UNSET:
+        payload["email"] = compact_text(email)
+    if phone is not OVERLAY_UNSET:
+        payload["phone"] = compact_text(phone)
     db.collection(NOTES_COLLECTION).document(cid).set(payload, merge=True)
-    return {"contactId": cid, "note": text, "updated_at": payload["updated_at"]}
+    return dict(payload)
+
+
+def upsert_sales_list_note(db: Any, *, contact_id: Any, note: Any) -> dict[str, str]:
+    return upsert_sales_list_overlay(db, contact_id=contact_id, note=note)
+
+
+def digits_only(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def row_matches_search(row: dict[str, Any] | None, query: Any) -> bool:
+    q = compact_text(query).casefold()
+    if not q:
+        return True
+    item = row if isinstance(row, dict) else {}
+    for field in SEARCH_FIELDS:
+        if q in compact_text(item.get(field)).casefold():
+            return True
+    q_digits = digits_only(query)
+    if len(q_digits) >= 4 and q_digits in digits_only(item.get("phone")):
+        return True
+    return False
+
+
+def search_sales_list_rows(rows: Iterable[dict[str, Any]], query: Any) -> list[dict[str, Any]]:
+    if not compact_text(query):
+        return list(rows)
+    return [row for row in rows if row_matches_search(row, query)]
+
+
+def parse_sort_order(value: Any, *, default: str = "asc") -> str:
+    text = compact_text(value).lower()
+    if text in {"desc", "descending", "newest", "newest-first", "newest_first"}:
+        return "desc"
+    if text in {"asc", "ascending", "oldest", "oldest-first", "oldest_first"}:
+        return "asc"
+    return "asc" if default == "asc" else "desc"
+
+
+def sort_sales_list_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    order: str = "asc",
+) -> list[dict[str, Any]]:
+    descending = parse_sort_order(order) == "desc"
+
+    def sort_key(row: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            compact_text(row.get("submissionDate")),
+            compact_text(row.get("client")).casefold(),
+            compact_text(row.get("contactId")),
+        )
+
+    return sorted(rows, key=sort_key, reverse=descending)
 
 
 def compute_sales_list(
@@ -343,11 +532,15 @@ def compute_sales_list(
     end: str | None = None,
     installer: str = "all",
     salesperson: str = "",
-    notes_by_contact: dict[str, str] | None = None,
+    query: str = "",
+    sort_order: str = "asc",
+    notes_by_contact: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     installer_key = parse_installer_filter(installer)
     salesperson_key = parse_salesperson_filter(salesperson)
+    search_query = compact_text(query)
+    order_key = parse_sort_order(sort_order)
     window = resolve_sales_list_window(
         timeframe=timeframe,
         year=year,
@@ -369,20 +562,25 @@ def compute_sales_list(
         end=window["end"],
     )
     base_rows = list(base.get("rows") or [])
-    stored_notes = (
-        notes_by_contact
+    stored_overlays = (
+        normalize_overlays(notes_by_contact)
         if notes_by_contact is not None
-        else load_notes_by_contact_ids(db, (row.get("contactId") for row in base_rows))
+        else load_overlays_by_contact_ids(db, (row.get("contactId") for row in base_rows))
     )
-    rows_with_notes = merge_dashboard_notes(base_rows, stored_notes)
+    rows_with_notes = attach_ghl_contact_urls(merge_contact_overlays(base_rows, stored_overlays))
     salespeople = unique_salespeople(rows_with_notes)
+    location_key = ghl_location_id()
     filtered = apply_sales_list_filters(
         rows_with_notes,
         installer=installer_key,
         salesperson=salesperson_key,
     )
+    tab_filtered_count = len(filtered)
+    if search_query:
+        filtered = search_sales_list_rows(filtered, search_query)
+    filtered = sort_sales_list_rows(filtered, order=order_key)
     locked_result = base.get("result")
-    sales_count = len(filtered)
+    sales_count = tab_filtered_count
     unfiltered = installer_key == "all" and not salesperson_key
     return {
         "metric": "Sales List",
@@ -404,9 +602,13 @@ def compute_sales_list(
             "timeframe": window["timeframe"],
             "start": window["start"],
             "end": window["end"],
+            "q": search_query,
+            "sort": "submissionDate",
+            "order": order_key,
         },
         "installer_tabs": [{"key": key, "label": label} for key, label in INSTALLER_TABS],
         "salespeople": salespeople,
+        "ghl_location_id": location_key,
         "columns": [{"key": key, "label": label} for key, label in SALES_LIST_COLUMNS],
         "rows": filtered,
         "debug": {
@@ -419,12 +621,17 @@ def compute_sales_list(
             "timeframe": window["timeframe"],
             "resolved_start": window["start"],
             "resolved_end": window["end"],
+            "search_query": search_query,
+            "sort": "submissionDate",
+            "order": order_key,
             "notes_collection": NOTES_COLLECTION,
-            "notes_loaded": len(stored_notes),
+            "notes_loaded": len(stored_overlays),
+            "ghl_location_id": location_key,
         },
         "contract": {
             **(base.get("contract") or {}),
-            "layout": "Yadmada Job Tracker Essential/Momentum/3rd Roc columns plus Dashboard notes",
+            "layout": "Yadmada Job Tracker columns: date sold, client, installer, then remaining Essential fields plus Dashboard notes",
+            "ghl_contact_url": f"{GHL_APP_ORIGIN}/v2/location/{{locationId}}/contacts/detail/{{contactId}}",
             "installer_filter": None if installer_key == "all" else installer_key,
             "salesperson_filter": salesperson_key or None,
             "dashboard_notes": {
@@ -432,6 +639,7 @@ def compute_sales_list(
                 "database": "happy-solar",
                 "key": "contactId",
                 "ghl_writeback": False,
+                "fields": ["note", "email", "phone"],
             },
             "fields": {
                 **((base.get("contract") or {}).get("fields") or {}),
@@ -440,6 +648,18 @@ def compute_sales_list(
                     "ghl_contacts_v2.customFields[Q2NUde7fCBQWp7GU76ca] Appointment Notes only",
                 ),
                 "dashboardNote": f"firestore {NOTES_COLLECTION}/{{contactId}}.note (dashboard only; never GHL)",
+                "email": (
+                    "ghl_contacts_v2.email, overlaid by "
+                    f"firestore {NOTES_COLLECTION}/{{contactId}}.email when set"
+                ),
+                "phone": (
+                    "ghl_contacts_v2.phone, overlaid by "
+                    f"firestore {NOTES_COLLECTION}/{{contactId}}.phone when set"
+                ),
+                "ghlContactUrl": (
+                    f"{GHL_APP_ORIGIN}/v2/location/{{locationId}}/contacts/detail/{{contactId}} "
+                    "when contactId is present; empty otherwise"
+                ),
             },
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -462,6 +682,8 @@ class handler(BaseHTTPRequestHandler):
             end = compact_text(qs.get("end", [""])[0]) or None
             installer = parse_installer_filter(qs.get("installer", ["all"])[0])
             salesperson = parse_salesperson_filter(qs.get("salesperson", [""])[0])
+            query = compact_text(qs.get("q", [""])[0])
+            sort_order = parse_sort_order(qs.get("order", ["asc"])[0])
 
             contract = SalesMetricContract()
             payload = compute_sales_list(
@@ -476,6 +698,8 @@ class handler(BaseHTTPRequestHandler):
                 end=end,
                 installer=installer,
                 salesperson=salesperson,
+                query=query,
+                sort_order=sort_order,
                 now=now,
             )
             body = json.dumps(payload).encode("utf-8")

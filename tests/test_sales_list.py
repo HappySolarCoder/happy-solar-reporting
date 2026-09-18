@@ -94,6 +94,9 @@ def sample_rows():
             "client": "Essential Client",
             "salesperson": "Alex Rivera",
             "installer": "Essential",
+            "email": "ess@example.com",
+            "phone": "+15855550101",
+            "address": "Rochester, New York 14606",
             "notes": "GHL appointment note",
         },
         {
@@ -102,6 +105,9 @@ def sample_rows():
             "client": "Momentum Client",
             "salesperson": "Alex Rivera",
             "installer": "Momentum Solar",
+            "email": "mom@example.com",
+            "phone": "716-555-0102",
+            "address": "Buffalo, New York 14221",
             "notes": "",
         },
         {
@@ -110,6 +116,9 @@ def sample_rows():
             "client": "Roc Client",
             "salesperson": "Pat Lee",
             "installer": "3rd Roc",
+            "email": "",
+            "phone": "5855550103",
+            "address": "Henrietta, NY 14467",
             "notes": "",
         },
         {
@@ -118,6 +127,9 @@ def sample_rows():
             "client": "Other Client",
             "salesperson": "Jordan",
             "installer": "Unknown Shop",
+            "email": "other@example.com",
+            "phone": "",
+            "address": "12 Main St, Albany, NY",
             "notes": "",
         },
     ]
@@ -215,6 +227,25 @@ class NotesMergeUpsertTests(unittest.TestCase):
         self.assertEqual(by_id["c-other"], "")
         self.assertNotIn("EXAMPLE", "".join(by_id.values()))
         self.assertEqual(merged[0]["notes"], "GHL appointment note")
+        self.assertEqual(merged[0]["email"], "ess@example.com")
+        self.assertEqual(merged[0]["phone"], "+15855550101")
+
+    def test_merge_overlays_email_and_phone_when_set(self):
+        merged = sales_list.merge_contact_overlays(
+            sample_rows(),
+            {
+                "c-ess": {"note": "Keep", "email": "new@happy.solar", "phone": "585-555-9999"},
+                "c-mom": {"note": "", "email": ""},
+            },
+        )
+        by_id = {row["contactId"]: row for row in merged}
+        self.assertEqual(by_id["c-ess"]["dashboardNote"], "Keep")
+        self.assertEqual(by_id["c-ess"]["email"], "new@happy.solar")
+        self.assertEqual(by_id["c-ess"]["phone"], "585-555-9999")
+        self.assertEqual(by_id["c-mom"]["email"], "")
+        self.assertEqual(by_id["c-mom"]["phone"], "716-555-0102")
+        self.assertEqual(by_id["c-roc"]["email"], "")
+        self.assertEqual(by_id["c-roc"]["phone"], "5855550103")
 
     def test_load_and_upsert_round_trip(self):
         db = FakeDb()
@@ -232,9 +263,30 @@ class NotesMergeUpsertTests(unittest.TestCase):
         self.assertEqual(cleared["note"], "")
         self.assertEqual(sales_list.load_notes_by_contact_ids(db, ["c-ess"])["c-ess"], "")
 
+    def test_partial_email_phone_upsert_does_not_wipe_note(self):
+        db = FakeDb()
+        sales_list.upsert_sales_list_note(db, contact_id="c-ess", note="Keep this")
+        saved = sales_list.upsert_sales_list_overlay(
+            db,
+            contact_id="c-ess",
+            email="patched@happy.solar",
+            phone="5855550000",
+        )
+        self.assertEqual(saved["email"], "patched@happy.solar")
+        self.assertEqual(saved["phone"], "5855550000")
+        self.assertNotIn("note", saved)
+        self.assertEqual(db.notes["c-ess"]["note"], "Keep this")
+        self.assertEqual(db.notes["c-ess"]["email"], "patched@happy.solar")
+        overlays = sales_list.load_overlays_by_contact_ids(db, ["c-ess"])
+        self.assertEqual(overlays["c-ess"]["note"], "Keep this")
+        self.assertEqual(overlays["c-ess"]["email"], "patched@happy.solar")
+        self.assertEqual(overlays["c-ess"]["phone"], "5855550000")
+
     def test_upsert_requires_contact_id(self):
         with self.assertRaises(ValueError):
             sales_list.upsert_sales_list_note(FakeDb(), contact_id="  ", note="x")
+        with self.assertRaises(ValueError):
+            sales_list.upsert_sales_list_overlay(FakeDb(), contact_id="c-ess")
 
     def test_notes_collection_is_sales_list_notes_v1(self):
         self.assertEqual(sales_list.NOTES_COLLECTION, "sales_list_notes_v1")
@@ -286,7 +338,16 @@ class SalesGrainParityTests(unittest.TestCase):
         self.assertEqual(len(payload["rows"]), 4)
         self.assertEqual(
             payload["filters"],
-            {"installer": "all", "salesperson": "", "timeframe": "month", "start": None, "end": None},
+            {
+                "installer": "all",
+                "salesperson": "",
+                "timeframe": "month",
+                "start": None,
+                "end": None,
+                "q": "",
+                "sort": "submissionDate",
+                "order": "asc",
+            },
         )
         self.assertIsNone(payload["contract"]["installer_filter"])
         self.assertEqual(
@@ -315,8 +376,9 @@ class SalesGrainParityTests(unittest.TestCase):
         self.assertEqual(payload["filters"]["installer"], "essential")
         self.assertEqual(payload["filters"]["salesperson"], "Alex Rivera")
         self.assertIn("dashboardNote", [c["key"] for c in payload["columns"]])
-        self.assertEqual(payload["columns"][12]["key"], "notes")
-        self.assertEqual(payload["columns"][13]["key"], "dashboardNote")
+        self.assertEqual([c["key"] for c in payload["columns"][:3]], ["submissionDate", "client", "installer"])
+        self.assertEqual(payload["columns"][13]["key"], "notes")
+        self.assertEqual(payload["columns"][14]["key"], "dashboardNote")
 
     def test_start_end_pass_through_to_compute_sales(self):
         captured = {}
@@ -461,6 +523,138 @@ class TimeframeWindowTests(unittest.TestCase):
         self.assertEqual(payload["timeframe"], "all")
 
 
+class GhlContactLinkTests(unittest.TestCase):
+    def test_builds_gohighlevel_contact_url(self):
+        url = sales_list.ghl_contact_url("pu9YNEjiZjZAIMlDnvNe")
+        self.assertEqual(
+            url,
+            "https://app.gohighlevel.com/v2/location/MMKRDviKggXzlcHQTnvZ/contacts/detail/pu9YNEjiZjZAIMlDnvNe",
+        )
+        self.assertEqual(sales_list.ghl_contact_url(""), "")
+        self.assertEqual(sales_list.ghl_contact_url("  "), "")
+        self.assertEqual(sales_list.ghl_contact_url("../evil"), "")
+        self.assertEqual(sales_list.ghl_contact_url("id/with/slash"), "")
+
+    def test_attach_skips_missing_contact_id(self):
+        attach = sales_list.attach_ghl_contact_urls(
+            [
+                {"contactId": "c-ess", "client": "Essential Client"},
+                {"contactId": "", "client": "No Id"},
+                {"client": "Missing key"},
+            ]
+        )
+        self.assertTrue(attach[0]["ghlContactUrl"].endswith("/contacts/detail/c-ess"))
+        self.assertEqual(attach[1]["ghlContactUrl"], "")
+        self.assertEqual(attach[2]["ghlContactUrl"], "")
+        self.assertEqual(attach[1]["client"], "No Id")
+
+    def test_compute_includes_ghl_url_on_rows(self):
+        original = sales_list.compute_essential_sales
+        sales_list.compute_essential_sales = lambda db, contract, **kwargs: sample_essential_payload()
+        try:
+            payload = sales_list.compute_sales_list(
+                db=FakeDb(),
+                contract=sales.SalesMetricContract(),
+                timeframe="month",
+                year=2026,
+                month=8,
+                tz="America/New_York",
+                notes_by_contact={},
+            )
+        finally:
+            sales_list.compute_essential_sales = original
+        self.assertEqual(payload["ghl_location_id"], "MMKRDviKggXzlcHQTnvZ")
+        self.assertTrue(payload["rows"][0]["ghlContactUrl"].endswith("/contacts/detail/c-ess"))
+        self.assertIn("/v2/location/", payload["contract"]["ghl_contact_url"])
+
+
+class ColumnOrderTests(unittest.TestCase):
+    def test_client_second_and_installer_third(self):
+        keys = [key for key, _label in sales_list.SALES_LIST_COLUMNS]
+        self.assertEqual(keys[:3], ["submissionDate", "client", "installer"])
+        self.assertEqual(keys, list(sales_list.SALES_LIST_COLUMN_KEYS))
+        self.assertEqual(len(keys), len(set(keys)))
+        essential_keys = [key for key, _label in essential.ESSENTIAL_COLUMNS]
+        self.assertEqual(set(keys) - {"dashboardNote"}, set(essential_keys))
+        self.assertEqual(essential_keys[0], "submissionDate")
+        self.assertNotEqual(essential_keys[1], "client")
+        self.assertNotEqual(essential_keys[2], "installer")
+
+
+class SearchAndSortTests(unittest.TestCase):
+    def test_empty_query_returns_full_set(self):
+        rows = sample_rows()
+        self.assertEqual(sales_list.search_sales_list_rows(rows, ""), rows)
+        self.assertEqual(sales_list.search_sales_list_rows(rows, "   "), rows)
+
+    def test_search_matches_identity_fields(self):
+        rows = sample_rows()
+        self.assertEqual(
+            [r["contactId"] for r in sales_list.search_sales_list_rows(rows, "essential client")],
+            ["c-ess"],
+        )
+        self.assertEqual(
+            [r["contactId"] for r in sales_list.search_sales_list_rows(rows, "albany")],
+            ["c-other"],
+        )
+        self.assertEqual(
+            [r["contactId"] for r in sales_list.search_sales_list_rows(rows, "mom@example.com")],
+            ["c-mom"],
+        )
+        self.assertEqual(
+            [r["contactId"] for r in sales_list.search_sales_list_rows(rows, "585-555-0101")],
+            ["c-ess"],
+        )
+        self.assertEqual(
+            [r["contactId"] for r in sales_list.search_sales_list_rows(rows, "pat lee")],
+            ["c-roc"],
+        )
+        self.assertEqual(sales_list.search_sales_list_rows(rows, "nobody-here"), [])
+
+    def test_sort_date_sold_default_oldest_first(self):
+        rows = list(reversed(sample_rows()))
+        oldest = sales_list.sort_sales_list_rows(rows, order="asc")
+        newest = sales_list.sort_sales_list_rows(rows, order="desc")
+        self.assertEqual([r["contactId"] for r in oldest], ["c-ess", "c-mom", "c-roc", "c-other"])
+        self.assertEqual([r["contactId"] for r in newest], ["c-other", "c-roc", "c-mom", "c-ess"])
+        self.assertEqual(sales_list.parse_sort_order("newest"), "desc")
+        self.assertEqual(sales_list.parse_sort_order(""), "asc")
+
+    def test_compute_applies_search_and_sort_without_breaking_grain(self):
+        captured = {}
+
+        def fake_compute_essential_sales(db, contract, **kwargs):
+            captured.update(kwargs)
+            return sample_essential_payload()
+
+        original = sales_list.compute_essential_sales
+        sales_list.compute_essential_sales = fake_compute_essential_sales
+        try:
+            payload = sales_list.compute_sales_list(
+                db=FakeDb(),
+                contract=sales.SalesMetricContract(),
+                timeframe="month",
+                year=2026,
+                month=8,
+                tz="America/New_York",
+                installer="all",
+                query="rochester",
+                sort_order="desc",
+                notes_by_contact={"c-ess": {"note": "Keep", "email": "overlay@happy.solar"}},
+            )
+        finally:
+            sales_list.compute_essential_sales = original
+
+        self.assertEqual(payload["result"], 4)
+        self.assertEqual(payload["sales_count"], 4)
+        self.assertEqual(payload["filtered_row_count"], 1)
+        self.assertEqual(payload["rows"][0]["contactId"], "c-ess")
+        self.assertEqual(payload["rows"][0]["email"], "overlay@happy.solar")
+        self.assertEqual(payload["filters"]["q"], "rochester")
+        self.assertEqual(payload["filters"]["order"], "desc")
+        self.assertEqual(payload["debug"]["sales_result"], 4)
+
+
 class NavAndPageTests(unittest.TestCase):
     def test_nav_includes_sales_list_and_keeps_essential_sales(self):
         html = nav.render_dashboard_nav("sales_list")
@@ -499,7 +693,23 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("var defaultInstaller = \"essential\";", html)
         self.assertIn('var defaultTimeframe = "month";', html)
         self.assertIn("Alex Rivera", html)
-        self.assertIn("renderTable(document.getElementById('salesTable'), data.columns || [], data.rows || [])", html)
+        self.assertIn("renderVisible()", html)
+        self.assertIn('id="searchBox"', html)
+        self.assertIn('id="sortBtn"', html)
+        self.assertIn("c.key === 'email' || c.key === 'phone'", html)
+        self.assertIn("data-field=\"' + esc(c.key) + '\"", html)
+        self.assertIn("saveField(field)", html)
+        self.assertIn("Oldest first", html)
+        self.assertIn("dashboardNote", html)
+        self.assertIn("allColumns", html)
+        self.assertIn("renderTable(document.getElementById('salesTable'), allColumns, rows)", html)
+        self.assertIn("ghlContactHref", html)
+        self.assertIn('target="_blank"', html)
+        self.assertIn('rel="noopener"', html)
+        self.assertIn("c.key === 'client'", html)
+        self.assertIn('data-installer="essential"', html)
+        self.assertIn('data-timeframe="quarter"', html)
+        self.assertIn("textarea class=\"dash-note\"", html)
 
 
 class DispatchTests(unittest.TestCase):

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import os
 import sys
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
@@ -33,6 +34,8 @@ from sales import SalesMetricContract, get_db
 NOTES_COLLECTION = "sales_list_notes_v1"
 ALL_TIME_START = "2018-01-01"
 DEFAULT_TZ = "America/New_York"
+GHL_APP_ORIGIN = "https://app.gohighlevel.com"
+DEFAULT_GHL_LOCATION_ID = "MMKRDviKggXzlcHQTnvZ"
 TIMEFRAMES: tuple[str, ...] = ("all", "month", "quarter")
 OVERLAY_UNSET = object()
 SEARCH_FIELDS: tuple[str, ...] = (
@@ -122,6 +125,39 @@ SALES_LIST_COLUMNS: tuple[tuple[str, str], ...] = tuple(
 
 def compact_text(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def ghl_location_id(value: Any = None) -> str:
+    """Happy Solar GHL location. Same default as data_cleanup / buffalo_overrides."""
+    return compact_text(value) or compact_text(os.environ.get("GHL_LOCATION_ID")) or DEFAULT_GHL_LOCATION_ID
+
+
+def is_ghl_id(value: Any) -> bool:
+    text = compact_text(value)
+    return bool(text) and all(ch.isalnum() or ch in "-_" for ch in text)
+
+
+def ghl_contact_url(contact_id: Any, location_id: Any = None) -> str:
+    """Deep link used by buffalo_overrides / missing_dispos / data_cleanup."""
+    cid = compact_text(contact_id)
+    loc = ghl_location_id(location_id)
+    if not is_ghl_id(cid) or not is_ghl_id(loc):
+        return ""
+    return f"{GHL_APP_ORIGIN}/v2/location/{loc}/contacts/detail/{cid}"
+
+
+def attach_ghl_contact_urls(
+    rows: Iterable[dict[str, Any]],
+    *,
+    location_id: Any = None,
+) -> list[dict[str, Any]]:
+    loc = ghl_location_id(location_id)
+    attached: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["ghlContactUrl"] = ghl_contact_url(item.get("contactId"), loc)
+        attached.append(item)
+    return attached
 
 
 def normalize_installer_tab(value: Any) -> str | None:
@@ -531,8 +567,9 @@ def compute_sales_list(
         if notes_by_contact is not None
         else load_overlays_by_contact_ids(db, (row.get("contactId") for row in base_rows))
     )
-    rows_with_notes = merge_contact_overlays(base_rows, stored_overlays)
+    rows_with_notes = attach_ghl_contact_urls(merge_contact_overlays(base_rows, stored_overlays))
     salespeople = unique_salespeople(rows_with_notes)
+    location_key = ghl_location_id()
     filtered = apply_sales_list_filters(
         rows_with_notes,
         installer=installer_key,
@@ -571,6 +608,7 @@ def compute_sales_list(
         },
         "installer_tabs": [{"key": key, "label": label} for key, label in INSTALLER_TABS],
         "salespeople": salespeople,
+        "ghl_location_id": location_key,
         "columns": [{"key": key, "label": label} for key, label in SALES_LIST_COLUMNS],
         "rows": filtered,
         "debug": {
@@ -588,10 +626,12 @@ def compute_sales_list(
             "order": order_key,
             "notes_collection": NOTES_COLLECTION,
             "notes_loaded": len(stored_overlays),
+            "ghl_location_id": location_key,
         },
         "contract": {
             **(base.get("contract") or {}),
             "layout": "Yadmada Job Tracker columns: date sold, client, installer, then remaining Essential fields plus Dashboard notes",
+            "ghl_contact_url": f"{GHL_APP_ORIGIN}/v2/location/{{locationId}}/contacts/detail/{{contactId}}",
             "installer_filter": None if installer_key == "all" else installer_key,
             "salesperson_filter": salesperson_key or None,
             "dashboard_notes": {
@@ -615,6 +655,10 @@ def compute_sales_list(
                 "phone": (
                     "ghl_contacts_v2.phone, overlaid by "
                     f"firestore {NOTES_COLLECTION}/{{contactId}}.phone when set"
+                ),
+                "ghlContactUrl": (
+                    f"{GHL_APP_ORIGIN}/v2/location/{{locationId}}/contacts/detail/{{contactId}} "
+                    "when contactId is present; empty otherwise"
                 ),
             },
         },

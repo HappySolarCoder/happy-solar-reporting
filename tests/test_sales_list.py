@@ -523,6 +523,51 @@ class TimeframeWindowTests(unittest.TestCase):
         self.assertEqual(payload["timeframe"], "all")
 
 
+class GhlContactLinkTests(unittest.TestCase):
+    def test_builds_gohighlevel_contact_url(self):
+        url = sales_list.ghl_contact_url("pu9YNEjiZjZAIMlDnvNe")
+        self.assertEqual(
+            url,
+            "https://app.gohighlevel.com/v2/location/MMKRDviKggXzlcHQTnvZ/contacts/detail/pu9YNEjiZjZAIMlDnvNe",
+        )
+        self.assertEqual(sales_list.ghl_contact_url(""), "")
+        self.assertEqual(sales_list.ghl_contact_url("  "), "")
+        self.assertEqual(sales_list.ghl_contact_url("../evil"), "")
+        self.assertEqual(sales_list.ghl_contact_url("id/with/slash"), "")
+
+    def test_attach_skips_missing_contact_id(self):
+        attach = sales_list.attach_ghl_contact_urls(
+            [
+                {"contactId": "c-ess", "client": "Essential Client"},
+                {"contactId": "", "client": "No Id"},
+                {"client": "Missing key"},
+            ]
+        )
+        self.assertTrue(attach[0]["ghlContactUrl"].endswith("/contacts/detail/c-ess"))
+        self.assertEqual(attach[1]["ghlContactUrl"], "")
+        self.assertEqual(attach[2]["ghlContactUrl"], "")
+        self.assertEqual(attach[1]["client"], "No Id")
+
+    def test_compute_includes_ghl_url_on_rows(self):
+        original = sales_list.compute_essential_sales
+        sales_list.compute_essential_sales = lambda db, contract, **kwargs: sample_essential_payload()
+        try:
+            payload = sales_list.compute_sales_list(
+                db=FakeDb(),
+                contract=sales.SalesMetricContract(),
+                timeframe="month",
+                year=2026,
+                month=8,
+                tz="America/New_York",
+                notes_by_contact={},
+            )
+        finally:
+            sales_list.compute_essential_sales = original
+        self.assertEqual(payload["ghl_location_id"], "MMKRDviKggXzlcHQTnvZ")
+        self.assertTrue(payload["rows"][0]["ghlContactUrl"].endswith("/contacts/detail/c-ess"))
+        self.assertIn("/v2/location/", payload["contract"]["ghl_contact_url"])
+
+
 class ColumnOrderTests(unittest.TestCase):
     def test_client_second_and_installer_third(self):
         keys = [key for key, _label in sales_list.SALES_LIST_COLUMNS]
@@ -658,6 +703,10 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("dashboardNote", html)
         self.assertIn("allColumns", html)
         self.assertIn("renderTable(document.getElementById('salesTable'), allColumns, rows)", html)
+        self.assertIn("ghlContactHref", html)
+        self.assertIn('target="_blank"', html)
+        self.assertIn('rel="noopener"', html)
+        self.assertIn("c.key === 'client'", html)
         self.assertIn('data-installer="essential"', html)
         self.assertIn('data-timeframe="quarter"', html)
         self.assertIn("textarea class=\"dash-note\"", html)

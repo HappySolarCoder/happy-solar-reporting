@@ -93,6 +93,8 @@ __DASHBOARD_NAV_CSS__
     th.sortable { cursor:pointer; user-select:none; }
     th.sortable:hover { color:#0a7a34; }
     th.sortable .sort-ind { color:#0a7a34; font-weight:900; }
+    a.clientlink { color:#0a7a34; font-weight:800; text-decoration:none; }
+    a.clientlink:hover { text-decoration:underline; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
     @media (max-width:980px) { .span-3,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:34px; } }
@@ -243,6 +245,13 @@ function viewQuery() {
 function digitsOnly(v) {
   return String(v == null ? '' : v).replace(/\D/g, '');
 }
+function ghlContactHref(row) {
+  var url = String((row && row.ghlContactUrl) || '');
+  if (/^https:\/\/app\.gohighlevel\.com\/v2\/location\/[A-Za-z0-9_-]+\/contacts\/detail\/[A-Za-z0-9_-]+$/.test(url)) {
+    return url;
+  }
+  return '';
+}
 function identityBlob(row) {
   return [
     row.client, row.address, row.email, row.phone,
@@ -306,6 +315,15 @@ function renderTable(el, columns, rows) {
           if (cid) {
             html += '<textarea class="dash-note" data-contact="' + esc(cid) + '" data-field="note" data-original="' + esc(r.dashboardNote) + '" aria-label="Dashboard notes">' + esc(r.dashboardNote) + '</textarea>';
             html += '<span class="note-status" data-status-for="note:' + esc(cid) + '"></span>';
+          }
+          html += '</td>';
+        } else if (c.key === 'client') {
+          var href = ghlContactHref(r);
+          html += '<td>';
+          if (href) {
+            html += '<a class="clientlink" href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(r.client) + '</a>';
+          } else {
+            html += esc(r.client);
           }
           html += '</td>';
         } else if (c.key === 'email' || c.key === 'phone') {

@@ -2,10 +2,11 @@
 
 """Vercel Python function: /api/metrics/sales_list_notes
 
-Upsert dashboard notes for the Sales List board. Persists to Firestore
+Upsert dashboard overlays for the Sales List board. Persists to Firestore
 named DB happy-solar, collection sales_list_notes_v1, keyed by contactId.
 
-Does not write back to GHL. Empty note is stored as an empty string.
+Accepts note, email, and/or phone. Omitted fields are left unchanged.
+Does not write back to GHL. Empty values are stored as empty strings.
 """
 
 from __future__ import annotations
@@ -22,7 +23,12 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from sales import get_db
-from sales_list import NOTES_COLLECTION, compact_text, load_notes_by_contact_ids, upsert_sales_list_note
+from sales_list import (
+    NOTES_COLLECTION,
+    compact_text,
+    load_overlays_by_contact_ids,
+    upsert_sales_list_overlay,
+)
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -44,6 +50,19 @@ def _write_json(handler: BaseHTTPRequestHandler, status: int, payload: dict[str,
     handler.wfile.write(body)
 
 
+def _overlay_payload(contact_id: str, overlay: dict[str, str] | None) -> dict[str, Any]:
+    stored = overlay or {}
+    return {
+        "ok": True,
+        "collection": NOTES_COLLECTION,
+        "ghl_writeback": False,
+        "contactId": contact_id,
+        "note": stored.get("note", ""),
+        "email": stored.get("email", ""),
+        "phone": stored.get("phone", ""),
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -51,17 +70,8 @@ class handler(BaseHTTPRequestHandler):
             contact_id = compact_text(qs.get("contactId", [""])[0])
             if not contact_id:
                 raise ValueError("contactId is required")
-            notes = load_notes_by_contact_ids(get_db(), [contact_id])
-            _write_json(
-                self,
-                200,
-                {
-                    "ok": True,
-                    "collection": NOTES_COLLECTION,
-                    "contactId": contact_id,
-                    "note": notes.get(contact_id, ""),
-                },
-            )
+            overlays = load_overlays_by_contact_ids(get_db(), [contact_id])
+            _write_json(self, 200, _overlay_payload(contact_id, overlays.get(contact_id)))
         except Exception as e:
             _write_json(self, 400, {"ok": False, "error": str(e)})
 
@@ -74,11 +84,14 @@ class handler(BaseHTTPRequestHandler):
     def _upsert(self):
         try:
             payload = _read_json(self)
-            saved = upsert_sales_list_note(
-                get_db(),
-                contact_id=payload.get("contactId"),
-                note=payload.get("note"),
-            )
+            kwargs: dict[str, Any] = {"contact_id": payload.get("contactId")}
+            if "note" in payload:
+                kwargs["note"] = payload.get("note")
+            if "email" in payload:
+                kwargs["email"] = payload.get("email")
+            if "phone" in payload:
+                kwargs["phone"] = payload.get("phone")
+            saved = upsert_sales_list_overlay(get_db(), **kwargs)
             _write_json(
                 self,
                 200,

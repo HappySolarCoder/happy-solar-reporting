@@ -3,8 +3,9 @@
 """Vercel Python function: /api/sales_list
 
 Sales List dashboard: Essential / Momentum / 3rd Roc / All on the locked
-Sales grain. Dashboard notes persist in Firestore sales_list_notes_v1.
-Data: /api/metrics/sales_list. Notes write: POST /api/metrics/sales_list_notes.
+Sales grain. Dashboard notes, email, and phone persist in Firestore
+sales_list_notes_v1. Data: /api/metrics/sales_list. Overlay write:
+POST /api/metrics/sales_list_notes.
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ __DASHBOARD_NAV_CSS__
     .filters { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .filter { display:flex; align-items:center; gap:8px; }
     .filter-label { font-size:12px; color:var(--muted); background:#f0f2f5; padding:9px 10px; border-radius:10px; border:1px solid var(--border); }
-    select, button, textarea { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }
+    select, button, textarea, input[type="search"], input.dash-field { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }
     button { background:var(--green); border-color:var(--green); color:#fff; font-weight:900; cursor:pointer; }
     button.tab { background:#fff; color:#1f2937; border-color:var(--border); font-weight:800; }
     button.tab.active { background:rgba(0,200,83,.10); border-color:rgba(0,200,83,.45); color:#0a7a34; }
@@ -80,10 +81,18 @@ __DASHBOARD_NAV_CSS__
     th { color:#64748b; font-weight:900; background:#fafbfc; position:sticky; top:0; z-index:1; white-space:nowrap; }
     td.notes { max-width:260px; white-space:pre-wrap; word-break:break-word; }
     td.dashboard-note { min-width:220px; }
+    td.dash-edit { min-width:170px; }
     textarea.dash-note { width:100%; min-height:64px; resize:vertical; font-family:inherit; }
+    input.dash-field { width:100%; padding:7px 8px; box-sizing:border-box; }
     .note-status { display:block; margin-top:4px; font-size:11px; color:var(--muted2); min-height:14px; }
     .note-status.ok { color:#0a7a34; }
     .note-status.err { color:#b91c1c; }
+    .table-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+    .searchbox { min-width:260px; width:min(420px, 100%); }
+    button.sortbtn { background:#fff; color:#1f2937; border-color:var(--border); font-weight:800; }
+    th.sortable { cursor:pointer; user-select:none; }
+    th.sortable:hover { color:#0a7a34; }
+    th.sortable .sort-ind { color:#0a7a34; font-weight:900; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
     @media (max-width:980px) { .span-3,.span-12 { grid-column:span 12; } }
     @media (max-width:640px) { .wrap { padding:12px; } .topbar { padding:12px; } .title { font-size:20px; } .kpi { font-size:34px; } }
@@ -94,7 +103,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Sales List</div>
-        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Defaults to all-time sales and All installers. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes save to Firestore only — GHL notes stay read-only.</div>
+        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Defaults to all-time sales and All installers. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes, email, and phone save to Firestore only — GHL appointment notes stay read-only.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -135,7 +144,17 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">Sales list</div>
-        <div class="meta" style="margin-bottom:10px">Essential-tab columns plus editable Dashboard notes. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="table-toolbar">
+          <div class="meta">Essential-tab columns plus editable email, phone, and Dashboard notes. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+          <div class="filters">
+            <div class="filter"><div class="filter-label">Search</div>
+              <input type="search" id="searchBox" class="searchbox" placeholder="Name, address, email, phone…" autocomplete="off" />
+            </div>
+            <div class="filter"><div class="filter-label">Date sold</div>
+              <button type="button" class="sortbtn" id="sortBtn" aria-pressed="false">Oldest first</button>
+            </div>
+          </div>
+        </div>
         <div class="tableWrap"><table id="salesTable"></table></div>
       </div>
     </div>
@@ -154,6 +173,13 @@ var quarterSel = document.getElementById('quarter');
 var salespersonSel = document.getElementById('salesperson');
 var installer = defaultInstaller || 'all';
 var timeframe = defaultTimeframe || 'all';
+var allRows = [];
+var allColumns = [];
+var grainResult = '—';
+var tabRowCount = 0;
+var searchQuery = '';
+var sortDesc = false;
+var searchTimer = null;
 function setOptions(sel, options, value) {
   sel.innerHTML = '';
   options.forEach(function(opt) {
@@ -208,9 +234,65 @@ function query() {
   if (salespersonSel.value) params.set('salesperson', salespersonSel.value);
   return params.toString();
 }
+function viewQuery() {
+  var params = new URLSearchParams(query());
+  if (searchQuery) params.set('q', searchQuery);
+  params.set('order', sortDesc ? 'desc' : 'asc');
+  return params.toString();
+}
+function digitsOnly(v) {
+  return String(v == null ? '' : v).replace(/\D/g, '');
+}
+function identityBlob(row) {
+  return [
+    row.client, row.address, row.email, row.phone,
+    row.salesperson, row.installer, row.contactId,
+    row.notes, row.dashboardNote
+  ].join(' ').toLowerCase();
+}
+function rowMatchesSearch(row, q) {
+  q = String(q || '').trim().toLowerCase();
+  if (!q) return true;
+  if (identityBlob(row).indexOf(q) !== -1) return true;
+  var qd = digitsOnly(q);
+  return qd.length >= 4 && digitsOnly(row.phone).indexOf(qd) !== -1;
+}
+function visibleRows() {
+  var rows = allRows.filter(function(r) { return rowMatchesSearch(r, searchQuery); });
+  rows.sort(function(a, b) {
+    var da = String(a.submissionDate || '');
+    var db = String(b.submissionDate || '');
+    if (da !== db) return sortDesc ? db.localeCompare(da) : da.localeCompare(db);
+    var ca = String(a.client || '').toLowerCase();
+    var cb = String(b.client || '').toLowerCase();
+    if (ca !== cb) return ca.localeCompare(cb);
+    return String(a.contactId || '').localeCompare(String(b.contactId || ''));
+  });
+  return rows;
+}
+function markSort() {
+  var btn = document.getElementById('sortBtn');
+  btn.textContent = sortDesc ? 'Newest first' : 'Oldest first';
+  btn.setAttribute('aria-pressed', sortDesc ? 'true' : 'false');
+}
+function renderVisible() {
+  var rows = visibleRows();
+  renderTable(document.getElementById('salesTable'), allColumns, rows);
+  document.getElementById('rowCount').textContent = String(rows.length);
+  var suffix = searchQuery ? (' · search "' + searchQuery + '"') : '';
+  document.getElementById('rowMeta').textContent = 'Locked grain ' + String(grainResult) + ' · filtered ' + String(tabRowCount) + ' · showing ' + String(rows.length) + suffix;
+  document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + viewQuery();
+  markSort();
+}
 function renderTable(el, columns, rows) {
   var html = '<thead><tr>';
-  columns.forEach(function(c) { html += '<th>' + esc(c.label) + '</th>'; });
+  columns.forEach(function(c) {
+    if (c.key === 'submissionDate') {
+      html += '<th class="sortable" data-sort="submissionDate" title="Sort by date sold">' + esc(c.label) + ' <span class="sort-ind">' + (sortDesc ? '▼' : '▲') + '</span></th>';
+    } else {
+      html += '<th>' + esc(c.label) + '</th>';
+    }
+  });
   html += '</tr></thead><tbody>';
   if (!rows || !rows.length) {
     html += '<tr><td colspan="' + columns.length + '">No sales in this window.</td></tr>';
@@ -218,12 +300,21 @@ function renderTable(el, columns, rows) {
     rows.forEach(function(r) {
       html += '<tr data-contact="' + esc(r.contactId || '') + '">';
       columns.forEach(function(c) {
+        var cid = String(r.contactId || '');
         if (c.key === 'dashboardNote') {
-          var cid = String(r.contactId || '');
           html += '<td class="dashboard-note">';
           if (cid) {
-            html += '<textarea class="dash-note" data-contact="' + esc(cid) + '" aria-label="Dashboard notes">' + esc(r.dashboardNote) + '</textarea>';
-            html += '<span class="note-status" data-status-for="' + esc(cid) + '"></span>';
+            html += '<textarea class="dash-note" data-contact="' + esc(cid) + '" data-field="note" data-original="' + esc(r.dashboardNote) + '" aria-label="Dashboard notes">' + esc(r.dashboardNote) + '</textarea>';
+            html += '<span class="note-status" data-status-for="note:' + esc(cid) + '"></span>';
+          }
+          html += '</td>';
+        } else if (c.key === 'email' || c.key === 'phone') {
+          html += '<td class="dash-edit">';
+          if (cid) {
+            html += '<input class="dash-field" data-contact="' + esc(cid) + '" data-field="' + esc(c.key) + '" data-original="' + esc(r[c.key]) + '" aria-label="' + esc(c.label) + '" value="' + esc(r[c.key]) + '" />';
+            html += '<span class="note-status" data-status-for="' + esc(c.key) + ':' + esc(cid) + '"></span>';
+          } else {
+            html += esc(r[c.key]);
           }
           html += '</td>';
         } else {
@@ -236,43 +327,71 @@ function renderTable(el, columns, rows) {
   }
   html += '</tbody>';
   el.innerHTML = html;
-  el.querySelectorAll('textarea.dash-note').forEach(function(area) {
-    area.addEventListener('blur', function() { saveNote(area); });
-    area.addEventListener('keydown', function(ev) {
+  var dateHead = el.querySelector('th.sortable');
+  if (dateHead) {
+    dateHead.addEventListener('click', function() {
+      sortDesc = !sortDesc;
+      renderVisible();
+    });
+  }
+  el.querySelectorAll('textarea.dash-note, input.dash-field').forEach(function(field) {
+    field.addEventListener('blur', function() { saveField(field); });
+    field.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Enter' && field.tagName === 'INPUT') {
+        ev.preventDefault();
+        field.blur();
+      }
       if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
         ev.preventDefault();
-        area.blur();
+        field.blur();
       }
     });
   });
 }
-function setNoteStatus(contactId, text, kind) {
-  var el = document.querySelector('[data-status-for="' + contactId + '"]');
+function setFieldStatus(contactId, field, text, kind) {
+  var el = document.querySelector('[data-status-for="' + field + ':' + contactId + '"]');
   if (!el) return;
   el.textContent = text;
   el.className = 'note-status' + (kind ? ' ' + kind : '');
 }
-async function saveNote(area) {
-  var contactId = area.getAttribute('data-contact') || '';
-  if (!contactId) return;
-  setNoteStatus(contactId, 'Saving…', '');
+function rememberField(contactId, field, value) {
+  allRows.forEach(function(row) {
+    if (String(row.contactId || '') !== String(contactId)) return;
+    if (field === 'note') row.dashboardNote = value;
+    else row[field] = value;
+  });
+}
+async function saveField(el) {
+  var contactId = el.getAttribute('data-contact') || '';
+  var field = el.getAttribute('data-field') || '';
+  if (!contactId || !field) return;
+  var next = el.value;
+  if (next === (el.getAttribute('data-original') || '')) return;
+  var body = { contactId: contactId };
+  body[field] = next;
+  setFieldStatus(contactId, field, 'Saving…', '');
   var res = await fetch('/api/metrics/sales_list_notes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contactId: contactId, note: area.value })
+    body: JSON.stringify(body)
   });
   var data = {};
   try { data = await res.json(); } catch (_err) { data = {}; }
   if (!res.ok || data.ok === false) {
-    setNoteStatus(contactId, data.error || 'Save failed', 'err');
+    setFieldStatus(contactId, field, data.error || 'Save failed', 'err');
     return;
   }
-  setNoteStatus(contactId, 'Saved', 'ok');
+  rememberField(contactId, field, next);
+  el.setAttribute('data-original', next);
+  setFieldStatus(contactId, field, 'Saved', 'ok');
+}
+async function saveNote(area) {
+  if (!area.getAttribute('data-field')) area.setAttribute('data-field', 'note');
+  return saveField(area);
 }
 async function load() {
-  var q = query();
-  document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + q;
-  var res = await fetch('/api/metrics/sales_list?' + q);
+  document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + viewQuery();
+  var res = await fetch('/api/metrics/sales_list?' + query());
   var data = await res.json();
   if (!res.ok) {
     document.getElementById('result').textContent = 'Error';
@@ -280,23 +399,39 @@ async function load() {
     document.getElementById('windowMeta').textContent = data.error || 'Failed to load';
     return;
   }
-  document.getElementById('result').textContent = String(data.result == null ? '—' : data.result);
-  document.getElementById('rowCount').textContent = String(data.filtered_row_count != null ? data.filtered_row_count : (data.rows || []).length);
+  grainResult = data.result == null ? '—' : data.result;
+  allRows = data.rows || [];
+  allColumns = data.columns || [];
+  tabRowCount = data.sales_count != null ? data.sales_count : allRows.length;
+  document.getElementById('result').textContent = String(grainResult);
   var start = String(data.window_start_local || '').slice(0, 10);
   var end = String(data.window_end_local || '').slice(0, 10);
   var locked = data.debug && data.debug.sales_result != null ? data.debug.sales_result : data.result;
+  grainResult = locked == null ? grainResult : locked;
   var frame = data.timeframe === 'all' ? 'All time' : (data.timeframe === 'quarter' ? 'Quarter' : (data.timeframe === 'month' ? 'Month' : (data.timeframe || '')));
   document.getElementById('windowMeta').textContent = (frame ? frame + ' · ' : '') + start + ' to ' + end + ' (' + (data.timezone || '') + ')';
-  document.getElementById('rowMeta').textContent = 'Locked grain ' + String(locked) + ' · filtered ' + String((data.rows || []).length);
   var people = [{value: '', label: 'All'}].concat((data.salespeople || []).map(function(name) {
     return {value: name, label: name};
   }));
   var keep = salespersonSel.value || defaultSalesperson;
   setOptions(salespersonSel, people, keep);
   defaultSalesperson = keep;
-  renderTable(document.getElementById('salesTable'), data.columns || [], data.rows || []);
+  renderVisible();
 }
 document.getElementById('apply').addEventListener('click', load);
+document.getElementById('sortBtn').addEventListener('click', function() {
+  sortDesc = !sortDesc;
+  document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + viewQuery();
+  renderVisible();
+});
+document.getElementById('searchBox').addEventListener('input', function(ev) {
+  searchQuery = ev.target.value || '';
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(function() {
+    document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + viewQuery();
+    renderVisible();
+  }, 120);
+});
 document.querySelectorAll('#installerTabs .tab').forEach(function(btn) {
   btn.addEventListener('click', function() {
     installer = btn.getAttribute('data-installer') || 'all';

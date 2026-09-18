@@ -376,8 +376,9 @@ class SalesGrainParityTests(unittest.TestCase):
         self.assertEqual(payload["filters"]["installer"], "essential")
         self.assertEqual(payload["filters"]["salesperson"], "Alex Rivera")
         self.assertIn("dashboardNote", [c["key"] for c in payload["columns"]])
-        self.assertEqual(payload["columns"][12]["key"], "notes")
-        self.assertEqual(payload["columns"][13]["key"], "dashboardNote")
+        self.assertEqual([c["key"] for c in payload["columns"][:3]], ["submissionDate", "client", "installer"])
+        self.assertEqual(payload["columns"][13]["key"], "notes")
+        self.assertEqual(payload["columns"][14]["key"], "dashboardNote")
 
     def test_start_end_pass_through_to_compute_sales(self):
         captured = {}
@@ -522,6 +523,19 @@ class TimeframeWindowTests(unittest.TestCase):
         self.assertEqual(payload["timeframe"], "all")
 
 
+class ColumnOrderTests(unittest.TestCase):
+    def test_client_second_and_installer_third(self):
+        keys = [key for key, _label in sales_list.SALES_LIST_COLUMNS]
+        self.assertEqual(keys[:3], ["submissionDate", "client", "installer"])
+        self.assertEqual(keys, list(sales_list.SALES_LIST_COLUMN_KEYS))
+        self.assertEqual(len(keys), len(set(keys)))
+        essential_keys = [key for key, _label in essential.ESSENTIAL_COLUMNS]
+        self.assertEqual(set(keys) - {"dashboardNote"}, set(essential_keys))
+        self.assertEqual(essential_keys[0], "submissionDate")
+        self.assertNotEqual(essential_keys[1], "client")
+        self.assertNotEqual(essential_keys[2], "installer")
+
+
 class SearchAndSortTests(unittest.TestCase):
     def test_empty_query_returns_full_set(self):
         rows = sample_rows()
@@ -642,6 +656,8 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("saveField(field)", html)
         self.assertIn("Oldest first", html)
         self.assertIn("dashboardNote", html)
+        self.assertIn("allColumns", html)
+        self.assertIn("renderTable(document.getElementById('salesTable'), allColumns, rows)", html)
         self.assertIn('data-installer="essential"', html)
         self.assertIn('data-timeframe="quarter"', html)
         self.assertIn("textarea class=\"dash-note\"", html)

@@ -91,10 +91,32 @@ INSTALLER_ALIASES: dict[str, frozenset[str]] = {
     ),
 }
 
+# Date sold stays first. Evan: client name 2nd, installer 3rd. Remaining
+# Essential-tab fields keep their prior relative order, plus dashboard notes.
+_ESSENTIAL_LABELS = {key: label for key, label in ESSENTIAL_COLUMNS}
+SALES_LIST_COLUMN_KEYS: tuple[str, ...] = (
+    "submissionDate",
+    "client",
+    "installer",
+    "financeType",
+    "salesperson",
+    "wc",
+    "asi",
+    "esco",
+    "cdg",
+    "size",
+    "phone",
+    "email",
+    "address",
+    "notes",
+    "dashboardNote",
+    "retentionRep",
+    "systemChecks",
+    "qp",
+)
 SALES_LIST_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    list(ESSENTIAL_COLUMNS[:13])
-    + [("dashboardNote", "Dashboard notes")]
-    + list(ESSENTIAL_COLUMNS[13:])
+    (key, "Dashboard notes" if key == "dashboardNote" else _ESSENTIAL_LABELS[key])
+    for key in SALES_LIST_COLUMN_KEYS
 )
 
 
@@ -569,7 +591,7 @@ def compute_sales_list(
         },
         "contract": {
             **(base.get("contract") or {}),
-            "layout": "Yadmada Job Tracker Essential/Momentum/3rd Roc columns plus Dashboard notes",
+            "layout": "Yadmada Job Tracker columns: date sold, client, installer, then remaining Essential fields plus Dashboard notes",
             "installer_filter": None if installer_key == "all" else installer_key,
             "salesperson_filter": salesperson_key or None,
             "dashboard_notes": {

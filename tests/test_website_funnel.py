@@ -217,6 +217,7 @@ class WebsiteFunnelContractTests(unittest.TestCase):
         self.assertIn("compute_month", PAGE_SRC)
         self.assertIn("compute_day_snapshot", PAGE_SRC)
         self.assertIn("compute_day_snapshot", YESTERDAY_SRC)
+        self.assertIn("rollup_day", inspect.getsource(funnel.compute_day_snapshot))
         self.assertIn("rollup_day", ROLLUP_SRC)
         self.assertIn("sessions → start → completed form", PAGE_SRC)
         self.assertIn("completed form", PAGE_SRC)
@@ -523,6 +524,7 @@ class _RecordingDb:
         self.snap = snap
         self.collections = []
         self.get_all_refs = []
+        self.get_all_calls = 0
 
     def collection(self, name):
         self.collections.append(name)
@@ -533,8 +535,33 @@ class _RecordingDb:
         return f"ref:{doc_id}"
 
     def get_all(self, refs):
+        self.get_all_calls += 1
         self.get_all_refs.extend(list(refs))
         return [self.snap]
+
+
+class _SequenceDb:
+    def __init__(self, snaps):
+        self.snaps = list(snaps)
+        self.i = 0
+        self.collections = []
+        self.get_all_refs = []
+        self.get_all_calls = 0
+
+    def collection(self, name):
+        self.collections.append(name)
+        return self
+
+    def document(self, doc_id):
+        self.doc_id = doc_id
+        return f"ref:{doc_id}"
+
+    def get_all(self, refs):
+        self.get_all_calls += 1
+        self.get_all_refs.extend(list(refs))
+        snap = self.snaps[min(self.i, len(self.snaps) - 1)]
+        self.i += 1
+        return [snap]
 
 
 class _Snap:
@@ -545,6 +572,22 @@ class _Snap:
 
     def to_dict(self):
         return self._payload
+
+
+def _ok_daily(date_ymd="2026-09-20", **overrides):
+    doc = {
+        "date": date_ymd,
+        "ga4": "ok",
+        "sessions": 136,
+        "starts": 8,
+        "address_complete": 6,
+        "bill_complete": 5,
+        "estimate_submit": 1,
+        "wix_form_submits": 0,
+        "completed_forms": 1,
+    }
+    doc.update(overrides)
+    return doc
 
 
 class WebsiteFunnelYesterdayTests(unittest.TestCase):
@@ -566,14 +609,19 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
 
     def test_missing_doc_is_ready_false_with_nulls(self):
         db = _RecordingDb(_Snap(False, "2026-08-19"))
-        payload = funnel.compute_day_snapshot(db, "2026-08-19")
-        self.assertEqual(db.collections, ["web_funnel_daily_v1"])
-        self.assertEqual(db.get_all_refs, ["ref:2026-08-19"])
+        with patch.object(funnel, "rollup_day", side_effect=RuntimeError("rollup failed")) as rollup:
+            payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        rollup.assert_called_once_with(db, "2026-08-19")
+        self.assertEqual(db.collections[0], "web_funnel_daily_v1")
+        self.assertIn("ref:2026-08-19", db.get_all_refs)
         self.assertFalse(payload["ready"])
         self.assertEqual(payload["reason"], "source isn't ready")
         self.assertEqual(payload["ga4"], "missing")
         self.assertEqual(payload["lead_field"], "estimate_submit")
         self.assertIsNone(payload["lead"])
+        self.assertTrue(payload["auto_rollup"])
+        self.assertEqual(payload["auto_rollup_reason"], "missing_daily")
+        self.assertFalse(payload["auto_rollup_wrote"])
         for field in (
             "sessions",
             "estimate_start",
@@ -607,9 +655,13 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
                     },
                 )
             )
-            payload = funnel.compute_day_snapshot(db, "2026-08-19")
+            with patch.object(funnel, "rollup_day", side_effect=RuntimeError("rollup failed")):
+                payload = funnel.compute_day_snapshot(db, "2026-08-19")
             self.assertFalse(payload["ready"], ga4_status)
             self.assertEqual(payload["reason"], "source isn't ready")
+            self.assertTrue(payload["auto_rollup"], ga4_status)
+            self.assertEqual(payload["auto_rollup_reason"], "ga4_not_ok")
+            self.assertFalse(payload["auto_rollup_wrote"])
             self.assertIsNone(payload["sessions"])
             self.assertIsNone(payload["estimate_start"])
             self.assertIsNone(payload["estimate_submit"])
@@ -635,7 +687,9 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
                 },
             )
         )
-        payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        with patch.object(funnel, "rollup_day") as rollup:
+            payload = funnel.compute_day_snapshot(db, "2026-08-19")
+        rollup.assert_not_called()
         self.assertTrue(payload["ready"])
         self.assertIsNone(payload["reason"])
         self.assertEqual(payload["scope"], "calculator")
@@ -655,11 +709,150 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
         self.assertNotEqual(payload["lead"], 9)
         self.assertNotEqual(payload["lead"], 11)
         self.assertFalse(payload["auto_rollup"])
+        self.assertIsNone(payload["auto_rollup_reason"])
+        self.assertFalse(payload["auto_rollup_wrote"])
         self.assertEqual(payload["reads"]["count"], 1)
         self.assertEqual(payload["reads"]["method"], "get_all")
         self.assertEqual(db.collections, ["web_funnel_daily_v1"])
+        self.assertEqual(db.get_all_calls, 1)
         self.assertNotIn("ghl_contacts_v2", db.collections)
         self.assertNotIn("ghl_opportunities_v2", db.collections)
+
+    def test_missing_daily_autorollup_reread_ready(self):
+        ready = _ok_daily("2026-09-20")
+        db = _SequenceDb(
+            [
+                _Snap(False, "2026-09-20"),
+                _Snap(True, "2026-09-20", ready),
+            ]
+        )
+        called = []
+
+        def fake_rollup(database, date_ymd=None):
+            called.append((database, date_ymd))
+            return {
+                "wrote": True,
+                "collection": "web_funnel_daily_v1",
+                "id": date_ymd,
+                "doc": ready,
+            }
+
+        with patch.object(funnel, "rollup_day", fake_rollup):
+            payload = funnel.compute_day_snapshot(db, "2026-09-20")
+        self.assertEqual(called, [(db, "2026-09-20")])
+        self.assertEqual(db.get_all_calls, 2)
+        self.assertTrue(payload["auto_rollup"])
+        self.assertEqual(payload["auto_rollup_reason"], "missing_daily")
+        self.assertTrue(payload["auto_rollup_wrote"])
+        self.assertTrue(payload["ready"])
+        self.assertIsNone(payload["reason"])
+        self.assertEqual(payload["ga4"], "ok")
+        self.assertEqual(payload["estimate_submit"], 1)
+        self.assertEqual(payload["lead"], 1)
+        self.assertEqual(payload["sessions"], 136)
+        self.assertEqual(payload["lead_field"], "estimate_submit")
+        self.assertNotIn("completed_forms", payload)
+
+    def test_ok_daily_does_not_invoke_rollup(self):
+        db = _RecordingDb(_Snap(True, "2026-09-20", _ok_daily("2026-09-20")))
+        with patch.object(funnel, "rollup_day") as rollup:
+            payload = funnel.compute_day_snapshot(db, "2026-09-20")
+        rollup.assert_not_called()
+        self.assertFalse(payload["auto_rollup"])
+        self.assertIsNone(payload["auto_rollup_reason"])
+        self.assertFalse(payload["auto_rollup_wrote"])
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["estimate_submit"], 1)
+        self.assertEqual(db.get_all_calls, 1)
+
+    def test_ga4_not_ok_invokes_autorollup(self):
+        ready = _ok_daily("2026-09-20")
+        for ga4_status in ("missing", "not_configured", "failed", "unknown"):
+            db = _SequenceDb(
+                [
+                    _Snap(
+                        True,
+                        "2026-09-20",
+                        {
+                            "date": "2026-09-20",
+                            "ga4": ga4_status,
+                            "sessions": 0,
+                            "estimate_submit": 0,
+                        },
+                    ),
+                    _Snap(True, "2026-09-20", ready),
+                ]
+            )
+            with patch.object(
+                funnel,
+                "rollup_day",
+                return_value={"wrote": True, "collection": "web_funnel_daily_v1", "id": "2026-09-20"},
+            ) as rollup:
+                payload = funnel.compute_day_snapshot(db, "2026-09-20")
+            rollup.assert_called_once_with(db, "2026-09-20")
+            self.assertTrue(payload["auto_rollup"], ga4_status)
+            self.assertEqual(payload["auto_rollup_reason"], "ga4_not_ok", ga4_status)
+            self.assertTrue(payload["auto_rollup_wrote"], ga4_status)
+            self.assertTrue(payload["ready"], ga4_status)
+            self.assertEqual(payload["estimate_submit"], 1, ga4_status)
+            self.assertEqual(payload["sessions"], 136, ga4_status)
+
+    def test_autorollup_failure_stays_not_ready_without_invented_counts(self):
+        db = _RecordingDb(_Snap(False, "2026-09-20"))
+        with patch.object(funnel, "rollup_day", side_effect=RuntimeError("ga4 down")) as rollup:
+            payload = funnel.compute_day_snapshot(db, "2026-09-20")
+        rollup.assert_called_once_with(db, "2026-09-20")
+        self.assertTrue(payload["auto_rollup"])
+        self.assertEqual(payload["auto_rollup_reason"], "missing_daily")
+        self.assertFalse(payload["auto_rollup_wrote"])
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["reason"], "source isn't ready")
+        self.assertEqual(payload["ga4"], "missing")
+        self.assertIsNone(payload["estimate_submit"])
+        self.assertIsNone(payload["lead"])
+        self.assertIsNone(payload["sessions"])
+        self.assertNotEqual(payload["estimate_submit"], 0)
+        self.assertNotEqual(payload["estimate_submit"], 1)
+
+    def test_autorollup_wrote_not_ok_does_not_invent_counts(self):
+        not_ok = {
+            "date": "2026-09-20",
+            "ga4": "not_configured",
+            "sessions": 0,
+            "starts": 0,
+            "estimate_submit": 0,
+        }
+        db = _SequenceDb(
+            [
+                _Snap(False, "2026-09-20"),
+                _Snap(True, "2026-09-20", not_ok),
+            ]
+        )
+        with patch.object(
+            funnel,
+            "rollup_day",
+            return_value={"wrote": True, "collection": "web_funnel_daily_v1", "id": "2026-09-20"},
+        ):
+            payload = funnel.compute_day_snapshot(db, "2026-09-20")
+        self.assertTrue(payload["auto_rollup"])
+        self.assertEqual(payload["auto_rollup_reason"], "missing_daily")
+        self.assertTrue(payload["auto_rollup_wrote"])
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["ga4"], "not_configured")
+        self.assertIsNone(payload["estimate_submit"])
+        self.assertIsNone(payload["sessions"])
+        self.assertNotEqual(payload["estimate_submit"], 0)
+
+    def test_autorollup_is_in_process_rollup_day(self):
+        src = inspect.getsource(funnel.compute_day_snapshot)
+        self.assertIn("rollup_day", src)
+        self.assertIn("autorollup_reason_for_doc", src)
+        self.assertNotIn("urlopen", src)
+        self.assertNotIn("/api/web_funnel_rollup", src)
+        self.assertEqual(funnel.autorollup_reason_for_doc(None), "missing_daily")
+        self.assertEqual(funnel.autorollup_reason_for_doc({"ga4": "missing"}), "ga4_not_ok")
+        self.assertEqual(funnel.autorollup_reason_for_doc({"ga4": "ok"}), None)
+        self.assertIn("auto-rollups when the daily doc is missing", YESTERDAY_SRC + FUNNEL_SRC)
 
     def test_yesterday_read_does_not_touch_ghl_collections(self):
         tree = ast.parse(FUNNEL_SRC + "\n" + YESTERDAY_SRC)

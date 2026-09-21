@@ -8,8 +8,8 @@ Completed-form counts only. Does not read CRM contact or opportunity
 collections. Not on warm_cache. Not hourly.
 
 8:00 America/New_York routine: hit this write for yesterday first,
-then GET /api/website_funnel_yesterday. The yesterday read does not
-auto-rollup.
+then GET /api/website_funnel_yesterday. Yesterday also auto-rollups
+in-process when the daily doc is missing or ga4 is not ok.
 
 Params:
 - date=YYYY-MM-DD (optional; default yesterday America/New_York)

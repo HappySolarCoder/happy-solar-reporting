@@ -6,13 +6,18 @@ Charles 8:00 America/New_York routine — calculator / wny snapshot.
 
 Reads one web_funnel_daily_v1/{YYYY-MM-DD} doc for yesterday in
 America/New_York (00:00–23:59 calendar day). No collection stream.
-Does not auto-rollup. Prefer GET /api/web_funnel_rollup first.
+If that daily is missing or ga4 is not "ok", auto-calls the same
+in-process rollup_day as GET /api/web_funnel_rollup?date={date},
+then re-reads. Prefer hitting rollup first at 8am; this is the
+safety net. auto_rollup / auto_rollup_reason / auto_rollup_wrote
+report whether this request wrote.
 
 Lead = estimate_submit only. Monthly Website Funnel still counts
 /contact-me wix_form_submit.
 
-If the daily doc is missing or ga4 is not_configured/failed:
-HTTP 200, ready=false, all metrics null. Counts are never invented.
+If the daily doc is still missing or ga4 is not_configured/failed
+after that attempt: HTTP 200, ready=false, all metrics null.
+Counts are never invented.
 
 Params:
 - date=YYYY-MM-DD or date=yesterday (optional; default yesterday NY)

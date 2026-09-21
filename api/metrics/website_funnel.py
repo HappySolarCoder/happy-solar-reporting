@@ -29,12 +29,16 @@ one doc per America/New_York date (id YYYY-MM-DD).
 
 Yesterday snapshot (8:00 America/New_York routine):
 - GET /api/website_funnel_yesterday reads one daily doc.
-- Optional write first: GET /api/web_funnel_rollup (yesterday NY).
-- The yesterday read does not auto-rollup.
+- Prefer write first: GET /api/web_funnel_rollup (yesterday NY).
+- Safety net: if the daily doc is missing or ga4 is not "ok",
+  yesterday auto-calls the same in-process rollup_day as
+  /api/web_funnel_rollup, then re-reads. It does not invent counts.
+  auto_rollup / auto_rollup_reason / auto_rollup_wrote report that.
 - Lead for that payload is estimate_submit only (calculator / wny).
 - Monthly scoreboard still includes /contact-me wix_form_submit.
-- Missing doc or ga4 not_configured/failed → ready=false and nulls.
-  Do not invent counts. Do not treat a missing source as 0 traffic.
+- Missing doc or ga4 not_configured/failed after that attempt →
+  ready=false and nulls. Do not invent counts. Do not treat a
+  missing source as 0 traffic.
 
 Cost rules:
 - Dashboard month view reads ≤31 daily docs.
@@ -160,6 +164,8 @@ YESTERDAY_METRIC_FIELDS = (
     "start_to_submit",
 )
 YESTERDAY_READY_GA4 = frozenset({"ok"})
+AUTO_ROLLUP_REASON_MISSING_DAILY = "missing_daily"
+AUTO_ROLLUP_REASON_GA4_NOT_OK = "ga4_not_ok"
 
 GOAL_SESSION_TO_FORM = 0.02
 GOAL_START_TO_FORM = 0.25
@@ -767,6 +773,15 @@ def daily_doc_is_ready(doc: dict[str, Any] | None) -> bool:
     return ga4 in YESTERDAY_READY_GA4
 
 
+def autorollup_reason_for_doc(doc: dict[str, Any] | None) -> str | None:
+    """Why yesterday should call rollup_day. None when daily ga4 is already ok."""
+    if not doc:
+        return AUTO_ROLLUP_REASON_MISSING_DAILY
+    if not daily_doc_is_ready(doc):
+        return AUTO_ROLLUP_REASON_GA4_NOT_OK
+    return None
+
+
 def empty_yesterday_metrics() -> dict[str, None]:
     return {field: None for field in YESTERDAY_METRIC_FIELDS}
 
@@ -811,11 +826,13 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         "collection": DAILY_COLLECTION,
         "reads": {"collection": DAILY_COLLECTION, "ids": [date_key], "method": "get_all", "count": 1},
         "auto_rollup": False,
+        "auto_rollup_reason": None,
+        "auto_rollup_wrote": False,
         "routine": {
             "when": "08:00 America/New_York",
             "write": "/api/web_funnel_rollup",
             "read": "/api/website_funnel_yesterday",
-            "note": "Hit rollup for yesterday first, then this read. This read does not roll up.",
+            "note": "8am should hit rollup for yesterday first. This read auto-rollups when the daily doc is missing or ga4 is not ok, then re-reads. Counts are never invented.",
         },
         "contract": {
             "lead": YESTERDAY_LEAD_FIELD,
@@ -835,7 +852,22 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
 def compute_day_snapshot(db: firestore.Client, date_ymd: str | None = None) -> dict[str, Any]:
     date_key = resolve_query_date(date_ymd)
     doc = read_daily_doc(db, date_key)
-    return build_day_snapshot(doc, date_key)
+    reason = autorollup_reason_for_doc(doc)
+    auto_rollup = False
+    auto_rollup_wrote = False
+    if reason:
+        auto_rollup = True
+        try:
+            rollup = rollup_day(db, date_key)
+            auto_rollup_wrote = bool((rollup or {}).get("wrote"))
+        except Exception:
+            auto_rollup_wrote = False
+        doc = read_daily_doc(db, date_key)
+    payload = build_day_snapshot(doc, date_key)
+    payload["auto_rollup"] = auto_rollup
+    payload["auto_rollup_reason"] = reason
+    payload["auto_rollup_wrote"] = auto_rollup_wrote
+    return payload
 
 
 def _sum_optional(values: list[Any]) -> int | None:

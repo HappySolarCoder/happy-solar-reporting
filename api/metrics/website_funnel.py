@@ -754,8 +754,6 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "hosts": sorted(LIVE_FORM_HOSTS),
             "visits_total_hosts": sorted(LIVE_TOTAL_HOSTS),
             "visits_wny_hosts": sorted(LIVE_WNY_HOSTS),
-            "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
-            "calculator_cutover_date": CALCULATOR_CUTOVER_DATE,
             "data_api_dimensions": list(GA4_REPORT_DIMENSIONS),
             "data_api_missing": list(GA4_MISSING_EXCLUSION_DIMENSIONS),
             "page_view_held": True,

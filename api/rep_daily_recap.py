@@ -9,6 +9,9 @@ Purpose:
 - Show the logged appointment outcome for each appointment.
 - Add prior-day Powerline dials and Raydar doors knocked into each owner bucket
   as a simple "worked yesterday" recap.
+- Appointments count only when the opportunity is in a territory pipeline
+  (Buffalo / Rochester / Syracuse / Virtual). Sweeper, Rehash, Inbound/Lead
+  Locker and Recruiting are excluded (ClickUp 86bc7a8zw, 86bc7ahnt).
 
 Identity join (Powerline / Raydar -> owner row):
 - Seed owner cards from the full sales roster (role=rep / categories
@@ -83,6 +86,21 @@ SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
 SETTER_LAST_NAME_FALLBACK_FIELD_ID = "Xhy6k4xfHRJ6s5IbfA5x"
 LEAD_SOURCE_FIELD_ID = "hd5QqHEOVSsPom5bJ32P"
 SELF_GEN_LEAD_SOURCE = "Self Gen"
+
+# Territory (market) pipelines. Mirrors api/metrics/inbound_cac.py TERRITORY_PIPELINE_IDS.
+BUFFALO_PIPELINE_ID = "GQtUlcTmLJ61HZjrGEPC"
+ROCHESTER_PIPELINE_ID = "qJNvqKWp8Xc7DaBr8QYc"
+SYRACUSE_PIPELINE_ID = "etLURrEVxupngZZRlISG"
+VIRTUAL_PIPELINE_ID = "r1b9pwgliYj7WyWBchTV"
+TERRITORY_PIPELINE_IDS: tuple[str, ...] = (
+    BUFFALO_PIPELINE_ID, ROCHESTER_PIPELINE_ID, SYRACUSE_PIPELINE_ID, VIRTUAL_PIPELINE_ID,
+)
+TERRITORY_PIPELINE_ID_SET = frozenset(TERRITORY_PIPELINE_IDS)
+# Non-market pipelines excluded from the recap (named for tests/readability).
+SWEEPER_PIPELINE_ID = "0VNxqmhbk7FDO64j2pKu"
+REHASH_PIPELINE_ID = "vQ63K9v80I6SLIUZ0MPJ"
+INBOUND_LEAD_LOCKER_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
+RECRUITING_PIPELINE_ID = "nH7N7Dno6fOexH2OPxkB"
 
 NICKNAME_EQUIVALENTS = {
     "josh": "joshua",
@@ -222,6 +240,11 @@ def is_self_gen_lead_source(value: Any) -> bool:
 def count_self_gen_appointments(appointments: list[dict[str, Any]] | None) -> int:
     """Count Self Gen rows already on an owner card. No extra Firestore stream."""
     return sum(1 for row in (appointments or []) if is_self_gen_lead_source((row or {}).get("lead_source")))
+
+
+def is_recap_appointment_pipeline(pipeline_id: Any) -> bool:
+    """Rep Daily Recap counts only territory-pipeline appointments (86bc7a8zw / 86bc7ahnt)."""
+    return compact_str(pipeline_id) in TERRITORY_PIPELINE_ID_SET
 
 
 def format_local_datetime(value: Any) -> str:
@@ -833,6 +856,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     contact_cache: dict[str, dict[str, Any]] = {}
     unmapped_powerline = Counter()
     unmapped_raydar = Counter()
+    excluded_pipeline_counts = Counter()
 
     def ensure_owner_bucket(owner_id: str, label: str) -> dict[str, Any]:
         bucket = owner_buckets.get(owner_id)
@@ -878,6 +902,10 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         appt_dt = as_dt(opp.get("appointmentStartTime"))
         if not appt_dt:
             continue
+        pipeline_id = compact_str(opp.get("pipelineId"))
+        if not is_recap_appointment_pipeline(pipeline_id):
+            excluded_pipeline_counts[pipeline_names.get(pipeline_id, pipeline_id or "Unknown")] += 1
+            continue
         owner_id = compact_str(opp.get("assignedTo"))
         owner_label = resolve_owner_name(opp, owner_id, user_names) if owner_id else "Unassigned"
         owner_key = owner_id or normalize_name_key(owner_label) or "unassigned"
@@ -899,7 +927,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         )
         lead_source = normalize_lead_source(contact_custom_field(contact, LEAD_SOURCE_FIELD_ID) if contact else None)
         outcome = normalize_disposition(opp.get("dispositionValue")) or "No outcome logged"
-        pipeline_name = pipeline_names.get(compact_str(opp.get("pipelineId")), compact_str(opp.get("pipelineId")) or "Unknown")
+        pipeline_name = pipeline_names.get(pipeline_id, pipeline_id or "Unknown")
         stage_name = stage_names.get(
             compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId")),
             compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId")) or "Unknown",
@@ -1052,6 +1080,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             "powerline_dials_total": powerline_total,
             "doors_knocked_total": raydar_total,
             "work_total": appointment_total + powerline_total + raydar_total,
+            "excluded_non_territory_appointments_total": sum(excluded_pipeline_counts.values()),
         },
         "owners": owners,
         "powerline_available": powerline_available,
@@ -1059,6 +1088,11 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             "powerline": [{"label": label, "count": count} for label, count in unmapped_powerline.most_common(10)],
             "raydar": [{"label": label, "count": count} for label, count in unmapped_raydar.most_common(10)],
         },
+        "excluded_non_territory_appointments": [
+            {"pipeline": pipeline, "count": count}
+            for pipeline, count in excluded_pipeline_counts.most_common()
+        ],
+        "appointment_pipeline_scope": "territory",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1284,7 +1318,7 @@ __DASHBOARD_NAV_HTML__
     </section>
 
     <section class="grid">
-      {render_stat("Appointments", summary["appointments_total"], "All GHL appointments scheduled in the selected ET day")}
+      {render_stat("Appointments", summary["appointments_total"], "Territory-pipeline (Buffalo/Rochester/Syracuse/Virtual) appointments scheduled in the selected ET day")}
       {render_stat("Completed Outcomes", summary["completed_outcomes_total"], "Appointments with Sit or No Sit logged")}
       {render_stat("Powerline Dials", summary["powerline_dials_total"], powerline_note)}
       {render_stat("Doors Knocked", summary["doors_knocked_total"], "Raydar knocks attributed to mapped rep actors")}
@@ -1296,6 +1330,8 @@ __DASHBOARD_NAV_HTML__
       <br />
       <strong>Self Gen appointments:</strong> {html_escape(summary.get("self_gen_appointments_total", 0))}
       (contact lead source Self Gen on appointments scheduled that ET day).
+      <br />
+      Excluded non-territory appointments (Sweeper/Rehash/other): {html_escape(summary.get("excluded_non_territory_appointments_total", 0))}
       <br />
       {html_escape(unmapped_note)}
     </div>

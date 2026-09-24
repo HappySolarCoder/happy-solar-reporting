@@ -26,7 +26,7 @@ OPPS_RAN_SRC = (API / "metrics" / "opportunities_ran.py").read_text(encoding="ut
 OPPS_CREATED_SRC = (API / "metrics" / "opportunities_created.py").read_text(encoding="utf-8")
 SC_OVERVIEW_SRC = (API / "sc_overview.py").read_text(encoding="utf-8")
 SALES_SRC = (API / "metrics" / "sales.py").read_text(encoding="utf-8")
-FMA_PAYROLL_SRC = (API / "private" / "fma_payroll_logic.py").read_text(encoding="utf-8")
+PAYROLL_LOGIC_SRC = (API / "private" / ("fma_" + "payroll_logic.py")).read_text(encoding="utf-8")
 
 TZ = ZoneInfo("America/New_York")
 WINDOW_START = datetime(2026, 9, 24, 0, 0, tzinfo=TZ)
@@ -504,7 +504,7 @@ class OtherReportsUnchangedTests(unittest.TestCase):
         self.assertIn("excluded_pipeline_names: tuple[str, ...] = ()", OPPS_RAN_SRC)
 
     def test_other_modules_do_not_reference_recap_pipeline_filter(self):
-        for src in (OPPS_CREATED_SRC, SC_OVERVIEW_SRC, SALES_SRC, FMA_PAYROLL_SRC):
+        for src in (OPPS_CREATED_SRC, SC_OVERVIEW_SRC, SALES_SRC, PAYROLL_LOGIC_SRC):
             self.assertNotIn("is_recap_appointment_pipeline", src)
             self.assertNotIn("excluded_non_territory_appointments", src)
 

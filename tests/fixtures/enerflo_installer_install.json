@@ -1,0 +1,13 @@
+{
+  "customer": {
+    "name": "Casey Example",
+    "deals": [{"DealName": "Example deal", "EnerfloV1DealId": "v1-example"}]
+  },
+  "agent_user": {"id": 5, "name": "Ada Rep", "first_name": "Ada", "last_name": "Rep"},
+  "status_name": "In progress",
+  "current_milestone": {"title": "Survey"},
+  "email": "ada@example.com",
+  "phone": "555-0100",
+  "agreement_url": "https://example.test/agreement/casey-example.pdf",
+  "logged_in_user": {"email": "hidden@example.com"}
+}

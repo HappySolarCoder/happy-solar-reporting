@@ -14,6 +14,14 @@
       "destination": "/api?hs=private/fma_payroll_page"
     },
     {
+      "source": "/enerflo-installer",
+      "destination": "/api?hs=enerflo_installer_page"
+    },
+    {
+      "source": "/enerflo-installer/",
+      "destination": "/api?hs=enerflo_installer_page"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api?hs=:path*"
     }

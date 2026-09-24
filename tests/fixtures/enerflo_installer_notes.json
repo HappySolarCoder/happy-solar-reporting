@@ -1,0 +1,74 @@
+[
+  {
+    "note_id": 101,
+    "id": 5010,
+    "epc_install_id": 5010,
+    "author_id": 145285,
+    "note": "@Tom Dunne @Jake Moreno please review the plans",
+    "created_at": "2026-09-20 12:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 102,
+    "id": 5011,
+    "epc_install_id": 5011,
+    "author_id": 145285,
+    "note": "@Ian C\n\nRoof - PASS - shingles are new\nElectrical - PASS",
+    "created_at": "2026-09-18 15:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 103,
+    "id": 5012,
+    "epc_install_id": 5012,
+    "author_id": 145285,
+    "note": "@Mark Sato check the plans",
+    "created_at": "2026-09-24 20:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 104,
+    "id": 5013,
+    "epc_install_id": 5013,
+    "author_id": 145285,
+    "note": "@Tom Dunne the first request",
+    "created_at": "2026-09-19 12:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 105,
+    "id": 5013,
+    "epc_install_id": 5013,
+    "author_id": 145285,
+    "note": "@Ian C sending the roof quote",
+    "created_at": "2026-09-21 12:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 106,
+    "id": 5014,
+    "epc_install_id": 5014,
+    "author_id": 145285,
+    "note": "@Adam Reed\n\nRoof - PASS\nElectrical - FAIL - panel is full",
+    "created_at": "2026-09-18 16:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 107,
+    "id": 5099,
+    "epc_install_id": 5099,
+    "author_id": 145285,
+    "note": "@Tom Dunne already answered",
+    "created_at": "2026-09-12 12:00:00",
+    "deleted_at": null
+  },
+  {
+    "note_id": 108,
+    "id": 5099,
+    "epc_install_id": 5099,
+    "author_id": 145285,
+    "note": "A later note with no tag",
+    "created_at": "2026-09-13 12:00:00",
+    "deleted_at": null
+  }
+]

@@ -149,9 +149,11 @@ class RestoreDispatchTests(unittest.TestCase):
 class RestoreConfigTests(unittest.TestCase):
     def test_rewrite_is_filesystem_fallback_and_cron_is_unchanged(self):
         rewrites = VERCEL.get("rewrites") or []
-        self.assertEqual(len(rewrites), 1)
-        self.assertEqual(rewrites[0]["source"], "/api/:path*")
-        self.assertEqual(rewrites[0]["destination"], "/api?hs=:path*")
+        api_rewrite = next(item for item in rewrites if item.get("source") == "/api/:path*")
+        self.assertEqual(api_rewrite["destination"], "/api?hs=:path*")
+        private_page = [item for item in rewrites if item.get("source") == "/private/fma-payroll"]
+        self.assertEqual(len(private_page), 1)
+        self.assertEqual(private_page[0]["destination"], "/api?hs=private/fma_payroll_page")
         crons = VERCEL.get("crons") or []
         self.assertEqual(len(crons), 1)
         self.assertEqual(crons[0]["path"], "/api/warm_cache")

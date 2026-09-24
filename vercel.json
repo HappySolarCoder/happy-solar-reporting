@@ -6,6 +6,14 @@
   },
   "rewrites": [
     {
+      "source": "/private/fma-payroll",
+      "destination": "/api?hs=private/fma_payroll_page"
+    },
+    {
+      "source": "/private/fma-payroll/",
+      "destination": "/api?hs=private/fma_payroll_page"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api?hs=:path*"
     }

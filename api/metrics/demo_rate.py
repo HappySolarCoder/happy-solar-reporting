@@ -408,6 +408,51 @@ def parse_int(qs: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+def pipeline_in_demo_scope(pname_low: str, contract: MetricContract) -> bool:
+    """Same include/exclude lists demo_rate uses for Sit and No Sit."""
+    if not pname_low:
+        return False
+    if pname_low in contract.excluded_pipeline_names:
+        return False
+    if pname_low not in contract.included_pipeline_names:
+        return False
+    return True
+
+
+def frozen_disposition_local(
+    opp: dict,
+    contract: MetricContract,
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> tuple[datetime, str] | None:
+    """Sit/No Sit whose frozen timestamp falls in [start_local, end_local).
+
+    Shared with FMA payroll so week membership cannot drift from demo_rate.
+    A follow-up is not a second sit: frozen_sit_timestamp is first-write-wins.
+    """
+    dispo = opp.get(contract.disposition_value_field)
+    if dispo not in ("Sit", "No Sit"):
+        return None
+    frozen_dt = frozen_sit_timestamp(
+        opp.get(contract.appointment_occurred_at_field),
+        opp.get(contract.disposition_date_field),
+    )
+    if not frozen_dt:
+        return None
+    if frozen_dt > now_utc:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        local_dt = frozen_dt.astimezone(ZoneInfo(contract.timezone))
+    except Exception:
+        return None
+    if not (start_local <= local_dt < end_local):
+        return None
+    return local_dt, dispo
+
+
 def html_page(payload: dict) -> str:
     # Dark QA page (matches other QA endpoints)
     rows = payload.get("rows") or []
@@ -557,38 +602,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         pname = resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         pname_low = pname.lower()
 
-        if not pname_low:
+        if not pipeline_in_demo_scope(pname_low, c):
             continue
 
-        if pname_low in c.excluded_pipeline_names:
+        windowed = frozen_disposition_local(opp, c, start_local, end_local, now_utc)
+        if not windowed:
             continue
-
-        if pname_low not in c.included_pipeline_names:
-            continue
-
-        dispo = opp.get(c.disposition_value_field)
-        if dispo not in ("Sit", "No Sit"):
-            continue
-
-        frozen_dt = frozen_sit_timestamp(
-            opp.get(c.appointment_occurred_at_field),
-            opp.get(c.disposition_date_field),
-        )
-        if not frozen_dt:
-            continue
-        if frozen_dt > now_utc:
-            continue
-
-        # Convert to local timezone for month window comparisons
-        try:
-            from zoneinfo import ZoneInfo
-
-            local_dt = frozen_dt.astimezone(ZoneInfo(c.timezone))
-        except Exception:
-            continue
-
-        if not (start_local <= local_dt < end_local):
-            continue
+        local_dt, dispo = windowed
 
         # join contact for setter + lead source filters/breakdowns
         contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}

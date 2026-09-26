@@ -409,6 +409,7 @@ class LinkAndQueryTests(unittest.TestCase):
             "api/private/fma_payroll_logout.py",
             "api/private/fma_payroll_page.py",
             "tests/test_fma_payroll.py",
+            "tests/test_sweeper_rehash_attribution.py",
             "tests/test_restore_omitted_apis.py",
             "vercel.json",
         }

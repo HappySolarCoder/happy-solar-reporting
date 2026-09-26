@@ -397,6 +397,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Metric Notes</div>
         <div class="meta">
           Demo commission is based on <strong>Sit</strong> outcomes from <code>/api/metrics/demo_rate</code>.
+          A filled Sweeper/Rehash Last Name replaces the setter only when the sit's America/New_York date is on or after 2026-09-24. Earlier sits stay with the original setter.
           Sales commission is based on canonical Sales counts from <code>/api/metrics/sales</code>.
         </div>
       </div>
@@ -578,6 +579,8 @@ __DASHBOARD_NAV_HTML__
           })
         ]);
 
+        // Per-sit cutoff lives in demo_rate (SWEEPER_ATTRIBUTION_START 2026-09-24).
+        // This page does not reassign setters itself, so payroll reads the same sit credit.
         const demoBySetter = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {};
         const salesBySetter = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_setter_last_name) || {};
 

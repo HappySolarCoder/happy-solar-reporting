@@ -23,6 +23,7 @@ for _path in (str(METRICS_DIR), str(PRIVATE_DIR)):
         sys.path.insert(0, _path)
 
 import demo_rate
+from sweeper_rehash_attribution import attributed_last_name, sweeper_rehash_last_name
 from fma_payroll_logic import (
     LEAD_GEN_SOURCE_CF,
     SCHEDULING_MANAGER_CF,
@@ -209,7 +210,11 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
             ],
         )
         lead = _cf_text(contact, LEAD_GEN_SOURCE_CF)
+        # Scheduling manager stays the contact field. Only the FMA setter
+        # moves, and only when the sit's ET date is on or after 2026-09-24.
         manager = _cf_text(contact, SCHEDULING_MANAGER_CF)
+        sweeper_last = sweeper_rehash_last_name(contact, opp)
+        setter = attributed_last_name(setter, lead, sweeper_last, local_dt.date())
         opp_id = compact(opp.get("id") or getattr(snap, "id", ""))
         opp_url, contact_url = _ghl_urls(opp, contact, opp_id, contact_id)
         sits.append(

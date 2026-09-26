@@ -596,7 +596,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-header setterHeader">
           <div>
             <div class="card-title">GHL — Demo Rate by Setter (Current Month)</div>
-            <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran)</div>
+            <div class="meta">Opps Ran / Demos / Demo % (Sit / Ran). On or after Thu Sep 24, 2026 (ET), a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
           </div>
         </div>
 

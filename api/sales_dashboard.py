@@ -463,7 +463,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By Setter Last Name</div>
+          <div class="meta">By last name. On or after Thu Sep 24, 2026 (ET), rehash or a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
         </div>
         <div class="tablewrap">
           <table>

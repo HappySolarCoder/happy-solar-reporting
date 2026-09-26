@@ -304,6 +304,16 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
         self.assertEqual(funnel.page_group_from_landing("/calculator"), "calculator")
         self.assertEqual(funnel.page_group_from_landing("/contact-me"), "contact_me")
         self.assertEqual(funnel.page_group_from_landing("/blog/hello"), "other")
+        self.assertEqual(funnel.page_group_from_landing("/estimate"), "calculator")
+        self.assertEqual(funnel.page_group_from_landing("/Estimate"), "calculator")
+        self.assertEqual(funnel.page_group_from_landing("/estimate/"), "calculator")
+        self.assertEqual(funnel.page_group_from_landing("/estimate?address=1"), "calculator")
+        self.assertEqual(
+            funnel.page_group_from_landing("https://www.happyslr.com/Estimate/?x=1"),
+            "calculator",
+        )
+        self.assertEqual(funnel.page_group_from_landing("/estimates"), "other")
+        self.assertEqual(funnel.page_group_from_landing("/wny/calculator"), "calculator")
         self.assertEqual(funnel.normalize_page_group("Buffalo"), "city_buffalo")
         self.assertEqual(funnel.normalize_page_group("contact-me"), "contact_me")
 
@@ -694,6 +704,9 @@ class WebsiteFunnelYesterdayTests(unittest.TestCase):
         self.assertIsNone(payload["reason"])
         self.assertEqual(payload["scope"], "calculator")
         self.assertEqual(payload["site"], "wny.happyslr.com")
+        self.assertEqual(funnel.calculator_site_label("2026-09-09"), "wny.happyslr.com")
+        self.assertEqual(funnel.calculator_site_label("2026-09-10"), "www.happyslr.com/estimate")
+        self.assertEqual(funnel.CALCULATOR_CUTOVER_DATE, "2026-09-10")
         self.assertEqual(payload["lead_field"], "estimate_submit")
         self.assertEqual(payload["lead"], 2)
         self.assertEqual(payload["sessions"], 100)
@@ -1027,6 +1040,7 @@ class WebsiteFunnelHostSplitTests(unittest.TestCase):
         self.assertEqual(out["visits_total"], 351)
         self.assertEqual(out["sessions"], 351)
         self.assertEqual(out["visits_wny"], 7)
+        self.assertEqual(out["visits_www_estimate"], 0)
         self.assertEqual(out["completed_forms"], 2)
         self.assertEqual(out["estimate_submit"], 0)
         self.assertEqual(out["wix_form_submits"], 2)
@@ -1192,6 +1206,72 @@ class WebsiteFunnelHostSplitTests(unittest.TestCase):
         self.assertNotIn("TESTER_IPS", FUNNEL_SRC)
         self.assertNotIn("ip_allowlist", FUNNEL_SRC)
         self.assertNotIn("ipAddress", FUNNEL_SRC)
+
+    def test_estimate_path_counts_as_calculator_after_cutover_only(self):
+        rows = [
+            {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/Estimate/", "count": 59},
+            {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/estimate?x=1", "count": 1},
+            {"event_name": "page_view", "host_name": "happyslr.com", "page_path": "/estimate", "count": 4},
+            {"event_name": "page_view", "host_name": "wny.happyslr.com", "page_path": "/calculator", "count": 7},
+            {"event_name": "page_view", "host_name": "www.happyslr.com", "page_path": "/", "count": 10},
+            {
+                "event_name": "estimate_start",
+                "host_name": "www.happyslr.com",
+                "page_path": "/estimate",
+                "count": 5,
+            },
+            {
+                "event_name": "estimate_submit",
+                "host_name": "www.happyslr.com",
+                "page_path": "/Estimate",
+                "count": 1,
+            },
+            {
+                "event_name": "estimate_start",
+                "host_name": "www.happyslr.com",
+                "page_path": "/blog/hello",
+                "count": 2,
+            },
+        ]
+        out = funnel.summarize_ga4_event_rows(rows)
+        self.assertEqual(out["visits_wny"], 7)
+        self.assertEqual(out["visits_www_estimate"], 60)
+        self.assertEqual(out["visits_calculator_unit"], "page_views")
+        self.assertEqual(out["by_page"]["calculator"]["sessions"], 64)
+        self.assertEqual(out["by_page"]["calculator"]["starts"], 5)
+        self.assertEqual(out["by_page"]["calculator"]["completed_forms"], 1)
+        self.assertEqual(out["by_page"]["other"]["starts"], 2)
+        self.assertEqual(out["by_page"]["other"]["sessions"], 0)
+        self.assertEqual(out["by_page"]["home"]["sessions"], 10)
+        before = funnel.build_daily_doc("2026-09-05", out)
+        after = funnel.build_daily_doc("2026-09-23", out)
+        self.assertEqual(before["visits_wny"], 7)
+        self.assertEqual(before["visits_calculator"], 7)
+        self.assertEqual(before["visits_calculator_unit"], "page_views")
+        self.assertEqual(after["visits_wny"], 7)
+        self.assertEqual(after["visits_calculator"], 60)
+        self.assertEqual(after["visits_calculator_unit"], "page_views")
+        self.assertEqual(after["by_page"]["calculator"]["starts"], 5)
+        self.assertEqual(funnel.calculator_site_label("2026-09-05"), "wny.happyslr.com")
+        self.assertEqual(funnel.calculator_site_label("2026-09-23"), "www.happyslr.com/estimate")
+
+    def test_pre_cutover_chart_uses_visits_wny_when_calculator_field_missing(self):
+        docs = [
+            {
+                "date": "2026-09-05",
+                "ga4": "ok",
+                "visits_total": 100,
+                "visits_wny": 12,
+                "completed_forms": 1,
+                "sessions": 100,
+            }
+        ]
+        payload = funnel.aggregate_daily_docs(docs, year=2026, month=9)
+        day = next(row for row in payload["days"] if row["date"] == "2026-09-05")
+        self.assertEqual(day["visits_wny"], 12)
+        self.assertEqual(day["visits_calculator"], 12)
+        self.assertEqual(payload["totals"]["visits_calculator"], 12)
+        self.assertEqual(payload["totals"]["visits_calculator_unit"], "page_views")
 
 
 if __name__ == "__main__":

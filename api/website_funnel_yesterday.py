@@ -2,7 +2,9 @@
 
 """Vercel Python function: /api/website_funnel_yesterday
 
-Charles 8:00 America/New_York routine — calculator / wny snapshot.
+Charles 8:00 America/New_York routine — calculator snapshot.
+site is wny.happyslr.com before 2026-09-10 ET and
+www.happyslr.com/estimate on and after that date.
 
 Reads one web_funnel_daily_v1/{YYYY-MM-DD} doc for yesterday in
 America/New_York (00:00–23:59 calendar day). No collection stream.

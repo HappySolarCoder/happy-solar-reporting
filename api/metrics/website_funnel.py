@@ -69,7 +69,11 @@ Host / QA exclusions (lock):
   pageLocation can see ?internal=1 when Designer adds that live flag.
   Do not invent a tester IP list.
 - visits_total = page_view on www.happyslr.com + happyslr.com.
-- visits_wny = page_view on wny.happyslr.com.
+- visits_wny = page_view on wny.happyslr.com (kept for older days).
+- visits_calculator = page_view. Before CALCULATOR_CUTOVER_DATE this
+  equals visits_wny. On and after that date it is page_view on
+  www.happyslr.com with pagePath /estimate. Same unit every day
+  (visits_calculator_unit = page_views). Not the GA4 sessions metric.
 - sessions is kept equal to visits_total (scoreboard / yesterday).
 - completed_forms = estimate_submit + wix_form_submit after those filters.
   Preview-host QA forms (Aug 19 estimate_* on *.vercel.app) do not count.
@@ -153,7 +157,17 @@ EVENT_COUNT_FIELDS = {
 YESTERDAY_NOT_READY_REASON = "source isn't ready"
 YESTERDAY_LEAD_FIELD = "estimate_submit"
 YESTERDAY_SCOPE = "calculator"
-YESTERDAY_SITE = "wny.happyslr.com"
+# wny.happyslr.com started 301-redirecting to www.happyslr.com/estimate
+# on 2026-09-09 at 2:32 PM America/New_York. Full ET days on and after
+# this date count calculator traffic from www /estimate. Earlier days
+# stay on the wny host so pre-cutover rollups do not move.
+CALCULATOR_CUTOVER_DATE = "2026-09-10"
+CALCULATOR_SITE_BEFORE = "wny.happyslr.com"
+CALCULATOR_SITE_AFTER = "www.happyslr.com/estimate"
+# page_view eventCount, same grain as visits_wny / visits_total.
+# Not the GA4 sessions metric and not session_start.
+VISITS_CALCULATOR_UNIT = "page_views"
+YESTERDAY_SITE = CALCULATOR_SITE_BEFORE
 YESTERDAY_METRIC_FIELDS = (
     "sessions",
     "estimate_start",
@@ -397,16 +411,88 @@ def normalize_page_group(raw: Any) -> str:
     return page_group_from_landing(raw)
 
 
-def page_group_from_landing(raw: Any) -> str:
+def landing_path(raw: Any) -> str:
+    """Path only, casefolded, query stripped, trailing slash stripped."""
     text = compact_str(raw)
     if not text:
-        return "other"
+        return ""
     try:
         parsed = urlparse(text if "://" in text else f"https://x{text if text.startswith('/') else '/' + text}")
         path = (parsed.path or "/").casefold()
     except Exception:
         path = text.casefold()
-    path = path.split("?")[0].rstrip("/") or "/"
+    return path.split("?")[0].rstrip("/") or "/"
+
+
+def is_estimate_landing_path(raw: Any) -> bool:
+    """/estimate, case-insensitive, with a query string or a trailing slash."""
+    return landing_path(raw) == "/estimate"
+
+
+def calculator_cutover_active(date_ymd: str | None) -> bool:
+    text = compact_str(date_ymd)
+    return bool(text) and text >= CALCULATOR_CUTOVER_DATE
+
+
+def calculator_site_label(date_ymd: str | None) -> str:
+    if calculator_cutover_active(date_ymd):
+        return CALCULATOR_SITE_AFTER
+    return CALCULATOR_SITE_BEFORE
+
+
+def month_calculator_site_mode(year: int, month: int) -> str:
+    dates = month_dates(year, month)
+    before = dates[0] < CALCULATOR_CUTOVER_DATE
+    after = dates[-1] >= CALCULATOR_CUTOVER_DATE
+    if before and after:
+        return "mixed"
+    if after:
+        return "after"
+    return "before"
+
+
+def calculator_visits_legend(mode: str) -> str:
+    if mode == "after":
+        return f"{CALCULATOR_SITE_AFTER} visits"
+    if mode == "mixed":
+        return (
+            f"{CALCULATOR_SITE_BEFORE} visits before {CALCULATOR_CUTOVER_DATE}; "
+            f"{CALCULATOR_SITE_AFTER} visits after"
+        )
+    return f"{CALCULATOR_SITE_BEFORE} visits"
+
+
+def calculator_rate_legend(mode: str) -> str:
+    if mode == "after":
+        return f"forms completed / {CALCULATOR_SITE_AFTER} visits"
+    if mode == "mixed":
+        return (
+            f"forms completed / calculator visits "
+            f"({CALCULATOR_SITE_BEFORE} before {CALCULATOR_CUTOVER_DATE}, "
+            f"{CALCULATOR_SITE_AFTER} after)"
+        )
+    return f"forms completed / {CALCULATOR_SITE_BEFORE} visits"
+
+
+def visits_chart_meta(mode: str) -> str:
+    head = "Total site visits = www.happyslr.com + happyslr.com page views."
+    tail = " Forms completed = live-host completed forms. Missing or not-configured days are gaps, not zeros."
+    if mode == "after":
+        mid = f" {CALCULATOR_SITE_AFTER} visits are the calculator series (page views)."
+    elif mode == "mixed":
+        mid = (
+            f" Calculator visits are {CALCULATOR_SITE_BEFORE} page views before {CALCULATOR_CUTOVER_DATE}"
+            f" and {CALCULATOR_SITE_AFTER} page views on and after that date."
+        )
+    else:
+        mid = f" {CALCULATOR_SITE_BEFORE} visits are a separate series."
+    return head + mid + tail
+
+
+def page_group_from_landing(raw: Any) -> str:
+    path = landing_path(raw)
+    if not path:
+        return "other"
     if path in {"/", "/home", "/index", "/index.html"}:
         return "home"
     if "buffalo" in path:
@@ -420,6 +506,8 @@ def page_group_from_landing(raw: Any) -> str:
     if "contact-me" in path or "contact_me" in path or path.endswith("/contact"):
         return "contact_me"
     if "calculator" in path:
+        return "calculator"
+    if path == "/estimate":
         return "calculator"
     return "other"
 
@@ -462,6 +550,9 @@ def _ga4_not_configured(error: str | None = None) -> dict[str, Any]:
         "sessions": None,
         "visits_total": None,
         "visits_wny": None,
+        "visits_www_estimate": None,
+        "visits_calculator": None,
+        "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
         "cta_clicks": None,
         "starts": None,
         "address_complete": None,
@@ -592,6 +683,7 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     totals = {field: 0 for field in EVENT_COUNT_FIELDS.values()}
     visits_total = 0
     visits_wny = 0
+    visits_www_estimate = 0
     by_page = empty_by_page()
     dropped = {"host": 0, "debug_mode": 0, "internal": 0}
 
@@ -624,6 +716,8 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             if host_kind == "total":
                 visits_total += count
                 totals["sessions"] += count
+                if normalize_host_name(host_name) == HOST_WWW and is_estimate_landing_path(page_path):
+                    visits_www_estimate += count
             elif host_kind == "wny":
                 visits_wny += count
         else:
@@ -644,6 +738,8 @@ def summarize_ga4_event_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "sessions": visits_total,
         "visits_total": visits_total,
         "visits_wny": visits_wny,
+        "visits_www_estimate": visits_www_estimate,
+        "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
         "cta_clicks": totals.get("cta_clicks", 0),
         "starts": totals.get("starts", 0),
         "address_complete": totals.get("address_complete", 0),
@@ -688,6 +784,30 @@ def normalize_by_page(raw: dict[str, Any] | None) -> dict[str, dict[str, int | N
     return out
 
 
+def resolve_visits_calculator(date_ymd: str, ga4: dict[str, Any]) -> int | None:
+    """Combined calculator page views. Pre-cutover = visits_wny. After = www /estimate."""
+    if compact_str(ga4.get("ga4")) != "ok":
+        return None
+    if calculator_cutover_active(date_ymd):
+        if "visits_www_estimate" not in ga4 or ga4.get("visits_www_estimate") is None:
+            return None
+        return int(ga4.get("visits_www_estimate") or 0)
+    if ga4.get("visits_wny") is None:
+        return None
+    return int(ga4.get("visits_wny") or 0)
+
+
+def visits_calculator_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> int | None:
+    """Read the stored field. Pre-cutover docs written before the field existed use visits_wny."""
+    if not doc:
+        return None
+    if doc.get("visits_calculator") is not None:
+        return _optional_int(doc.get("visits_calculator"))
+    if date_ymd < CALCULATOR_CUTOVER_DATE:
+        return _optional_int(doc.get("visits_wny"))
+    return None
+
+
 def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
     ga4_status = compact_str(ga4.get("ga4")) or "not_configured"
     estimate_submit = ga4.get("estimate_submit")
@@ -703,6 +823,8 @@ def build_daily_doc(date_ymd: str, ga4: dict[str, Any]) -> dict[str, Any]:
         "sessions": sessions,
         "visits_total": visits_total,
         "visits_wny": visits_wny,
+        "visits_calculator": resolve_visits_calculator(date_ymd, ga4),
+        "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
         "cta_clicks": ga4.get("cta_clicks"),
         "starts": ga4.get("starts"),
         "address_complete": ga4.get("address_complete"),
@@ -816,7 +938,7 @@ def build_day_snapshot(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         "reason": None if ready else YESTERDAY_NOT_READY_REASON,
         "metric": METRIC_NAME,
         "scope": YESTERDAY_SCOPE,
-        "site": YESTERDAY_SITE,
+        "site": calculator_site_label(date_key),
         "timezone": TIMEZONE_NAME,
         "date": date_key,
         "window": window,
@@ -884,6 +1006,7 @@ def chart_day_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         "date": date_key,
         "visits_total": None,
         "visits_wny": None,
+        "visits_calculator": None,
         "completed_forms": None,
     }
     if not doc:
@@ -897,6 +1020,7 @@ def chart_day_from_doc(doc: dict[str, Any] | None, date_ymd: str) -> dict[str, A
         "date": date_key,
         "visits_total": _optional_int(doc.get("visits_total")),
         "visits_wny": _optional_int(doc.get("visits_wny")),
+        "visits_calculator": visits_calculator_from_doc(doc, date_key),
         "completed_forms": _optional_int(doc.get("completed_forms")),
     }
 
@@ -911,17 +1035,22 @@ def cumulative_form_ratios(days: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cum_forms = 0
     cum_total = 0
     cum_wny = 0
+    cum_calc = 0
     out: list[dict[str, Any]] = []
     for row in days or []:
         date_key = compact_str(row.get("date"))
         visits_total = row.get("visits_total")
         visits_wny = row.get("visits_wny")
+        visits_calc = row.get("visits_calculator")
+        if visits_calc is None and date_key < CALCULATOR_CUTOVER_DATE:
+            visits_calc = visits_wny
         completed = row.get("completed_forms")
         if visits_total is None and visits_wny is None:
             out.append(
                 {
                     "date": date_key,
                     "forms_over_wny": None,
+                    "forms_over_calculator": None,
                     "forms_over_total": None,
                 }
             )
@@ -932,10 +1061,13 @@ def cumulative_form_ratios(days: list[dict[str, Any]]) -> list[dict[str, Any]]:
             cum_total += int(visits_total)
         if visits_wny is not None:
             cum_wny += int(visits_wny)
+        if visits_calc is not None:
+            cum_calc += int(visits_calc)
         out.append(
             {
                 "date": date_key,
                 "forms_over_wny": ratio(cum_forms, cum_wny),
+                "forms_over_calculator": ratio(cum_forms, cum_calc),
                 "forms_over_total": ratio(cum_forms, cum_total),
             }
         )
@@ -964,11 +1096,16 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
 
     visits_total = _sum_optional([row.get("visits_total") for row in docs])
     visits_wny = _sum_optional([row.get("visits_wny") for row in docs])
+    visits_calculator = _sum_optional(
+        [visits_calculator_from_doc(row, compact_str(row.get("date"))) for row in docs]
+    )
     sessions = _sum_optional([row.get("sessions") for row in docs])
     totals = {
         "sessions": sessions,
         "visits_total": visits_total,
         "visits_wny": visits_wny,
+        "visits_calculator": visits_calculator,
+        "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
         "cta_clicks": _sum_optional([row.get("cta_clicks") for row in docs]),
         "starts": _sum_optional([row.get("starts") for row in docs]),
         "address_complete": _sum_optional([row.get("address_complete") for row in docs]),
@@ -1148,6 +1285,16 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
             "ga4_env": [GA4_PROPERTY_ID_ENV, GA4_SERVICE_ACCOUNT_JSON_ENV, FIREBASE_SERVICE_ACCOUNT_JSON_ENV],
             "visits_total": "page_view on www.happyslr.com + happyslr.com after host allowlist",
             "visits_wny": "page_view on wny.happyslr.com after host allowlist",
+            "visits_calculator": (
+                "page_view eventCount. Before "
+                + CALCULATOR_CUTOVER_DATE
+                + " ET this equals visits_wny. On and after that date it is page_view on www.happyslr.com "
+                "with pagePath /estimate (case-insensitive, optional trailing slash or query string)."
+            ),
+            "visits_calculator_unit": VISITS_CALCULATOR_UNIT,
+            "calculator_cutover_date": CALCULATOR_CUTOVER_DATE,
+            "calculator_site_before": CALCULATOR_SITE_BEFORE,
+            "calculator_site_after": CALCULATOR_SITE_AFTER,
             "sessions": "Same as visits_total. page_view eventCount held; not session_start.",
             "completed_forms": "estimate_submit + wix_form_submit on live hosts only, after debug/internal filters.",
             "exclusions": {
@@ -1279,10 +1426,10 @@ __DASHBOARD_NAV_HTML__
       <div class="section-label">Daily — live hosts only</div>
       <div class="card span-12">
         <div class="card-title">Daily visits and forms</div>
-        <div class="meta">Total site visits = www.happyslr.com + happyslr.com page views. wny.happyslr.com visits are a separate series. Forms completed = live-host completed forms. Missing or not-configured days are gaps, not zeros.</div>
+        <div class="meta" id="visitsMeta">__VISITS_META__</div>
         <div class="legend">
           <span><span class="swatch" style="background:#2196F3"></span>Total site visits</span>
-          <span><span class="swatch" style="background:#00C853"></span>wny.happyslr.com visits</span>
+          <span id="calcVisitsLegend"><span class="swatch" style="background:#00C853"></span>__CALC_VISITS_LABEL__</span>
           <span><span class="swatch" style="background:#d97706"></span>Forms completed</span>
         </div>
         <div class="chartBox" id="visitsChart"></div>
@@ -1291,7 +1438,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Running conversion this month</div>
         <div class="meta">Cumulative in the selected month: sum of forms so far / sum of visits so far. Divide-by-zero is blank, not 0%. Null days stay gaps.</div>
         <div class="legend">
-          <span><span class="swatch" style="background:#00C853"></span>forms completed / wny.happyslr.com visits</span>
+          <span id="calcRateLegend"><span class="swatch" style="background:#00C853"></span>__CALC_RATE_LABEL__</span>
           <span><span class="swatch" style="background:#2196F3"></span>forms completed / total site visits</span>
         </div>
         <div class="chartBox" id="rateChart"></div>
@@ -1319,6 +1466,46 @@ __DASHBOARD_NAV_HTML__
 <script>
 var defaultYear = __YEAR__;
 var defaultMonth = __MONTH__;
+var CALCULATOR_CUTOVER = "__CALCULATOR_CUTOVER__";
+var SITE_BEFORE = "__SITE_BEFORE__";
+var SITE_AFTER = "__SITE_AFTER__";
+function calculatorSite(date) {
+  if (date && String(date) >= CALCULATOR_CUTOVER) return SITE_AFTER;
+  return SITE_BEFORE;
+}
+function monthSiteMode(days) {
+  var before = false, after = false;
+  (days || []).forEach(function(row) {
+    if (!row || !row.date) return;
+    if (String(row.date) >= CALCULATOR_CUTOVER) after = true;
+    else before = true;
+  });
+  if (before && after) return 'mixed';
+  if (after) return 'after';
+  return 'before';
+}
+function calculatorVisitsLegend(mode) {
+  if (mode === 'after') return SITE_AFTER + ' visits';
+  if (mode === 'mixed') return SITE_BEFORE + ' visits before ' + CALCULATOR_CUTOVER + '; ' + SITE_AFTER + ' visits after';
+  return SITE_BEFORE + ' visits';
+}
+function calculatorRateLegend(mode) {
+  if (mode === 'after') return 'forms completed / ' + SITE_AFTER + ' visits';
+  if (mode === 'mixed') {
+    return 'forms completed / calculator visits (' + SITE_BEFORE + ' before ' + CALCULATOR_CUTOVER + ', ' + SITE_AFTER + ' after)';
+  }
+  return 'forms completed / ' + SITE_BEFORE + ' visits';
+}
+function visitsChartMeta(mode) {
+  var head = 'Total site visits = www.happyslr.com + happyslr.com page views.';
+  var tail = ' Forms completed = live-host completed forms. Missing or not-configured days are gaps, not zeros.';
+  var mid;
+  if (mode === 'after') mid = ' ' + SITE_AFTER + ' visits are the calculator series (page views).';
+  else if (mode === 'mixed') {
+    mid = ' Calculator visits are ' + SITE_BEFORE + ' page views before ' + CALCULATOR_CUTOVER + ' and ' + SITE_AFTER + ' page views on and after that date.';
+  } else mid = ' ' + SITE_BEFORE + ' visits are a separate series.';
+  return head + mid + tail;
+}
 var yearSel = document.getElementById('year');
 var monthSel = document.getElementById('month');
 function setOptions(sel, options, value) {
@@ -1428,26 +1615,45 @@ async function load() {
   }).join('');
 
   var days = data.days || [];
+  var siteMode = monthSiteMode(days);
+  var visitsLegend = document.getElementById('calcVisitsLegend');
+  var rateLegend = document.getElementById('calcRateLegend');
+  var visitsMeta = document.getElementById('visitsMeta');
+  if (visitsLegend) {
+    visitsLegend.innerHTML = '<span class="swatch" style="background:#00C853"></span>' + calculatorVisitsLegend(siteMode);
+  }
+  if (rateLegend) {
+    rateLegend.innerHTML = '<span class="swatch" style="background:#00C853"></span>' + calculatorRateLegend(siteMode);
+  }
+  if (visitsMeta) visitsMeta.textContent = visitsChartMeta(siteMode);
   var running = data.running || runningFromDays(days);
   drawLineChart('visitsChart', days, [
     {key: 'visits_total', label: 'Total site visits', color: '#2196F3'},
-    {key: 'visits_wny', label: 'wny.happyslr.com visits', color: '#00C853'},
+    {key: 'visits_calculator', label: calculatorVisitsLegend(siteMode), color: '#00C853', labelFor: function(row) {
+      return calculatorSite(row && row.date) + ' visits';
+    }},
     {key: 'completed_forms', label: 'Forms completed', color: '#d97706'}
   ], {kind: 'count', empty: 'No host-split warehouse days yet. Re-rollup to draw this chart. Gaps are not zeros.'});
   drawLineChart('rateChart', running, [
-    {key: 'forms_over_wny', label: 'forms completed / wny.happyslr.com visits', color: '#00C853'},
+    {key: 'forms_over_calculator', label: calculatorRateLegend(siteMode), color: '#00C853', labelFor: function(row) {
+      return 'forms completed / ' + calculatorSite(row && row.date) + ' visits';
+    }},
     {key: 'forms_over_total', label: 'forms completed / total site visits', color: '#2196F3'}
-  ], {kind: 'pct', empty: 'No running conversion yet. wny or total visits must be greater than zero.'});
+  ], {kind: 'pct', empty: 'No running conversion yet. Calculator or total visits must be greater than zero.'});
 }
 function runningFromDays(days) {
-  var cumForms = 0, cumTotal = 0, cumWny = 0;
+  var cumForms = 0, cumTotal = 0, cumWny = 0, cumCalc = 0;
   return (days || []).map(function(row) {
-    var out = {date: row.date, forms_over_wny: null, forms_over_total: null};
+    var out = {date: row.date, forms_over_wny: null, forms_over_calculator: null, forms_over_total: null};
+    var visitsCalc = row.visits_calculator;
+    if (visitsCalc == null && row.date && String(row.date) < CALCULATOR_CUTOVER) visitsCalc = row.visits_wny;
     if (row.visits_total == null && row.visits_wny == null) return out;
     if (row.completed_forms != null) cumForms += Number(row.completed_forms);
     if (row.visits_total != null) cumTotal += Number(row.visits_total);
     if (row.visits_wny != null) cumWny += Number(row.visits_wny);
+    if (visitsCalc != null) cumCalc += Number(visitsCalc);
     out.forms_over_wny = cumWny > 0 ? cumForms / cumWny : null;
+    out.forms_over_calculator = cumCalc > 0 ? cumForms / cumCalc : null;
     out.forms_over_total = cumTotal > 0 ? cumForms / cumTotal : null;
     return out;
   });
@@ -1522,7 +1728,8 @@ function drawLineChart(id, rows, series, opt) {
       var py = y(v).toFixed(1);
       d += (drawing ? ' L' : 'M') + px + ' ' + py;
       drawing = true;
-      var tip = String((rows[i] || {}).date || '') + ' — ' + s.label + ' ' + (opt.kind === 'pct' ? pct(v) : num(v));
+      var pointLabel = (typeof s.labelFor === 'function') ? s.labelFor(rows[i] || {}) : s.label;
+      var tip = String((rows[i] || {}).date || '') + ' — ' + pointLabel + ' ' + (opt.kind === 'pct' ? pct(v) : num(v));
       dots += '<circle cx="' + px + '" cy="' + py + '" r="3" fill="' + s.color + '"><title>' + tip + '</title></circle>';
     });
     if (d) {
@@ -1537,9 +1744,16 @@ load();
 </body>
 </html>
 """
+    mode = month_calculator_site_mode(year, month)
     return (
         html.replace("__YEAR__", str(year))
         .replace("__MONTH__", str(month))
+        .replace("__CALCULATOR_CUTOVER__", CALCULATOR_CUTOVER_DATE)
+        .replace("__SITE_BEFORE__", CALCULATOR_SITE_BEFORE)
+        .replace("__SITE_AFTER__", CALCULATOR_SITE_AFTER)
+        .replace("__VISITS_META__", visits_chart_meta(mode))
+        .replace("__CALC_VISITS_LABEL__", calculator_visits_legend(mode))
+        .replace("__CALC_RATE_LABEL__", calculator_rate_legend(mode))
         .replace("__DASHBOARD_NAV_CSS__", nav_css)
         .replace("__DASHBOARD_NAV_HTML__", nav_html)
     )

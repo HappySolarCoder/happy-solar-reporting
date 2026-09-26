@@ -624,10 +624,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
         lead = normalize_lead_source(contact_custom_field(contact, c.lead_gen_source_contact_cf_id))
         sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
-        # Same credit rule as opportunities created: rehash or a filled
-        # Sweeper/Rehash Last Name counts for that person. True self-gen
-        # with an empty field stays on the setter.
-        credited = attributed_last_name(setter, lead, sweeper_last)
+        # Same ET business date payroll uses for Thu–Wed week membership
+        # (frozen sit timestamp localized to America/New_York). Sweeper credit
+        # starts 2026-09-24. Earlier sits stay with the setter, including the
+        # breakdown commissions and the Scottsdale incentive read.
+        appointment_date = local_dt.date()
+        credited = attributed_last_name(setter, lead, sweeper_last, appointment_date)
         setter_s = normalize_person_display(credited, empty="none")
 
         # Apply optional filters
@@ -635,7 +637,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             continue
         if filters.get("setter") and setter_s.lower() != str(filters["setter"]).strip().lower():
             continue
-        if not lead_source_matches(filters.get("lead_source"), lead, sweeper_last):
+        if not lead_source_matches(filters.get("lead_source"), lead, sweeper_last, appointment_date):
             continue
 
         ran += 1

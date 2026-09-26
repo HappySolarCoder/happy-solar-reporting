@@ -28,7 +28,7 @@ DEFINITION = {
     "pipelines_included": ["buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper"],
     "pipelines_excluded": ["inbound/lead locker"],
     "follow_up": "not a second sit",
-    "setter": "contact Setter Last Name Eq4NLTSkJ56KTxbxypuE, else opportunity same field, else last token of Setter Name Xhy6k4xfHRJ6s5IbfA5x",
+    "setter": "contact Setter Last Name Eq4NLTSkJ56KTxbxypuE, else opportunity same field, else last token of Setter Name Xhy6k4xfHRJ6s5IbfA5x; Sweeper/Rehash Last Name HWfjOp8MvE6soxBAL75f replaces that setter when the field is filled and the sit's America/New_York date is on or after 2026-09-24",
     "lead_gen_source": "contact hd5QqHEOVSsPom5bJ32P",
     "scheduling_manager": "contact 6QmaNZha745jNHnh3U86",
     "owner": "ghl_opportunities_v2.assignedTo via ghl_users_v2",

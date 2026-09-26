@@ -529,14 +529,15 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
         lead_norm = normalize_channel(lead)
         sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
-        # Rehash, or a filled Sweeper/Rehash Last Name, counts for that person.
-        # True self-gen with an empty field stays on the setter.
-        credited = attributed_last_name(setter, lead_norm, sweeper_last)
+        # createdAt in America/New_York is this metric's appointment date.
+        # Same cutoff as payroll sits: on or after Thursday 2026-09-24.
+        appointment_date = created_local.date()
+        credited = attributed_last_name(setter, lead_norm, sweeper_last, appointment_date)
         setter_norm = normalize_person_display(credited, empty="none")
         if setter_filter_norm and setter_norm.lower() != setter_filter_norm:
             continue
 
-        if not lead_source_matches(lead_source_norm, lead_norm, sweeper_last):
+        if not lead_source_matches(lead_source_norm, lead_norm, sweeper_last, appointment_date):
             continue
 
         # record once, keyed so result always matches list
@@ -604,9 +605,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             ),
             "setter_attribution": (
                 "created_by_setter_last_name uses Sweeper/Rehash Last Name when that field "
-                "is non-empty (including rehash lead source). Empty field keeps the setter, "
-                "including true self-gen. A Self Gen lead_source filter also includes rehash "
-                "and rows with Sweeper/Rehash Last Name filled."
+                "is non-empty and createdAt in America/New_York is on or after 2026-09-24. "
+                "Earlier dates stay with the setter. Empty field keeps the setter, including "
+                "true self-gen. On or after the cutoff, a Self Gen lead_source filter also "
+                "includes rehash and rows with Sweeper/Rehash Last Name filled."
             ),
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},

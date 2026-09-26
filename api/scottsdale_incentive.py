@@ -364,7 +364,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Demo Notes</div>
         <div class="meta">
           Demos are <strong>Sit</strong> outcomes only, using the canonical demo metric appointment window semantics in
-          <code>America/New_York</code>.
+          <code>America/New_York</code>. A filled Sweeper/Rehash Last Name replaces the setter only when the sit date is on or after 2026-09-24. Earlier sits in this window stay with the original setter.
         </div>
         <div class="meta">
           Breakdown source: <code>sit_by_setter_last_name</code>.
@@ -485,6 +485,7 @@ __DASHBOARD_NAV_HTML__
           'Zach Maecker',
           1
         );
+        // Per-sit cutoff lives in demo_rate (SWEEPER_ATTRIBUTION_START 2026-09-24).
         const demoEntries = addManualCount(
           filteredEntries((demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {}, true),
           'Emerson',

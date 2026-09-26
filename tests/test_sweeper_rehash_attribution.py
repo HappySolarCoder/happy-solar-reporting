@@ -2,8 +2,8 @@
 
 """Sweeper/Rehash Last Name attribution for self-gen and FMA appointments.
 
-Field id is the warehouse contact custom field documented in
-ghl-firestore-sync-v2 extract_sweeper_rehash_last_name:
+Confirmed contact custom field from the Happy Solar stack
+(ghl-firestore-sync-v2 Discord alerts / extract_sweeper_rehash_last_name):
 "Sweeper/Rehash Last Name" HWfjOp8MvE6soxBAL75f.
 """
 

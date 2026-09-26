@@ -2,8 +2,9 @@
 
 """Credit appointments and self-gens to Sweeper/Rehash Last Name.
 
-Warehouse field (ghl-firestore-sync-v2 extract_sweeper_rehash_last_name):
-contact custom field "Sweeper/Rehash Last Name" HWfjOp8MvE6soxBAL75f.
+Confirmed Happy Solar stack field (ghl-firestore-sync-v2 Discord alerts,
+extract_sweeper_rehash_last_name): contact custom field
+"Sweeper/Rehash Last Name" HWfjOp8MvE6soxBAL75f.
 The same id is read on the opportunity when the contact value is empty.
 """
 
@@ -12,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Contact custom field "Sweeper/Rehash Last Name".
+# Confirmed contact custom field "Sweeper/Rehash Last Name".
 SWEEPER_REHASH_LAST_NAME_FIELD_ID = "HWfjOp8MvE6soxBAL75f"
 
 _BLANK_LAST_NAMES = frozenset(

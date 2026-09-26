@@ -50,6 +50,11 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from sit_timestamp import frozen_sit_timestamp
+from sweeper_rehash_attribution import (
+    attributed_last_name,
+    lead_source_matches,
+    sweeper_rehash_last_name,
+)
 
 
 def normalize_person_display(value: Any, *, empty: str) -> str:
@@ -131,6 +136,8 @@ class MetricContract:
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     setter_last_name_opportunity_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
+    # Contact "Sweeper/Rehash Last Name". Same id may also sit on the opportunity.
+    sweeper_rehash_last_name_cf_id: str = "HWfjOp8MvE6soxBAL75f"
 
 
 def get_db() -> firestore.Client:
@@ -615,16 +622,20 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
         setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
-        setter_s = normalize_person_display(setter, empty="none")
-
         lead = normalize_lead_source(contact_custom_field(contact, c.lead_gen_source_contact_cf_id))
+        sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
+        # Same credit rule as opportunities created: rehash or a filled
+        # Sweeper/Rehash Last Name counts for that person. True self-gen
+        # with an empty field stays on the setter.
+        credited = attributed_last_name(setter, lead, sweeper_last)
+        setter_s = normalize_person_display(credited, empty="none")
 
         # Apply optional filters
         if filters.get("pipeline") and pname_low != str(filters["pipeline"]).strip().lower():
             continue
         if filters.get("setter") and setter_s.lower() != str(filters["setter"]).strip().lower():
             continue
-        if filters.get("lead_source") and lead.lower() != str(filters["lead_source"]).strip().lower():
+        if not lead_source_matches(filters.get("lead_source"), lead, sweeper_last):
             continue
 
         ran += 1

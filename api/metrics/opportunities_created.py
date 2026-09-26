@@ -27,14 +27,26 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+METRICS_DIR = Path(__file__).resolve().parent
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from sweeper_rehash_attribution import (
+    attributed_last_name,
+    lead_source_matches,
+    sweeper_rehash_last_name,
+)
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -145,6 +157,8 @@ class MetricContract:
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     setter_last_name_opportunity_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
+    # Contact "Sweeper/Rehash Last Name". Same id may also sit on the opportunity.
+    sweeper_rehash_last_name_cf_id: str = "HWfjOp8MvE6soxBAL75f"
 
 
 def get_db() -> firestore.Client:
@@ -513,13 +527,16 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
         lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
-
-        setter_norm = normalize_person_display(setter, empty="none")
+        lead_norm = normalize_channel(lead)
+        sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
+        # Rehash, or a filled Sweeper/Rehash Last Name, counts for that person.
+        # True self-gen with an empty field stays on the setter.
+        credited = attributed_last_name(setter, lead_norm, sweeper_last)
+        setter_norm = normalize_person_display(credited, empty="none")
         if setter_filter_norm and setter_norm.lower() != setter_filter_norm:
             continue
 
-        lead_norm = normalize_channel(lead)
-        if lead_source_norm and str(lead_norm).strip().lower() != str(lead_source_norm).strip().lower():
+        if not lead_source_matches(lead_source_norm, lead_norm, sweeper_last):
             continue
 
         # record once, keyed so result always matches list
@@ -581,6 +598,16 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "excluded_pipeline_names": list(c.excluded_pipeline_names),
             "owner_field": f"{c.opp_collection}.assignedTo -> roster_people_v1.ghl_user_id -> display_name (misses: ghl_users_v2 get_all, then assignedToName)",
             "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
+            "sweeper_rehash_last_name_field": (
+                f"{c.contact_collection}.customFields[{c.sweeper_rehash_last_name_cf_id}] "
+                f"then opportunity.customFields[{c.sweeper_rehash_last_name_cf_id}]"
+            ),
+            "setter_attribution": (
+                "created_by_setter_last_name uses Sweeper/Rehash Last Name when that field "
+                "is non-empty (including rehash lead source). Empty field keeps the setter, "
+                "including true self-gen. A Self Gen lead_source filter also includes rehash "
+                "and rows with Sweeper/Rehash Last Name filled."
+            ),
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},
         },

@@ -12,6 +12,11 @@ Purpose:
 - Appointments count only when the opportunity is in a territory pipeline
   (Buffalo / Rochester / Syracuse / Virtual). Sweeper, Rehash, Inbound/Lead
   Locker and Recruiting are excluded (ClickUp 86bc7a8zw, 86bc7ahnt).
+- A marked demo (dispositionValue Sit) stays on the Eastern day it was
+  marked. That day is frozen_sit_timestamp: the earlier of
+  appointmentOccurredAt and dispositionDate (same first-write rule as
+  Demo Rate). Moving the follow-up appointmentStartTime to a later day
+  does not remove the demo (ClickUp 86bcarfdp, Kacia Coscia).
 
 Identity join (Powerline / Raydar -> owner row):
 - Seed owner cards from the full sales roster (role=rep / categories
@@ -38,6 +43,9 @@ Window semantics:
 - Optional query params:
   - date=YYYY-MM-DD
   - start=YYYY-MM-DD&end=YYYY-MM-DD
+- Scheduled rows use appointmentStartTime in that ET window.
+- Marked Sit rows also match when frozen_sit_timestamp falls in the
+  window, even if appointmentStartTime is now a different day.
 
 Data sources:
 - happy-solar Firestore:
@@ -75,6 +83,12 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
+
+METRICS_DIR = API_DIR / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from sit_timestamp import frozen_sit_timestamp
 
 
 TZ = ZoneInfo("America/New_York")
@@ -245,6 +259,52 @@ def count_self_gen_appointments(appointments: list[dict[str, Any]] | None) -> in
 def is_recap_appointment_pipeline(pipeline_id: Any) -> bool:
     """Rep Daily Recap counts only territory-pipeline appointments (86bc7a8zw / 86bc7ahnt)."""
     return compact_str(pipeline_id) in TERRITORY_PIPELINE_ID_SET
+
+
+def marked_demo_local(
+    opp: dict[str, Any],
+    start_local: datetime,
+    end_local_excl: datetime,
+    *,
+    now_utc: datetime | None = None,
+) -> datetime | None:
+    """ET time a marked Sit belongs on this recap day, or None.
+
+    Demos are dispositionValue Sit. The day is frozen_sit_timestamp
+    (earlier of appointmentOccurredAt and dispositionDate), the same
+    first-write stamp Demo Rate uses. A later follow-up
+    appointmentStartTime must not move the demo off the day it was marked.
+    Stamps still in the future are ignored, matching Demo Rate.
+    """
+    if normalize_disposition(opp.get("dispositionValue")) != "Sit":
+        return None
+    frozen = frozen_sit_timestamp(opp.get("appointmentOccurredAt"), opp.get("dispositionDate"))
+    if not frozen:
+        return None
+    now = now_utc or datetime.now(timezone.utc)
+    if frozen > now:
+        return None
+    local = frozen.astimezone(TZ)
+    if not (start_local <= local < end_local_excl):
+        return None
+    return local
+
+
+def stream_opportunity_window(db: firestore.Client, field: str, start_utc: datetime, end_utc: datetime) -> list[Any]:
+    """Bounded ghl_opportunities_v2 range scan. Empty list if the query fails.
+
+    Used for appointmentOccurredAt and dispositionDate so a missing index
+    cannot take down the appointmentStartTime recap. Do not full-stream.
+    """
+    try:
+        return list(
+            db.collection("ghl_opportunities_v2")
+            .where(field, ">=", start_utc)
+            .where(field, "<", end_utc)
+            .stream()
+        )
+    except Exception:
+        return []
 
 
 def format_local_datetime(value: Any) -> str:
@@ -890,22 +950,21 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             compact_str(row.get("label")) or user_names.get(owner_id) or owner_id,
         )
 
-    # GHL appointments by yesterday's scheduled appointment time.
-    ghl_query = (
-        db.collection("ghl_opportunities_v2")
-        .where("appointmentStartTime", ">=", start_utc)
-        .where("appointmentStartTime", "<", end_utc)
-    )
+    # GHL appointments by scheduled start, plus marked Sits whose frozen
+    # timestamp falls on this ET day after the follow-up start moved.
+    seen_opportunity_ids: set[str] = set()
 
-    for snap in ghl_query.stream():
-        opp = snap.to_dict() or {}
-        appt_dt = as_dt(opp.get("appointmentStartTime"))
-        if not appt_dt:
-            continue
+    def remember_opportunity(opp: dict[str, Any], snap_id: str) -> None:
+        for key in (compact_str(opp.get("id")), compact_str(snap_id)):
+            if key:
+                seen_opportunity_ids.add(key)
+
+    def already_listed(opp: dict[str, Any], snap_id: str) -> bool:
+        keys = {compact_str(opp.get("id")), compact_str(snap_id)}
+        return any(key and key in seen_opportunity_ids for key in keys)
+
+    def append_appointment(opp: dict[str, Any], snap_id: str, appt_dt: datetime, *, attribution: str) -> None:
         pipeline_id = compact_str(opp.get("pipelineId"))
-        if not is_recap_appointment_pipeline(pipeline_id):
-            excluded_pipeline_counts[pipeline_names.get(pipeline_id, pipeline_id or "Unknown")] += 1
-            continue
         owner_id = compact_str(opp.get("assignedTo"))
         owner_label = resolve_owner_name(opp, owner_id, user_names) if owner_id else "Unassigned"
         owner_key = owner_id or normalize_name_key(owner_label) or "unassigned"
@@ -944,7 +1003,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
                 "stage": stage_name,
                 "setter_last_name": setter_last or "—",
                 "lead_source": lead_source,
-                "opportunity_id": compact_str(opp.get("id") or snap.id),
+                "opportunity_id": compact_str(opp.get("id") or snap_id),
+                "attribution": attribution,
             }
         )
         bucket["appointment_total"] += 1
@@ -956,6 +1016,43 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             bucket["no_sit_total"] += 1
         else:
             bucket["pending_total"] += 1
+        remember_opportunity(opp, snap_id)
+
+    ghl_query = (
+        db.collection("ghl_opportunities_v2")
+        .where("appointmentStartTime", ">=", start_utc)
+        .where("appointmentStartTime", "<", end_utc)
+    )
+
+    for snap in ghl_query.stream():
+        opp = snap.to_dict() or {}
+        appt_dt = as_dt(opp.get("appointmentStartTime"))
+        if not appt_dt:
+            continue
+        pipeline_id = compact_str(opp.get("pipelineId"))
+        if not is_recap_appointment_pipeline(pipeline_id):
+            excluded_pipeline_counts[pipeline_names.get(pipeline_id, pipeline_id or "Unknown")] += 1
+            remember_opportunity(opp, snap.id)
+            continue
+        append_appointment(opp, snap.id, appt_dt, attribution="appointment_start")
+
+    now_utc = datetime.now(timezone.utc)
+    extra_snaps: dict[str, Any] = {}
+    for field in ("appointmentOccurredAt", "dispositionDate"):
+        for snap in stream_opportunity_window(db, field, start_utc, end_utc):
+            extra_snaps.setdefault(snap.id, snap)
+
+    for snap in extra_snaps.values():
+        opp = snap.to_dict() or {}
+        if already_listed(opp, snap.id):
+            continue
+        pipeline_id = compact_str(opp.get("pipelineId"))
+        if not is_recap_appointment_pipeline(pipeline_id):
+            continue
+        demo_local = marked_demo_local(opp, start_local, end_local_excl, now_utc=now_utc)
+        if demo_local is None:
+            continue
+        append_appointment(opp, snap.id, demo_local, attribution="frozen_demo")
 
     # Register live owner-bucket labels so Powerline/Raydar join owners already
     # on the page (assignedTo / owner_label), plus non-setter GHL users
@@ -1318,7 +1415,7 @@ __DASHBOARD_NAV_HTML__
     </section>
 
     <section class="grid">
-      {render_stat("Appointments", summary["appointments_total"], "Territory-pipeline (Buffalo/Rochester/Syracuse/Virtual) appointments scheduled in the selected ET day")}
+      {render_stat("Appointments", summary["appointments_total"], "Territory-pipeline (Buffalo/Rochester/Syracuse/Virtual) appointments scheduled in the selected ET day. Sits marked that day stay listed when the follow-up start moves.")}
       {render_stat("Completed Outcomes", summary["completed_outcomes_total"], "Appointments with Sit or No Sit logged")}
       {render_stat("Powerline Dials", summary["powerline_dials_total"], powerline_note)}
       {render_stat("Doors Knocked", summary["doors_knocked_total"], "Raydar knocks attributed to mapped rep actors")}
@@ -1332,6 +1429,9 @@ __DASHBOARD_NAV_HTML__
       (contact lead source Self Gen on appointments scheduled that ET day).
       <br />
       Excluded non-territory appointments (Sweeper/Rehash/other): {html_escape(summary.get("excluded_non_territory_appointments_total", 0))}
+      <br />
+      <strong>Marked demos:</strong> a Sit stays on the Eastern day it was marked
+      (earlier of appointmentOccurredAt and dispositionDate), even when the follow-up appointment start is later moved.
       <br />
       {html_escape(unmapped_note)}
     </div>

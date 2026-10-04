@@ -24,7 +24,7 @@ Every terminology and knowledge seed is **DRAFT**. Approving a seed in the admin
 | --- | --- | --- |
 | Opp2Prelim | Cards and the trend chart leave the rate blank when Ran is 0. | Still draft. The blank-versus-zero note is not approved policy. Cohort versus period is still open. |
 | Demo Rate | Zero denominator is N/A. Labels say demo, demos, demo rate, or no demo. | Still draft. The raw disposition value Sit is data only. |
-| Phones | The overview card still sums Phones and Virtual on screen. | Still draft. Do not approve folding Virtual into Phones. |
+| Phones | Virtual belongs in Phones. The demo-rate normalizer maps Virtual and virt to Phones, and the overview card adds Phones and Virtual. | Still draft. Do not treat them as separate sources. The row is not approved. |
 | Self Gen | Canonical Lead Gen Source string is `Self Gen`. Other casings are the same source. | Still draft. |
 | Doors | Observed label. | Still draft. |
 | Inbound | Overview card key is Inbound. | Still draft. Do not use the paid-social Inbound lead rule as this definition. |

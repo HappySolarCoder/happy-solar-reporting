@@ -117,14 +117,14 @@
     {
       "term_id": "phones",
       "display_name": "Phones",
-      "aliases": ["Phones", "Phone", "Virtual"],
+      "aliases": ["Phones", "Phone", "Virtual", "virt"],
       "category": "source",
       "definition": null,
-      "observation": "The company overview Phones card sums breakdown keys Phones and Virtual. That screen sum is not an approved decision to fold Virtual into Phones. This row is still DRAFT.",
+      "observation": "Existing dashboard contract: Virtual belongs in Phones. demo_rate.normalize_lead_source maps Virtual and virt to Phones. The company overview Phones card adds the keys Phones and Virtual. They are not separate sources. This dictionary row is still DRAFT.",
       "owner_note": {
         "date": "2026-10-04",
         "not_policy": true,
-        "text": "Do not approve folding Virtual into Phones."
+        "text": "Virtual belongs in Phones. The live demo-rate normalizer maps Virtual and virt to Phones, and the company overview Phones card adds the keys Phones and Virtual. That is the existing dashboard contract. Do not treat them as separate sources. This note is not an approval of the dictionary row."
       },
       "calculation": {
         "metric_id": null,
@@ -141,17 +141,18 @@
         "statuses": "unresolved",
         "exclusions": "unresolved",
         "deduplication": "inherits the metric",
-        "grouping": "alias sum on the overview cards",
+        "grouping": "Phones and Virtual are one source on the overview card and in the demo-rate normalizer",
         "attribution": "unresolved"
       },
       "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
       "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
       "evidence": [
         {"path": "api/company_overview.py", "excerpt": "const PHONES_KEYS = ['Phones', 'Virtual'];"},
-        {"path": "api/metrics/demo_rate.py", "excerpt": "if low in (\"virtual\", \"virt\"):"}
+        {"path": "api/metrics/demo_rate.py", "excerpt": "if low in (\"virtual\", \"virt\"):"},
+        {"path": "api/metrics/demo_rate.py", "excerpt": "Business update: \"Virtual\" is now treated as \"Phones\"."}
       ],
-      "examples": {"question": "What does Phones include?", "correct_interpretation": "Report the alias conflict. Do not declare Virtual identical to Phones as policy.", "ambiguities": ["Sales API filter and overview card do not group Virtual the same way."]},
-      "ambiguities": ["Virtual is not approved as part of Phones."]
+      "examples": {"question": "What does Phones include?", "correct_interpretation": "Virtual belongs in Phones on the existing dashboards. Do not call this draft row approved policy, and do not split Virtual into its own source.", "ambiguities": ["The dictionary row stays draft."]},
+      "ambiguities": ["Recorded dashboard contract: Virtual is part of Phones. The row is not approved."]
     },
     {
       "term_id": "self_gen",

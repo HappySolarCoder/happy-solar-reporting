@@ -633,7 +633,10 @@ class GrowthFixtureTests(unittest.TestCase):
         self.assertIn("not zero", model["sources"]["landing_visits"]["note"])
         self.assertNotIn("not wired", model["sources"]["landing_visits"]["note"])
         self.assertNotEqual(model["stages"][2]["value"], sum(growth.DAILY_VISITS))
+        self.assertEqual(model["stages"][3]["label"], "Abandoned Form")
         self.assertNotEqual(model["stages"][3]["value"], sum(growth.DAILY_FORM_STARTS))
+        self.assertIn("Abandoned Form", model["sources"]["form_starts"]["note"])
+        self.assertNotIn("Form starts", model["sources"]["form_starts"]["note"])
         self.assertNotIn("opp", [stage["key"] for stage in model["stages"]])
         self.assertEqual(model["territory_opps"]["total"], 0)
         self.assertEqual(model["kpis"]["cpl"]["display"], "N/A")
@@ -812,11 +815,14 @@ class PageTests(unittest.TestCase):
         self.assertEqual(visits["display"], "—")
         self.assertNotEqual(visits["display"], "0")
         self.assertIsNone(forms["value"])
+        self.assertEqual(forms["label"], "Abandoned Form")
         self.assertEqual(forms["status"], "unavailable")
         self.assertEqual(forms["display"], "—")
         self.assertIn("unavailable", model["sources"]["landing_visits"]["note"])
         self.assertIn("not zero", model["sources"]["landing_visits"]["note"])
         self.assertNotIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertIn("Abandoned Form", model["sources"]["form_starts"]["note"])
+        self.assertNotIn("Form starts", model["sources"]["form_starts"]["note"])
         self.assertIn("unavailable", model["sources"]["form_starts"]["note"])
         self.assertIn("not zero", model["sources"]["form_starts"]["note"])
         self.assertNotEqual(visits["value"], sum(growth.DAILY_VISITS))
@@ -829,6 +835,8 @@ class PageTests(unittest.TestCase):
         self.assertIn("Sample fixture", html)
         self.assertIn("This read is unavailable, so the stage stays blank.", html)
         self.assertIn("A failed read is not zero.", html)
+        self.assertIn("Abandoned Form", html)
+        self.assertNotIn("Form starts", html)
         self.assertNotIn("Form starts are not wired", html)
         self.assertNotIn("SAMPLE DATA", html)
         self.assertNotIn("Nov 1–15, 2026", html)
@@ -1078,12 +1086,21 @@ class PaidWebsiteStageTests(unittest.TestCase):
             _ga4_row(["20261002", "Paid Search", "google", "cpc"], 9),
         ]
         start_rows = [
-            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_start"], 3),
-            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_submit"], 8),
+            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_start"], 5),
             _ga4_row(["20261001", "Organic Social", "facebook", "organic", "estimate_start"], 5),
             _ga4_row(["20261002", "Paid Social", "instagram", "paid", "estimate_start"], 1),
+            _ga4_row(["20261002", "Paid Search", "google", "cpc", "estimate_start"], 9),
+        ]
+        submit_rows = [
+            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_submit"], 2),
+            _ga4_row(["20261002", "Paid Social", "instagram", "paid", "estimate_submit"], 1),
+            _ga4_row(["20261002", "Paid Social", "instagram", "paid", "wix_form_submit"], 6),
+            _ga4_row(["20261001", "Organic Social", "facebook", "organic", "estimate_submit"], 4),
         ]
         seen = []
+
+        def event_values(body):
+            return body["dimensionFilter"]["andGroup"]["expressions"][1]["filter"]["inListFilter"]["values"]
 
         def runner(body, timeout=25):
             seen.append(body)
@@ -1096,20 +1113,23 @@ class PaidWebsiteStageTests(unittest.TestCase):
             self.assertIn("wny.happyslr.com", hosts)
             name = body["metrics"][0]["name"]
             if name == "sessions":
+                self.assertNotIn("estimate_start", json.dumps(body))
                 self.assertNotIn("estimate_submit", json.dumps(body))
                 return _ga4_ok(session_rows)
             self.assertEqual(name, "eventCount")
-            self.assertEqual(
-                body["dimensionFilter"]["andGroup"]["expressions"][1]["filter"]["inListFilter"]["values"],
-                ["estimate_start"],
-            )
-            self.assertNotIn("estimate_submit", json.dumps(body["dimensionFilter"]))
-            return _ga4_ok(start_rows)
+            values = event_values(body)
+            self.assertEqual(len(values), 1)
+            if values == ["estimate_start"]:
+                self.assertNotIn("estimate_submit", json.dumps(body["dimensionFilter"]))
+                return _ga4_ok(start_rows)
+            self.assertEqual(values, ["estimate_submit"])
+            self.assertNotIn("estimate_start", json.dumps(body["dimensionFilter"]))
+            return _ga4_ok(submit_rows)
 
         website = metric.fetch_paid_website_stages(
             self.start_local, self.end_local, report_runner=runner
         )
-        self.assertEqual(len(seen), 2)
+        self.assertEqual(len(seen), 3)
         visits = website["landing_visits"]
         forms = website["form_starts"]
         self.assertEqual(visits["status"], "ok")
@@ -1118,14 +1138,22 @@ class PaidWebsiteStageTests(unittest.TestCase):
         self.assertEqual(visits["measurement_id"], "G-V02RZFR4SZ")
         self.assertEqual([point["value"] for point in visits["series"]], [14, 0])
         self.assertEqual(forms["status"], "ok")
-        self.assertEqual(forms["total"], 4)
-        self.assertEqual(forms["event"], "estimate_start")
-        self.assertEqual([point["value"] for point in forms["series"]], [3, 1])
+        self.assertEqual(forms["label"], "Abandoned Form")
+        self.assertEqual(forms["total"], 3)
+        self.assertEqual(forms["paid_estimate_start"], 6)
+        self.assertEqual(forms["paid_estimate_submit"], 3)
+        self.assertEqual(forms["start_event"], "estimate_start")
+        self.assertEqual(forms["finished_event"], "estimate_submit")
+        self.assertEqual([point["value"] for point in forms["series"]], [3, 0])
+        self.assertIn("Abandoned Form", forms["note"])
+        self.assertNotIn("Form starts", forms["note"])
+        self.assertNotEqual(forms["total"], 0)
+        self.assertNotEqual(forms["total"], sum(growth.DAILY_FORM_STARTS))
 
         def fail_sessions(body, timeout=25):
             if body["metrics"][0]["name"] == "sessions":
                 return {"ga4": "failed", "rows": [], "error": "ga4_run_report_failed"}
-            return _ga4_ok(start_rows)
+            return runner(body)
 
         partial = metric.fetch_paid_website_stages(
             self.start_local, self.end_local, report_runner=fail_sessions
@@ -1134,7 +1162,7 @@ class PaidWebsiteStageTests(unittest.TestCase):
         self.assertIsNone(partial["landing_visits"]["total"])
         self.assertIsNone(partial["landing_visits"]["series"])
         self.assertEqual(partial["form_starts"]["status"], "ok")
-        self.assertEqual(partial["form_starts"]["total"], 4)
+        self.assertEqual(partial["form_starts"]["total"], 3)
         self.assertNotIn('"total": 0', json.dumps(partial["landing_visits"]))
 
         def fail_both(body, timeout=25):
@@ -1180,6 +1208,79 @@ class PaidWebsiteStageTests(unittest.TestCase):
         self.assertNotEqual(unwired["landing_visits"]["total"], 0)
         self.assertNotEqual(unwired["form_starts"]["total"], 0)
 
+    def test_abandoned_form_floors_at_zero_and_a_failed_event_stays_null(self):
+        def rows_for(event_name, day_one, day_two):
+            return [
+                _ga4_row(["20261001", "Paid Social", "facebook", "paid", event_name], day_one),
+                _ga4_row(["20261002", "Paid Social", "instagram", "cpc", event_name], day_two),
+            ]
+
+        def respond(starts, submits, fail=None):
+            def runner(body, timeout=25):
+                name = body["metrics"][0]["name"]
+                if name == "sessions":
+                    return _ga4_ok([_ga4_row(["20261001", "Paid Social", "facebook", "paid"], 14)])
+                values = body["dimensionFilter"]["andGroup"]["expressions"][1]["filter"]["inListFilter"]["values"]
+                if fail == "start" and values == ["estimate_start"]:
+                    return {"ga4": "failed", "rows": [], "error": "ga4_run_report_failed"}
+                if fail == "submit" and values == ["estimate_submit"]:
+                    return {"ga4": "failed", "rows": [], "error": "ga4_run_report_failed"}
+                if values == ["estimate_start"]:
+                    return _ga4_ok(rows_for("estimate_start", *starts))
+                return _ga4_ok(rows_for("estimate_submit", *submits))
+
+            return runner
+
+        floored = metric.fetch_paid_website_stages(
+            self.start_local, self.end_local, report_runner=respond((1, 6), (4, 0))
+        )
+        forms = floored["form_starts"]
+        self.assertEqual(forms["status"], "ok")
+        self.assertEqual(forms["paid_estimate_start"], 7)
+        self.assertEqual(forms["paid_estimate_submit"], 4)
+        self.assertEqual(forms["total"], 3)
+        self.assertEqual([point["value"] for point in forms["series"]], [0, 6])
+        self.assertNotEqual(forms["total"], sum(point["value"] for point in forms["series"]))
+        self.assertTrue(all(point["value"] >= 0 for point in forms["series"]))
+
+        nobody = metric.fetch_paid_website_stages(
+            self.start_local, self.end_local, report_runner=respond((2, 0), (5, 0))
+        )
+        self.assertEqual(nobody["form_starts"]["status"], "ok")
+        self.assertEqual(nobody["form_starts"]["total"], 0)
+        self.assertEqual([point["value"] for point in nobody["form_starts"]["series"]], [0, 0])
+        self.assertIsNotNone(nobody["form_starts"]["series"])
+        counts_start, counts_end, counts = MetaAndVisitorTests()._counts()
+        zero_payload = metric.assemble_paid_social(
+            counts,
+            start_local=counts_start,
+            end_local=counts_end,
+            daily_meta={"status": "unavailable", "rows": [], "lead_actions_ignored": False},
+            aggregate_spend=metric.cac.unavailable_meta_spend("missing_env"),
+            website={"form_starts": nobody["form_starts"], "landing_visits": nobody["landing_visits"]},
+        )
+        zero_model = growth.live_model(zero_payload)
+        self.assertEqual(zero_model["stages"][3]["label"], "Abandoned Form")
+        self.assertEqual(zero_model["stages"][3]["value"], 0)
+        self.assertEqual(zero_model["stages"][3]["display"], "0")
+        self.assertEqual(zero_model["stages"][3]["status"], "ok")
+        self.assertNotEqual(zero_model["stages"][3]["display"], "—")
+
+        for failure in ("start", "submit"):
+            failed = metric.fetch_paid_website_stages(
+                self.start_local, self.end_local, report_runner=respond((5, 1), (2, 1), fail=failure)
+            )
+            self.assertEqual(failed["landing_visits"]["status"], "ok")
+            self.assertEqual(failed["landing_visits"]["total"], 14)
+            self.assertEqual(failed["form_starts"]["status"], "unavailable")
+            self.assertIsNone(failed["form_starts"]["total"])
+            self.assertIsNone(failed["form_starts"]["series"])
+            self.assertNotEqual(failed["form_starts"]["total"], 0)
+            self.assertNotEqual(failed["form_starts"]["total"], 6)
+            self.assertIn("Abandoned Form", failed["form_starts"]["note"])
+            self.assertIn("not zero", failed["form_starts"]["note"])
+            self.assertNotIn("Form starts", failed["form_starts"]["note"])
+
     def test_live_adapter_shows_counts_and_keeps_a_failed_read_null(self):
         start_local, end_local, counts = MetaAndVisitorTests()._counts()
         website = {
@@ -1224,6 +1325,7 @@ class PaidWebsiteStageTests(unittest.TestCase):
         self.assertEqual(visits["status"], "ok")
         self.assertEqual([point["value"] for point in payload["landing_visits"]["series"]], [14, 0])
         self.assertIsNone(forms["value"])
+        self.assertEqual(forms["label"], "Abandoned Form")
         self.assertEqual(forms["display"], "—")
         self.assertEqual(forms["status"], "unavailable")
         self.assertIsNone(payload["form_starts"]["series"])
@@ -1253,18 +1355,28 @@ class PaidWebsiteStageTests(unittest.TestCase):
         both_model = growth.live_model(both)
         self.assertEqual(both_model["stages"][2]["value"], 14)
         self.assertEqual(both_model["stages"][2]["status"], "ok")
+        self.assertEqual(both_model["stages"][3]["label"], "Abandoned Form")
         self.assertEqual(both_model["stages"][3]["value"], 4)
         self.assertEqual(both_model["stages"][3]["status"], "ok")
         self.assertEqual(both_model["stages"][3]["display"], "4")
         self.assertNotEqual(both_model["stages"][2]["value"], 320)
         self.assertNotEqual(both_model["stages"][3]["value"], 40)
+        self.assertIn("Abandoned Form", model["sources"]["form_starts"]["note"])
+        self.assertNotIn("Form starts", model["sources"]["form_starts"]["note"])
         self.assertIn("not zero", model["sources"]["form_starts"]["note"])
         html = page.render_html(model=model)
         self.assertIn(">14<", html)
+        self.assertIn("Abandoned Form", html)
+        self.assertNotIn("Form starts", html)
         self.assertNotIn("SAMPLE DATA", html)
         self.assertNotIn("Nov 1–15, 2026", html)
         self.assertNotIn("8/20", html)
         self.assertNotIn("Form starts are not wired", html)
+        both_html = page.render_html(model=both_model)
+        self.assertIn("Abandoned Form", both_html)
+        self.assertNotIn("Form starts", both_html)
+        self.assertNotIn("form starts", both_html)
+        self.assertIn("abandoned forms", both_html)
         self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, html)
 
         original = metric.load_window_records

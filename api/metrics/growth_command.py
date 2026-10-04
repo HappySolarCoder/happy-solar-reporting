@@ -13,9 +13,10 @@ Field mapping, live adapter:
 - Landing visits: GA4 paid sessions on property 408492342 /
   G-V02RZFR4SZ. The website traffic paid-session rule. A failed read
   stays null. Meta landing-page views are not visits.
-- Form starts: calculator estimate_start from that same paid traffic.
-  estimate_submit, Instant Form, and 3PL are not form starts. A failed
-  read stays null.
+- Abandoned Form: paid estimate_start minus paid estimate_submit for
+  the same window, never below zero. Same paid-session rule as landing
+  visits. Instant Form and 3PL are not counted. If either read fails,
+  the stage stays null. A successful read with nobody abandoning is zero.
 - Leads: pipeline 7nSEgeoBYXZiIS7x41Jy, Lead Gen Source
   hd5QqHEOVSsPom5bJ32P strips to Inbound. Blank, 3PL, and Doors do not.
 - Demos: territory appointment disposition in the window, those contacts.
@@ -93,7 +94,7 @@ STAGE_ORDER = (
     ("impressions", "Impressions"),
     ("outbound_clicks", "Outbound clicks"),
     ("landing_visits", "Landing visits"),
-    ("form_starts", "Form starts"),
+    ("form_starts", "Abandoned Form"),
     ("leads", "Leads created"),
     ("demos", "Demos"),
     ("sold", "Sold"),
@@ -504,7 +505,12 @@ def summarize(spec: dict) -> dict:
             ("impressions", "Impressions", impressions, "Sample Meta impressions" if is_demo else "Meta account impressions"),
             ("outbound_clicks", "Outbound clicks", outbound_clicks, "Sample Meta outbound clicks" if is_demo else "Meta outbound clicks"),
             ("landing_visits", "Landing visits", visits, f"GA4 paid sessions {GA4_MEASUREMENT_ID}"),
-            ("form_starts", "Form starts", form_starts, "Form starts"),
+            (
+                "form_starts",
+                "Form starts" if is_demo else "Abandoned Form",
+                form_starts,
+                "Form starts" if is_demo else "Abandoned Form",
+            ),
             ("leads", "Leads created", leads, "Source-filtered CRM leads"),
             ("demos", "Demos", demos, "CRM demos for those leads"),
             ("sold", "Sold", sold, "CRM sold date for those leads"),
@@ -586,14 +592,15 @@ def _landing_note(value) -> str:
 def _form_note(value) -> str:
     if value is None:
         return (
-            "Form starts are calculator estimate_start events from paid traffic. "
+            "Abandoned Form is paid calculator estimate_start minus paid estimate_submit. "
             "This read is unavailable, so the stage stays blank. A failed read is not zero. "
-            "The November sample is not used. A finished form is not a start. "
-            "Instant Form and 3PL are not form starts."
+            "The November sample is not used. Instant Form and 3PL are not abandoned forms."
         )
     return (
-        "Calculator estimate_start events from paid traffic, same rule as landing visits. "
-        "A finished form is not a start. Instant Form and 3PL are not form starts."
+        "Abandoned Form is paid calculator estimate_start minus paid estimate_submit "
+        "for this window, never below zero. Same paid-session rule as landing visits. "
+        "A finished form is not abandoned. Instant Form and 3PL are not abandoned forms. "
+        "A successful read with nobody abandoning is zero."
     )
 
 
@@ -859,12 +866,24 @@ def _recommendations(spec, kpis, visits, form_starts, spend, leads) -> list[dict
     as_of = spec["as_of"].isoformat()
     if visits not in (None, 0) and form_starts is not None:
         rate = format_percent(form_starts, visits, 1)
+        if spec.get("is_demo"):
+            title = f"Review the {rate} visit-to-form-start rate"
+            evidence = (
+                f"{format_count(form_starts)} form starts / {format_count(visits)} landing visits = {rate}. "
+                "No baseline is stored, so this is a review."
+            )
+        else:
+            title = f"Review the {rate} visit-to-abandoned-form rate"
+            evidence = (
+                f"{format_count(form_starts)} abandoned forms / {format_count(visits)} landing visits = {rate}. "
+                "No baseline is stored, so this is a review."
+            )
         items.append(
             {
                 "id": "rec-visit-to-form",
-                "title": f"Review the {rate} visit-to-form-start rate",
-                "evidence": f"{format_count(form_starts)} form starts / {format_count(visits)} landing visits = {rate}. No baseline is stored, so this is a review.",
-                "action": f"Review the {rate} visit-to-form-start rate.",
+                "title": title,
+                "evidence": evidence,
+                "action": title + ".",
                 "status": "Open",
                 "entity_ids": [ad["id"] for ad in SAMPLE_ADS] if spec.get("is_demo") else [],
                 "source_timestamp": as_of,

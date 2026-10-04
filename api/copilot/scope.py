@@ -160,7 +160,7 @@ def classify(message: str) -> ScopeDecision:
                 "clarify",
                 text,
                 "",
-                "Which term should I explain: Opp2Prelim, Demo Rate, a lead source, Sales, Ran, or Sit?",
+                "Which term should I explain: Opp2Prelim, Demo Rate, a lead source, Sales, Ran, or Demo?",
                 None,
             )
         return ScopeDecision("definition", text, "", "", term)

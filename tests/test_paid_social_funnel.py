@@ -1,0 +1,748 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import re
+import sys
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+API = ROOT / "api"
+METRICS = API / "metrics"
+for path in (str(API), str(METRICS)):
+    if path not in sys.path:
+        sys.path.append(path)
+
+
+def load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+metric = load_module("paid_social_funnel_metric", METRICS / "paid_social_funnel.py")
+page = load_module("paid_social_funnel_page", API / "paid_social_funnel.py")
+nav = load_module("dashboard_nav_paid_social", API / "dashboard_nav.py")
+sales = load_module("sales_for_paid_social", METRICS / "sales.py")
+index = load_module("index_for_paid_social", API / "index.py")
+
+METRIC_SRC = (METRICS / "paid_social_funnel.py").read_text(encoding="utf-8")
+PAGE_SRC = (API / "paid_social_funnel.py").read_text(encoding="utf-8")
+SALES_SRC = (METRICS / "sales.py").read_text(encoding="utf-8")
+NY = ZoneInfo("America/New_York")
+NOW = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
+PIPELINE = metric.LEAD_PIPELINE_ID
+FIELD = metric.SOURCE_FIELD_ID
+SOLD_FIELD = metric.SOLD_DATE_FIELD_ID
+VIRTUAL = "r1b9pwgliYj7WyWBchTV"
+BUFFALO = "GQtUlcTmLJ61HZjrGEPC"
+WORD = re.compile(r"\b(sit|sits|sat)\b", re.IGNORECASE)
+
+
+def contact(contact_id: str, source: str | None, sold: str | None = None) -> dict:
+    fields = []
+    if source is not None:
+        fields.append({"id": FIELD, "value": source})
+    if sold is not None:
+        fields.append({"id": SOLD_FIELD, "value": sold})
+    return {"id": contact_id, "customFields": fields}
+
+
+def pipeline_opp(
+    opp_id: str,
+    contact_id: str,
+    created: str,
+    *,
+    name: str = "Lead Locker: not the lead number",
+    stage: str = "open-stage",
+) -> dict:
+    return {
+        "id": opp_id,
+        "pipelineId": PIPELINE,
+        "contactId": contact_id,
+        "name": name,
+        "createdAt": created,
+        "pipelineStageId": stage,
+    }
+
+
+def territory(
+    opp_id: str,
+    contact_id: str,
+    pipeline_id: str,
+    created_local: datetime,
+    *,
+    occurred_utc: datetime | None = None,
+    disposition: str | None = None,
+):
+    return metric.cac.TerritoryOpp(
+        opportunity_id=opp_id,
+        contact_id=contact_id,
+        pipeline_id=pipeline_id,
+        created_local=created_local,
+        occurred_utc=occurred_utc,
+        disposition=disposition,
+    )
+
+
+def run_window(start: str, end: str, pipeline, created, demos, sold_ids, contacts):
+    start_local, end_local, _, _ = metric.cac.date_range_window(start, end, "America/New_York")
+    counts = metric.count_paid_social(
+        pipeline,
+        created,
+        demos,
+        sold_ids,
+        contacts,
+        start_local,
+        end_local,
+        NOW,
+    )
+    payload = metric.assemble_paid_social(
+        counts,
+        start_local=start_local,
+        end_local=end_local,
+        daily_meta={"status": "unavailable", "rows": [], "lead_actions_ignored": False},
+        aggregate_spend=metric.cac.unavailable_meta_spend("missing_env"),
+    )
+    return counts, payload
+
+
+class SourceFilterTests(unittest.TestCase):
+    def test_only_stripped_inbound_matches(self):
+        self.assertTrue(metric.source_is_inbound(contact("c", "Inbound")))
+        self.assertTrue(metric.source_is_inbound(contact("c", " inbound ")))
+        self.assertTrue(metric.source_is_inbound(contact("c", "INBOUND")))
+        self.assertFalse(metric.source_is_inbound(contact("c", "3PL")))
+        self.assertFalse(metric.source_is_inbound(contact("c", "3pl")))
+        self.assertFalse(metric.source_is_inbound(contact("c", "Doors")))
+        self.assertFalse(metric.source_is_inbound(contact("c", "")))
+        self.assertFalse(metric.source_is_inbound(contact("c", None)))
+        self.assertFalse(metric.source_is_inbound(contact("c", "   ")))
+        self.assertFalse(metric.source_is_inbound({"customFields": []}))
+        self.assertFalse(metric.source_is_inbound(None))
+
+    def test_module_does_not_use_title_buckets_or_the_form_fill_row(self):
+        self.assertNotIn("bucket_title(", METRIC_SRC)
+        self.assertNotIn("compute_inbound_cac", METRIC_SRC)
+        self.assertNotIn("count_inbound_named_fills", METRIC_SRC)
+        self.assertNotIn("build_performance_kpis", METRIC_SRC)
+        self.assertNotIn("7981f111-73f2-4593-9662-6b95d99bf51a", METRIC_SRC)
+        self.assertEqual(
+            metric.SOLD_DATE_FIELD_ID,
+            sales.SalesMetricContract().sold_date_custom_field_id,
+        )
+        self.assertEqual(set(metric.TERRITORY_PIPELINE_NAMES), set(metric.cac.TERRITORY_PIPELINE_IDS))
+
+    def test_meta_read_is_account_level_and_skips_lead_actions(self):
+        url = metric.insights_request_url(
+            metric.META_ACCOUNT_ID,
+            "test-token",
+            "2026-10-01",
+            "2026-10-04",
+            "1",
+        )
+        parsed = __import__("urllib.parse", fromlist=["urlparse"]).urlparse(url)
+        query = __import__("urllib.parse", fromlist=["parse_qs"]).parse_qs(parsed.query)
+        self.assertEqual(query["fields"][0], "impressions,outbound_clicks,spend")
+        self.assertNotIn("landing_page_views", query["fields"][0])
+        self.assertNotIn("actions", query["fields"][0].split(","))
+        self.assertEqual(query["level"][0], "account")
+        self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, parsed.path)
+        self.assertNotIn("campaign", query)
+        self.assertIn('method="GET"', METRIC_SRC)
+
+
+class EvidenceWindowTests(unittest.TestCase):
+    def test_oct1_through_oct4_does_not_plot_pipeline_opps_as_leads(self):
+        contacts = {}
+        pipeline = []
+        created = []
+        demos = []
+        for index in range(5):
+            contact_id = f"blank-{index}"
+            contacts[contact_id] = contact(contact_id, None, sold="2026-10-02")
+            pipeline.append(
+                pipeline_opp(
+                    f"p-{index}",
+                    contact_id,
+                    "2026-10-02T15:00:00+00:00",
+                    name="Lead Locker: blank source",
+                )
+            )
+            created.append(
+                territory(
+                    f"t-{index}",
+                    contact_id,
+                    BUFFALO,
+                    datetime(2026, 10, 2, 12, 0, tzinfo=NY),
+                    occurred_utc=datetime(2026, 10, 2, 18, 0, tzinfo=timezone.utc),
+                    disposition="Sit",
+                )
+            )
+            demos.append(created[-1])
+        counts, payload = run_window(
+            "2026-10-01",
+            "2026-10-04",
+            pipeline,
+            created,
+            demos,
+            set(contacts),
+            contacts,
+        )
+        self.assertEqual(payload["window_start_local"], "2026-10-01T00:00:00-04:00")
+        self.assertEqual(payload["window_end_local"], "2026-10-05T00:00:00-04:00")
+        leads = payload["funnel"][3]
+        opps = payload["funnel"][4]
+        self.assertEqual(leads["total"], 0)
+        self.assertEqual(counts["pipeline_opportunities_in_window"], 5)
+        self.assertNotEqual(leads["total"], 5)
+        self.assertEqual(leads["excluded_by_source"], {"(blank)": 5})
+        self.assertTrue(all(point["value"] == 0 for point in leads["series"]))
+        self.assertNotIn(5, [point["value"] for point in leads["series"]])
+        self.assertEqual(opps["total"], 0)
+        self.assertEqual(payload["demos"]["total"], 0)
+        self.assertEqual(payload["demos"]["note"], "no demo")
+        self.assertEqual(payload["sales"]["total"], 0)
+        self.assertIsNone(payload["kpis"]["cost_per_lead"]["value"])
+        self.assertEqual(payload["kpis"]["cost_per_lead"]["target"], 25)
+        self.assertIsNone(payload["kpis"]["cost_per_demo"]["value"])
+        self.assertEqual(payload["kpis"]["cost_per_demo"]["target"], 50)
+
+    def test_sep7_through_oct4_matches_source_filter(self):
+        contacts = {}
+        pipeline = []
+        created = []
+        demos = []
+        lead_ids = ("c1", "c2", "c3")
+        created_at = (
+            "2026-09-10T15:00:00+00:00",
+            "2026-09-12T15:00:00+00:00",
+            "2026-09-20T15:00:00+00:00",
+        )
+        for contact_id, stamp in zip(lead_ids, created_at):
+            contacts[contact_id] = contact(contact_id, "Inbound", sold="2026-08-15")
+            pipeline.append(
+                pipeline_opp(f"lead-{contact_id}", contact_id, stamp, name="Website form")
+            )
+        contacts["c1"] = contact("c1", "Inbound", sold="2026-08-15T00:00:00.000Z")
+        territory_rows = (
+            ("opp-v1", "c1", VIRTUAL, datetime(2026, 9, 11, 11, 0, tzinfo=NY), datetime(2026, 9, 18, 18, 0, tzinfo=timezone.utc), "Sit"),
+            ("opp-v2", "c2", VIRTUAL, datetime(2026, 9, 14, 11, 0, tzinfo=NY), None, None),
+            ("opp-b1", "c3", BUFFALO, datetime(2026, 9, 21, 11, 0, tzinfo=NY), None, None),
+        )
+        for opp_id, contact_id, pipeline_id, created_local, occurred, disposition in territory_rows:
+            row = territory(
+                opp_id,
+                contact_id,
+                pipeline_id,
+                created_local,
+                occurred_utc=occurred,
+                disposition=disposition,
+            )
+            created.append(row)
+            if disposition:
+                demos.append(row)
+        for index in range(97):
+            contact_id = f"blank-{index}"
+            contacts[contact_id] = contact(contact_id, None)
+            pipeline.append(pipeline_opp(f"blank-{index}", contact_id, "2026-09-15T15:00:00+00:00", name="Lead Locker: blank"))
+        for index in range(13):
+            contact_id = f"3pl-{index}"
+            contacts[contact_id] = contact(contact_id, "3PL", sold="2026-09-20")
+            pipeline.append(pipeline_opp(f"3pl-{index}", contact_id, "2026-09-16T15:00:00+00:00", name="Solar Reviews: 3PL"))
+        for index in range(2):
+            contact_id = f"doors-{index}"
+            contacts[contact_id] = contact(contact_id, "Doors", sold="2026-09-22")
+            pipeline.append(pipeline_opp(f"doors-{index}", contact_id, "2026-09-18T15:00:00+00:00", name="Doors"))
+            demos.append(
+                territory(
+                    f"doors-demo-{index}",
+                    contact_id,
+                    BUFFALO,
+                    datetime(2026, 9, 19, 11, 0, tzinfo=NY),
+                    occurred_utc=datetime(2026, 9, 19, 18, 0, tzinfo=timezone.utc),
+                    disposition="Sit",
+                )
+            )
+        contacts["before"] = contact("before", "Inbound", sold="2026-09-20")
+        pipeline.append(pipeline_opp("before-window", "before", "2026-09-06T15:00:00+00:00"))
+        created.append(
+            territory(
+                "before-opp",
+                "before",
+                VIRTUAL,
+                datetime(2026, 9, 8, 11, 0, tzinfo=NY),
+            )
+        )
+        sold_ids = {f"3pl-{index}" for index in range(13)}
+        sold_ids.update({f"doors-{index}" for index in range(2)})
+        sold_ids.add("c1")
+        sold_ids.add("before")
+        counts, payload = run_window(
+            "2026-09-07",
+            "2026-10-04",
+            pipeline,
+            created,
+            demos,
+            sold_ids,
+            contacts,
+        )
+        leads = payload["funnel"][3]
+        opps = payload["funnel"][4]
+        self.assertEqual(payload["window_start_local"], "2026-09-07T00:00:00-04:00")
+        self.assertEqual(payload["window_end_local"], "2026-10-05T00:00:00-04:00")
+        self.assertEqual(counts["pipeline_opportunities_in_window"], 115)
+        self.assertEqual(leads["total"], 3)
+        self.assertEqual(leads["matched_source_values"], {"Inbound": 3})
+        self.assertEqual(leads["excluded_by_source"], {"(blank)": 97, "3PL": 13, "Doors": 2})
+        self.assertEqual(leads["refunded_leads"], 0)
+        self.assertNotIn(leads["total"], (5, 72, 115, 51, 21))
+        self.assertNotIn(115, [point["value"] for point in leads["series"]])
+        self.assertEqual(sum(point["value"] for point in leads["series"]), 3)
+        self.assertEqual(opps["total"], 3)
+        self.assertEqual(opps["by_territory"]["Virtual"], 2)
+        self.assertEqual(opps["by_territory"]["Buffalo"], 1)
+        self.assertEqual(opps["by_territory"]["Rochester"], 0)
+        self.assertEqual(opps["by_territory"]["Syracuse"], 0)
+        self.assertEqual(payload["demos"]["total"], 1)
+        self.assertEqual(payload["sales"]["total"], 0)
+        self.assertIsNone(payload["kpis"]["cost_per_acquisition"]["value"])
+        self.assertEqual(payload["kpis"]["cost_per_acquisition"]["target"], 200)
+
+    def test_window_edges_and_refunded_inbound_still_match_the_source_rule(self):
+        contacts = {
+            "edge": contact("edge", "Inbound"),
+            "late": contact("late", "Inbound"),
+            "refunded": contact("refunded", "Inbound"),
+        }
+        pipeline = [
+            pipeline_opp("edge", "edge", "2026-10-05T03:30:00+00:00", name="not a title"),
+            pipeline_opp("late", "late", "2026-10-05T04:00:00+00:00"),
+            pipeline_opp(
+                "refunded",
+                "refunded",
+                "2026-09-10T15:00:00+00:00",
+                stage=metric.cac.REFUNDED_STAGE_ID,
+            ),
+        ]
+        _counts, payload = run_window("2026-10-01", "2026-10-04", pipeline, [], [], set(), contacts)
+        self.assertEqual(payload["funnel"][3]["total"], 1)
+        _counts, wider = run_window("2026-09-07", "2026-10-04", pipeline, [], [], set(), contacts)
+        self.assertEqual(wider["funnel"][3]["total"], 2)
+        self.assertEqual(wider["funnel"][3]["refunded_leads"], 1)
+
+
+class MetaAndVisitorTests(unittest.TestCase):
+    def _counts(self):
+        start_local, end_local, _, _ = metric.cac.date_range_window("2026-10-01", "2026-10-02", "America/New_York")
+        counts = metric.count_paid_social([], [], [], set(), {}, start_local, end_local, NOW)
+        return start_local, end_local, counts
+
+    def test_missing_meta_and_visitors_stay_blank(self):
+        start_local, end_local, counts = self._counts()
+        payload = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta={"status": "unavailable", "rows": [], "lead_actions_ignored": True},
+            aggregate_spend=metric.cac.unavailable_meta_spend("missing_env"),
+        )
+        steps = {step["key"]: step for step in payload["funnel"]}
+        self.assertIsNone(steps["ad_views"]["series"])
+        self.assertIsNone(steps["ad_views"]["total"])
+        self.assertIsNone(steps["clicks"]["series"])
+        self.assertEqual(steps["website_visitors"]["status"], "not_wired")
+        self.assertIsNone(steps["website_visitors"]["total"])
+        self.assertIsNone(steps["website_visitors"]["series"])
+        self.assertEqual(steps["website_visitors"]["measurement_id"], "G-V02RZFR4SZ")
+        self.assertIn("not wired", steps["website_visitors"]["note"])
+        self.assertFalse(payload["meta_lead_actions"]["plotted"])
+        self.assertIsNone(payload["meta_lead_actions"]["series"])
+        self.assertEqual(payload["meta_lead_actions"]["status"], "absent_not_zero")
+        self.assertTrue(payload["spend"]["unmatched"])
+        self.assertNotIn('"total": 0', json.dumps(steps["ad_views"]))
+        self.assertNotIn('"total": 0', json.dumps(steps["clicks"]))
+        self.assertNotIn('"total": 0', json.dumps(steps["website_visitors"]))
+
+    def test_spend_gap_is_labeled_and_not_picked(self):
+        class Response:
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+
+            def read(self):
+                return self.payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def urlopen(req, timeout=20):
+            self.assertEqual(req.method, "GET")
+            self.assertNotIn("actions", req.full_url.split("fields=")[1].split("&", 1)[0])
+            return Response(
+                {
+                    "data": [
+                        {
+                            "date_start": "2026-10-01",
+                            "impressions": "10",
+                            "clicks": "2",
+                            "spend": "50.00",
+                            "actions": [{"action_type": "lead", "value": "0"}],
+                        },
+                        {"date_start": "2026-10-02", "spend": "60.11"},
+                    ]
+                }
+            )
+
+        daily = metric.fetch_meta_daily(
+            datetime(2026, 10, 1, tzinfo=NY),
+            datetime(2026, 10, 3, tzinfo=NY),
+            token="test-token",
+            account_id=metric.META_ACCOUNT_ID,
+            urlopen=urlopen,
+        )
+        self.assertTrue(daily["lead_actions_ignored"])
+        self.assertNotIn("actions", daily["rows"][0])
+        self.assertEqual(daily["rows"][0]["impressions"], 10)
+        self.assertIsNone(daily["rows"][1]["impressions"])
+        self.assertIsNone(daily["rows"][1]["clicks"])
+        start_local, end_local, counts = self._counts()
+        counts["leads"] = 2
+        counts["opps"] = 2
+        counts["demos"] = 1
+        counts["sales"] = 1
+        payload = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta=daily,
+            aggregate_spend=metric.cac.MetaSpendResult(
+                spend=110.60,
+                spend_status="ok",
+                account_id=metric.META_ACCOUNT_ID,
+            ),
+        )
+        gap = payload["spend"]["gap"]
+        self.assertEqual(gap["account_insights_total"], 110.60)
+        self.assertEqual(gap["daily_rows_sum"], 110.11)
+        self.assertIn("does not pick one", gap["note"])
+        self.assertIn("Neither figure is tied to a lead or an opp", gap["note"])
+        self.assertIsNone(payload["spend"]["spend"])
+        self.assertIsNone(payload["kpis"]["cost_per_lead"]["value"])
+        by_spend = payload["kpis"]["cost_per_lead"]["by_spend"]
+        self.assertEqual(by_spend["account_insights_total"], round(110.60 / 2, 2))
+        self.assertEqual(by_spend["daily_rows_sum"], round(110.11 / 2, 2))
+        self.assertNotEqual(by_spend["account_insights_total"], by_spend["daily_rows_sum"])
+        views = {step["key"]: step for step in payload["funnel"]}["ad_views"]
+        by_day = {point["date"]: point["value"] for point in views["series"]}
+        self.assertEqual(by_day["2026-10-01"], 10)
+        self.assertIsNone(by_day["2026-10-02"])
+        self.assertNotIn("lead", json.dumps(payload["meta_lead_actions"]["series"]))
+
+    def test_agreed_spend_sets_costs_against_targets(self):
+        start_local, end_local, counts = self._counts()
+        counts["leads"] = 3
+        counts["opps"] = 3
+        counts["demos"] = 1
+        counts["sales"] = 1
+        daily = {
+            "status": "ok",
+            "rows": [
+                {"date": "2026-10-01", "impressions": 4, "clicks": 1, "spend": 30.0},
+                {"date": "2026-10-02", "impressions": 0, "clicks": 0, "spend": 60.0},
+            ],
+            "lead_actions_ignored": False,
+        }
+        payload = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta=daily,
+            aggregate_spend=metric.cac.MetaSpendResult(spend=90.0, spend_status="ok"),
+        )
+        self.assertIsNone(payload["spend"]["gap"])
+        self.assertEqual(payload["spend"]["spend"], 90.0)
+        self.assertTrue(payload["spend"]["unmatched"])
+        self.assertEqual(payload["kpis"]["cost_per_lead"]["value"], 30.0)
+        self.assertEqual(payload["kpis"]["cost_per_lead"]["target"], 25)
+        self.assertEqual(payload["kpis"]["cost_per_opp"]["value"], 30.0)
+        self.assertIsNone(payload["kpis"]["cost_per_opp"]["target"])
+        self.assertEqual(payload["kpis"]["cost_per_demo"]["value"], 90.0)
+        self.assertEqual(payload["kpis"]["cost_per_demo"]["target"], 50)
+        self.assertEqual(payload["kpis"]["cost_per_acquisition"]["value"], 90.0)
+        self.assertEqual(payload["kpis"]["cost_per_acquisition"]["target"], 200)
+        views = {step["key"]: step for step in payload["funnel"]}["ad_views"]
+        self.assertEqual([point["value"] for point in views["series"]], [4, 0])
+
+
+growth = load_module("growth_command_center", METRICS / "growth_command.py")
+
+
+class GrowthFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.model = growth.demo_model()
+
+    def test_fixture_formulas_match_the_guide(self):
+        self.assertEqual(sum(growth.DAILY_LEADS), 8)
+        self.assertEqual(sum(growth.DAILY_SPEND), 240)
+        self.assertEqual(sum(growth.DAILY_IMPRESSIONS), 24000)
+        self.assertEqual(sum(growth.DAILY_CLICKS), 400)
+        self.assertEqual(sum(growth.DAILY_VISITS), 320)
+        self.assertEqual(sum(growth.DAILY_FORM_STARTS), 40)
+        self.assertEqual(sum(growth.DAILY_DEMOS), 4)
+        self.assertEqual(sum(growth.DAILY_SOLD), 1)
+        self.assertEqual(self.model["kpis"]["leads"]["text"], "8/20")
+        self.assertEqual(self.model["kpis"]["leads"]["percent_label"], "40%")
+        self.assertEqual(self.model["kpis"]["leads"]["pace"], "2 behind pace")
+        self.assertEqual(self.model["pace"]["expected"], 10)
+        self.assertEqual(self.model["kpis"]["cpl"]["value"], 30)
+        self.assertEqual(self.model["kpis"]["cpl"]["note"], "$5 over goal")
+        self.assertEqual(self.model["kpis"]["cpl"]["tone"], "amber")
+        self.assertNotEqual(self.model["kpis"]["cpl"]["tone"], "success")
+        self.assertEqual(self.model["kpis"]["demo_cost"]["value"], 60)
+        self.assertEqual(self.model["kpis"]["demo_cost"]["note"], "$10 over goal")
+        self.assertEqual(self.model["kpis"]["demo_cost"]["tone"], "amber")
+        self.assertEqual(self.model["kpis"]["cpa"]["value"], 240)
+        self.assertEqual(self.model["kpis"]["cpa"]["note"], "$40 over goal")
+        self.assertEqual(self.model["kpis"]["cpa"]["tone"], "amber")
+        self.assertEqual(self.model["kpis"]["spend"]["display"], "$240")
+        self.assertEqual(self.model["kpis"]["spend"]["active_label"], "3 active")
+        self.assertEqual(self.model["kpis"]["spend"]["cap_label"], "Not configured")
+        self.assertEqual([stage["key"] for stage in self.model["stages"]], [
+            "impressions", "outbound_clicks", "landing_visits", "form_starts", "leads", "demos", "sold",
+        ])
+        self.assertEqual(self.model["stages"][0]["ratio_label"], "1.7%")
+        self.assertEqual(self.model["stages"][1]["ratio_label"], "80%")
+        self.assertEqual(self.model["stages"][2]["ratio_label"], "12.5%")
+        self.assertEqual(self.model["stages"][3]["ratio_label"], "20%")
+        self.assertEqual(self.model["stages"][4]["ratio_label"], "50%")
+        self.assertEqual(self.model["stages"][5]["ratio_label"], "25%")
+        self.assertEqual(self.model["ads"]["rows"][0]["ctr_label"], "1.8%")
+        self.assertEqual(self.model["ads"]["rows"][1]["ctr_label"], "1.75%")
+        self.assertEqual(self.model["ads"]["rows"][2]["ctr_label"], "1.33%")
+        self.assertEqual(self.model["ads"]["total"]["ctr_label"], "1.67%")
+        self.assertEqual(self.model["ads"]["total"]["cpl_label"], "$30")
+        self.assertLess(self.model["cost_charts"]["cpl"]["end_y"], self.model["cost_charts"]["cpl"]["target_y"])
+        self.assertEqual(self.model["cost_charts"]["cpl"]["end_value"], 30)
+        self.assertEqual(self.model["cost_charts"]["cpl"]["target"], 25)
+        self.assertTrue(self.model["is_demo"])
+        self.assertEqual(self.model["badge"], "SAMPLE DATA")
+        self.assertFalse(self.model["validated"])
+        self.assertEqual(self.model["bot"]["status"], "WATCH")
+        self.assertNotEqual(self.model["bot"]["status"], "ON TRACK")
+        titles = " ".join(item["title"] + " " + item["action"] for item in self.model["recommendations"])
+        self.assertIn("Review the 12.5% visit-to-form-start rate", titles)
+        self.assertIn("Test an approved creative against lead cost", titles)
+        self.assertNotIn("16%", titles)
+        self.assertNotIn("80% of visitors", titles)
+        self.assertIsNone(self.model["territory_opps"])
+        self.assertNotIn(5, (self.model["kpis"]["leads"]["actual"],))
+        self.assertNotEqual(self.model["kpis"]["leads"]["actual"], 115)
+
+    def test_zero_denominator_is_not_a_dollar_cost(self):
+        start = growth.date(2026, 11, 1)
+        model = growth.summarize(
+            {
+                "is_demo": True,
+                "validated": False,
+                "preset": "custom",
+                "range_start": start,
+                "range_end": start,
+                "goal_month": "2026-11",
+                "as_of": growth.FIXTURE_AS_OF,
+                "days": [
+                    {
+                        "date": "2026-11-01",
+                        "spend": 10,
+                        "impressions": 0,
+                        "outbound_clicks": 0,
+                        "landing_visits": 0,
+                        "form_starts": 0,
+                        "leads": 0,
+                        "demos": 0,
+                        "sold": 0,
+                        "known": True,
+                    }
+                ],
+                "ads": {"status": "unavailable", "reason": "none", "rows": []},
+                "submissions": None,
+                "tracking": "unknown",
+                "territory_opps": None,
+                "spend_gap": None,
+                "window_totals": None,
+            }
+        )
+        self.assertIsNone(model["kpis"]["cpl"]["value"])
+        self.assertEqual(model["kpis"]["cpl"]["display"], "N/A")
+        self.assertNotEqual(model["kpis"]["cpl"]["display"], "$0")
+        self.assertEqual(model["stages"][0]["ratio_label"], "N/A")
+
+    def test_october_goal_does_not_inherit_november(self):
+        model = growth.demo_model({"preset": ["last-month"]})
+        self.assertEqual(model["goal_month"], "2026-10")
+        self.assertEqual(model["pace"]["goal"], 10)
+        self.assertIsNone(model["kpis"]["leads"]["actual"])
+        self.assertEqual(model["kpis"]["leads"]["text"], "—")
+        self.assertNotEqual(model["kpis"]["leads"]["text"], "0/10")
+
+    def test_live_model_does_not_copy_the_sample_or_invent_visits(self):
+        paid = {
+            "window_start_local": "2026-10-01T00:00:00-04:00",
+            "window_end_local": "2026-10-05T00:00:00-04:00",
+            "funnel": [
+                {"key": "ad_views", "status": "unavailable", "total": None, "series": None},
+                {"key": "clicks", "status": "unavailable", "total": None, "series": None},
+                {"key": "website_visitors", "status": "not_wired", "total": None, "series": None},
+                {"key": "leads_created", "status": "ok", "total": 0, "series": [
+                    {"date": day, "value": 0} for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+                ]},
+                {"key": "opps_created", "status": "ok", "total": 0, "by_territory": {
+                    "Buffalo": 0, "Rochester": 0, "Syracuse": 0, "Virtual": 0,
+                }},
+            ],
+            "outbound_clicks": {"status": "unavailable", "total": None, "series": None},
+            "demos": {"status": "ok", "total": 0, "series": [
+                {"date": day, "value": 0} for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+            ]},
+            "sales": {"status": "ok", "total": 0, "series": [
+                {"date": day, "value": 0} for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+            ]},
+            "spend": {"spend": None, "gap": None, "series": None, "note": metric.UNMATCHED_SPEND_NOTE},
+        }
+        model = growth.live_model(paid)
+        self.assertFalse(model["is_demo"])
+        self.assertIsNone(model["badge"])
+        self.assertEqual(model["kpis"]["leads"]["actual"], 0)
+        self.assertNotEqual(model["kpis"]["leads"]["actual"], 5)
+        self.assertIsNone(model["stages"][2]["value"])
+        self.assertEqual(model["stages"][2]["status"], "unavailable")
+        self.assertIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertNotIn("opp", [stage["key"] for stage in model["stages"]])
+        self.assertEqual(model["territory_opps"]["total"], 0)
+        self.assertEqual(model["kpis"]["cpl"]["display"], "N/A")
+        self.assertEqual(model["ads"]["status"], "unavailable")
+        self.assertNotEqual(model["kpis"]["spend"]["display"], "$240")
+        self.assertNotEqual(model["bot"]["status"], "ON TRACK")
+
+    def test_live_spend_gap_is_not_chosen(self):
+        paid = {
+            "window_start_local": "2026-10-01T00:00:00-04:00",
+            "window_end_local": "2026-10-03T00:00:00-04:00",
+            "funnel": [
+                {"key": "ad_views", "status": "ok", "total": 10, "series": [
+                    {"date": "2026-10-01", "value": 10},
+                    {"date": "2026-10-02", "value": None},
+                ]},
+                {"key": "leads_created", "status": "ok", "total": 2, "series": [
+                    {"date": "2026-10-01", "value": 2},
+                    {"date": "2026-10-02", "value": 0},
+                ]},
+                {"key": "opps_created", "status": "ok", "total": 2, "by_territory": {}},
+            ],
+            "outbound_clicks": {"status": "ok", "total": 4, "series": [
+                {"date": "2026-10-01", "value": 4},
+                {"date": "2026-10-02", "value": 0},
+            ]},
+            "demos": {"status": "ok", "total": 1, "series": [
+                {"date": "2026-10-01", "value": 1},
+                {"date": "2026-10-02", "value": 0},
+            ]},
+            "sales": {"status": "ok", "total": 0, "series": [
+                {"date": "2026-10-01", "value": 0},
+                {"date": "2026-10-02", "value": 0},
+            ]},
+            "spend": {
+                "spend": None,
+                "gap": {
+                    "account_insights_total": 110.60,
+                    "daily_rows_sum": 110.11,
+                    "note": "Neither figure is tied to a lead or an opp. This page does not pick one.",
+                },
+                "series": [
+                    {"date": "2026-10-01", "value": 50.0},
+                    {"date": "2026-10-02", "value": 60.11},
+                ],
+                "note": "Neither figure is tied to a lead or an opp. This page does not pick one.",
+            },
+        }
+        model = growth.live_model(paid)
+        self.assertIsNone(model["kpis"]["cpl"]["value"])
+        self.assertIsNone(model["kpis"]["spend"]["value"])
+        self.assertTrue(any(item["id"] == "rec-spend-gap" for item in model["recommendations"]))
+
+
+class PageTests(unittest.TestCase):
+    def test_page_matches_the_command_center(self):
+        html = page.render_html()
+        funnel = html.split('class="funnel-row"', 1)[1].split("</section>", 1)[0]
+        labels = [
+            "Impressions",
+            "Outbound clicks",
+            "Landing visits",
+            "Form starts",
+            "Leads created",
+            "Demos",
+            "Sold",
+        ]
+        positions = [funnel.find(label) for label in labels]
+        self.assertTrue(all(pos > 0 for pos in positions), positions)
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("Growth command center", html)
+        self.assertIn("SAMPLE DATA", html)
+        self.assertIn("Directional", html)
+        self.assertIn("2 behind pace", html)
+        self.assertIn("$5 over goal", html)
+        self.assertIn("Not configured", html)
+        self.assertIn("G-V02RZFR4SZ", html)
+        self.assertIn("7nSEgeoBYXZiIS7x41Jy", html)
+        self.assertIn('href="/api/paid_social_funnel', html)
+        self.assertNotIn("/api/metrics/inbound_cac", html)
+        self.assertNotIn("|| 0", html)
+        self.assertNotIn("16%", html)
+        self.assertIsNone(WORD.search(html))
+        self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, PAGE_SRC)
+        self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, html)
+        nav_html = nav.render_dashboard_nav("paid_social_funnel")
+        self.assertLess(nav_html.find("Website Traffic"), nav_html.find("Paid Social"))
+        self.assertIn('class="navbtn active" href="/api/paid_social_funnel"', nav_html)
+        self.assertEqual(
+            index.dispatch_route("/api/metrics/paid_social_funnel?start=2026-09-07&end=2026-10-04"),
+            "metrics/paid_social_funnel",
+        )
+        self.assertEqual(index.dispatch_route("/api/paid_social_funnel"), "paid_social_funnel")
+
+    def test_handler_renders_sample_until_live_is_validated(self):
+        handler = page.handler.__new__(page.handler)
+        handler.path = "/api/paid_social_funnel"
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        handler.wfile = MagicMock()
+        handler.do_GET()
+        body = handler.wfile.write.call_args[0][0].decode("utf-8")
+        self.assertIn("SAMPLE DATA", body)
+        self.assertIn("Nov 1–15, 2026", body)
+        self.assertIsNone(WORD.search(body))
+
+        live = page.model_for_query({"source": ["live"]}, live_loader=lambda _qs: (_ for _ in ()).throw(RuntimeError("no creds")))
+        live_html = page.render_html(model=live)
+        self.assertNotIn("SAMPLE DATA", live_html)
+        self.assertIn("Sample numbers are not shown", live_html)
+        self.assertNotIn("$240", live_html)
+        self.assertIsNone(WORD.search(live_html))
+
+
+if __name__ == "__main__":
+    unittest.main()

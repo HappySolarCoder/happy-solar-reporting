@@ -2,20 +2,23 @@
 
 """Paid social funnel. Read-only.
 
-Lead: an opportunity on pipeline Inbound/Lead Locker
+Lead: an opportunity on the 3PL/Inbound pipeline
 (7nSEgeoBYXZiIS7x41Jy) whose contact Lead Gen Source
 (hd5QqHEOVSsPom5bJ32P) strips to Inbound, case-insensitive.
-3PL does not count. A blank field does not count.
-Title buckets are not the lead number. The inbound CAC form-fill
-row is not the lead number.
+Blank, 3PL, and Doors do not count. Not every opportunity in that
+pipeline is a lead. Title buckets are not the lead number. The
+inbound CAC form-fill row is not the lead number.
 
 Opp: a separate opportunity for that same lead contact in Buffalo,
 Rochester, Syracuse, or Virtual, dated by that territory
 opportunity's createdAt in America/New_York.
 
-Demos: distinct territory opportunity with the existing demo
-disposition and appointmentOccurredAt in the window, limited to
-those lead contacts.
+Demos: distinct opportunity in Buffalo, Rochester, Syracuse, or
+Virtual only, whose contact Lead Gen Source strips to Inbound and
+whose dispositionValue equals SIT_DISPOSITION exactly, dated by
+appointmentOccurredAt in America/New_York (territory_sit_in_window).
+A demo does not have to be one of the lead contacts. 3PL/Inbound
+pipeline opportunities are never demos.
 
 Sales: distinct contactId with Contact Sold Date
 P9oBjgbZjJdeE0OkBj9T in the window, limited to those lead contacts.
@@ -142,9 +145,9 @@ LEAD_ACTIONS_NOTE = (
     "Meta lead actions are not shown. They were absent, not zero."
 )
 LEAD_NOTE = (
-    "A lead is an opportunity in Inbound/Lead Locker whose Lead Gen Source "
-    "strips to Inbound. 3PL does not count. A blank field does not count. "
-    "Title buckets are not this number."
+    "A lead is an opportunity in the 3PL/Inbound pipeline whose Lead Gen Source "
+    "strips to Inbound. Blank, 3PL, and Doors do not count. Not every "
+    "opportunity in that pipeline is a lead. Title buckets are not this number."
 )
 OPP_NOTE = (
     "An opp is a separate opportunity for that same lead contact in "
@@ -152,9 +155,11 @@ OPP_NOTE = (
     "created time in America/New_York."
 )
 DEMO_NOTE = (
-    "A demo is a distinct territory opportunity with the existing demo "
-    "disposition and appointment time in this window, limited to these "
-    "lead contacts."
+    "A demo is a distinct Buffalo, Rochester, Syracuse, or Virtual opportunity "
+    "whose Lead Gen Source is Inbound and whose appointment outcome is the "
+    "existing demo outcome, dated by appointment time in America/New_York. "
+    "It does not have to be one of these lead contacts. 3PL/Inbound pipeline "
+    "opportunities are never demos."
 )
 SALES_NOTE = (
     "A sold deal is a distinct contact whose Sold Date falls in this window, "
@@ -217,7 +222,11 @@ def count_paid_social(
     end_local: datetime,
     now_utc: datetime,
 ) -> dict[str, Any]:
-    """Count one window. Lead and opp numbers come only from the source filter."""
+    """Count one window. Lead and opp numbers come only from the source filter.
+
+    Demos are not joined to the lead contacts. Each territory opportunity is
+    checked on its own contact's Lead Gen Source.
+    """
     days = window_dates(start_local, end_local)
     lead_ids: set[str] = set()
     lead_contacts: set[str] = set()
@@ -276,16 +285,27 @@ def count_paid_social(
 
     demo_ids: set[str] = set()
     demo_days: dict[str, int] = {}
+    demo_excluded_by_source: dict[str, int] = {}
+    demo_by_territory = {name: 0 for name in TERRITORY_PIPELINE_NAMES.values()}
     for opp in territory_demos:
-        if opp.contact_id not in lead_contacts:
+        if not opp.opportunity_id or opp.opportunity_id in demo_ids:
+            continue
+        name = territory_name(opp.pipeline_id)
+        if name is None:
+            continue
+        if opp.disposition != cac.SIT_DISPOSITION:
             continue
         if not cac.territory_sit_in_window(opp, start_local, end_local, now_utc):
             continue
-        if opp.opportunity_id:
-            demo_ids.add(opp.opportunity_id)
-        if opp.occurred_utc is not None and start_local.tzinfo is not None:
-            occurred_local = opp.occurred_utc.astimezone(start_local.tzinfo)
-            _bump(demo_days, _day_key(occurred_local))
+        contact = contacts.get(opp.contact_id) if opp.contact_id else None
+        if not source_is_inbound(contact):
+            label = source_label(contact)
+            demo_excluded_by_source[label] = demo_excluded_by_source.get(label, 0) + 1
+            continue
+        demo_ids.add(opp.opportunity_id)
+        demo_by_territory[name] += 1
+        occurred_local = opp.occurred_utc.astimezone(start_local.tzinfo)
+        _bump(demo_days, _day_key(occurred_local))
 
     sales: set[str] = set()
     sale_days: dict[str, int] = {}
@@ -311,6 +331,8 @@ def count_paid_social(
         "opps_by_territory": by_territory,
         "demos": len(demo_ids),
         "demo_series": _series(days, demo_days),
+        "demos_by_territory": demo_by_territory,
+        "demos_excluded_by_source": demo_excluded_by_source,
         "sales": len(sales),
         "sale_series": _series(days, sale_days),
         "days": days,
@@ -968,12 +990,23 @@ def assemble_paid_social(
             "source_field_name": SOURCE_FIELD_NAME,
             "source_value": SOURCE_VALUE,
             "match": "strip_case_insensitive",
-            "does_not_match": ["3PL", "(blank)"],
+            "does_not_match": ["3PL", "Doors", "(blank)"],
             "not_the_lead_number": [
                 "title bucket Lead Locker",
                 "title bucket Solar Reviews",
                 "inbound_cac Inbound form-fill row",
             ],
+        },
+        "demo_definition": {
+            "pipeline_ids": list(TERRITORY_PIPELINE_NAMES),
+            "excluded_pipeline_ids": [LEAD_PIPELINE_ID],
+            "source_field_id": SOURCE_FIELD_ID,
+            "source_value": SOURCE_VALUE,
+            "outcome_field": cac.DISPOSITION_VALUE_FIELD,
+            "outcome_value": cac.SIT_DISPOSITION,
+            "outcome_match": "exact",
+            "date_field": cac.APPOINTMENT_OCCURRED_AT_FIELD,
+            "limited_to_lead_contacts": False,
         },
         "funnel": [
             {
@@ -1036,6 +1069,8 @@ def assemble_paid_social(
             "total": demos,
             "status": "ok",
             "series": counts.get("demo_series"),
+            "by_territory": counts.get("demos_by_territory") or {},
+            "excluded_by_source": counts.get("demos_excluded_by_source") or {},
             "note": "no demo" if demos == 0 else DEMO_NOTE,
         },
         "sales": {

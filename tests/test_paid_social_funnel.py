@@ -343,6 +343,235 @@ class EvidenceWindowTests(unittest.TestCase):
         self.assertEqual(wider["funnel"][3]["refunded_leads"], 1)
 
 
+ROCHESTER = "qJNvqKWp8Xc7DaBr8QYc"
+SYRACUSE = "etLURrEVxupngZZRlISG"
+
+
+def demo_row(opp_id, contact_id, pipeline_id, occurred_utc, disposition="Sit"):
+    return territory(
+        opp_id,
+        contact_id,
+        pipeline_id,
+        datetime(2026, 9, 1, 11, 0, tzinfo=NY),
+        occurred_utc=occurred_utc,
+        disposition=disposition,
+    )
+
+
+class LeadDefinitionTests(unittest.TestCase):
+    def test_only_inbound_source_in_the_lead_pipeline_is_a_lead(self):
+        sources = {
+            "in-1": "Inbound",
+            "in-2": " inbound ",
+            "in-3": "INBOUND",
+            "tpl": "3PL",
+            "doors": "Doors",
+            "empty": "",
+            "spaces": "   ",
+            "none": None,
+        }
+        contacts = {cid: contact(cid, value) for cid, value in sources.items()}
+        pipeline = [pipeline_opp(f"opp-{cid}", cid, "2026-10-02T15:00:00+00:00") for cid in sources]
+        contacts["terr"] = contact("terr", "Inbound")
+        pipeline.append(
+            {
+                "id": "territory-not-lead",
+                "pipelineId": BUFFALO,
+                "contactId": "terr",
+                "createdAt": "2026-10-02T15:00:00+00:00",
+            }
+        )
+        counts, payload = run_window("2026-10-01", "2026-10-04", pipeline, [], [], set(), contacts)
+        leads = payload["funnel"][3]
+        self.assertEqual(leads["total"], 3)
+        self.assertEqual(counts["lead_contacts"], {"in-1", "in-2", "in-3"})
+        self.assertEqual(counts["pipeline_opportunities_in_window"], 8)
+        self.assertEqual(leads["excluded_by_source"], {"3PL": 1, "Doors": 1, "(blank)": 3})
+        self.assertIn("Doors", payload["lead_definition"]["does_not_match"])
+        self.assertIn("Doors do not count", leads["note"])
+        self.assertIn("Not every opportunity in that pipeline is a lead", leads["note"])
+
+
+class DemoDefinitionTests(unittest.TestCase):
+    def test_inbound_territory_demo_counts_without_a_lead_pipeline_opp(self):
+        contacts = {cid: contact(cid, "Inbound") for cid in ("b", "r", "s", "v")}
+        demos = [
+            demo_row("d-b", "b", BUFFALO, datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)),
+            demo_row("d-r", "r", ROCHESTER, datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)),
+            demo_row("d-s", "s", SYRACUSE, datetime(2026, 10, 3, 15, 0, tzinfo=timezone.utc)),
+            demo_row("d-v", "v", VIRTUAL, datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc)),
+        ]
+        counts, payload = run_window("2026-10-01", "2026-10-04", [], [], demos, set(), contacts)
+        self.assertEqual(counts["leads"], 0)
+        self.assertEqual(payload["demos"]["total"], 4)
+        self.assertEqual(
+            payload["demos"]["by_territory"],
+            {"Buffalo": 1, "Rochester": 1, "Syracuse": 1, "Virtual": 1},
+        )
+        self.assertEqual([point["value"] for point in payload["demos"]["series"]], [1, 1, 1, 1])
+        self.assertEqual(payload["demos"]["note"], metric.DEMO_NOTE)
+        self.assertIsNone(WORD.search(payload["demos"]["note"]))
+        definition = payload["demo_definition"]
+        self.assertEqual(set(definition["pipeline_ids"]), {BUFFALO, ROCHESTER, SYRACUSE, VIRTUAL})
+        self.assertEqual(definition["excluded_pipeline_ids"], [PIPELINE])
+        self.assertEqual(definition["outcome_field"], "dispositionValue")
+        self.assertEqual(definition["outcome_value"], metric.cac.SIT_DISPOSITION)
+        self.assertEqual(definition["date_field"], "appointmentOccurredAt")
+        self.assertFalse(definition["limited_to_lead_contacts"])
+
+    def test_non_inbound_source_is_not_a_demo(self):
+        contacts = {
+            "tpl": contact("tpl", "3PL"),
+            "doors": contact("doors", "Doors"),
+            "blank": contact("blank", None),
+            "self": contact("self", "Self Gen"),
+        }
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        demos = [demo_row(f"d-{cid}", cid, BUFFALO, occurred) for cid in contacts]
+        demos.append(demo_row("d-missing", "no-contact-doc", VIRTUAL, occurred))
+        _counts, payload = run_window("2026-10-01", "2026-10-04", [], [], demos, set(), contacts)
+        self.assertEqual(payload["demos"]["total"], 0)
+        self.assertEqual(payload["demos"]["note"], "no demo")
+        self.assertEqual(
+            payload["demos"]["excluded_by_source"],
+            {"3PL": 1, "Doors": 1, "(blank)": 2, "Self Gen": 1},
+        )
+
+    def test_inbound_territory_opp_without_the_exact_outcome_is_not_a_demo(self):
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        outcomes = (None, "", "No Sit", "sit", "SIT", "Rescheduled", "Cancelled")
+        contacts = {f"c{i}": contact(f"c{i}", "Inbound") for i in range(len(outcomes))}
+        demos = [
+            demo_row(f"d{i}", f"c{i}", VIRTUAL, occurred, disposition=value)
+            for i, value in enumerate(outcomes)
+        ]
+        _counts, payload = run_window("2026-10-01", "2026-10-04", [], [], demos, set(), contacts)
+        self.assertEqual(payload["demos"]["total"], 0)
+        self.assertEqual(payload["demos"]["excluded_by_source"], {})
+
+    def test_lead_pipeline_opp_is_never_a_demo(self):
+        contacts = {"lead": contact("lead", "Inbound")}
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        pipeline = [pipeline_opp("lead-opp", "lead", "2026-10-02T14:00:00+00:00")]
+        demos = [
+            demo_row("lead-opp", "lead", PIPELINE, occurred),
+            demo_row("other", "lead", "someOtherPipeline", occurred),
+        ]
+        counts, payload = run_window("2026-10-01", "2026-10-04", pipeline, [], demos, set(), contacts)
+        self.assertEqual(counts["leads"], 1)
+        self.assertEqual(payload["demos"]["total"], 0)
+
+    def test_lead_contact_demo_still_needs_its_own_rule(self):
+        contacts = {"lead": contact("lead", "Inbound"), "other": contact("other", "Inbound")}
+        pipeline = [pipeline_opp("lead-opp", "lead", "2026-10-02T14:00:00+00:00")]
+        occurred = datetime(2026, 10, 3, 15, 0, tzinfo=timezone.utc)
+        demos = [
+            demo_row("lead-demo", "lead", ROCHESTER, occurred),
+            demo_row("other-demo", "other", SYRACUSE, occurred),
+            demo_row("lead-no-outcome", "lead", BUFFALO, occurred, disposition=None),
+        ]
+        _counts, payload = run_window("2026-10-01", "2026-10-04", pipeline, [], demos, set(), contacts)
+        self.assertEqual(payload["funnel"][3]["total"], 1)
+        self.assertEqual(payload["demos"]["total"], 2)
+        self.assertEqual(payload["demos"]["by_territory"]["Rochester"], 1)
+        self.assertEqual(payload["demos"]["by_territory"]["Syracuse"], 1)
+        self.assertEqual(payload["demos"]["by_territory"]["Buffalo"], 0)
+
+    def test_demo_window_uses_new_york_appointment_time_and_dedupes(self):
+        contacts = {cid: contact(cid, "Inbound") for cid in ("early", "first", "last", "next", "future", "dup")}
+        demos = [
+            demo_row("early", "early", BUFFALO, datetime(2026, 10, 1, 3, 59, tzinfo=timezone.utc)),
+            demo_row("first", "first", BUFFALO, datetime(2026, 10, 1, 4, 0, tzinfo=timezone.utc)),
+            demo_row("last", "last", VIRTUAL, datetime(2026, 10, 5, 3, 59, tzinfo=timezone.utc)),
+            demo_row("next", "next", VIRTUAL, datetime(2026, 10, 5, 4, 0, tzinfo=timezone.utc)),
+            demo_row("dup", "dup", SYRACUSE, datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)),
+            demo_row("dup", "dup", SYRACUSE, datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)),
+            demo_row("no-time", "dup", SYRACUSE, None),
+        ]
+        _counts, payload = run_window("2026-10-01", "2026-10-04", [], [], demos, set(), contacts)
+        self.assertEqual(payload["demos"]["total"], 3)
+        by_day = {point["date"]: point["value"] for point in payload["demos"]["series"]}
+        self.assertEqual(by_day, {"2026-10-01": 1, "2026-10-02": 1, "2026-10-03": 0, "2026-10-04": 1})
+
+        start_local, end_local, _, _ = metric.cac.date_range_window("2026-10-01", "2026-10-31", "America/New_York")
+        future = [demo_row("future", "future", BUFFALO, datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc))]
+        counts = metric.count_paid_social([], [], future, set(), contacts, start_local, end_local, NOW)
+        self.assertEqual(counts["demos"], 0)
+
+    def test_loader_keeps_only_the_exact_outcome_on_territory_pipelines(self):
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        docs = [
+            {"id": "ok", "pipelineId": BUFFALO, "contactId": "c", "dispositionValue": "Sit", "appointmentOccurredAt": occurred},
+            {"id": "pad", "pipelineId": BUFFALO, "contactId": "c", "dispositionValue": " Sit ", "appointmentOccurredAt": occurred},
+            {"id": "lower", "pipelineId": BUFFALO, "contactId": "c", "dispositionValue": "sit", "appointmentOccurredAt": occurred},
+            {"id": "nosit", "pipelineId": VIRTUAL, "contactId": "c", "dispositionValue": "No Sit", "appointmentOccurredAt": occurred},
+            {"id": "lead", "pipelineId": PIPELINE, "contactId": "c", "dispositionValue": "Sit", "appointmentOccurredAt": occurred},
+        ]
+
+        class Snap:
+            def __init__(self, doc):
+                self.id = doc["id"]
+                self._doc = doc
+
+            def to_dict(self):
+                return dict(self._doc)
+
+        class Query:
+            def where(self, *_args):
+                return self
+
+            def stream(self):
+                return [Snap(doc) for doc in docs]
+
+        class Db:
+            def collection(self, _name):
+                return Query()
+
+        start_local, end_local, _, _ = metric.cac.date_range_window("2026-10-01", "2026-10-04", "America/New_York")
+        loaded = metric.cac.load_territory_sits(Db(), start_local, end_local, NOW)
+        self.assertEqual([opp.opportunity_id for opp in loaded], ["ok"])
+
+    def test_live_records_load_contacts_for_demo_only_opps(self):
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        demo_only = demo_row("demo-only", "walk-in", VIRTUAL, occurred)
+        requested = {}
+
+        def load_contacts(_db, ids):
+            requested["ids"] = set(ids)
+            return {"walk-in": contact("walk-in", "Inbound")}
+
+        with patch.object(metric.cac, "load_inbound_opps", return_value=[]), \
+                patch.object(metric.cac, "load_territory_created", return_value=[]), \
+                patch.object(metric.cac, "load_territory_sits", return_value=[demo_only]), \
+                patch.object(metric.cac, "load_sold_stage_contact_ids", return_value=set()), \
+                patch.object(metric.cac, "load_contacts_by_ids", side_effect=load_contacts):
+            payload = metric.compute_paid_social_funnel(
+                object(),
+                start="2026-10-01",
+                end="2026-10-04",
+                now=NOW,
+                token="test-token",
+                account_id=metric.META_ACCOUNT_ID,
+                daily_fetcher=lambda _s, _e: {"status": "unavailable", "rows": [], "lead_actions_ignored": False},
+                aggregate_fetcher=lambda _s, _e: metric.cac.unavailable_meta_spend("missing_env"),
+                ga4_fetcher=lambda _s, _e: {},
+            )
+        self.assertIn("walk-in", requested["ids"])
+        self.assertEqual(payload["funnel"][3]["total"], 0)
+        self.assertEqual(payload["demos"]["total"], 1)
+        model = growth.live_model(payload)
+        self.assertEqual(model["kpis"]["demos"]["value"], 1)
+        demo_stage = [stage for stage in model["stages"] if stage["key"] == "demos"][0]
+        self.assertEqual(demo_stage["label"], "Demos")
+        self.assertEqual(demo_stage["value"], 1)
+        html = page.render_html(model=model)
+        self.assertIn(">Demos<", html)
+        self.assertIn("It does not have to be one of the lead contacts", html)
+        self.assertIsNone(WORD.search(html))
+        self.assertIsNone(WORD.search(metric.DEMO_NOTE))
+        self.assertIsNone(WORD.search(metric.LEAD_NOTE))
+
+
 class MetaAndVisitorTests(unittest.TestCase):
     def _counts(self):
         start_local, end_local, _, _ = metric.cac.date_range_window("2026-10-01", "2026-10-02", "America/New_York")

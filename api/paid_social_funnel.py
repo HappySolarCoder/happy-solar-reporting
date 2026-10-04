@@ -2,9 +2,11 @@
 
 """Growth command center.
 
-Dark overview for paid acquisition. The default screen is the sample
-fixture. Live mode reads the paid-social adapter and does not invent
-missing sources. Viewing this page does not change ads or spend.
+Dark overview for paid acquisition. The default screen is the live
+adapter for the current month through today in America/New_York.
+The November sample fixture is only shown for an explicit sample
+request (?source=demo). Live mode does not copy sample numbers.
+Viewing this page does not change ads or spend.
 """
 
 from __future__ import annotations
@@ -32,26 +34,30 @@ from growth_command import (  # noqa: E402
 )
 
 
+SAMPLE_SOURCES = {"demo", "sample", "fixture"}
+
+
 def render_html(start: str | None = None, end: str | None = None, model: dict | None = None) -> str:
     if model is None:
-        query = {}
+        query = {"source": ["live"]}
         if start and end:
-            query = {"start": [start], "end": [end]}
-        model = demo_model(query)
+            query["start"] = [start]
+            query["end"] = [end]
+        model = model_for_query(query)
     return _document(model)
 
 
 def model_for_query(qs: dict, live_loader=None) -> dict:
-    source = " ".join(str((qs.get("source") or ["demo"])[0] or "").split()) or "demo"
-    if source == "live":
-        try:
-            loader = live_loader or _load_live
-            return live_model(loader(qs), qs)
-        except Exception:
-            return unavailable_model(
-                "Live sources could not be read. Sample numbers are not shown."
-            )
-    return demo_model(qs)
+    source = " ".join(str((qs.get("source") or ["live"])[0] or "").split()).lower()
+    if source in SAMPLE_SOURCES:
+        return demo_model(qs)
+    try:
+        loader = live_loader or _load_live
+        return live_model(loader(qs), qs)
+    except Exception:
+        return unavailable_model(
+            "Live sources could not be read. Sample numbers are not shown."
+        )
 
 
 def _load_live(qs: dict) -> dict:
@@ -106,7 +112,7 @@ def _document(model: dict) -> str:
     badge = (
         f'<span class="badge">{_esc(model["badge"])}</span>'
         if model.get("badge")
-        else '<span class="badge badge-live">Live · not validated</span>'
+        else '<span class="badge badge-live">Live</span>'
     )
     banner = ""
     if model.get("missing_days"):
@@ -388,8 +394,8 @@ def _funnel(model: dict) -> str:
     stages = model["stages"]
     for index, stage in enumerate(stages):
         note = stage["note"]
-        if stage["key"] == "landing_visits":
-            note = model["sources"]["landing_visits"]["note"]
+        if stage["key"] in ("landing_visits", "form_starts"):
+            note = model["sources"][stage["key"]]["note"]
         opp = ""
         if stage["key"] == "leads" and model.get("territory_opps"):
             territory = model["territory_opps"]
@@ -397,8 +403,10 @@ def _funnel(model: dict) -> str:
             for name in ("Buffalo", "Rochester", "Syracuse", "Virtual"):
                 parts.append(f"{name} {int((territory.get('by_territory') or {}).get(name) or 0)}")
             opp = f'<p>Territory opps are not a funnel stage: {_esc(territory.get("total"))} ({_esc(", ".join(parts))}).</p>'
-        elif stage["key"] == "leads":
+        elif stage["key"] == "leads" and model.get("is_demo"):
             opp = "<p>Territory opps are not a funnel stage. The sample fixture does not invent an opp count.</p>"
+        elif stage["key"] == "leads":
+            opp = "<p>Territory opps are not a funnel stage. The live opp count is unavailable for this read.</p>"
         bits.append(
             f'''<details class="stage">
               <summary>
@@ -515,13 +523,22 @@ def _ads_panel(model: dict, compact: bool) -> str:
 
 
 def _activity(model: dict) -> str:
+    if model.get("is_demo"):
+        audit = "A live bot audit log is unavailable. The sample fixture records no ad changes."
+        check = (
+            f"Sample check at {_esc(model['as_of_label'])}: "
+            "tracking is a fixture flag, not a live certification."
+        )
+    else:
+        audit = "A live bot audit log is unavailable. This view does not fill that gap from the sample fixture."
+        check = f"Read at {_esc(model['as_of_label'])}. Tracking is not certified from this screen."
     return f"""
     <section class="card">
       <div class="section-head"><h2>Activity</h2><label class="text-btn" for="screen-overview">Back to overview</label></div>
       <p>Opening this screen does not change ads or spend.</p>
-      <p class="empty">A live bot audit log is unavailable. The sample fixture records no ad changes.</p>
+      <p class="empty">{audit}</p>
       <ul class="plain">
-        <li>Sample check at {_esc(model["as_of_label"])}: tracking is a fixture flag, not a live certification.</li>
+        <li>{check}</li>
         <li>No campaign, budget, or ad setting is written by this dashboard.</li>
       </ul>
     </section>
@@ -551,7 +568,8 @@ def _settings(model: dict) -> str:
         <li>Demo uses the existing appointment outcome for those lead contacts. The label on this screen is demo.</li>
         <li>Sold uses contact sold date {_esc(model["sold_date_field_id"])}. The sales metric contract is unchanged.</li>
         <li>Website visits are GA4 paid sessions on {_esc(model["measurement_id"])}. Meta landing-page views are not used.</li>
-        <li>CRM clock {_esc(model["crm_timezone"])}. Sample cutoff clock {_esc(model["account_timezone"])}.</li>
+        <li>The live window uses {_esc(model["crm_timezone"])}: the current month through today.</li>
+        <li>The sample fixture, opened only with an explicit sample request, uses {_esc(model["account_timezone"])}.</li>
       </ul>
     </section>
     """

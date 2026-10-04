@@ -563,9 +563,9 @@ def _settings(model: dict) -> str:
       </ul>
       <h3>Field mapping</h3>
       <ul class="plain">
-        <li>Lead: pipeline {_esc(model["lead_pipeline_id"])}, Lead Gen Source {_esc(model["source_field_id"])} strips to Inbound. Blank, 3PL, and Doors do not count.</li>
+        <li>Lead: pipeline {_esc(model["lead_pipeline_id"])}, Lead Gen Source {_esc(model["source_field_id"])} strips to Inbound. Blank, 3PL, and Doors do not count. Not every opportunity in that pipeline is a lead.</li>
         <li>Territory opportunities in Buffalo, Rochester, Syracuse, or Virtual are not a funnel stage.</li>
-        <li>Demo uses the existing appointment outcome for those lead contacts. The label on this screen is demo.</li>
+        <li>Demo: an opportunity in Buffalo, Rochester, Syracuse, or Virtual whose Lead Gen Source is Inbound and whose appointment outcome is the existing demo outcome, dated by appointment time in America/New_York. It does not have to be one of the lead contacts. Opportunities in the lead pipeline are never demos.</li>
         <li>Sold uses contact sold date {_esc(model["sold_date_field_id"])}. The sales metric contract is unchanged.</li>
         <li>Website visits are GA4 paid sessions on property 408492342, measurement {_esc(model["measurement_id"])}. The website traffic paid-session rule: paid medium or paid channel, Facebook and Instagram included. A Meta click is not a session. Meta landing-page views are not used.</li>
         <li>Abandoned Form is paid calculator estimate_start minus paid estimate_submit for the same window, never below zero. The same paid-session rule as landing visits. A finished form is not abandoned. Instant Form and 3PL are not abandoned forms. A failed read stays blank.</li>

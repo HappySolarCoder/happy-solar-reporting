@@ -19,7 +19,10 @@ Field mapping, live adapter:
   the stage stays null. A successful read with nobody abandoning is zero.
 - Leads: pipeline 7nSEgeoBYXZiIS7x41Jy, Lead Gen Source
   hd5QqHEOVSsPom5bJ32P strips to Inbound. Blank, 3PL, and Doors do not.
-- Demos: territory appointment disposition in the window, those contacts.
+- Demos: Buffalo, Rochester, Syracuse, or Virtual opportunity with Lead
+  Gen Source Inbound and the existing demo outcome in dispositionValue,
+  dated by appointmentOccurredAt. Not limited to the lead contacts.
+  3PL/Inbound pipeline opportunities are never demos.
 - Sold: contact sold date P9oBjgbZjJdeE0OkBj9T, those contacts.
   The sales metric contract is unchanged.
 - Account act_1624979685613708. No campaign writes.
@@ -512,7 +515,7 @@ def summarize(spec: dict) -> dict:
                 "Form starts" if is_demo else "Abandoned Form",
             ),
             ("leads", "Leads created", leads, "Source-filtered CRM leads"),
-            ("demos", "Demos", demos, "CRM demos for those leads"),
+            ("demos", "Demos", demos, "Inbound territory demos"),
             ("sold", "Sold", sold, "CRM sold date for those leads"),
         ]
     )

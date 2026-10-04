@@ -16,6 +16,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -52,7 +53,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             qs = parse_qs(urlparse(self.path).query)
-            now = datetime.utcnow()
+            now = datetime.now(ZoneInfo("America/New_York"))
             end_y = int((qs.get("year", [str(now.year)])[0] or now.year))
             end_m = int((qs.get("month", [str(now.month)])[0] or now.month))
             start_y = int((qs.get("start_year", ["2025"])[0] or "2025"))
@@ -84,12 +85,12 @@ class handler(BaseHTTPRequestHandler):
                 s = float(sales.get("result") or 0)
                 c = float(created.get("result") or 0)
                 r = float(ran.get("result") or 0)
-                opp2 = (s / r * 100.0) if r > 0 else 0.0
+                opp2 = (s / r * 100.0) if r > 0 else None
                 return {
                     "month": f"{y}-{str(m).zfill(2)}",
                     "sales": s,
                     "opps_created": c,
-                    "opp2prelim": round(opp2, 1),
+                    "opp2prelim": None if opp2 is None else round(opp2, 1),
                 }
 
             with ThreadPoolExecutor(max_workers=12) as ex:

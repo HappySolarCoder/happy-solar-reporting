@@ -43,7 +43,7 @@
       "collection": "data_catalog",
       "source_uri": "api/metrics/demo_rate.py",
       "source_revision": "repository-inspection-2026-10-04",
-      "content": "Several metric contracts set timezone America/New_York and comment that it is mandatory. The company overview default month uses datetime.utcnow. Neither fact is an owner-approved company timezone. COPILOT_COMPANY_TIMEZONE must be set by an owner before Goose treats a date range as a reporting period.",
+      "content": "On 2026-10-04 the data owner set the company reporting timezone to America/New_York. Sales, opportunities created, opportunities ran, and demo rate already force that zone. Company overview dates use America/New_York and do not take the default month from UTC. COPILOT_BILLING_TIMEZONE is not approved and must stay unset until the Google billing period is verified. This document remains DRAFT and is not company policy by itself.",
       "owner": null,
       "visibility_scope": "employee",
       "approval_status": "DRAFT",

@@ -8,13 +8,13 @@ This guide is the remaining setup. It does not contain secret values.
 
 Starting page: `/api/company_overview`.
 
-The page still loads `/api/metrics/company_snapshot` and `/api/metrics/company_trends`. Those handlers were not modified. Snapshot fans out to the existing sales, opportunities-created, opportunities-ran, and demo-rate metric modules and caches about 60 seconds. Trends cache about 6 hours. The overview cards sum lead-source aliases in the browser.
+The page still loads `/api/metrics/company_snapshot` and `/api/metrics/company_trends`. Snapshot fans out to the existing sales, opportunities-created, opportunities-ran, and demo-rate metric modules and caches about 60 seconds. Trends cache about 6 hours. Opp2Prelim on the trend is null when Ran is 0, matching the blank card. The sales contract is unchanged. The overview cards sum lead-source aliases in the browser.
 
 Goose numeric tools call those same metric modules through `api/copilot/metrics_port.py`. They do not reimplement the formulas and they do not change report responses. Source cards sum the same alias lists the overview uses (`Phones`+`Virtual`, the Self Gen spellings, and the single-label cards).
 
 Company overview itself has no per-employee session. Settings pages use one shared `SETTINGS_PASSWORD` over HTTP basic auth. Goose uses that same password. The username is ignored, so every successful login is the actor `settings_admin`. A `user_id` or `role` in the JSON body is discarded.
 
-The metric modules hardcode `America/New_York`. If `COPILOT_COMPANY_TIMEZONE` is set to anything else, Goose refuses the numeric tools instead of relabeling those results.
+`COPILOT_COMPANY_TIMEZONE` defaults to `America/New_York`. That zone was approved on 2026-10-04. Company overview dates, filter chips, and Goose answer periods use it. They do not use the server clock or UTC. `COPILOT_BILLING_TIMEZONE` is still unset. Do not copy America/New_York into it.
 
 ## Unresolved business definitions
 
@@ -22,19 +22,21 @@ Every terminology and knowledge seed is **DRAFT**. Approving a seed in the admin
 
 | Term | What the code shows | Still needs an owner |
 | --- | --- | --- |
-| Opp2Prelim | Overview cards use Sales / Ran × 100 and an em dash when Ran is 0. The trend route uses 0.0 when Ran is 0. | Cohort versus period basis. Which zero-denominator rule is policy. |
-| Demo Rate | `demo_rate.py` uses sit count / (Sit or No Sit). Overview cards recompute sit/ran and use 0 when Ran is 0. | Confirm sit and ran eligibility. |
-| Phones | Overview sums Phones and Virtual. `sales.py` does not fold Virtual into a Phones filter. | Is Virtual an alias everywhere? |
-| Self Gen | Overview sums `Self Gen`, `self gen`, `selfgen`, `SelfGen`. | Canonical source id. |
-| Doors, Inbound, 3PL | Observed labels. `sc_overview` folds `3pl/inbound` into Inbound. | Business meanings. Do not expand 3PL by guessing. |
-| Sales | Distinct contacts in Sold or Sale Cancelled, dated by sold-date field `P9oBjgbZjJdeE0OkBj9T`. | Should Sale Cancelled stay in Sales? |
-| Ran | `opportunities_ran.py` counts a non-empty appointment disposition. Demo rate's denominator is Sit or No Sit. | Are those the same set? |
-| Sit | Disposition value Sit. The overview label is Demos. | Confirm Sit versus Demo. |
-| Created | Overview requests `pipeline_scope=all`. | Qualifying statuses and the event date. |
+| Opp2Prelim | Cards and the trend chart leave the rate blank when Ran is 0. | Still draft. The blank-versus-zero note is not approved policy. Cohort versus period is still open. |
+| Demo Rate | Zero denominator is N/A. Labels say demo, demos, demo rate, or no demo. | Still draft. The raw disposition value Sit is data only. |
+| Phones | The overview card still sums Phones and Virtual on screen. | Still draft. Do not approve folding Virtual into Phones. |
+| Self Gen | Canonical Lead Gen Source string is `Self Gen`. Other casings are the same source. | Still draft. |
+| Doors | Observed label. | Still draft. |
+| Inbound | Overview card key is Inbound. | Still draft. Do not use the paid-social Inbound lead rule as this definition. |
+| 3PL | Observed label. | Still draft. Do not define the acronym. |
+| Sales | Existing dashboards include Sold and Sale Cancelled, sold date `P9oBjgbZjJdeE0OkBj9T`, date-only, distinct contactId, America/New_York. That contract is unchanged. | Still draft. Do not state the note as new policy. |
+| Ran | Non-empty appointment disposition in `opportunities_ran.py`. | Still draft. |
+| Demo | Labels say demo. Raw value Sit stays in the data. | Still draft. |
+| Created | Overview requests `pipeline_scope=all`. | Still draft. |
 
 Knowledge seeds record the same gaps: markets, team structure, lead-to-sale process, sync frequency, and targets are not in the repository. Goose will not answer those until an admin approves a document. Draft documents are excluded from search.
 
-There is no approved company timezone in the repo. Several contracts comment that `America/New_York` is mandatory. The overview default month uses `datetime.utcnow()`.
+The company reporting timezone is `America/New_York` as of 2026-10-04. The Google billing timezone is not approved.
 
 ## Routes
 
@@ -53,9 +55,9 @@ Set these in the Vercel project. Do not commit them.
 
 | Name | Rule |
 | --- | --- |
-| `COPILOT_ENABLED` | Leave unset or `false` until launch checks pass. |
-| `COPILOT_COMPANY_TIMEZONE` | IANA zone the owner approves. Required before dates are treated as reporting periods. |
-| `COPILOT_BILLING_TIMEZONE` | IANA zone of the Google billing month. Required. This is not inferred. |
+| `COPILOT_ENABLED` | Stays false. Do not turn it on from this change. |
+| `COPILOT_COMPANY_TIMEZONE` | Defaults to `America/New_York`. Approved 2026-10-04. |
+| `COPILOT_BILLING_TIMEZONE` | Leave unset. The Google billing period timezone is not verified. |
 | `COPILOT_ALLOWED_ROLES` | `settings_admin` matches the only role this app can prove. Do not invent finer roles. |
 | `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. |
 | `GOOGLE_CLOUD_PROJECT` | Dedicated inference project. Do not reuse `GCP_PROJECT_ID` for this. |
@@ -72,7 +74,9 @@ Set these in the Vercel project. Do not commit them.
 
 ## Model and rates
 
-Pinned on 4 October 2026 from Google Cloud Agent Platform pricing:
+Public list price read on 4 October 2026. This is not approval to spend and not a permanent pin. Recheck the card before launch. Grounding, image, audio, and a floating latest alias stay off. Paid calls fail closed without `COPILOT_GOOGLE_CREDENTIALS_JSON`.
+
+Pinned from that read:
 
 - Model: `gemini-3.1-flash-lite`
 - Location: `global`
@@ -109,13 +113,13 @@ python scripts/copilot_seed.py --apply
 3. Create a runtime service account with only the inference permission the Gen AI SDK needs. Do not grant project owner or billing admin.
 4. Store its JSON in `COPILOT_GOOGLE_CREDENTIALS_JSON`. Do not commit it. Do not reuse the Firestore service account for inference.
 5. If the billing account supports spend caps, set a USD 18 cap on the inference service as backup. Google treats spend caps as a preview, they are not instant, and they are not the primary stop. The ledger is the primary stop.
-6. Record the billing timezone in `COPILOT_BILLING_TIMEZONE`. A provider cap can stay tripped after the app month rolls; lifting it is a console action.
+6. Leave `COPILOT_BILLING_TIMEZONE` unset until the Google billing period timezone is verified. Do not copy `America/New_York` into it. A provider cap can stay tripped after the app month rolls; lifting it is a console action.
 
 ## Enable, pause, rollback
 
 1. Open `/api/copilot/admin` with the settings password.
 2. Save draft definitions, then approve only the metrics that should answer numbers. Approve knowledge documents the same way.
-3. Set the timezone and project variables. Leave `COPILOT_ENABLED` false and read the launch-check list.
+3. Set the inference project variables. Leave `COPILOT_BILLING_TIMEZONE` unset and `COPILOT_ENABLED` false, then read the launch-check list.
 4. When that list is empty, set `COPILOT_ENABLED=true` and redeploy that env change. This pull request does not deploy production.
 5. Pause from the admin page sets `copilot_config/runtime.paused`. The dashboard keeps working. Clearing pause does not enable the feature by itself.
 6. Rollback of a bad prompt or knowledge revision is a new revision, or `COPILOT_ENABLED=false`. Do not delete `copilot_ledger`, `copilot_reservations`, or `copilot_audit`.
@@ -130,12 +134,11 @@ Budget and security tests use an in-memory ledger and a fake model. They do not 
 
 ## Remaining owner decisions
 
-- Dedicated inference project id, and a least-privilege service account JSON in `COPILOT_GOOGLE_CREDENTIALS_JSON`.
-- Confirm `COPILOT_COMPANY_TIMEZONE`. The metric code assumes `America/New_York` until you say otherwise.
-- Confirm `COPILOT_BILLING_TIMEZONE` against the Google billing account.
-- Approve, edit, or leave draft each terminology row. Unapproved metrics return no figure.
-- Decide Sale Cancelled inside Sales, Virtual inside Phones, the 3PL expansion, and Opp2Prelim's zero-denominator rule before approving those rows.
+- Dedicated inference project id, and a least-privilege service account JSON in `COPILOT_GOOGLE_CREDENTIALS_JSON`. Without it, paid calls stay closed.
+- `COPILOT_BILLING_TIMEZONE` is not approved. Leave it unset until the Google billing period timezone is verified.
+- Terminology rows stay DRAFT. The 2026-10-04 notes are on those drafts and are not approval.
 - Approve company-profile and process documents, or leave those questions unanswered.
 - Set the USD 18 inference spend cap in Google billing if the account allows it.
-- Re-verify the rate card before 2026-11-03.
+- Recheck the 2026-10-04 rate card before launch. It is not a permanent pin.
+- `COPILOT_ENABLED` stays false.
 - Name the agent owner, data owner, and budget admin. One person can hold more than one of those.

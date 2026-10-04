@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Pinned Gemini Flash price card.
 
-Verified 2026-10-04 against Google Cloud Agent Platform pricing:
+The 2026-10-04 public list price for gemini-3.1-flash-lite on Vertex global
+matches USD 0.25 / 1M input tokens and USD 1.50 / 1M output tokens. That read
+is not approval to spend and not a permanent pin. Recheck it before launch.
 https://cloud.google.com/vertex-ai/generative-ai/pricing
 
 Model page:

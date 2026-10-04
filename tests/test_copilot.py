@@ -118,6 +118,8 @@ class CopilotTests(unittest.TestCase):
     def test_feature_flag_defaults_off_and_dashboard_message(self):
         config = config_from_env({})
         self.assertFalse(config.enabled)
+        self.assertEqual(config.company_timezone, "America/New_York")
+        self.assertIsNone(config.billing_timezone)
         result = _chat("Explain Opp2Prelim", config=config)
         self.assertEqual(result["body"]["answer"], PAUSED)
         self.assertTrue(result["body"]["dashboard_unaffected"])
@@ -536,6 +538,30 @@ class CopilotTests(unittest.TestCase):
     def test_overview_handler_still_serves_html_without_enabling_copilot(self):
         self.assertIn("company_snapshot", OVERVIEW)
         self.assertNotIn("COPILOT_ENABLED = true", OVERVIEW)
+        self.assertIn('ZoneInfo("America/New_York")', OVERVIEW)
+        self.assertNotIn("datetime.utcnow()", OVERVIEW)
+        trends = (ROOT / "api" / "metrics" / "company_trends.py").read_text(encoding="utf-8")
+        self.assertIn("if r > 0 else None", trends)
+        self.assertNotIn("else 0.0", trends)
+
+    def test_owner_notes_stay_draft_and_are_not_chat_policy(self):
+        entries = load_seed()
+        self.assertTrue(all(entry["governance"]["status"] == "DRAFT" for entry in entries))
+        self.assertTrue(any(entry.get("owner_note", {}).get("date") == "2026-10-04" for entry in entries))
+        notes = [entry.get("owner_note", {}).get("text", "") for entry in entries]
+        joined = " ".join(notes)
+        self.assertIn("Sale Cancelled", joined)
+        self.assertIn("Self Gen", joined)
+        self.assertIn("Do not approve folding Virtual into Phones.", joined)
+        self.assertIn("Do not define what 3PL stands for.", joined)
+        self.assertIn("paid-social Inbound", joined)
+        self.assertTrue(all(entry.get("owner_note", {}).get("not_policy", True) for entry in entries if entry.get("owner_note")))
+        result = _chat("Explain Opp2Prelim", request_id="req_owner_note_01")
+        answer = result["body"]["answer"].lower()
+        self.assertIn("not company policy", answer)
+        self.assertNotIn("2026-10-04", answer)
+        for word in (" sit ", " sits ", " sat "):
+            self.assertNotIn(word, f" {answer} ")
 
 
 if __name__ == "__main__":

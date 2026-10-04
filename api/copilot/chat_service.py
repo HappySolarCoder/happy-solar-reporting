@@ -107,7 +107,7 @@ def _render_summary(payload: dict[str, Any]) -> str:
     lines.append(f"Company totals for {period['start']} to {period['end']} ({period['timezone']}).")
     for metric in payload["metrics"]:
         if metric["value"] is None:
-            shown = "unavailable"
+            shown = "N/A" if "zero_denominator" in (metric.get("incomplete") or []) else "unavailable"
         else:
             shown = str(metric["value"])
         unit = metric.get("unit") or ""
@@ -115,6 +115,30 @@ def _render_summary(payload: dict[str, Any]) -> str:
     if period.get("partial"):
         lines.append("This is a partial period.")
     return " ".join(lines)
+
+
+def _rate_text(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    return str(value)
+
+
+def _public_labels(text: str) -> str:
+    """User-facing words are demo, demos, demo rate, or no demo.
+
+    The raw disposition token Sit is left unchanged. Lowercase sit, sits, and sat are not labels.
+    """
+
+    def replace(match: re.Match) -> str:
+        word = match.group(0)
+        if word == "Sit":
+            return word
+        lowered = word.lower()
+        if lowered == "sits":
+            return "demos"
+        return "demo"
+
+    return re.sub(r"\b(sits|sit|sat)\b", replace, text, flags=re.IGNORECASE)
 
 
 def _render_sources(payload: dict[str, Any]) -> str:
@@ -126,7 +150,7 @@ def _render_sources(payload: dict[str, Any]) -> str:
     for row in payload["rows"]:
         lines.append(
             f"{row['label']}: sales {row['sales']}, ran {row['opps_ran']}, "
-            f"demo rate {row['demo_rate']}, opp2prelim {row['opp2prelim']}."
+            f"demo rate {_rate_text(row['demo_rate'])}, opp2prelim {_rate_text(row['opp2prelim'])}."
         )
     return " ".join(lines)
 
@@ -499,6 +523,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             code = "rejected"
     if store.preference(identity.actor_id).get("concise") and len(answer) > 280:
         answer = answer[:277].rstrip() + "..."
+    answer = _public_labels(answer)
     interpretation = None
     model_note = None
     if tool_payload.get("available") and decision_intent in {"company_summary", "compare", "source_performance"}:
@@ -513,6 +538,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 tool_payload=tool_payload,
                 history=[],
             )
+            if interpretation:
+                interpretation = _public_labels(interpretation)
             if interpretation is None and model is not None and getattr(model, "configured", False):
                 model_note = MODEL_UNAVAILABLE
         except BudgetExceeded as exc:

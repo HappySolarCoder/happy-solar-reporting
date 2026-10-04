@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Vertex Gemini client. Never falls back to the Firestore service account."""
+"""Vertex Gemini client. Never falls back to the Firestore service account.
+
+No grounding, image, audio, or floating latest alias. Missing
+COPILOT_GOOGLE_CREDENTIALS_JSON fails closed before a request is sent.
+"""
 
 from __future__ import annotations
 

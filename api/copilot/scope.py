@@ -111,7 +111,7 @@ def _term_hint(text: str) -> str | None:
         return "sales"
     if re.search(r"\bran\b", lowered):
         return "ran"
-    if re.search(r"\bsit\b", lowered):
+    if re.search(r"\b(sits|sit|sat|demos)\b", lowered):
         return "sit"
     if "created" in lowered or "opportunities" in lowered:
         return "created"

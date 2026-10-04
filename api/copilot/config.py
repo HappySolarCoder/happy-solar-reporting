@@ -16,6 +16,10 @@ from copilot.rates import (
     build_rate_card,
 )
 
+# Approved 2026-10-04. Dashboard dates, filters, and answer periods use this zone.
+# Do not copy it into COPILOT_BILLING_TIMEZONE. That zone is not approved.
+APPROVED_COMPANY_TIMEZONE = "America/New_York"
+
 
 def _flag(value: str | None, default: bool = False) -> bool:
     if value is None or value.strip() == "":
@@ -79,7 +83,8 @@ def config_from_env(env: dict[str, str] | None = None) -> CopilotConfig:
     source = os.environ if env is None else env
     model_id = (source.get("COPILOT_MODEL_ID") or PINNED_MODEL_ID).strip()
     location = (source.get("GOOGLE_CLOUD_LOCATION") or source.get("COPILOT_LOCATION") or PINNED_LOCATION).strip()
-    company_tz = (source.get("COPILOT_COMPANY_TIMEZONE") or "").strip() or None
+    company_tz = (source.get("COPILOT_COMPANY_TIMEZONE") or "").strip() or APPROVED_COMPANY_TIMEZONE
+    # Leave billing unset unless an owner names the verified Google billing zone.
     billing_tz = (source.get("COPILOT_BILLING_TIMEZONE") or "").strip() or None
     project = (source.get("GOOGLE_CLOUD_PROJECT") or "").strip() or None
     # FIREBASE / GCP_PROJECT_ID belong to the data center. Do not treat them as
@@ -130,8 +135,8 @@ def configuration_problems(config: CopilotConfig, today) -> list[str]:
     problems: list[str] = []
     if not config.enabled:
         problems.append("COPILOT_ENABLED is not true")
-    if not config.company_timezone:
-        problems.append("COPILOT_COMPANY_TIMEZONE is unset")
+    if config.company_timezone != APPROVED_COMPANY_TIMEZONE:
+        problems.append("COPILOT_COMPANY_TIMEZONE is not the approved America/New_York")
     if not config.billing_timezone:
         problems.append("COPILOT_BILLING_TIMEZONE is unset")
     if not config.allowed_roles:

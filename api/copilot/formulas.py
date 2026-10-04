@@ -53,9 +53,9 @@ def unmapped_labels(counts: Mapping[str, Any] | None) -> list[str]:
 
 
 def opp2prelim_percent(sales: int | None, ran: int | None) -> float | None:
-    """Company overview card: null when Ran is 0, so the UI shows an em dash.
+    """Blank when Ran is 0. Cards and the trend chart both use that rule.
 
-    company_trends uses 0.0 when Ran is 0. That conflict is unresolved.
+    A positive denominator with zero sales is 0%, which is different from N/A.
     """
     if sales is None or ran is None:
         return None
@@ -64,17 +64,13 @@ def opp2prelim_percent(sales: int | None, ran: int | None) -> float | None:
     return round((sales / ran) * 100, 1)
 
 
-def demo_rate_percent(sits: int | None, ran: int | None) -> float | None:
-    """Company overview card uses 0 when Ran is 0. Distinguish that from a true zero rate.
-
-    Returns None when either input is missing. Returns 0.0 when Ran is 0, matching
-    the card (`ran > 0 ? sit/ran*100 : 0`), and sets the caller-facing flag separately.
-    """
-    if sits is None or ran is None:
+def demo_rate_percent(demos: int | None, ran: int | None) -> float | None:
+    """N/A when Ran is 0. A real zero rate requires a positive denominator."""
+    if demos is None or ran is None:
         return None
     if ran == 0:
-        return 0.0
-    return round((sits / ran) * 100, 1)
+        return None
+    return round((demos / ran) * 100, 1)
 
 
 def percent_change(current: float | None, baseline: float | None) -> float | None:

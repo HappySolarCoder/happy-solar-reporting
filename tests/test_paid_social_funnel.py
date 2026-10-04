@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -628,7 +629,11 @@ class GrowthFixtureTests(unittest.TestCase):
         self.assertNotEqual(model["kpis"]["leads"]["actual"], 5)
         self.assertIsNone(model["stages"][2]["value"])
         self.assertEqual(model["stages"][2]["status"], "unavailable")
-        self.assertIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertIn("unavailable", model["sources"]["landing_visits"]["note"])
+        self.assertIn("not zero", model["sources"]["landing_visits"]["note"])
+        self.assertNotIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertNotEqual(model["stages"][2]["value"], sum(growth.DAILY_VISITS))
+        self.assertNotEqual(model["stages"][3]["value"], sum(growth.DAILY_FORM_STARTS))
         self.assertNotIn("opp", [stage["key"] for stage in model["stages"]])
         self.assertEqual(model["territory_opps"]["total"], 0)
         self.assertEqual(model["kpis"]["cpl"]["display"], "N/A")
@@ -809,15 +814,22 @@ class PageTests(unittest.TestCase):
         self.assertIsNone(forms["value"])
         self.assertEqual(forms["status"], "unavailable")
         self.assertEqual(forms["display"], "—")
-        self.assertIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertIn("unavailable", model["sources"]["landing_visits"]["note"])
+        self.assertIn("not zero", model["sources"]["landing_visits"]["note"])
+        self.assertNotIn("not wired", model["sources"]["landing_visits"]["note"])
         self.assertIn("unavailable", model["sources"]["form_starts"]["note"])
+        self.assertIn("not zero", model["sources"]["form_starts"]["note"])
+        self.assertNotEqual(visits["value"], sum(growth.DAILY_VISITS))
+        self.assertNotEqual(forms["value"], sum(growth.DAILY_FORM_STARTS))
         self.assertNotIn("opp", [stage["key"] for stage in model["stages"]])
 
         html = page.render_html(model=model)
         self.assertIn(">Live<", html)
         self.assertIn("Oct 1–4, 2026", html)
         self.assertIn("Sample fixture", html)
-        self.assertIn("Form starts are not wired, so this stage is unavailable.", html)
+        self.assertIn("This read is unavailable, so the stage stays blank.", html)
+        self.assertIn("A failed read is not zero.", html)
+        self.assertNotIn("Form starts are not wired", html)
         self.assertNotIn("SAMPLE DATA", html)
         self.assertNotIn("Nov 1–15, 2026", html)
         self.assertNotIn("8/20", html)
@@ -999,6 +1011,299 @@ class LiveWindowTests(unittest.TestCase):
         self.assertFalse(october["is_demo"])
         self.assertIsNone(october["stages"][2]["value"])
         self.assertEqual(october["stages"][2]["status"], "unavailable")
+
+
+def _ga4_row(dimensions: list[str], metric: int) -> dict:
+    return {
+        "dimensionValues": [{"value": value} for value in dimensions],
+        "metricValues": [{"value": str(metric)}],
+    }
+
+
+def _ga4_ok(rows: list[dict]) -> dict:
+    return {"ga4": "ok", "report": {"rowCount": len(rows), "rows": rows}}
+
+
+class PaidWebsiteStageTests(unittest.TestCase):
+    def setUp(self):
+        self.start_local, self.end_local, _, _ = metric.cac.date_range_window(
+            "2026-10-01", "2026-10-02", "America/New_York"
+        )
+        self.days = ["2026-10-01", "2026-10-02"]
+
+    def test_paid_session_rule_includes_facebook_and_instagram_only(self):
+        traffic = metric._load_website_traffic()
+        self.assertTrue(traffic.session_is_paid("facebook", "paid", "Paid Social"))
+        self.assertTrue(traffic.session_is_paid("instagram", "cpc", "Paid Social"))
+        self.assertTrue(traffic.session_is_paid("l.facebook.com", "paidsocial", "Paid Social"))
+        self.assertFalse(traffic.session_is_paid("facebook", "organic", "Organic Social"))
+        self.assertFalse(traffic.session_is_paid("instagram", "organic", "Organic Social"))
+        self.assertFalse(traffic.session_is_paid("google", "cpc", "Paid Search"))
+        self.assertFalse(traffic.session_is_paid("google", "organic", "Organic Search"))
+        counted = metric.count_paid_rows(
+            [
+                {"date": "2026-10-01", "sessionSource": "facebook", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "sessions": 10},
+                {"date": "2026-10-01", "sessionSource": "instagram", "sessionMedium": "cpc", "sessionDefaultChannelGroup": "Paid Social", "sessions": 4},
+                {"date": "2026-10-02", "sessionSource": "facebook", "sessionMedium": "organic", "sessionDefaultChannelGroup": "Organic Social", "sessions": 7},
+                {"date": "2026-10-02", "sessionSource": "google", "sessionMedium": "cpc", "sessionDefaultChannelGroup": "Paid Search", "sessions": 9},
+                {"date": "2026-10-01", "eventName": "estimate_start", "sessionSource": "facebook", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "sessions": 3},
+            ],
+            self.days,
+            value_keys=("sessions",),
+        )
+        self.assertEqual(counted["total"], 14)
+        self.assertEqual([point["value"] for point in counted["series"]], [14, 0])
+        starts = metric.count_paid_rows(
+            [
+                {"date": "20261001", "eventName": "estimate_start", "sessionSource": "facebook", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "eventCount": 3},
+                {"date": "20261001", "eventName": "estimate_submit", "sessionSource": "facebook", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "eventCount": 8},
+                {"date": "20261001", "eventName": "estimate_start", "sessionSource": "facebook", "sessionMedium": "organic", "sessionDefaultChannelGroup": "Organic Social", "eventCount": 5},
+                {"date": "20261002", "eventName": "estimate_start", "sessionSource": "instagram", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "eventCount": 1},
+                {"date": "20261002", "eventName": "wix_form_submit", "sessionSource": "instagram", "sessionMedium": "paid", "sessionDefaultChannelGroup": "Paid Social", "eventCount": 6},
+            ],
+            self.days,
+            value_keys=("eventCount",),
+            event_name="estimate_start",
+        )
+        self.assertEqual(starts["total"], 4)
+        self.assertEqual([point["value"] for point in starts["series"]], [3, 1])
+        self.assertEqual(metric.FORM_START_EVENT, "estimate_start")
+        self.assertNotEqual(metric.FORM_START_EVENT, "estimate_submit")
+
+    def test_fetch_counts_paid_rows_and_a_failed_read_stays_null(self):
+        session_rows = [
+            _ga4_row(["20261001", "Paid Social", "facebook", "paid"], 10),
+            _ga4_row(["20261001", "Paid Social", "instagram", "cpc"], 4),
+            _ga4_row(["20261002", "Organic Social", "facebook", "organic"], 7),
+            _ga4_row(["20261002", "Paid Search", "google", "cpc"], 9),
+        ]
+        start_rows = [
+            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_start"], 3),
+            _ga4_row(["20261001", "Paid Social", "facebook", "paid", "estimate_submit"], 8),
+            _ga4_row(["20261001", "Organic Social", "facebook", "organic", "estimate_start"], 5),
+            _ga4_row(["20261002", "Paid Social", "instagram", "paid", "estimate_start"], 1),
+        ]
+        seen = []
+
+        def runner(body, timeout=25):
+            seen.append(body)
+            self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, json.dumps(body))
+            self.assertNotIn("landingPageViews", json.dumps(body))
+            self.assertEqual(body["dateRanges"], [{"startDate": "2026-10-01", "endDate": "2026-10-02"}])
+            hosts = json.dumps(body["dimensionFilter"])
+            self.assertIn("www.happyslr.com", hosts)
+            self.assertIn("happyslr.com", hosts)
+            self.assertIn("wny.happyslr.com", hosts)
+            name = body["metrics"][0]["name"]
+            if name == "sessions":
+                self.assertNotIn("estimate_submit", json.dumps(body))
+                return _ga4_ok(session_rows)
+            self.assertEqual(name, "eventCount")
+            self.assertEqual(
+                body["dimensionFilter"]["andGroup"]["expressions"][1]["filter"]["inListFilter"]["values"],
+                ["estimate_start"],
+            )
+            self.assertNotIn("estimate_submit", json.dumps(body["dimensionFilter"]))
+            return _ga4_ok(start_rows)
+
+        website = metric.fetch_paid_website_stages(
+            self.start_local, self.end_local, report_runner=runner
+        )
+        self.assertEqual(len(seen), 2)
+        visits = website["landing_visits"]
+        forms = website["form_starts"]
+        self.assertEqual(visits["status"], "ok")
+        self.assertEqual(visits["total"], 14)
+        self.assertEqual(visits["property_id"], "408492342")
+        self.assertEqual(visits["measurement_id"], "G-V02RZFR4SZ")
+        self.assertEqual([point["value"] for point in visits["series"]], [14, 0])
+        self.assertEqual(forms["status"], "ok")
+        self.assertEqual(forms["total"], 4)
+        self.assertEqual(forms["event"], "estimate_start")
+        self.assertEqual([point["value"] for point in forms["series"]], [3, 1])
+
+        def fail_sessions(body, timeout=25):
+            if body["metrics"][0]["name"] == "sessions":
+                return {"ga4": "failed", "rows": [], "error": "ga4_run_report_failed"}
+            return _ga4_ok(start_rows)
+
+        partial = metric.fetch_paid_website_stages(
+            self.start_local, self.end_local, report_runner=fail_sessions
+        )
+        self.assertEqual(partial["landing_visits"]["status"], "unavailable")
+        self.assertIsNone(partial["landing_visits"]["total"])
+        self.assertIsNone(partial["landing_visits"]["series"])
+        self.assertEqual(partial["form_starts"]["status"], "ok")
+        self.assertEqual(partial["form_starts"]["total"], 4)
+        self.assertNotIn('"total": 0', json.dumps(partial["landing_visits"]))
+
+        def fail_both(body, timeout=25):
+            return {"ga4": "not_configured", "rows": [], "error": None}
+
+        failed = metric.fetch_paid_website_stages(
+            self.start_local, self.end_local, report_runner=fail_both
+        )
+        self.assertIsNone(failed["landing_visits"]["total"])
+        self.assertIsNone(failed["form_starts"]["total"])
+        self.assertIsNone(failed["landing_visits"]["series"])
+        self.assertIsNone(failed["form_starts"]["series"])
+        self.assertNotEqual(failed["landing_visits"]["total"], 0)
+        self.assertNotEqual(failed["form_starts"]["total"], 0)
+
+        calls = {"n": 0}
+
+        def refuse(body, timeout=25):
+            calls["n"] += 1
+            raise AssertionError("a different property must not be queried")
+
+        with patch.dict(os.environ, {"GA4_PROPERTY_ID": "999999"}):
+            mismatched = metric.fetch_paid_website_stages(
+                self.start_local, self.end_local, report_runner=refuse
+            )
+        self.assertEqual(calls["n"], 0)
+        self.assertIsNone(mismatched["landing_visits"]["total"])
+        self.assertIsNone(mismatched["form_starts"]["total"])
+
+        if any(
+            os.environ.get(name)
+            for name in ("GA4_PROPERTY_ID", "GA4_SERVICE_ACCOUNT_JSON", "FIREBASE_SERVICE_ACCOUNT_JSON")
+        ):
+            return
+        with patch("urllib.request.urlopen", side_effect=AssertionError("GA4 must not be called")):
+            unwired = metric.fetch_paid_website_stages(self.start_local, self.end_local)
+        self.assertEqual(unwired["landing_visits"]["status"], "unavailable")
+        self.assertEqual(unwired["landing_visits"]["reason"], "not_configured")
+        self.assertIsNone(unwired["landing_visits"]["total"])
+        self.assertIsNone(unwired["landing_visits"]["series"])
+        self.assertIsNone(unwired["form_starts"]["total"])
+        self.assertIsNone(unwired["form_starts"]["series"])
+        self.assertNotEqual(unwired["landing_visits"]["total"], 0)
+        self.assertNotEqual(unwired["form_starts"]["total"], 0)
+
+    def test_live_adapter_shows_counts_and_keeps_a_failed_read_null(self):
+        start_local, end_local, counts = MetaAndVisitorTests()._counts()
+        website = {
+            "landing_visits": {
+                "status": "ok",
+                "total": 14,
+                "series": [
+                    {"date": "2026-10-01", "value": 14},
+                    {"date": "2026-10-02", "value": 0},
+                ],
+                "measurement_id": "G-V02RZFR4SZ",
+                "property_id": "408492342",
+            },
+            "form_starts": {
+                "status": "unavailable",
+                "total": 0,
+                "series": [
+                    {"date": "2026-10-01", "value": 0},
+                    {"date": "2026-10-02", "value": 0},
+                ],
+            },
+        }
+        payload = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta={"status": "unavailable", "rows": [], "lead_actions_ignored": False},
+            aggregate_spend=metric.cac.unavailable_meta_spend("missing_env"),
+            website=website,
+        )
+        self.assertEqual(payload["funnel"][2]["total"], 14)
+        self.assertEqual(payload["funnel"][3]["key"], "leads_created")
+        self.assertIsNone(payload["form_starts"]["total"])
+        self.assertIsNone(payload["form_starts"]["series"])
+        self.assertEqual(payload["form_starts"]["status"], "unavailable")
+        self.assertNotIn('"total": 0', json.dumps(payload["form_starts"]))
+        model = growth.live_model(payload)
+        visits = model["stages"][2]
+        forms = model["stages"][3]
+        self.assertEqual(visits["value"], 14)
+        self.assertEqual(visits["display"], "14")
+        self.assertEqual(visits["status"], "ok")
+        self.assertEqual([point["value"] for point in payload["landing_visits"]["series"]], [14, 0])
+        self.assertIsNone(forms["value"])
+        self.assertEqual(forms["display"], "—")
+        self.assertEqual(forms["status"], "unavailable")
+        self.assertIsNone(payload["form_starts"]["series"])
+        self.assertNotEqual(visits["value"], sum(growth.DAILY_VISITS))
+        self.assertNotEqual(forms["value"], sum(growth.DAILY_FORM_STARTS))
+        self.assertNotEqual(forms["value"], 0)
+        self.assertIn("Facebook and Instagram", model["sources"]["landing_visits"]["note"])
+        self.assertNotIn("not wired", model["sources"]["landing_visits"]["note"])
+        both = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta={"status": "unavailable", "rows": [], "lead_actions_ignored": False},
+            aggregate_spend=metric.cac.unavailable_meta_spend("missing_env"),
+            website={
+                "landing_visits": website["landing_visits"],
+                "form_starts": {
+                    "status": "ok",
+                    "total": 4,
+                    "series": [
+                        {"date": "2026-10-01", "value": 3},
+                        {"date": "2026-10-02", "value": 1},
+                    ],
+                },
+            },
+        )
+        both_model = growth.live_model(both)
+        self.assertEqual(both_model["stages"][2]["value"], 14)
+        self.assertEqual(both_model["stages"][2]["status"], "ok")
+        self.assertEqual(both_model["stages"][3]["value"], 4)
+        self.assertEqual(both_model["stages"][3]["status"], "ok")
+        self.assertEqual(both_model["stages"][3]["display"], "4")
+        self.assertNotEqual(both_model["stages"][2]["value"], 320)
+        self.assertNotEqual(both_model["stages"][3]["value"], 40)
+        self.assertIn("not zero", model["sources"]["form_starts"]["note"])
+        html = page.render_html(model=model)
+        self.assertIn(">14<", html)
+        self.assertNotIn("SAMPLE DATA", html)
+        self.assertNotIn("Nov 1–15, 2026", html)
+        self.assertNotIn("8/20", html)
+        self.assertNotIn("Form starts are not wired", html)
+        self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, html)
+
+        original = metric.load_window_records
+        metric.load_window_records = lambda *_args, **_kwargs: ([], [], [], set(), {})
+        try:
+            failed = metric.compute_paid_social_funnel(
+                object(),
+                start="2026-10-01",
+                end="2026-10-02",
+                now=NOW,
+                token="test-token",
+                account_id=metric.META_ACCOUNT_ID,
+                daily_fetcher=lambda _start, _end: {
+                    "status": "unavailable",
+                    "rows": [],
+                    "lead_actions_ignored": False,
+                },
+                aggregate_fetcher=lambda _start, _end: metric.cac.unavailable_meta_spend("missing_env"),
+                ga4_fetcher=lambda _start, _end: (_ for _ in ()).throw(RuntimeError("ga4 down")),
+            )
+        finally:
+            metric.load_window_records = original
+        self.assertIsNone(failed["landing_visits"]["total"])
+        self.assertIsNone(failed["form_starts"]["total"])
+        self.assertIsNone(failed["landing_visits"]["series"])
+        self.assertIsNone(failed["form_starts"]["series"])
+        failed_model = growth.live_model(failed)
+        self.assertIsNone(failed_model["stages"][2]["value"])
+        self.assertIsNone(failed_model["stages"][3]["value"])
+        self.assertEqual(failed_model["stages"][2]["display"], "—")
+        self.assertEqual(failed_model["stages"][3]["display"], "—")
+        self.assertNotEqual(failed_model["stages"][2]["value"], 0)
+        self.assertNotEqual(failed_model["stages"][3]["value"], 0)
+        self.assertNotEqual(failed_model["stages"][2]["value"], 320)
+        self.assertNotEqual(failed_model["stages"][3]["value"], 40)
+        failed_html = page.render_html(model=failed_model)
+        self.assertNotIn("SAMPLE DATA", failed_html)
+        self.assertNotIn("Nov 1–15, 2026", failed_html)
+        self.assertIn("A failed read is not zero.", failed_html)
 
 
 if __name__ == "__main__":

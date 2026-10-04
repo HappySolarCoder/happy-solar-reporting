@@ -10,8 +10,12 @@ are counted for the adapter and are not a funnel stage.
 Field mapping, live adapter:
 - Impressions and outbound clicks: Meta account insights, read-only.
   Lead actions are not requested. Landing-page views are not visits.
-- Landing visits: GA4 paid sessions on G-V02RZFR4SZ. Not wired.
-- Form starts: not wired.
+- Landing visits: GA4 paid sessions on property 408492342 /
+  G-V02RZFR4SZ. The website traffic paid-session rule. A failed read
+  stays null. Meta landing-page views are not visits.
+- Form starts: calculator estimate_start from that same paid traffic.
+  estimate_submit, Instant Form, and 3PL are not form starts. A failed
+  read stays null.
 - Leads: pipeline 7nSEgeoBYXZiIS7x41Jy, Lead Gen Source
   hd5QqHEOVSsPom5bJ32P strips to Inbound. Blank, 3PL, and Doors do not.
 - Demos: territory appointment disposition in the window, those contacts.
@@ -41,6 +45,7 @@ FIXTURE_START = date(2026, 11, 1)
 FIXTURE_END = date(2026, 11, 15)
 FIXTURE_AS_OF = datetime(2026, 11, 16, 0, 0, tzinfo=ACCOUNT_TZ)
 GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
+GA4_PROPERTY_ID = "408492342"
 LEAD_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
 SOURCE_FIELD_ID = "hd5QqHEOVSsPom5bJ32P"
 SOLD_DATE_FIELD_ID = "P9oBjgbZjJdeE0OkBj9T"
@@ -279,6 +284,10 @@ def live_model(paid: dict, qs: dict | None = None) -> dict:
     demo_series = _series_map(demos.get("series"))
     sale_series = _series_map(sales.get("series"))
     spend_series = _series_map(spend.get("series"))
+    visits_ok, visits_total, visit_series = _ready_series(
+        _live_block(paid, "landing_visits", "website_visitors")
+    )
+    forms_ok, forms_total, form_series = _ready_series(_live_block(paid, "form_starts"))
     spend_complete = gap is None and spend.get("spend") is not None and _series_closed(spend_series, start, end)
     days = []
     for current in _dates(start, end):
@@ -289,8 +298,8 @@ def live_model(paid: dict, qs: dict | None = None) -> dict:
                 "spend": spend_series.get(key) if spend_complete else None,
                 "impressions": view_series.get(key) if views.get("total") is not None else None,
                 "outbound_clicks": outbound_series.get(key) if outbound.get("total") is not None else None,
-                "landing_visits": None,
-                "form_starts": None,
+                "landing_visits": visit_series.get(key) if visits_ok else None,
+                "form_starts": form_series.get(key) if forms_ok else None,
                 "leads": leads_series.get(key) if leads_step.get("status") == "ok" else None,
                 "demos": demo_series.get(key) if demos.get("status") == "ok" else None,
                 "sold": sale_series.get(key) if sales.get("status") == "ok" else None,
@@ -308,8 +317,8 @@ def live_model(paid: dict, qs: dict | None = None) -> dict:
     totals = {
         "impressions": views.get("total"),
         "outbound_clicks": outbound.get("total"),
-        "landing_visits": None,
-        "form_starts": None,
+        "landing_visits": visits_total if visits_ok else None,
+        "form_starts": forms_total if forms_ok else None,
         "leads": leads_step.get("total"),
         "demos": demos.get("total"),
         "sold": sales.get("total"),
@@ -341,6 +350,35 @@ def live_model(paid: dict, qs: dict | None = None) -> dict:
             "spend_unmatched_note": spend.get("note"),
         }
     )
+
+
+def _live_block(paid: dict, *keys: str) -> dict:
+    funnel = {}
+    for step in paid.get("funnel") or []:
+        if isinstance(step, dict) and step.get("key"):
+            funnel[str(step.get("key"))] = step
+    for key in keys:
+        block = paid.get(key)
+        if isinstance(block, dict):
+            return block
+        found = funnel.get(key)
+        if isinstance(found, dict):
+            return found
+    return {}
+
+
+def _ready_series(block: dict) -> tuple[bool, int | None, dict]:
+    """Use a stage only when the read succeeded. A failed total of 0 stays blank."""
+    if block.get("status") != "ok":
+        return False, None, {}
+    total = block.get("total")
+    if total is None or isinstance(total, bool):
+        return False, None, {}
+    try:
+        number = int(total)
+    except (TypeError, ValueError):
+        return False, None, {}
+    return True, number, _series_map(block.get("series"))
 
 
 def _series_map(series: list | None) -> dict[str, int | float | None]:
@@ -529,6 +567,36 @@ def summarize(spec: dict) -> dict:
     }
 
 
+def _landing_note(value) -> str:
+    if value is None:
+        return (
+            f"Landing visits are GA4 paid sessions on property {GA4_PROPERTY_ID}, "
+            f"measurement {GA4_MEASUREMENT_ID}. This read is unavailable, so the stage stays blank. "
+            "A failed read is not zero. The November sample is not used. "
+            "Meta landing-page views are not visits."
+        )
+    return (
+        f"GA4 paid sessions on property {GA4_PROPERTY_ID}, measurement {GA4_MEASUREMENT_ID}. "
+        "The website traffic paid-session rule: paid medium or paid channel, "
+        "Facebook and Instagram included. A Meta click is not a session. "
+        "Meta landing-page views are not visits."
+    )
+
+
+def _form_note(value) -> str:
+    if value is None:
+        return (
+            "Form starts are calculator estimate_start events from paid traffic. "
+            "This read is unavailable, so the stage stays blank. A failed read is not zero. "
+            "The November sample is not used. A finished form is not a start. "
+            "Instant Form and 3PL are not form starts."
+        )
+    return (
+        "Calculator estimate_start events from paid traffic, same rule as landing visits. "
+        "A finished form is not a start. Instant Form and 3PL are not form starts."
+    )
+
+
 def _sources(is_demo: bool, impressions, clicks, visits, forms) -> dict:
     def state(value, live_note: str, sample_note: str) -> dict:
         if is_demo and value is not None:
@@ -542,10 +610,10 @@ def _sources(is_demo: bool, impressions, clicks, visits, forms) -> dict:
         "outbound_clicks": state(clicks, "Meta outbound clicks. A Meta click is not a GA4 session.", "Sample outbound clicks."),
         "landing_visits": state(
             visits,
-            f"Website visits are GA4 paid sessions on {GA4_MEASUREMENT_ID}. That series is not wired, so this stage is unavailable. Meta landing-page views are not used.",
+            _landing_note(visits),
             f"Sample landing visits. Live visits stay on GA4 paid sessions {GA4_MEASUREMENT_ID}.",
         ),
-        "form_starts": state(forms, "Form starts are not wired, so this stage is unavailable.", "Sample form starts."),
+        "form_starts": state(forms, _form_note(forms), "Sample form starts."),
     }
 
 

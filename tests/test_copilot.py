@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import os
 import sys
 import threading
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
@@ -22,7 +25,7 @@ from copilot.dictionary import is_official, load_seed
 from copilot.formulas import percent_change, sum_aliases
 from copilot.gemini_client import ModelError
 from copilot.knowledge import load_seed as load_knowledge
-from copilot.messages import BUDGET_LIMIT, PAUSED, SCOPE_DENIAL
+from copilot.messages import BUDGET_LIMIT, PAUSED, SCOPE_DENIAL, SIGN_IN_REQUIRED
 from copilot.periods import equivalent_prior_period, period_from_dates
 from copilot.pii import scrub_row
 from copilot.prompt import SYSTEM_PROMPT
@@ -128,6 +131,8 @@ class CopilotTests(unittest.TestCase):
             for evidence in entry["evidence"]:
                 text = (ROOT / evidence["path"]).read_text(encoding="utf-8")
                 self.assertIn(evidence["excerpt"], text, entry["term_id"])
+        demo = next(entry for entry in entries if entry["term_id"] == "sit")
+        self.assertEqual(demo["display_name"], "Demo")
         documents = load_knowledge()["documents"]
         self.assertTrue(all(doc["approval_status"] == "DRAFT" for doc in documents))
         questions = json.loads((ROOT / "api" / "copilot" / "seeds" / "questions.json").read_text())
@@ -414,13 +419,97 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("Goose", SYSTEM_PROMPT)
         self.assertIn("Happy Solar Data Copilot", SYSTEM_PROMPT)
         self.assertIn(SCOPE_DENIAL, SYSTEM_PROMPT)
+        clarified = classify("Explain the metric")
+        self.assertEqual(
+            clarified.clarification,
+            "Which term should I explain: Opp2Prelim, Demo Rate, a lead source, Sales, Ran, or Demo?",
+        )
         from company_overview import render_html
 
-        html = render_html(2026, 10)
-        self.assertIn("Ask about our data", html)
-        self.assertIn("Goose · Happy Solar Data Copilot", html)
+        with patch.dict(os.environ, {"COPILOT_ENABLED": "false"}):
+            with patch("copilot.ui.render_panel", side_effect=AssertionError("render_panel called")) as panel:
+                html = render_html(2026, 10)
+        self.assertFalse(panel.called)
+        self.assertNotIn("Ask about our data", html)
+        self.assertNotIn('id="goosePanel"', html)
+        self.assertNotIn('id="gooseOpen"', html)
+        self.assertNotIn("/api/copilot/chat", html)
+        self.assertNotIn("/api/copilot/feedback", html)
         self.assertIn("/api/metrics/company_snapshot", html)
+
+    def test_overview_panel_when_copilot_enabled(self):
+        from company_overview import render_html
+
+        with patch.dict(os.environ, {"COPILOT_ENABLED": "true"}):
+            html = render_html(2026, 10)
+        self.assertIn("Ask about our data", html)
+        self.assertIn('id="goosePanel"', html)
+        self.assertIn("Goose · Happy Solar Data Copilot", html)
+        self.assertIn("/api/copilot/chat", html)
+        self.assertIn("/api/copilot/feedback", html)
         self.assertIn("Explain Opp2Prelim", html)
+
+    def test_feedback_refuses_when_copilot_disabled(self):
+        from copilot import feedback as feedback_mod
+
+        raw = b'{"message":"the chart looks wrong"}'
+        sent = {}
+
+        class Fake:
+            headers = {"Content-Length": str(len(raw)), "Authorization": "Basic eA=="}
+            rfile = io.BytesIO(raw)
+            wfile = io.BytesIO()
+
+            def send_response(self, code):
+                sent["status"] = code
+
+            def send_header(self, *_args):
+                return None
+
+            def end_headers(self):
+                return None
+
+        def opened():
+            raise AssertionError("feedback opened the store while disabled")
+
+        with patch.dict(os.environ, {"COPILOT_ENABLED": "false"}):
+            with patch.object(feedback_mod, "open_store", opened):
+                with patch.object(feedback_mod, "save_feedback", opened):
+                    feedback_mod.handler.do_POST(Fake())
+        body = json.loads(Fake.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(sent["status"], 200)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["code"], "copilot_disabled")
+        self.assertEqual(body["answer"], PAUSED)
+        self.assertTrue(body["dashboard_unaffected"])
+        self.assertEqual(Fake.rfile.tell(), 0)
+
+    def test_feedback_requires_sign_in_when_copilot_enabled(self):
+        from copilot import feedback as feedback_mod
+
+        raw = b'{"message":"the chart looks wrong"}'
+        sent = {}
+
+        class Fake:
+            headers = {"Content-Length": str(len(raw))}
+            rfile = io.BytesIO(raw)
+            wfile = io.BytesIO()
+
+            def send_response(self, code):
+                sent["status"] = code
+
+            def send_header(self, *_args):
+                return None
+
+            def end_headers(self):
+                return None
+
+        with patch.dict(os.environ, {"COPILOT_ENABLED": "true", "SETTINGS_PASSWORD": ""}):
+            with patch.object(feedback_mod, "open_store", side_effect=AssertionError("store")):
+                feedback_mod.handler.do_POST(Fake())
+        body = json.loads(Fake.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(sent["status"], 401)
+        self.assertEqual(body["answer"], SIGN_IN_REQUIRED)
 
     def test_budget_limit_message_and_injection_does_not_raise_cap(self):
         store = MemoryStore()

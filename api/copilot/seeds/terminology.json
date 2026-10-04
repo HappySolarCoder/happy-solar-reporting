@@ -256,7 +256,7 @@
     },
     {
       "term_id": "sit",
-      "display_name": "Sit",
+      "display_name": "Demo",
       "aliases": ["Sit", "Demos"],
       "category": "status",
       "definition": null,

@@ -1094,19 +1094,34 @@ __DASHBOARD_NAV_HTML__
 </body>
 </html>"""
 
-    try:
-        from copilot.ui import render_panel
-
-        panel = render_panel()
-    except Exception:
-        panel = ""
-    return (
+    rendered = (
         html.replace("__YEAR__", str(year))
         .replace("__MONTH__", str(month))
         .replace("__DASHBOARD_NAV_CSS__", nav_css)
         .replace("__DASHBOARD_NAV_HTML__", nav_html)
-        .replace("</body>", panel + "\n</body>")
     )
+    panel = _copilot_panel()
+    if not panel:
+        return rendered
+    return rendered.replace("</body>", panel + "\n</body>")
+
+
+def _copilot_panel() -> str:
+    """Goose markup only when COPILOT_ENABLED is true. Flag-off HTML is unchanged."""
+    try:
+        from copilot.config import config_from_env
+
+        enabled = config_from_env().enabled
+    except Exception:
+        return ""
+    if not enabled:
+        return ""
+    try:
+        from copilot.ui import render_panel
+
+        return render_panel()
+    except Exception:
+        return ""
 
 
 class Handler(BaseHTTPRequestHandler):

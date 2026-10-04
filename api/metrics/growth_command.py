@@ -291,9 +291,9 @@ def live_model(paid: dict, qs: dict | None = None) -> dict:
                 "outbound_clicks": outbound_series.get(key) if outbound.get("total") is not None else None,
                 "landing_visits": None,
                 "form_starts": None,
-                "leads": leads_series.get(key, 0) if leads_step.get("status") == "ok" else None,
-                "demos": demo_series.get(key, 0) if demos.get("status") == "ok" and demo_series else None,
-                "sold": sale_series.get(key, 0) if sales.get("status") == "ok" and sale_series else None,
+                "leads": leads_series.get(key) if leads_step.get("status") == "ok" else None,
+                "demos": demo_series.get(key) if demos.get("status") == "ok" else None,
+                "sold": sale_series.get(key) if sales.get("status") == "ok" else None,
                 "known": True,
             }
         )

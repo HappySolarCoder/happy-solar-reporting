@@ -826,12 +826,27 @@ def compute_paid_social_funnel(
 
 
 def parse_range(qs: dict[str, list[str]], now: datetime) -> tuple[str, str]:
+    """Inclusive dates on the America/New_York calendar.
+
+    Named presets use that calendar. A custom start and end are used when
+    no named preset is set. Otherwise the window is the current month
+    through today.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo(TIMEZONE_NAME))
+    today = now.astimezone(ZoneInfo(TIMEZONE_NAME)).date()
+    preset = " ".join(str((qs.get("preset") or [""])[0] or "").split()).lower()
+    if preset == "this-month":
+        return today.replace(day=1).isoformat(), today.isoformat()
+    if preset == "last-month":
+        last_prev = today.replace(day=1) - timedelta(days=1)
+        return last_prev.replace(day=1).isoformat(), last_prev.isoformat()
+    if preset == "last-30":
+        return (today - timedelta(days=29)).isoformat(), today.isoformat()
     start, end = cac.parse_optional_range(qs)
     if start and end:
         return start, end
-    end_day = now.date()
-    start_day = end_day - timedelta(days=27)
-    return start_day.isoformat(), end_day.isoformat()
+    return today.replace(day=1).isoformat(), today.isoformat()
 
 
 class handler(BaseHTTPRequestHandler):

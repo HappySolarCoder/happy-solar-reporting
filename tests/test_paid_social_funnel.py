@@ -685,7 +685,7 @@ class GrowthFixtureTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_page_matches_the_command_center(self):
-        html = page.render_html()
+        html = page.render_html(model=page.model_for_query({"source": ["demo"]}))
         funnel = html.split('class="funnel-row"', 1)[1].split("</section>", 1)[0]
         labels = [
             "Impressions",
@@ -723,9 +723,9 @@ class PageTests(unittest.TestCase):
         )
         self.assertEqual(index.dispatch_route("/api/paid_social_funnel"), "paid_social_funnel")
 
-    def test_handler_renders_sample_until_live_is_validated(self):
+    def test_explicit_sample_mode_still_renders_the_fixture(self):
         handler = page.handler.__new__(page.handler)
-        handler.path = "/api/paid_social_funnel"
+        handler.path = "/api/paid_social_funnel?source=demo"
         handler.send_response = MagicMock()
         handler.send_header = MagicMock()
         handler.end_headers = MagicMock()
@@ -734,14 +734,271 @@ class PageTests(unittest.TestCase):
         body = handler.wfile.write.call_args[0][0].decode("utf-8")
         self.assertIn("SAMPLE DATA", body)
         self.assertIn("Nov 1–15, 2026", body)
+        self.assertIn("8/20", body)
+        self.assertIsNone(WORD.search(body))
+        for source in ("sample", "fixture"):
+            model = page.model_for_query({"source": [source]})
+            self.assertTrue(model["is_demo"])
+            self.assertEqual(model["badge"], "SAMPLE DATA")
+
+    def test_default_screen_is_live_current_month_without_sample_numbers(self):
+        days = ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]
+        paid = {
+            "window_start_local": "2026-10-01T00:00:00-04:00",
+            "window_end_local": "2026-10-05T00:00:00-04:00",
+            "funnel": [
+                {"key": "ad_views", "status": "ok", "total": 100, "series": [
+                    {"date": day, "value": 25} for day in days
+                ]},
+                {"key": "website_visitors", "status": "not_wired", "total": None, "series": None},
+                {"key": "leads_created", "status": "ok", "total": 2, "series": [
+                    {"date": days[0], "value": 2},
+                    *[{"date": day, "value": 0} for day in days[1:]],
+                ]},
+                {"key": "opps_created", "status": "ok", "total": 1, "by_territory": {
+                    "Buffalo": 1, "Rochester": 0, "Syracuse": 0, "Virtual": 0,
+                }},
+            ],
+            "outbound_clicks": {"status": "ok", "total": 10, "series": [
+                {"date": days[0], "value": 10},
+                *[{"date": day, "value": 0} for day in days[1:]],
+            ]},
+            "demos": {"status": "ok", "total": 1, "series": [
+                {"date": days[0], "value": 1},
+                *[{"date": day, "value": 0} for day in days[1:]],
+            ]},
+            "sales": {"status": "ok", "total": 0, "series": [
+                {"date": day, "value": 0} for day in days
+            ]},
+            "spend": {
+                "spend": 80.0,
+                "gap": None,
+                "series": [{"date": day, "value": 20.0} for day in days],
+                "note": metric.UNMATCHED_SPEND_NOTE,
+            },
+        }
+        seen = {}
+
+        def loader(qs):
+            seen["qs"] = qs
+            return paid
+
+        model = page.model_for_query({}, live_loader=loader)
+        self.assertEqual(seen["qs"], {})
+        self.assertFalse(model["is_demo"])
+        self.assertIsNone(model["badge"])
+        self.assertEqual(model["range_start"], "2026-10-01")
+        self.assertEqual(model["range_end"], "2026-10-04")
+        self.assertEqual(model["goal_month"], "2026-10")
+        self.assertEqual(model["pace"]["goal"], 10)
+        self.assertNotEqual(model["pace"]["goal"], 20)
+        self.assertEqual(model["kpis"]["leads"]["text"], "2/10")
+        self.assertEqual(model["kpis"]["cpl"]["value"], 40)
+        self.assertEqual(model["kpis"]["cpl"]["tone"], "amber")
+        self.assertNotEqual(model["kpis"]["cpl"]["tone"], "success")
+        self.assertEqual(model["kpis"]["demo_cost"]["value"], 80)
+        self.assertEqual(model["kpis"]["demo_cost"]["tone"], "amber")
+        self.assertEqual(model["kpis"]["cpa"]["display"], "N/A")
+        self.assertNotEqual(model["kpis"]["cpa"]["display"], "$0")
+        visits = model["stages"][2]
+        forms = model["stages"][3]
+        self.assertIsNone(visits["value"])
+        self.assertEqual(visits["status"], "unavailable")
+        self.assertEqual(visits["display"], "—")
+        self.assertNotEqual(visits["display"], "0")
+        self.assertIsNone(forms["value"])
+        self.assertEqual(forms["status"], "unavailable")
+        self.assertEqual(forms["display"], "—")
+        self.assertIn("not wired", model["sources"]["landing_visits"]["note"])
+        self.assertIn("unavailable", model["sources"]["form_starts"]["note"])
+        self.assertNotIn("opp", [stage["key"] for stage in model["stages"]])
+
+        html = page.render_html(model=model)
+        self.assertIn(">Live<", html)
+        self.assertIn("Oct 1–4, 2026", html)
+        self.assertIn("Sample fixture", html)
+        self.assertIn("Form starts are not wired, so this stage is unavailable.", html)
+        self.assertNotIn("SAMPLE DATA", html)
+        self.assertNotIn("Nov 1–15, 2026", html)
+        self.assertNotIn("8/20", html)
+        self.assertNotIn("$240", html)
+        self.assertNotIn("Local savings", html)
+        self.assertNotIn("Solar explained", html)
+        self.assertNotIn("Homeowner story", html)
+        self.assertNotIn("sample-ad-", html)
+        self.assertNotIn("Review the 12.5% visit-to-form-start rate", html)
+        self.assertIsNone(WORD.search(html))
+        self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, html)
+
+        failed = page.model_for_query(
+            {"source": ["live"]},
+            live_loader=lambda _qs: (_ for _ in ()).throw(RuntimeError("no creds")),
+        )
+        failed_html = page.render_html(model=failed)
+        self.assertFalse(failed["is_demo"])
+        self.assertNotIn("SAMPLE DATA", failed_html)
+        self.assertIn("Sample numbers are not shown", failed_html)
+        self.assertNotIn("$240", failed_html)
+        self.assertNotIn("Local savings", failed_html)
+        self.assertIsNone(WORD.search(failed_html))
+
+        demo_calls = {"n": 0}
+
+        def exploding(_qs):
+            demo_calls["n"] += 1
+            raise AssertionError("sample mode must not read live sources")
+
+        sample = page.model_for_query({"source": ["demo"]}, live_loader=exploding)
+        self.assertEqual(demo_calls["n"], 0)
+        self.assertTrue(sample["is_demo"])
+        self.assertEqual(sample["range_label"], "Nov 1–15, 2026")
+
+    def test_default_handler_uses_the_live_loader(self):
+        calls = {}
+
+        def loader(qs):
+            calls["qs"] = dict(qs)
+            now = datetime(2026, 10, 4, 15, 0, tzinfo=NY)
+            start, end = metric.parse_range(qs, now)
+            calls["start"] = start
+            calls["end"] = end
+            return {
+                "window_start_local": "2026-10-01T00:00:00-04:00",
+                "window_end_local": "2026-10-05T00:00:00-04:00",
+                "funnel": [
+                    {"key": "leads_created", "status": "ok", "total": 1, "series": [
+                        {"date": "2026-10-01", "value": 1},
+                        {"date": "2026-10-02", "value": 0},
+                        {"date": "2026-10-03", "value": 0},
+                        {"date": "2026-10-04", "value": 0},
+                    ]},
+                ],
+                "outbound_clicks": {"status": "unavailable", "total": None, "series": None},
+                "demos": {"status": "ok", "total": 0, "series": [
+                    {"date": day, "value": 0}
+                    for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+                ]},
+                "sales": {"status": "ok", "total": 0, "series": [
+                    {"date": day, "value": 0}
+                    for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04")
+                ]},
+                "spend": {"spend": None, "gap": None, "series": None},
+            }
+
+        original = page._load_live
+        page._load_live = loader
+        try:
+            handler = page.handler.__new__(page.handler)
+            handler.path = "/api/paid_social_funnel"
+            handler.send_response = MagicMock()
+            handler.send_header = MagicMock()
+            handler.end_headers = MagicMock()
+            handler.wfile = MagicMock()
+            handler.do_GET()
+        finally:
+            page._load_live = original
+        body = handler.wfile.write.call_args[0][0].decode("utf-8")
+        self.assertEqual(calls["qs"], {})
+        self.assertEqual(calls["start"], "2026-10-01")
+        self.assertEqual(calls["end"], "2026-10-04")
+        self.assertNotIn("SAMPLE DATA", body)
+        self.assertNotIn("Nov 1–15, 2026", body)
+        self.assertIn("Oct 1–4, 2026", body)
+        self.assertIn("1/10", body)
+        self.assertNotIn("8/20", body)
+        self.assertIn("unavailable", body)
         self.assertIsNone(WORD.search(body))
 
-        live = page.model_for_query({"source": ["live"]}, live_loader=lambda _qs: (_ for _ in ()).throw(RuntimeError("no creds")))
-        live_html = page.render_html(model=live)
-        self.assertNotIn("SAMPLE DATA", live_html)
-        self.assertIn("Sample numbers are not shown", live_html)
-        self.assertNotIn("$240", live_html)
-        self.assertIsNone(WORD.search(live_html))
+    def test_load_live_requests_the_current_month_through_today(self):
+        from types import SimpleNamespace
+
+        calls = {}
+
+        def compute(db, *, start, end, now):
+            calls["db"] = db
+            calls["start"] = start
+            calls["end"] = end
+            calls["zone"] = getattr(now.tzinfo, "key", str(now.tzinfo))
+            return {"ok": True}
+
+        fake = SimpleNamespace(
+            parse_range=metric.parse_range,
+            compute_paid_social_funnel=compute,
+            cac=SimpleNamespace(get_db=lambda: "db-handle"),
+        )
+        name = "hs_growth_paid_social_metric"
+        previous = sys.modules.get(name)
+        sys.modules[name] = fake
+        try:
+            before = datetime.now(NY).date()
+            result = page._load_live({})
+            after = datetime.now(NY).date()
+        finally:
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls["db"], "db-handle")
+        self.assertEqual(calls["zone"], "America/New_York")
+        self.assertIn(calls["start"], {before.replace(day=1).isoformat(), after.replace(day=1).isoformat()})
+        self.assertIn(calls["end"], {before.isoformat(), after.isoformat()})
+        self.assertNotEqual((calls["start"], calls["end"]), ("2026-11-01", "2026-11-15"))
+
+
+class LiveWindowTests(unittest.TestCase):
+    def test_parse_range_is_the_current_month_through_today(self):
+        now = datetime(2026, 10, 4, 18, 30, tzinfo=NY)
+        self.assertEqual(metric.parse_range({}, now), ("2026-10-01", "2026-10-04"))
+        self.assertEqual(metric.parse_range({"preset": ["this-month"]}, now), ("2026-10-01", "2026-10-04"))
+        self.assertEqual(metric.parse_range({"preset": ["last-month"]}, now), ("2026-09-01", "2026-09-30"))
+        self.assertEqual(metric.parse_range({"preset": ["last-30"]}, now), ("2026-09-05", "2026-10-04"))
+        self.assertEqual(
+            metric.parse_range(
+                {"preset": ["custom"], "start": ["2026-08-01"], "end": ["2026-08-10"]},
+                now,
+            ),
+            ("2026-08-01", "2026-08-10"),
+        )
+        self.assertEqual(
+            metric.parse_range({"start": ["2026-11-01"], "end": ["2026-11-15"]}, now),
+            ("2026-11-01", "2026-11-15"),
+        )
+        utc_evening = datetime(2026, 10, 5, 2, 30, tzinfo=timezone.utc)
+        self.assertEqual(metric.parse_range({}, utc_evening), ("2026-10-01", "2026-10-04"))
+        january = datetime(2026, 1, 1, 8, 0, tzinfo=NY)
+        self.assertEqual(metric.parse_range({}, january), ("2026-01-01", "2026-01-01"))
+        self.assertEqual(metric.parse_range({"preset": ["last-month"]}, january), ("2025-12-01", "2025-12-31"))
+
+    def test_live_november_goal_stays_20_and_october_stays_10(self):
+        october = growth.live_model(
+            {
+                "window_start_local": "2026-10-01T00:00:00-04:00",
+                "window_end_local": "2026-10-05T00:00:00-04:00",
+                "funnel": [{"key": "leads_created", "status": "ok", "total": 2, "series": []}],
+                "outbound_clicks": {"status": "unavailable", "total": None},
+                "demos": {"status": "ok", "total": 0, "series": []},
+                "sales": {"status": "ok", "total": 0, "series": []},
+                "spend": {"spend": None, "gap": None, "series": None},
+            }
+        )
+        november = growth.live_model(
+            {
+                "window_start_local": "2026-11-01T00:00:00-05:00",
+                "window_end_local": "2026-11-16T00:00:00-05:00",
+                "funnel": [{"key": "leads_created", "status": "ok", "total": 2, "series": []}],
+                "outbound_clicks": {"status": "unavailable", "total": None},
+                "demos": {"status": "ok", "total": 0, "series": []},
+                "sales": {"status": "ok", "total": 0, "series": []},
+                "spend": {"spend": None, "gap": None, "series": None},
+            }
+        )
+        self.assertEqual(october["pace"]["goal"], 10)
+        self.assertEqual(november["pace"]["goal"], 20)
+        self.assertNotEqual(october["kpis"]["leads"]["text"], "8/20")
+        self.assertFalse(october["is_demo"])
+        self.assertIsNone(october["stages"][2]["value"])
+        self.assertEqual(october["stages"][2]["status"], "unavailable")
 
 
 if __name__ == "__main__":

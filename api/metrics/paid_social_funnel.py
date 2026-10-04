@@ -24,7 +24,9 @@ Uses SalesMetricContract stage ids. Does not change that contract.
 Meta account act_1624979685613708 is read-only. This module does not
 send campaign, budget, or ad updates.
 
-Landing visits and form starts are a read of the existing GA4 property.
+Landing visits are a read of the existing GA4 property. Abandoned Form
+is paid estimate_start minus paid estimate_submit for the same window,
+never below zero. If either event read fails, that stage stays null.
 A failed read stays null. This module does not change the calculator form.
 """
 
@@ -120,20 +122,20 @@ VISITS_UNAVAILABLE_NOTE = (
     "Meta landing-page views are not visits."
 )
 FORMS_OK_NOTE = (
-    "Form starts are calculator estimate_start events from paid traffic, "
-    "using the same paid-session rule as landing visits. A finished form "
-    "(estimate_submit) is not a form start. Instant Form and 3PL are not "
-    "form starts."
+    "Abandoned Form is paid calculator estimate_start minus paid "
+    "estimate_submit for this window, never below zero. Same paid-session "
+    "rule as landing visits. A finished form is not abandoned. Instant Form "
+    "and 3PL are not abandoned forms. A successful read with nobody "
+    "abandoning is zero."
 )
 FORMS_UNAVAILABLE_NOTE = (
-    "Form starts are calculator estimate_start events from paid traffic. "
+    "Abandoned Form is paid estimate_start minus paid estimate_submit. "
     "This read is unavailable, so the stage stays blank. A failed read is "
-    "not zero. The November sample is not used. A finished form "
-    "(estimate_submit) is not a form start. Instant Form and 3PL are not "
-    "form starts."
+    "not zero. The November sample is not used. Instant Form and 3PL are "
+    "not abandoned forms."
 )
 FORMS_UNWIRED_NOTE = (
-    "Form starts are not wired on this read, so the stage stays blank. "
+    "Abandoned Form is not wired on this read, so the stage stays blank. "
     "A missing read is not zero. The November sample is not used."
 )
 LEAD_ACTIONS_NOTE = (
@@ -701,11 +703,12 @@ def _visits_stage(status: str, total: int | None, series: list | None, note: str
 def _forms_stage(status: str, total: int | None, series: list | None, note: str, reason: str | None = None) -> dict[str, Any]:
     return {
         "key": "form_starts",
-        "label": "Form starts",
+        "label": "Abandoned Form",
         "status": status,
         "total": total,
         "series": series,
-        "event": FORM_START_EVENT,
+        "start_event": FORM_START_EVENT,
+        "finished_event": FINISHED_FORM_EVENT,
         "measurement_id": GA4_MEASUREMENT_ID,
         "property_id": GA4_PROPERTY_ID,
         "note": note,
@@ -778,7 +781,7 @@ def _sessions_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
     }
 
 
-def _form_starts_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
+def _event_count_body(traffic: Any, start: str, end: str, event_name: str) -> dict[str, Any]:
     return {
         "dateRanges": [{"startDate": start, "endDate": end}],
         "dimensions": [{"name": name} for name in (*PAID_GA4_DIMENSIONS, "eventName")],
@@ -791,7 +794,7 @@ def _form_starts_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
                     {
                         "filter": {
                             "fieldName": "eventName",
-                            "inListFilter": {"values": [FORM_START_EVENT]},
+                            "inListFilter": {"values": [event_name]},
                         }
                     },
                 ]
@@ -803,8 +806,6 @@ def _form_starts_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
 def _read_stage(runner: Any, traffic: Any, body: dict[str, Any], days: list[str], *, kind: str) -> dict[str, Any]:
     dimensions = tuple(item["name"] for item in body["dimensions"])
     metrics = tuple(item["name"] for item in body["metrics"])
-    value_keys = metrics
-    event_name = FORM_START_EVENT if kind == "forms" else None
     ok_note = VISITS_OK_NOTE if kind == "visits" else FORMS_OK_NOTE
     bad_note = VISITS_UNAVAILABLE_NOTE if kind == "visits" else FORMS_UNAVAILABLE_NOTE
     builder = _visits_stage if kind == "visits" else _forms_stage
@@ -815,8 +816,53 @@ def _read_stage(runner: Any, traffic: Any, body: dict[str, Any], days: list[str]
         return builder("unavailable", None, None, bad_note, "ga4_failed")
     if parsed is None:
         return builder("unavailable", None, None, bad_note, "ga4_failed")
-    counted = count_paid_rows(parsed, days, value_keys=value_keys, event_name=event_name)
+    counted = count_paid_rows(parsed, days, value_keys=metrics, event_name=None)
     return builder("ok", counted["total"], counted["series"], ok_note, None)
+
+
+def _read_paid_event(
+    runner: Any,
+    traffic: Any,
+    body: dict[str, Any],
+    days: list[str],
+    event_name: str,
+) -> dict[str, Any] | None:
+    """Paid eventCount for one calculator event. None means the read failed."""
+    dimensions = tuple(item["name"] for item in body["dimensions"])
+    metrics = tuple(item["name"] for item in body["metrics"])
+    try:
+        raw = runner(body)
+        parsed = _parsed_ga4_rows(raw, traffic, dimensions, metrics)
+    except Exception:
+        return None
+    if parsed is None:
+        return None
+    return count_paid_rows(parsed, days, value_keys=metrics, event_name=event_name)
+
+
+def _abandoned_forms(runner: Any, traffic: Any, start: str, end: str, days: list[str]) -> dict[str, Any]:
+    """Paid estimate_start minus paid estimate_submit. Either failure stays null."""
+    starts = _read_paid_event(
+        runner, traffic, _event_count_body(traffic, start, end, FORM_START_EVENT), days, FORM_START_EVENT
+    )
+    submits = _read_paid_event(
+        runner, traffic, _event_count_body(traffic, start, end, FINISHED_FORM_EVENT), days, FINISHED_FORM_EVENT
+    )
+    if starts is None or submits is None:
+        return _forms_stage("unavailable", None, None, FORMS_UNAVAILABLE_NOTE, "ga4_failed")
+    total = max(0, int(starts["total"]) - int(submits["total"]))
+    series = []
+    for start_point, submit_point in zip(starts["series"], submits["series"]):
+        series.append(
+            {
+                "date": start_point["date"],
+                "value": max(0, int(start_point["value"]) - int(submit_point["value"])),
+            }
+        )
+    stage = _forms_stage("ok", total, series, FORMS_OK_NOTE, None)
+    stage["paid_estimate_start"] = int(starts["total"])
+    stage["paid_estimate_submit"] = int(submits["total"])
+    return stage
 
 
 def fetch_paid_website_stages(
@@ -825,8 +871,11 @@ def fetch_paid_website_stages(
     *,
     report_runner: Any = None,
 ) -> dict[str, Any]:
-    """Read GA4 paid sessions and paid calculator starts. Failures stay null.
+    """Read GA4 paid sessions and abandoned calculator forms. Failures stay null.
 
+    Abandoned Form is paid estimate_start minus paid estimate_submit for the
+    same window, never below zero. If either event read fails, that stage
+    stays null. A successful read with nobody abandoning is zero.
     Uses the existing Data API client, property 408492342, and measurement
     G-V02RZFR4SZ. Does not change ads, spend, campaigns, or the calculator form.
     """
@@ -855,9 +904,7 @@ def fetch_paid_website_stages(
         "landing_visits": _read_stage(
             report_runner, traffic, _sessions_body(traffic, start, end), days, kind="visits"
         ),
-        "form_starts": _read_stage(
-            report_runner, traffic, _form_starts_body(traffic, start, end), days, kind="forms"
-        ),
+        "form_starts": _abandoned_forms(report_runner, traffic, start, end, days),
     }
 
 

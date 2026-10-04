@@ -568,7 +568,7 @@ def _settings(model: dict) -> str:
         <li>Demo uses the existing appointment outcome for those lead contacts. The label on this screen is demo.</li>
         <li>Sold uses contact sold date {_esc(model["sold_date_field_id"])}. The sales metric contract is unchanged.</li>
         <li>Website visits are GA4 paid sessions on property 408492342, measurement {_esc(model["measurement_id"])}. The website traffic paid-session rule: paid medium or paid channel, Facebook and Instagram included. A Meta click is not a session. Meta landing-page views are not used.</li>
-        <li>Form starts are calculator estimate_start events from that same paid traffic. A finished form is not a start. Instant Form and 3PL are not form starts.</li>
+        <li>Abandoned Form is paid calculator estimate_start minus paid estimate_submit for the same window, never below zero. The same paid-session rule as landing visits. A finished form is not abandoned. Instant Form and 3PL are not abandoned forms. A failed read stays blank.</li>
         <li>The live window uses {_esc(model["crm_timezone"])}: the current month through today.</li>
         <li>The sample fixture, opened only with an explicit sample request, uses {_esc(model["account_timezone"])}.</li>
       </ul>

@@ -701,14 +701,16 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .cost-panel input[id^="cost-cpl-"]:checked ~ .chart.cpl,
 .cost-panel input[id^="cost-demo-"]:checked ~ .chart.demo,
 .cost-panel input[id^="cost-cpa-"]:checked ~ .chart.cpa { display:block; }
-.table-scroll { overflow-x:auto; max-width:100%; }
+.ads-panel { display:flex; flex-direction:column; min-height:0; }
+.ads-panel .table-scroll { flex:1 1 auto; min-height:0; overflow:auto; max-width:100%; }
+.table-scroll { overflow:auto; max-width:100%; }
 .ad-head, .ad-row > summary, .ad-total {
   display:grid; grid-template-columns:minmax(140px,1.6fr) .7fr .7fr .7fr .6fr .5fr .6fr; gap:8px; align-items:center;
 }
 .ad-head { color:var(--muted); font-size:12px; padding-bottom:8px; }
 .ad-head button { background:transparent; border:0; color:var(--muted); text-align:right; padding:0; cursor:pointer; }
 .ad-row { border-top:1px solid var(--border); }
-.ad-row summary { list-style:none; cursor:pointer; padding:8px 0; }
+.ad-row summary { list-style:none; cursor:pointer; padding:4px 0; }
 .ad-row summary::-webkit-details-marker { display:none; }
 .ad-name { display:flex; gap:8px; align-items:center; min-width:0; }
 .ad-name small { display:block; color:var(--muted); }
@@ -757,9 +759,44 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   #screen-overview:checked ~ .content .panel-overview {
     height:calc(100vh - 36px);
     display:grid;
-    grid-template-rows:auto auto minmax(0,324px) minmax(120px,150px) minmax(160px,1fr);
+    grid-template-rows:auto auto minmax(200px,1fr) minmax(112px,128px) minmax(292px,1fr);
     overflow:hidden;
   }
   #screen-overview:checked ~ .content { overflow:hidden; }
+  #screen-overview:checked ~ .content .panel-overview .main-row,
+  #screen-overview:checked ~ .content .panel-overview .bottom-row {
+    min-height:0;
+    height:100%;
+  }
+  #screen-overview:checked ~ .content .panel-overview .lead-panel,
+  #screen-overview:checked ~ .content .panel-overview .cost-panel,
+  #screen-overview:checked ~ .content .panel-overview .funnel-panel {
+    min-height:0;
+    overflow:hidden;
+  }
+  #screen-overview:checked ~ .content .panel-overview .lead-panel,
+  #screen-overview:checked ~ .content .panel-overview .cost-panel {
+    display:flex;
+    flex-direction:column;
+  }
+  #screen-overview:checked ~ .content .panel-overview .chart-frame,
+  #screen-overview:checked ~ .content .panel-overview .cost-panel .chart {
+    flex:1 1 auto;
+    min-height:0;
+  }
+  #screen-overview:checked ~ .content .panel-overview .chart-svg {
+    width:100%;
+    height:100%;
+  }
+  #screen-overview:checked ~ .content .panel-overview .ads-panel {
+    height:100%;
+    overflow:hidden;
+    padding:12px;
+  }
+  #screen-overview:checked ~ .content .panel-overview .ads-panel .section-head { margin-bottom:4px; }
+  #screen-overview:checked ~ .content .panel-overview .ads-panel .fine { margin-top:4px; }
+  #screen-overview:checked ~ .content .panel-overview .funnel-panel { padding:12px; }
+  #screen-overview:checked ~ .content .panel-overview .stage summary { min-height:0; padding:8px; }
+  #screen-overview:checked ~ .content .panel-overview .stage-state:empty { display:none; }
 }
 """

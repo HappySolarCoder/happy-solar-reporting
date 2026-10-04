@@ -1,0 +1,148 @@
+# -*- coding: utf-8 -*-
+"""Company overview chat panel. The dashboard keeps working when this is hidden."""
+
+from __future__ import annotations
+
+from copilot.messages import UI_TITLE, WELCOME
+
+
+def render_panel() -> str:
+    welcome = WELCOME.replace("'", "\\'")
+    title = UI_TITLE
+    return f"""
+<button type="button" id="gooseOpen" class="goose-open">Ask about our data</button>
+<div id="goosePanel" class="goose-panel" hidden>
+  <div class="goose-head">
+    <div>
+      <div class="goose-title">{title}</div>
+      <div class="goose-sub">Read-only. Draft definitions are not company policy.</div>
+    </div>
+    <button type="button" id="gooseClose" class="goose-close">Close</button>
+  </div>
+  <div class="goose-chips" id="gooseChips"></div>
+  <div class="goose-suggest">
+    <button type="button" data-goose-q="Explain Opp2Prelim">Explain Opp2Prelim</button>
+    <button type="button" data-goose-q="Compare source performance">Compare source performance</button>
+    <button type="button" data-goose-q="What changed versus the same period last month?">What changed versus the same period last month?</button>
+  </div>
+  <div id="gooseLog" class="goose-log"></div>
+  <form id="gooseForm" class="goose-form">
+    <textarea id="gooseInput" maxlength="2000" placeholder="Ask about Happy Solar data"></textarea>
+    <button type="submit">Send</button>
+  </form>
+  <button type="button" id="gooseIssue" class="goose-issue">Report an issue</button>
+</div>
+<style>
+  .goose-open {{ position: fixed; left: 16px; bottom: 16px; z-index: 10000; background: #0a7a34; color: #fff; border: 0; border-radius: 999px; padding: 12px 16px; font-weight: 800; cursor: pointer; }}
+  .goose-panel {{ position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); background: #fff; border-left: 1px solid #e8ecf0; z-index: 10001; display: flex; flex-direction: column; padding: 16px; box-shadow: -8px 0 24px rgba(17,24,39,.08); }}
+  .goose-panel[hidden] {{ display: none !important; }}
+  .goose-head {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }}
+  .goose-title {{ font-weight: 900; color: #1a2b4a; }}
+  .goose-sub {{ color: #6b7280; font-size: 12px; margin-top: 4px; }}
+  .goose-close, .goose-form button, .goose-suggest button, .goose-issue {{ border: 1px solid #e8ecf0; background: #fff; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
+  .goose-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }}
+  .goose-chips label {{ font-size: 12px; border: 1px solid #e8ecf0; border-radius: 999px; padding: 4px 8px; }}
+  .goose-suggest {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+  .goose-log {{ flex: 1; overflow: auto; margin: 12px 0; font-size: 14px; }}
+  .goose-msg {{ margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; white-space: pre-wrap; }}
+  .goose-msg a {{ color: #0a7a34; }}
+  .goose-form {{ display: flex; gap: 8px; }}
+  .goose-form textarea {{ flex: 1; border: 1px solid #e8ecf0; border-radius: 10px; padding: 8px; font: inherit; }}
+  .goose-issue {{ margin-top: 8px; }}
+  @media (max-width: 720px) {{ .goose-panel {{ width: 100%; }} }}
+</style>
+<script>
+(function() {{
+  const panel = document.getElementById('goosePanel');
+  const log = document.getElementById('gooseLog');
+  const chips = document.getElementById('gooseChips');
+  const input = document.getElementById('gooseInput');
+  const sources = ['doors','self_gen','phones','inbound','3pl'];
+  const labels = {{doors:'Doors', self_gen:'Self Gen', phones:'Phones', inbound:'Inbound', '3pl':'3PL'}};
+  function selectedDates() {{
+    const start = document.getElementById('startDate');
+    const end = document.getElementById('endDate');
+    return {{
+      start: start ? start.value : '',
+      end: end ? end.value : ''
+    }};
+  }}
+  function selectedSources() {{
+    return Array.from(chips.querySelectorAll('input:checked')).map(el => el.value);
+  }}
+  function drawChips() {{
+    const dates = selectedDates();
+    chips.innerHTML = '';
+    const dateChip = document.createElement('span');
+    dateChip.textContent = (dates.start || 'start') + ' → ' + (dates.end || 'end');
+    chips.appendChild(dateChip);
+    sources.forEach(id => {{
+      const label = document.createElement('label');
+      label.innerHTML = '<input type="checkbox" value="' + id + '"> ' + labels[id];
+      chips.appendChild(label);
+    }});
+  }}
+  function add(text, evidence) {{
+    const div = document.createElement('div');
+    div.className = 'goose-msg';
+    div.textContent = text;
+    (evidence || []).forEach(item => {{
+      if (!item.source_link) return;
+      const link = document.createElement('a');
+      link.href = item.source_link;
+      link.textContent = item.metric_id ? (' ' + item.metric_id + ' source') : ' source';
+      div.appendChild(link);
+    }});
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }}
+  async function send(message) {{
+    const dates = selectedDates();
+    add(message, []);
+    const response = await fetch('/api/copilot/chat', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        message: message,
+        filters: {{start: dates.start, end: dates.end, sources: selectedSources()}},
+        request_id: 'ui_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+      }})
+    }});
+    const payload = await response.json();
+    let text = payload.answer || 'Goose is unavailable.';
+    if (payload.interpretation) text += '\\n' + payload.interpretation;
+    if (payload.footnote && payload.footnote.data_as_of) text += '\\nData as of ' + payload.footnote.data_as_of;
+    if (payload.reset_date) text += '\\nNext reset ' + payload.reset_date;
+    add(text, payload.evidence || []);
+  }}
+  document.getElementById('gooseOpen').addEventListener('click', () => {{
+    panel.hidden = false;
+    drawChips();
+    if (!log.dataset.welcomed) {{
+      add('{welcome}', []);
+      log.dataset.welcomed = '1';
+    }}
+  }});
+  document.getElementById('gooseClose').addEventListener('click', () => {{ panel.hidden = true; }});
+  document.querySelectorAll('[data-goose-q]').forEach(btn => btn.addEventListener('click', () => send(btn.getAttribute('data-goose-q'))));
+  document.getElementById('gooseForm').addEventListener('submit', (event) => {{
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message) return;
+    input.value = '';
+    send(message);
+  }});
+  document.getElementById('gooseIssue').addEventListener('click', async () => {{
+    const note = window.prompt('What looks wrong?');
+    if (!note) return;
+    const response = await fetch('/api/copilot/feedback', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{message: note}})
+    }});
+    const payload = await response.json();
+    add(payload.answer || 'Feedback was not saved.', []);
+  }});
+}})();
+</script>
+"""

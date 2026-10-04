@@ -1094,7 +1094,19 @@ __DASHBOARD_NAV_HTML__
 </body>
 </html>"""
 
-    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month)).replace("__DASHBOARD_NAV_CSS__", nav_css).replace("__DASHBOARD_NAV_HTML__", nav_html)
+    try:
+        from copilot.ui import render_panel
+
+        panel = render_panel()
+    except Exception:
+        panel = ""
+    return (
+        html.replace("__YEAR__", str(year))
+        .replace("__MONTH__", str(month))
+        .replace("__DASHBOARD_NAV_CSS__", nav_css)
+        .replace("__DASHBOARD_NAV_HTML__", nav_html)
+        .replace("</body>", panel + "\n</body>")
+    )
 
 
 class Handler(BaseHTTPRequestHandler):

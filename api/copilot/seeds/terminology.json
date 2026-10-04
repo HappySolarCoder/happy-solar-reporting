@@ -1,0 +1,288 @@
+{
+  "seed_version": "2026-10-04",
+  "policy": "Every entry is an observation of repository code. None are approved company policy.",
+  "entries": [
+    {
+      "term_id": "opp2prelim",
+      "display_name": "Opp2Prelim",
+      "aliases": ["Opp2Prelim", "Opp2Prelim%", "opp2prelim"],
+      "category": "metric",
+      "definition": null,
+      "observation": "Company overview cards set Opp2Prelim to Sales / Ran × 100 and show an em dash when Ran is 0. The monthly trend route uses 0.0 when Ran is 0. Whether this is a cohort conversion is not settled in code.",
+      "calculation": {
+        "metric_id": "opp2prelim",
+        "backend_function": "company overview setOpp2PrelimCard; company_trends divides sales by ran",
+        "numerator": "sales result for the same filters",
+        "denominator": "opportunities ran result for the same filters",
+        "unit": "percent",
+        "rounding": "1 decimal on the trend route; card uses toFixed(1)",
+        "zero_denominator_policy": "null_when_denominator_zero"
+      },
+      "scope": {
+        "tables": ["ghl_opportunities_v2", "ghl_contacts_v2"],
+        "fields": ["pipelineStageId", "customFields hd5QqHEOVSsPom5bJ32P"],
+        "statuses": "Sales uses Sold and Sale Cancelled stage IDs. Ran uses a non-empty appointment disposition.",
+        "exclusions": "unresolved",
+        "deduplication": "sales: distinct contactId; ran: distinct opportunity id",
+        "grouping": "company total, or alias sum on the lead-gen breakdown",
+        "attribution": "unresolved"
+      },
+      "time": {
+        "event_date_field": "sales: contact Sold Date; ran: appointmentOccurredAt",
+        "timezone": "America/New_York is hardcoded in the metric modules and is not an approved company timezone",
+        "boundaries": "start inclusive, end exclusive next local midnight when start/end are passed",
+        "basis": "period totals. Not confirmed as a cohort.",
+        "effective_from": null,
+        "effective_to": null
+      },
+      "governance": {
+        "status": "DRAFT",
+        "version": 1,
+        "owner": null,
+        "approved_by": null,
+        "approved_at": null
+      },
+      "evidence": [
+        {"path": "api/company_overview.py", "excerpt": "const p = r > 0 ? (s / r) * 100 : null;"},
+        {"path": "api/metrics/company_trends.py", "excerpt": "opp2 = (s / r * 100.0) if r > 0 else 0.0"}
+      ],
+      "examples": {
+        "question": "Explain Opp2Prelim",
+        "correct_interpretation": "Say the definition is not approved. Describe the screen formula only as an observation.",
+        "ambiguities": ["Cohort versus period basis is not documented.", "Trend chart and cards disagree when Ran is 0."]
+      },
+      "ambiguities": ["Cohort versus period basis is not documented.", "Zero denominator is an em dash on cards and 0.0 on the trend route."]
+    },
+    {
+      "term_id": "demo_rate",
+      "display_name": "Demo Rate",
+      "aliases": ["Demo Rate", "demo rate", "demo"],
+      "category": "metric",
+      "definition": null,
+      "observation": "demo_rate.py defines Demo Rate as Sit count divided by opportunities whose disposition is Sit or No Sit. The company overview card recomputes sit/ran from breakdown maps and uses 0 when Ran is 0. Source cards sum alias keys, including Phones plus Virtual.",
+      "calculation": {
+        "metric_id": "demo_rate",
+        "backend_function": "api/metrics/demo_rate.py build_payload",
+        "numerator": "dispositionValue Sit",
+        "denominator": "dispositionValue in Sit or No Sit",
+        "unit": "percent",
+        "rounding": "1 decimal in build_payload",
+        "zero_denominator_policy": "zero_when_denominator_zero"
+      },
+      "scope": {
+        "tables": ["ghl_opportunities_v2", "ghl_contacts_v2"],
+        "fields": ["dispositionValue", "GYGpLKBPfMpiBqyU2ogQ", "appointmentOccurredAt", "dispositionDate"],
+        "statuses": "Sit and No Sit",
+        "exclusions": "Follow-up is not a second sit. Inbound/lead locker pipeline is excluded by the demo contract.",
+        "deduplication": "opportunity grain inside build_payload",
+        "grouping": "lead gen source after normalize_lead_source",
+        "attribution": "setter versus sweeper/rehash is handled in demo_rate.py and is not restated here as policy"
+      },
+      "time": {
+        "event_date_field": "earlier of appointmentOccurredAt and dispositionDate",
+        "timezone": "America/New_York hardcoded on the demo contract",
+        "boundaries": "month window in that zone",
+        "basis": "period of the frozen sit timestamp, not confirmed as a cohort",
+        "effective_from": null,
+        "effective_to": null
+      },
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [
+        {"path": "api/metrics/demo_rate.py", "excerpt": "Numerator: count of opportunities with dispositionValue == \"Sit\"."},
+        {"path": "api/company_overview.py", "excerpt": "result: ran > 0 ? (sit / ran) * 100 : 0,"}
+      ],
+      "examples": {
+        "question": "What is Demo Rate?",
+        "correct_interpretation": "Do not call the draft formula company policy.",
+        "ambiguities": ["Card denominator is the ran breakdown, which the module defines as Sit plus No Sit."]
+      },
+      "ambiguities": ["Confirm that a sit and a ran are exactly the disposition rules in demo_rate.py."]
+    },
+    {
+      "term_id": "phones",
+      "display_name": "Phones",
+      "aliases": ["Phones", "Phone", "Virtual"],
+      "category": "source",
+      "definition": null,
+      "observation": "The company overview Phones card sums breakdown keys Phones and Virtual. demo_rate.normalize_lead_source and sc_overview.normalize_lead_source map Virtual to Phones. sales.py keeps the raw lead-gen string, so a lead_source=Phones filter on the sales API does not include Virtual.",
+      "calculation": {
+        "metric_id": null,
+        "backend_function": "company overview PHONES_KEYS alias sum",
+        "numerator": null,
+        "denominator": null,
+        "unit": "label",
+        "rounding": null,
+        "zero_denominator_policy": null
+      },
+      "scope": {
+        "tables": ["ghl_contacts_v2"],
+        "fields": ["customFields hd5QqHEOVSsPom5bJ32P"],
+        "statuses": "unresolved",
+        "exclusions": "unresolved",
+        "deduplication": "inherits the metric",
+        "grouping": "alias sum on the overview cards",
+        "attribution": "unresolved"
+      },
+      "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [
+        {"path": "api/company_overview.py", "excerpt": "const PHONES_KEYS = ['Phones', 'Virtual'];"},
+        {"path": "api/metrics/demo_rate.py", "excerpt": "if low in (\"virtual\", \"virt\"):"}
+      ],
+      "examples": {"question": "What does Phones include?", "correct_interpretation": "Report the alias conflict. Do not declare Virtual identical to Phones as policy.", "ambiguities": ["Sales API filter and overview card do not group Virtual the same way."]},
+      "ambiguities": ["Is Virtual an alias of Phones in every report, or only on some screens?"]
+    },
+    {
+      "term_id": "self_gen",
+      "display_name": "Self Gen",
+      "aliases": ["Self Gen", "self gen", "selfgen", "SelfGen", "self-gen"],
+      "category": "source",
+      "definition": null,
+      "observation": "The company overview Self Gen card sums Self Gen, self gen, selfgen, and SelfGen. sc_overview also maps self-gen to Self Gen. demo_rate.normalize_lead_source does not special-case those spellings, so the raw string remains.",
+      "calculation": {
+        "metric_id": null,
+        "backend_function": "company overview SELF_GEN_KEYS alias sum",
+        "numerator": null,
+        "denominator": null,
+        "unit": "label",
+        "rounding": null,
+        "zero_denominator_policy": null
+      },
+      "scope": {"tables": ["ghl_contacts_v2"], "fields": ["customFields hd5QqHEOVSsPom5bJ32P"], "statuses": "unresolved", "exclusions": "unresolved", "deduplication": "inherits the metric", "grouping": "alias sum", "attribution": "unresolved"},
+      "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/company_overview.py", "excerpt": "const SELF_GEN_KEYS = ['Self Gen', 'self gen', 'selfgen', 'SelfGen'];"}],
+      "examples": {"question": "What is Self Gen?", "correct_interpretation": "The canonical source identity is not confirmed.", "ambiguities": ["Hyphenated self-gen is mapped in sc_overview and not in the overview key list."]},
+      "ambiguities": ["Canonical source id for Self Gen is unconfirmed."]
+    },
+    {
+      "term_id": "doors",
+      "display_name": "Doors",
+      "aliases": ["Doors", "Door", "D2D"],
+      "category": "source",
+      "definition": null,
+      "observation": "Doors is a lead-gen label used by the company overview card and normalized from doors, door, and d2d in demo_rate.py and sc_overview.py. A business definition beyond that label was not in the repository.",
+      "calculation": {"metric_id": null, "backend_function": "observed label", "numerator": null, "denominator": null, "unit": "label", "rounding": null, "zero_denominator_policy": null},
+      "scope": {"tables": ["ghl_contacts_v2"], "fields": ["customFields hd5QqHEOVSsPom5bJ32P"], "statuses": "unresolved", "exclusions": "unresolved", "deduplication": "inherits the metric", "grouping": "exact key Doors on the overview card", "attribution": "unresolved"},
+      "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/company_overview.py", "excerpt": "sumByAliases(salesByLead, ['Doors'])"}],
+      "examples": {"question": "What does Doors mean?", "correct_interpretation": "It is an observed source label, not a written business definition.", "ambiguities": ["Door and D2D normalization is not shared by sales.py."]},
+      "ambiguities": ["Business meaning of Doors is not in the repository."]
+    },
+    {
+      "term_id": "inbound",
+      "display_name": "Inbound",
+      "aliases": ["Inbound"],
+      "category": "source",
+      "definition": null,
+      "observation": "The company overview treats Inbound as its own card. sc_overview maps the labels inbound, 3pl/inbound, and 3pl / inbound to Inbound, and a 3PL/Inbound filter matches both 3PL and Inbound. Those behaviors conflict.",
+      "calculation": {"metric_id": null, "backend_function": "observed label", "numerator": null, "denominator": null, "unit": "label", "rounding": null, "zero_denominator_policy": null},
+      "scope": {"tables": ["ghl_contacts_v2"], "fields": ["customFields hd5QqHEOVSsPom5bJ32P"], "statuses": "unresolved", "exclusions": "unresolved", "deduplication": "inherits the metric", "grouping": "overview card uses the key Inbound only", "attribution": "unresolved"},
+      "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/company_overview.py", "excerpt": "const INBOUND_KEYS = ['Inbound'];"}],
+      "examples": {"question": "What is Inbound?", "correct_interpretation": "Do not merge it with 3PL.", "ambiguities": ["sc_overview folds 3pl/inbound into Inbound."]},
+      "ambiguities": ["Relationship between Inbound and 3PL is unresolved."]
+    },
+    {
+      "term_id": "three_pl",
+      "display_name": "3PL",
+      "aliases": ["3PL", "3pl"],
+      "category": "source",
+      "definition": null,
+      "observation": "3PL is an observed lead-gen label on the company overview. The repository does not expand the acronym. sc_overview keeps 3pl, 3p, and threepl as 3PL, while 3pl/inbound becomes Inbound.",
+      "calculation": {"metric_id": null, "backend_function": "observed label", "numerator": null, "denominator": null, "unit": "label", "rounding": null, "zero_denominator_policy": null},
+      "scope": {"tables": ["ghl_contacts_v2"], "fields": ["customFields hd5QqHEOVSsPom5bJ32P"], "statuses": "unresolved", "exclusions": "unresolved", "deduplication": "inherits the metric", "grouping": "overview card key 3PL", "attribution": "unresolved"},
+      "time": {"event_date_field": "inherits the metric", "timezone": "unconfirmed", "boundaries": "inherits the metric", "basis": "unresolved", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/company_overview.py", "excerpt": "const THREE_PL_KEYS = ['3PL'];"}],
+      "examples": {"question": "What does 3PL mean?", "correct_interpretation": "Say the business expansion is unknown.", "ambiguities": ["Do not expand 3PL by guessing."]},
+      "ambiguities": ["The business expansion of 3PL is unknown."]
+    },
+    {
+      "term_id": "sales",
+      "display_name": "Sales",
+      "aliases": ["Sales", "sale"],
+      "category": "metric",
+      "definition": null,
+      "observation": "sales.py counts distinct contacts with an opportunity in Sold or Sale Cancelled stage IDs. The date filter is the contact Sold Date custom field P9oBjgbZjJdeE0OkBj9T. Scope comments name Buffalo, Rochester, Virtual, and Syracuse stage IDs.",
+      "calculation": {
+        "metric_id": "sales",
+        "backend_function": "api/metrics/sales.py compute_sales",
+        "numerator": "distinct contactId",
+        "denominator": null,
+        "unit": "count",
+        "rounding": "integer",
+        "zero_denominator_policy": null
+      },
+      "scope": {
+        "tables": ["ghl_opportunities_v2", "ghl_contacts_v2"],
+        "fields": ["pipelineStageId", "contactId", "customFields P9oBjgbZjJdeE0OkBj9T"],
+        "statuses": "Sold and Sale Cancelled stage IDs listed on SalesMetricContract",
+        "exclusions": "unresolved beyond those stage IDs",
+        "deduplication": "contactId",
+        "grouping": "pipeline, owner, setter, lead gen source",
+        "attribution": "lead gen source is the raw custom-field value, with CRM UI and Hand folded to none"
+      },
+      "time": {"event_date_field": "contact Sold Date", "timezone": "function argument, callers pass America/New_York", "boundaries": "date-only inclusive end", "basis": "sold date period, not created date", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/metrics/sales.py", "excerpt": "Count of unique contacts/customers with an opportunity in Sold OR Sale Cancelled stage IDs"}],
+      "examples": {"question": "How many sales were there?", "correct_interpretation": "Do not answer with a count until this draft is approved.", "ambiguities": ["Sale Cancelled remains inside the sales count."]},
+      "ambiguities": ["Confirm whether Sale Cancelled should remain in Sales."]
+    },
+    {
+      "term_id": "ran",
+      "display_name": "Ran",
+      "aliases": ["Ran", "Opps Ran", "opps_ran"],
+      "category": "metric",
+      "definition": null,
+      "observation": "opportunities_ran.py counts distinct opportunities whose What happened with Appointment field is non-empty and whose appointmentOccurredAt falls in the window. It does not exclude sweeper or rehash.",
+      "calculation": {
+        "metric_id": "opps_ran",
+        "backend_function": "api/metrics/opportunities_ran.py compute",
+        "numerator": "distinct opportunity id",
+        "denominator": null,
+        "unit": "count",
+        "rounding": "integer",
+        "zero_denominator_policy": null
+      },
+      "scope": {"tables": ["ghl_opportunities_v2", "ghl_contacts_v2"], "fields": ["customFields GYGpLKBPfMpiBqyU2ogQ", "appointmentOccurredAt"], "statuses": "any non-empty disposition value", "exclusions": "excluded_pipeline_names is empty", "deduplication": "opportunity id", "grouping": "pipeline, owner, setter, lead gen source", "attribution": "lead gen source is not normalized the same way as demo_rate"},
+      "time": {"event_date_field": "appointmentOccurredAt", "timezone": "America/New_York hardcoded", "boundaries": "local window", "basis": "appointment occurred timestamp", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/metrics/opportunities_ran.py", "excerpt": "timezone: str = \"America/New_York\"  # MANDATORY"}],
+      "examples": {"question": "What counts as ran?", "correct_interpretation": "Quote the code observation and mark it unapproved.", "ambiguities": ["Demo rate's ran denominator is Sit plus No Sit, which may be narrower than any non-empty disposition."]},
+      "ambiguities": ["Ran in opportunities_ran.py and the demo-rate denominator may not be the same set."]
+    },
+    {
+      "term_id": "sit",
+      "display_name": "Sit",
+      "aliases": ["Sit", "Demos"],
+      "category": "status",
+      "definition": null,
+      "observation": "Sit is the disposition value used as the demo-rate numerator. The overview labels that numerator Demos. The frozen timestamp is the earlier of appointmentOccurredAt and dispositionDate.",
+      "calculation": {"metric_id": "demo_rate", "backend_function": "api/metrics/demo_rate.py build_payload", "numerator": "Sit", "denominator": "Sit + No Sit", "unit": "count", "rounding": "integer", "zero_denominator_policy": null},
+      "scope": {"tables": ["ghl_opportunities_v2"], "fields": ["dispositionValue", "GYGpLKBPfMpiBqyU2ogQ"], "statuses": "Sit", "exclusions": "Follow-up is not a second sit", "deduplication": "one sit per opportunity in that module", "grouping": "lead source", "attribution": "unresolved"},
+      "time": {"event_date_field": "min(appointmentOccurredAt, dispositionDate)", "timezone": "America/New_York hardcoded", "boundaries": "local window", "basis": "first-write-wins sit timestamp", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/metrics/demo_rate.py", "excerpt": "Demos = Sit. Window = first-write-wins"}],
+      "examples": {"question": "What is a sit?", "correct_interpretation": "It is the observed disposition value Sit, not a separate approved status model.", "ambiguities": ["The overview word Demos is the sit count."]},
+      "ambiguities": ["Confirm Sit versus Demo as labels."]
+    },
+    {
+      "term_id": "created",
+      "display_name": "Opps Created",
+      "aliases": ["Opps Created", "Created", "opportunities created"],
+      "category": "metric",
+      "definition": null,
+      "observation": "The company overview loads opportunities_created with pipeline_scope=all and shows created_by_lead_gen_source. Qualifying statuses and the event date live in that module and were not re-decided here.",
+      "calculation": {"metric_id": "opps_created", "backend_function": "api/metrics/opportunities_created.py compute", "numerator": "compute result", "denominator": null, "unit": "count", "rounding": "integer", "zero_denominator_policy": null},
+      "scope": {"tables": ["ghl_opportunities_v2", "ghl_contacts_v2"], "fields": ["lead gen source custom field"], "statuses": "see opportunities_created.py; not restated as policy", "exclusions": "unresolved", "deduplication": "see opportunities_created.py", "grouping": "lead gen source breakdown", "attribution": "Virtual is rewritten to Phones only for the lead_source filter in that module"},
+      "time": {"event_date_field": "see opportunities_created.py", "timezone": "contract timezone", "boundaries": "start/end window", "basis": "created period", "effective_from": null, "effective_to": null},
+      "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
+      "evidence": [{"path": "api/company_overview.py", "excerpt": "const createdUrl = `/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all`;"}],
+      "examples": {"question": "What is an opportunity created?", "correct_interpretation": "Point at the existing module and keep the definition draft.", "ambiguities": ["Created, ran, and sold dates are different events."]},
+      "ambiguities": ["Qualifying created statuses should be confirmed by the data owner before approval."]
+    }
+  ]
+}

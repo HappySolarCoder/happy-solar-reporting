@@ -1072,5 +1072,17 @@ class WebsiteTrafficChartTests(unittest.TestCase):
         self.assertFalse(body["funnel"]["funnel_top_is_all_site"])
 
 
+class PaidSessionRuleTests(unittest.TestCase):
+    def test_session_is_paid_reuses_the_facebook_rule(self):
+        self.assertTrue(traffic.session_is_paid("facebook", "paid", "Paid Social"))
+        self.assertTrue(traffic.session_is_paid("instagram", "cpc", "Paid Social"))
+        self.assertFalse(traffic.session_is_paid("facebook", "organic", "Organic Social"))
+        self.assertFalse(traffic.session_is_paid("google", "cpc", "Paid Search"))
+        self.assertEqual(
+            traffic.session_is_paid("facebook", "paid", "Paid Social"),
+            traffic.classify_facebook("facebook", "paid", "Paid Social") == "paid",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

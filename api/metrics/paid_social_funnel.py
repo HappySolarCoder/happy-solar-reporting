@@ -23,12 +23,16 @@ Uses SalesMetricContract stage ids. Does not change that contract.
 
 Meta account act_1624979685613708 is read-only. This module does not
 send campaign, budget, or ad updates.
+
+Landing visits and form starts are a read of the existing GA4 property.
+A failed read stays null. This module does not change the calculator form.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -72,6 +76,15 @@ SOLD_DATE_FIELD_ID = cac.SOLD_DATE_CUSTOM_FIELD_ID
 META_ACCOUNT_ID = "act_1624979685613708"
 META_CAMPAIGN_NOT_MODIFIED = "120251885305880744"
 GA4_MEASUREMENT_ID = "G-V02RZFR4SZ"
+GA4_PROPERTY_ID = "408492342"
+FORM_START_EVENT = "estimate_start"
+FINISHED_FORM_EVENT = "estimate_submit"
+PAID_GA4_DIMENSIONS = (
+    "date",
+    "sessionDefaultChannelGroup",
+    "sessionSource",
+    "sessionMedium",
+)
 CPL_TARGET = 25
 DEMO_COST_TARGET = 50
 CPA_TARGET = 200
@@ -93,6 +106,35 @@ VISITORS_NOTE = (
     "Website visitors are GA4 paid sessions on stream G-V02RZFR4SZ. "
     "That series is not wired on this page, so it stays blank. "
     "Meta landing-page views are not used."
+)
+VISITS_OK_NOTE = (
+    "Website visitors are GA4 paid sessions on property 408492342, "
+    "measurement G-V02RZFR4SZ. The website traffic paid-session rule: "
+    "paid medium or paid channel, Facebook and Instagram included. "
+    "A Meta click is not a session. Meta landing-page views are not visits."
+)
+VISITS_UNAVAILABLE_NOTE = (
+    "Website visitors are GA4 paid sessions on property 408492342, "
+    "measurement G-V02RZFR4SZ. This read is unavailable, so the stage stays "
+    "blank. A failed read is not zero. The November sample is not used. "
+    "Meta landing-page views are not visits."
+)
+FORMS_OK_NOTE = (
+    "Form starts are calculator estimate_start events from paid traffic, "
+    "using the same paid-session rule as landing visits. A finished form "
+    "(estimate_submit) is not a form start. Instant Form and 3PL are not "
+    "form starts."
+)
+FORMS_UNAVAILABLE_NOTE = (
+    "Form starts are calculator estimate_start events from paid traffic. "
+    "This read is unavailable, so the stage stays blank. A failed read is "
+    "not zero. The November sample is not used. A finished form "
+    "(estimate_submit) is not a form start. Instant Form and 3PL are not "
+    "form starts."
+)
+FORMS_UNWIRED_NOTE = (
+    "Form starts are not wired on this read, so the stage stays blank. "
+    "A missing read is not zero. The November sample is not used."
 )
 LEAD_ACTIONS_NOTE = (
     "Meta lead actions are not shown. They were absent, not zero."
@@ -566,6 +608,259 @@ def _excluded_sentence(counts: dict[str, Any]) -> str:
     return sentence
 
 
+def _load_website_traffic():
+    """Load the metrics module that already owns the paid-session rule and GA4 client."""
+    name = "hs_paid_social_website_traffic"
+    existing = sys.modules.get(name)
+    if existing is not None and callable(getattr(existing, "session_is_paid", None)):
+        return existing
+    spec = importlib.util.spec_from_file_location(name, METRICS_DIR / "website_traffic.py")
+    if spec is None or spec.loader is None:
+        raise ImportError("Cannot load website traffic metric")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _row_metric(row: dict[str, Any], value_keys: tuple[str, ...]) -> int | None:
+    for key in value_keys:
+        if key not in row:
+            continue
+        raw = row.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if value < 0:
+            return None
+        return value
+    return None
+
+
+def count_paid_rows(
+    rows: list[dict[str, Any]] | None,
+    days: list[str],
+    *,
+    value_keys: tuple[str, ...],
+    event_name: str | None = None,
+) -> dict[str, Any]:
+    """Sum rows the website-traffic paid-session rule accepts.
+
+    A successful report omits days with no paid rows. Those days are 0.
+    This function does not turn a failed read into a number. The caller
+    keeps total and series null when the report itself failed.
+    """
+    traffic = _load_website_traffic()
+    by_day = {day: 0 for day in days}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        event = traffic.compact_str(row.get("eventName") or row.get("event_name"))
+        if event_name:
+            if event != event_name:
+                continue
+        elif event in {FORM_START_EVENT, FINISHED_FORM_EVENT, "wix_form_submit"}:
+            continue
+        if not traffic.session_is_paid(
+            row.get("sessionSource") or row.get("source"),
+            row.get("sessionMedium") or row.get("medium"),
+            row.get("sessionDefaultChannelGroup") or row.get("channel"),
+        ):
+            continue
+        day = traffic.normalize_series_date(row.get("date"))
+        if day not in by_day:
+            continue
+        value = _row_metric(row, value_keys)
+        if value is None:
+            continue
+        by_day[day] += value
+    return {
+        "total": sum(by_day.values()),
+        "series": [{"date": day, "value": by_day[day]} for day in days],
+    }
+
+
+def _visits_stage(status: str, total: int | None, series: list | None, note: str, reason: str | None = None) -> dict[str, Any]:
+    return {
+        "key": "website_visitors",
+        "label": "Website visitors from the ad",
+        "order": 3,
+        "status": status,
+        "total": total,
+        "series": series,
+        "measurement_id": GA4_MEASUREMENT_ID,
+        "property_id": GA4_PROPERTY_ID,
+        "note": note,
+        "reason": reason,
+    }
+
+
+def _forms_stage(status: str, total: int | None, series: list | None, note: str, reason: str | None = None) -> dict[str, Any]:
+    return {
+        "key": "form_starts",
+        "label": "Form starts",
+        "status": status,
+        "total": total,
+        "series": series,
+        "event": FORM_START_EVENT,
+        "measurement_id": GA4_MEASUREMENT_ID,
+        "property_id": GA4_PROPERTY_ID,
+        "note": note,
+        "reason": reason,
+    }
+
+
+def _blank_website(reason: str) -> dict[str, Any]:
+    return {
+        "landing_visits": _visits_stage("unavailable", None, None, VISITS_UNAVAILABLE_NOTE, reason),
+        "form_starts": _forms_stage("unavailable", None, None, FORMS_UNAVAILABLE_NOTE, reason),
+    }
+
+
+def _unwired_forms() -> dict[str, Any]:
+    return _forms_stage("not_wired", None, None, FORMS_UNWIRED_NOTE, "not_wired")
+
+
+def _sanitize_stage(stage: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    """A status other than ok cannot carry a plotted zero."""
+    ok_note = VISITS_OK_NOTE if kind == "visits" else FORMS_OK_NOTE
+    blank_note = VISITS_UNAVAILABLE_NOTE if kind == "visits" else FORMS_UNAVAILABLE_NOTE
+    builder = _visits_stage if kind == "visits" else _forms_stage
+    status = stage.get("status")
+    total = stage.get("total")
+    ready = status == "ok" and total is not None and not isinstance(total, bool)
+    number: int | None = None
+    if ready:
+        try:
+            number = int(total)
+        except (TypeError, ValueError):
+            ready = False
+    if not ready:
+        kept = "not_wired" if status == "not_wired" else "unavailable"
+        note = stage.get("note") or (FORMS_UNWIRED_NOTE if kept == "not_wired" and kind == "forms" else blank_note)
+        return builder(kept, None, None, note, stage.get("reason"))
+    series = stage.get("series")
+    if not isinstance(series, list):
+        series = None
+    return builder("ok", number, series, stage.get("note") or ok_note, None)
+
+
+def _parsed_ga4_rows(raw: Any, traffic: Any, dimensions: tuple[str, ...], metrics: tuple[str, ...]) -> list[dict[str, Any]] | None:
+    if not isinstance(raw, dict) or raw.get("ga4") != "ok":
+        return None
+    report = raw.get("report")
+    if not isinstance(report, dict):
+        return None
+    returned = report.get("rows") or []
+    if not isinstance(returned, list):
+        return None
+    row_count = report.get("rowCount")
+    if row_count not in (None, ""):
+        try:
+            if int(row_count) > len(returned):
+                return None
+        except (TypeError, ValueError):
+            return None
+    parsed = traffic.parse_ga4_generic_rows(report, dimensions, metrics)
+    return parsed if isinstance(parsed, list) else None
+
+
+def _sessions_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
+    return {
+        "dateRanges": [{"startDate": start, "endDate": end}],
+        "dimensions": [{"name": name} for name in PAID_GA4_DIMENSIONS],
+        "metrics": [{"name": "sessions"}],
+        "limit": "10000",
+        "dimensionFilter": traffic.live_host_filter(),
+    }
+
+
+def _form_starts_body(traffic: Any, start: str, end: str) -> dict[str, Any]:
+    return {
+        "dateRanges": [{"startDate": start, "endDate": end}],
+        "dimensions": [{"name": name} for name in (*PAID_GA4_DIMENSIONS, "eventName")],
+        "metrics": [{"name": "eventCount"}],
+        "limit": "10000",
+        "dimensionFilter": {
+            "andGroup": {
+                "expressions": [
+                    traffic.live_host_filter(),
+                    {
+                        "filter": {
+                            "fieldName": "eventName",
+                            "inListFilter": {"values": [FORM_START_EVENT]},
+                        }
+                    },
+                ]
+            }
+        },
+    }
+
+
+def _read_stage(runner: Any, traffic: Any, body: dict[str, Any], days: list[str], *, kind: str) -> dict[str, Any]:
+    dimensions = tuple(item["name"] for item in body["dimensions"])
+    metrics = tuple(item["name"] for item in body["metrics"])
+    value_keys = metrics
+    event_name = FORM_START_EVENT if kind == "forms" else None
+    ok_note = VISITS_OK_NOTE if kind == "visits" else FORMS_OK_NOTE
+    bad_note = VISITS_UNAVAILABLE_NOTE if kind == "visits" else FORMS_UNAVAILABLE_NOTE
+    builder = _visits_stage if kind == "visits" else _forms_stage
+    try:
+        raw = runner(body)
+        parsed = _parsed_ga4_rows(raw, traffic, dimensions, metrics)
+    except Exception:
+        return builder("unavailable", None, None, bad_note, "ga4_failed")
+    if parsed is None:
+        return builder("unavailable", None, None, bad_note, "ga4_failed")
+    counted = count_paid_rows(parsed, days, value_keys=value_keys, event_name=event_name)
+    return builder("ok", counted["total"], counted["series"], ok_note, None)
+
+
+def fetch_paid_website_stages(
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    report_runner: Any = None,
+) -> dict[str, Any]:
+    """Read GA4 paid sessions and paid calculator starts. Failures stay null.
+
+    Uses the existing Data API client, property 408492342, and measurement
+    G-V02RZFR4SZ. Does not change ads, spend, campaigns, or the calculator form.
+    """
+    days = window_dates(start_local, end_local)
+    start = start_local.date().isoformat()
+    end = (end_local.date() - timedelta(days=1)).isoformat()
+    if end < start:
+        end = start
+    try:
+        traffic = _load_website_traffic()
+        funnel = traffic.funnel_mod()
+    except Exception:
+        return _blank_website("ga4_client_unavailable")
+    if funnel.GA4_PROPERTY_ID != GA4_PROPERTY_ID or funnel.GA4_MEASUREMENT_ID != GA4_MEASUREMENT_ID:
+        return _blank_website("property_mismatch")
+    if FORM_START_EVENT not in funnel.GA4_EVENT_NAMES or FINISHED_FORM_EVENT not in funnel.GA4_EVENT_NAMES:
+        return _blank_website("form_start_event_missing")
+    property_id = traffic.compact_str(os.environ.get(funnel.GA4_PROPERTY_ID_ENV)) or funnel.GA4_PROPERTY_ID
+    if property_id != GA4_PROPERTY_ID:
+        return _blank_website("property_mismatch")
+    if report_runner is None:
+        if not funnel.ga4_credentials_available():
+            return _blank_website("not_configured")
+        report_runner = traffic.run_ga4_report
+    return {
+        "landing_visits": _read_stage(
+            report_runner, traffic, _sessions_body(traffic, start, end), days, kind="visits"
+        ),
+        "form_starts": _read_stage(
+            report_runner, traffic, _form_starts_body(traffic, start, end), days, kind="forms"
+        ),
+    }
+
+
 def assemble_paid_social(
     counts: dict[str, Any],
     *,
@@ -574,6 +869,7 @@ def assemble_paid_social(
     daily_meta: dict[str, Any],
     aggregate_spend: cac.MetaSpendResult | None,
     timezone_name: str = TIMEZONE_NAME,
+    website: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     days = list(counts.get("days") or window_dates(start_local, end_local))
     meta_ok = daily_meta.get("status") == "ok"
@@ -601,6 +897,18 @@ def assemble_paid_social(
     sales = int(counts["sales"])
     territory = counts.get("opps_by_territory") or {}
     territory_bits = [f"{name} {int(territory.get(name) or 0)}" for name in ("Buffalo", "Rochester", "Syracuse", "Virtual")]
+    if isinstance(website, dict):
+        supplied_visits = website.get("landing_visits")
+        supplied_forms = website.get("form_starts")
+        visitors = _sanitize_stage(supplied_visits, kind="visits") if isinstance(supplied_visits, dict) else _visits_stage(
+            "unavailable", None, None, VISITS_UNAVAILABLE_NOTE, "missing"
+        )
+        forms = _sanitize_stage(supplied_forms, kind="forms") if isinstance(supplied_forms, dict) else _forms_stage(
+            "unavailable", None, None, FORMS_UNAVAILABLE_NOTE, "missing"
+        )
+    else:
+        visitors = _visits_stage("not_wired", None, None, VISITORS_NOTE, "not_wired")
+        forms = _unwired_forms()
     return {
         "metric": "Paid social funnel",
         "timezone": timezone_name,
@@ -639,16 +947,7 @@ def assemble_paid_social(
                 "series": clicks,
                 "note": clicks_note,
             },
-            {
-                "key": "website_visitors",
-                "label": "Website visitors from the ad",
-                "order": 3,
-                "status": "not_wired",
-                "total": None,
-                "series": None,
-                "measurement_id": GA4_MEASUREMENT_ID,
-                "note": VISITORS_NOTE,
-            },
+            visitors,
             {
                 "key": "leads_created",
                 "label": "Leads created",
@@ -673,6 +972,8 @@ def assemble_paid_social(
                 "note": OPP_NOTE + " " + ", ".join(territory_bits) + ".",
             },
         ],
+        "landing_visits": visitors,
+        "form_starts": forms,
         "outbound_clicks": {
             "label": "Outbound clicks",
             "status": "ok" if outbound_total is not None else "unavailable",
@@ -776,6 +1077,7 @@ def compute_paid_social_funnel(
     urlopen: Any = None,
     aggregate_fetcher: Any = None,
     daily_fetcher: Any = None,
+    ga4_fetcher: Any = None,
 ) -> dict[str, Any]:
     start_local, end_local, _, _ = cac.date_range_window(start, end, tz)
     if (end_local.date() - start_local.date()).days > MAX_RANGE_DAYS:
@@ -815,6 +1117,15 @@ def compute_paid_social_funnel(
         aggregate = cac.unavailable_meta_spend("account_mismatch")
     else:
         aggregate = cac.unavailable_meta_spend("missing_env")
+    if ga4_fetcher:
+        try:
+            website = ga4_fetcher(start_local, end_local)
+        except Exception:
+            website = _blank_website("ga4_fetcher_failed")
+        if not isinstance(website, dict):
+            website = _blank_website("ga4_fetcher_failed")
+    else:
+        website = fetch_paid_website_stages(start_local, end_local)
     return assemble_paid_social(
         counts,
         start_local=start_local,
@@ -822,6 +1133,7 @@ def compute_paid_social_funnel(
         daily_meta=daily_meta,
         aggregate_spend=aggregate,
         timezone_name=tz,
+        website=website,
     )
 
 

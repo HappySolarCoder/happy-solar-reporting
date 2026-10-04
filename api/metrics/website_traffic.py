@@ -321,6 +321,16 @@ def classify_facebook(source: Any, medium: Any, channel: Any) -> str | None:
     return "other"
 
 
+def session_is_paid(source: Any, medium: Any, channel: Any) -> bool:
+    """Paid session rule this dashboard already uses.
+
+    Paid medium or paid channel, and only after the row is Facebook,
+    Instagram, or another social channel those sources share. Google paid
+    search does not match. Organic social does not match.
+    """
+    return classify_facebook(source, medium, channel) == "paid"
+
+
 def tile(status: str, **extra: Any) -> dict[str, Any]:
     out = {"status": status}
     out.update(extra)

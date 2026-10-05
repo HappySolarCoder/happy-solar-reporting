@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def _loading_overlay_css() -> str:
+    return Path(__file__).with_name("loading_overlay.css").read_text(encoding="utf-8")
+
+
 def dashboard_nav_css() -> str:
     theme = Path(__file__).with_name("ops_theme.css").read_text(encoding="utf-8")
     return (
@@ -15,6 +19,8 @@ def dashboard_nav_css() -> str:
         + _nav_collapse_css()
         + "\n"
         + _nav_state_boot()
+        + "\n"
+        + _loading_overlay_css()
     )
 
 
@@ -602,7 +608,7 @@ def _legacy_nav_css() -> str:
 
 def render_dashboard_loader() -> str:
     return """
-        <div id="hsDashboardLoader" class="hs-loader" aria-hidden="false">
+        <div id="hsDashboardLoader" class="hs-loader is-hidden" aria-hidden="true">
           <div class="hs-loader-card">
             <div class="hs-loader-mark" aria-hidden="true">
               <div class="hs-loader-top"></div>
@@ -698,7 +704,7 @@ def render_dashboard_nav(current: str) -> str:
             f'<div class="navgroup">{label}</div>' + "".join(links)
         )
     menu = "".join(groups)
-    return f"""
+    html = f"""
         {render_dashboard_loader()}
         <button type="button" class="mobile-menu oc-menu-btn" aria-label="Toggle navigation" onclick="document.body.classList.toggle('menu-open')">☰</button>
         <aside id="sidebar">
@@ -720,6 +726,7 @@ def render_dashboard_nav(current: str) -> str:
           <nav class="navscroll" aria-label="Operations">{menu}</nav>
           <div class="sidebottom"><div><b>Operations control</b>America/New_York</div></div>
         </aside>
+        <!-- HAPPY_SOLAR_LOADING -->
         <script>
           (function() {{
             document.documentElement.classList.add('oc-root');
@@ -808,39 +815,9 @@ def render_dashboard_nav(current: str) -> str:
                 if (event.propertyName === 'width') remeasureCharts();
               }});
             }}
-            var loader = document.getElementById('hsDashboardLoader');
-            var pendingFetches = 0;
-            var hideTimer = null;
-            function setLoaderVisible(visible) {{
-              if (!loader) return;
-              loader.classList.toggle('is-hidden', !visible);
-              loader.setAttribute('aria-hidden', visible ? 'false' : 'true');
-            }}
-            function scheduleLoaderHide() {{
-              if (!loader) return;
-              if (hideTimer) window.clearTimeout(hideTimer);
-              hideTimer = window.setTimeout(function() {{
-                if (pendingFetches <= 0) setLoaderVisible(false);
-              }}, 180);
-            }}
-            function shouldTrackFetch(input) {{
-              var raw = '';
-              if (typeof input === 'string') raw = input;
-              else if (input && typeof input.url === 'string') raw = input.url;
-              if (!raw) return false;
-              try {{
-                var url = new URL(raw, window.location.href);
-                if (url.origin !== window.location.origin) return false;
-                if (!url.pathname.startsWith('/api/')) return false;
-                if (url.pathname === '/api/warm_cache') return false;
-                return true;
-              }} catch (_err) {{
-                return false;
-              }}
-            }}
             window.HSDashboardLoader = {{
-              show: function() {{ if (hideTimer) window.clearTimeout(hideTimer); setLoaderVisible(true); }},
-              hide: function() {{ pendingFetches = 0; scheduleLoaderHide(); }},
+              show: function() {{ if (window.HappySolarLoading) window.HappySolarLoading.begin('manual'); }},
+              hide: function() {{}},
             }};
             var FILTER_KEY = 'hsOpsFilters';
             function readStored() {{
@@ -867,7 +844,6 @@ def render_dashboard_nav(current: str) -> str:
               window.__hsOpsFetchPatched = true;
               var originalFetch = window.fetch.bind(window);
               window.fetch = function(input, init) {{
-                var tracked = shouldTrackFetch(input);
                 var next = input;
                 try {{
                   var raw = typeof input === 'string' ? input : (input && input.url) || '';
@@ -890,19 +866,10 @@ def render_dashboard_nav(current: str) -> str:
                     next = url.toString();
                   }}
                 }} catch (_err) {{}}
-                if (tracked) {{
-                  pendingFetches += 1;
-                  window.HSDashboardLoader.show();
-                }}
-                return originalFetch(next, init).finally(function() {{
-                  if (!tracked) return;
-                  pendingFetches = Math.max(0, pendingFetches - 1);
-                  if (pendingFetches === 0) scheduleLoaderHide();
-                }});
+                if (window.HappySolarLoading) return window.HappySolarLoading.fetch(originalFetch, next, init);
+                return originalFetch(next, init);
               }};
             }}
-            setLoaderVisible(true);
-            scheduleLoaderHide();
             document.addEventListener('keydown', function(event) {{
               if (event.key === 'Escape') document.body.classList.remove('menu-open');
             }});
@@ -967,3 +934,8 @@ def render_dashboard_nav(current: str) -> str:
           }})();
         </script>
     """
+    overlay = Path(__file__).with_name("loading_overlay.js").read_text(encoding="utf-8")
+    return html.replace(
+        "<!-- HAPPY_SOLAR_LOADING -->",
+        "<script>\n" + overlay + "\n</script>",
+    )

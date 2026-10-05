@@ -317,16 +317,6 @@
     }).join(" ");
     return '<svg class="sparkline" viewBox="0 0 140 30" role="img" aria-label="' + esc(label) + '"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="' + points + '"/></svg>';
   }
-  function showError(message) {
-    document.getElementById("pageNote").textContent = message;
-    ["Company", "Doors", "SelfGen", "Sweeper", "Inbound", "3pl"].forEach(function (prefix) {
-      ["Created", "Demo", "Opp2", "Sales"].forEach(function (stage) { setText("lg" + prefix + stage, "—"); });
-    });
-    setText("totalSales", "—");
-    setText("oppsCreated", "—");
-    setText("demoRate", "—");
-    setText("opp2", "—");
-  }
   function renderGoalsPanel(bloom) {
     const host = document.getElementById("companyGoalsBody");
     if (!host) return;
@@ -424,7 +414,14 @@
     return '<svg class="history-chart" viewBox="0 0 740 214" role="img" aria-label="' + esc(label) + ' from company_trends"><path d="' + path + '" fill="none" stroke="#26d9eb" stroke-width="2.5" stroke-linejoin="round"/>' + dots + labels + "</svg>";
   }
   async function loadTrends() {
-    const res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8");
+    let res;
+    try {
+      res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8");
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+      return;
+    }
     if (!res.ok) {
       document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
       return;
@@ -441,17 +438,36 @@
   async function load() {
     const token = ++requestToken;
     pageFilters = filters();
-    document.getElementById("pageNote").textContent = "Loading live metrics…";
+    if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
+    if (!snapshot) document.getElementById("pageNote").textContent = "Loading live metrics…";
     const period = (pageFilters.start || "").slice(0, 7);
-    const response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
-    const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period));
-    if (token !== requestToken) return;
-    if (!response.ok) {
-      showError("Company snapshot failed (HTTP " + response.status + "). Retry from Reset filters.");
+    let response;
+    try {
+      response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
       return;
     }
-    bloomGoals = bloomRes.ok ? await bloomRes.json() : null;
-    applySnapshot(await response.json());
+    if (token !== requestToken) return;
+    if (!response.ok) return;
+    try {
+      const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period));
+      if (token !== requestToken) return;
+      if (bloomRes.ok) bloomGoals = await bloomRes.json();
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
+    }
+    if (token !== requestToken) return;
+    try {
+      applySnapshot(await response.json());
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
+      const generation = window.HappySolarLoading && window.HappySolarLoading.currentGeneration;
+      if (generation && !generation.settled) generation.failed = true;
+    }
   }
 
   function modal(title, body) {
@@ -680,5 +696,6 @@
   renderFilterBar();
   bindFunnels();
   bindCarousel();
+  window.hsOpsReload = load;
   load();
 })();

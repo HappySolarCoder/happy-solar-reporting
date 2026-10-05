@@ -41,6 +41,7 @@ def render_html() -> str:
     </main>
   </div>
   <script>
+    let requestToken = 0;
     const cards = [
       ["Company sales", "sales"],
       ["Territory sales", "territory"],
@@ -123,7 +124,9 @@ def render_html() -> str:
       return '<article class="goal-tile"><div class="goal-tile-head"><h3>Territory sales</h3><span class="badge good">Synced</span></div><div class="goal-actual">' + esc(actual) + ' <span>actual</span></div>' + body + '<p>Stored Bloom territory sales goals. They are not added into a company goal.</p></article>';
     }}
     async function load() {{
+      const token = ++requestToken;
       const f = filters();
+      if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
       const params = new URLSearchParams();
       params.set("year", f.start.slice(0, 4));
       params.set("month", String(Number(f.start.slice(5, 7))));
@@ -132,10 +135,32 @@ def render_html() -> str:
       if (f.territory !== "All") params.set("pipeline", f.territory);
       if (f.source === "Sweeper") params.set("sweeper", "1");
       else if (f.source !== "All") params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
-      const snapRes = await fetch("/api/metrics/company_snapshot?" + params.toString());
-      const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(f.start.slice(0, 7)));
-      const snap = snapRes.ok ? await snapRes.json() : null;
-      const bloom = bloomRes.ok ? await bloomRes.json() : null;
+      let snapRes;
+      let bloomRes;
+      try {{
+        snapRes = await fetch("/api/metrics/company_snapshot?" + params.toString());
+        bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(f.start.slice(0, 7)));
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        if (token !== requestToken) return;
+        return;
+      }}
+      if (token !== requestToken) return;
+      if (!snapRes.ok) return;
+      let snap;
+      let bloom = null;
+      try {{
+        snap = await snapRes.json();
+        if (token !== requestToken) return;
+        if (bloomRes.ok) bloom = await bloomRes.json();
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        if (token !== requestToken) return;
+        var generation = window.HappySolarLoading && window.HappySolarLoading.currentGeneration;
+        if (generation && !generation.settled) generation.failed = true;
+        return;
+      }}
+      if (token !== requestToken) return;
       const data = (snap && snap.data) || {{}};
       const sales = data.sales && !data.sales.error ? data.sales.result : null;
       const created = data.created && !data.created.error ? data.created.result : null;
@@ -164,7 +189,15 @@ def render_html() -> str:
       document.getElementById("bloomBadge").textContent = bloom && bloom.available ? "Synced" : "Goal Not Set";
       document.getElementById("asOf").textContent = bloom && bloom.checked_at ? ("Bloom check " + bloom.checked_at) : "Bloom unread";
       const month = f.start.slice(0, 7);
-      const roster = await fetch("/api/settings_api", {{ method: "POST", headers: {{ "Content-Type": "application/json" }}, body: JSON.stringify({{ action: "bootstrap", month: month }}) }});
+      let roster;
+      try {{
+        roster = await fetch("/api/settings_api", {{ method: "POST", hsOptional: true, headers: {{ "Content-Type": "application/json" }}, body: JSON.stringify({{ action: "bootstrap", month: month }}) }});
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        document.getElementById("rosterGoals").textContent = "Roster goals unavailable.";
+        return;
+      }}
+      if (token !== requestToken) return;
       const host = document.getElementById("rosterGoals");
       if (!roster.ok) {{ host.textContent = "Roster goals unavailable."; return; }}
       const payload = await roster.json();
@@ -183,6 +216,7 @@ def render_html() -> str:
         : '';
       host.innerHTML = firestoreTable + bloomTable;
     }}
+    window.hsOpsReload = load;
     renderFilters();
     load();
   </script>

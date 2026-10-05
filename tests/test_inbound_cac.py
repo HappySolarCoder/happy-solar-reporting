@@ -208,8 +208,8 @@ class BoundQueryAndNavTests(unittest.TestCase):
         html = nav.render_dashboard_nav("inbound_cac")
         self.assertNotIn('href="/api/inbound_cac"', html)
         self.assertNotIn("Inbound CAC", html)
-        lead_start = html.find("Lead Generation")
-        lead_end = html.find("Daily Dashboard")
+        lead_start = html.find("LEAD GENERATION")
+        lead_end = html.find("PROJECT MANAGEMENT")
         self.assertNotEqual(lead_start, -1)
         self.assertNotEqual(lead_end, -1)
         lead_block = html[lead_start:lead_end]

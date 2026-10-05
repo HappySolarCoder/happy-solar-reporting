@@ -49,6 +49,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from pipeline_scope import pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
 from sweeper_rehash_attribution import (
     attributed_last_name,
@@ -600,6 +601,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     sit_by_setter: dict[str, int] = {}
     setter_labels: dict[str, str] = {}
     by_pipeline: dict[str, int] = {}
+    sit_by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
     sit_by_lead: dict[str, int] = {}
 
@@ -632,8 +634,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         credited = attributed_last_name(setter, lead, sweeper_last, appointment_date)
         setter_s = normalize_person_display(credited, empty="none")
 
-        # Apply optional filters
-        if filters.get("pipeline") and pname_low != str(filters["pipeline"]).strip().lower():
+        # Apply optional filters. pipeline=sweeper matches Sweeper and Rehash.
+        if not pipeline_in_scope(
+            pname,
+            pipeline=filters.get("pipeline"),
+            sweeper=truthy_flag(filters.get("sweeper")),
+        ):
             continue
         if filters.get("setter") and setter_s.lower() != str(filters["setter"]).strip().lower():
             continue
@@ -651,6 +657,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         by_lead[lead] = by_lead.get(lead, 0) + 1
         if dispo == "Sit":
             sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
+            sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
 
         matching.append(
             {
@@ -697,6 +704,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "demo_rate_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),  # legacy: was misnamed; kept for backward-compat
 
             "demo_rate_by_pipeline": by_pipeline,
+            "ran_by_pipeline": by_pipeline,
+            "sit_by_pipeline": sit_by_pipeline,
             "ran_by_lead_gen_source": by_lead,
             "sit_by_lead_gen_source": sit_by_lead,
             "demo_rate_by_lead_gen_source": {k: (round((sit_by_lead.get(k,0)/v)*100,1) if v else 0.0) for k,v in by_lead.items()},
@@ -721,6 +730,7 @@ class handler(BaseHTTPRequestHandler):
             "pipeline": (qs.get("pipeline", [None])[0] or None),
             "setter": (qs.get("setter", [None])[0] or None),
             "lead_source": (qs.get("lead_source", [None])[0] or None),
+            "sweeper": (qs.get("sweeper", [None])[0] or None),
         }
 
         try:

@@ -7,7 +7,14 @@ Morning Brief (auto narrative) for leadership standups.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler
+
+API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
 HTML = """<!doctype html>
@@ -17,6 +24,7 @@ HTML = """<!doctype html>
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>Happy Solar — Morning Brief</title>
   <style>
+__DASHBOARD_NAV_CSS__
     :root {
       --bg:#f5f7fa; --card:#fff; --border:#e8ecf0; --text:#111827; --muted:#6b7280; --muted2:#9ca3af;
       --pink:#ec4899; --pink2:#f472b6; --shadow:0 1px 3px rgba(17,24,39,0.06);
@@ -81,14 +89,7 @@ HTML = """<!doctype html>
         <div class=\"title\">☀️ Morning Brief</div>
         <div class=\"subtitle\">Auto-narrative standup summary from yesterday/today metrics</div>
         <div class=\"pinkline\"></div>
-        <div class=\"nav\">
-          <a class=\"navbtn\" href=\"/api/daily_update\">Daily Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/company_overview\">Company Overview</a>
-          <a class=\"navbtn\" href=\"/api/sales_dashboard\">Sales Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/fma_dashboard\">FMA Dashboard</a>
-          <a class=\"navbtn\" href=\"/api/settings\">Settings</a>
-          <a class=\"navbtn active\" href=\"/api/morning_brief\">Morning Brief</a>
-        </div>
+__DASHBOARD_NAV_HTML__
       </div>
       <div>
         <div class=\"filters\">
@@ -250,7 +251,7 @@ HTML = """<!doctype html>
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = HTML.encode("utf-8")
+        body = HTML.replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css()).replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("morning_brief")).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

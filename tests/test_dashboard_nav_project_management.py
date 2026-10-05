@@ -29,11 +29,11 @@ render_dashboard_nav = nav.render_dashboard_nav
 class DashboardNavProjectManagementTests(unittest.TestCase):
     def test_nav_includes_project_management_and_sibling_urls(self):
         html = render_dashboard_nav("company_overview")
-        self.assertIn("Project Management", html)
+        self.assertIn("PROJECT MANAGEMENT", html)
         self.assertIn(PM_HUB_URL, html)
         self.assertIn(HOLD_CANCELLED_URL, html)
         daily = html.find("Daily Dashboard")
-        project = html.find("Project Management")
+        project = html.find("PROJECT MANAGEMENT")
         self.assertNotEqual(daily, -1)
         self.assertNotEqual(project, -1)
         self.assertLess(daily, project)
@@ -43,7 +43,7 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertLess(project, bot)
         self.assertIn("/api/bot_kpi_scorecard", html)
         self.assertNotEqual(website, -1)
-        self.assertLess(bot, website)
+        self.assertLess(website, bot)
         self.assertIn("/api/website_funnel", html)
         self.assertIn("/api/website_traffic", html)
         self.assertLess(website, html.find("Website Traffic"))
@@ -53,14 +53,14 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
     def test_project_management_dropdown_is_active_for_either_child(self):
         hub_html = render_dashboard_nav("project_management_hub")
         hold_html = render_dashboard_nav("hold_cancelled")
-        self.assertIn("Project Management", hub_html)
+        self.assertIn("PROJECT MANAGEMENT", hub_html)
         self.assertIn(PM_HUB_URL, hub_html)
         self.assertIn(HOLD_CANCELLED_URL, hold_html)
-        self.assertIn('summary class="navbtn active"', hub_html)
-        self.assertIn('summary class="navbtn active"', hold_html)
+        self.assertIn("navlink navbtn active", hub_html)
+        self.assertIn("navlink navbtn active", hold_html)
         self.assertIn(f'href="{PM_HUB_URL}"', hub_html)
-        self.assertIn("navmenu-item active", hub_html)
-        self.assertIn("navmenu-item active", hold_html)
+        self.assertIn("Project Hub", hub_html)
+        self.assertIn("Hold / Cancelled", hold_html)
 
 
 if __name__ == "__main__":

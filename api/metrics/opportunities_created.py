@@ -42,6 +42,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from pipeline_scope import pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
@@ -402,7 +403,7 @@ def normalize_channel(v: Any) -> str:
     return str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None, pipeline: str | None = None, sweeper: bool = False) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -513,6 +514,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         if pipeline_scope_norm != "all":
             if included and pname_norm not in included:
                 continue
+        if not pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper):
+            continue
 
         in_pipeline += 1
 
@@ -694,10 +697,12 @@ class Handler(BaseHTTPRequestHandler):
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
             pipeline_scope = (qs.get("pipeline_scope", [""])[0] or "").strip() or None
             setter_last_name = (qs.get("setter_last_name", [""])[0] or "").strip() or None
+            pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
+            sweeper = truthy_flag(qs.get("sweeper", [""])[0])
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope, setter_last_name=setter_last_name)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope, setter_last_name=setter_last_name, pipeline=pipeline, sweeper=sweeper)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

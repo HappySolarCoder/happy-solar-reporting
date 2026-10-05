@@ -34,7 +34,7 @@ def _fetch_json(url: str, timeout: int = 25) -> dict | None:
 
 def _clean_qs(qs: dict[str, list[str]]) -> str:
     out = {}
-    for k in ("year", "month", "start", "end"):
+    for k in ("year", "month", "start", "end", "lead_source", "pipeline", "sweeper"):
         v = (qs.get(k, [""])[0] or "").strip()
         if v:
             out[k] = v

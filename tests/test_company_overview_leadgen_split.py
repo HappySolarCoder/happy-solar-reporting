@@ -77,10 +77,11 @@ class LeadGenInbound3plSplitTests(unittest.TestCase):
         self.assertAlmostEqual(inbound_demo, 60.0, places=1)
         self.assertAlmostEqual(three_pl_demo, 40.0, places=1)
 
-    def test_company_doors_self_gen_phones_titles_unchanged(self):
+    def test_company_doors_self_gen_sweeper_titles(self):
         html = self.html
-        for title in ("Company Funnel", "Doors Funnel", "Self Gen Funnel", "Phones Funnel"):
+        for title in ("Company Funnel", "Doors Funnel", "Self gen Funnel", "Sweeper Funnel"):
             self.assertIn(title, html)
+        self.assertNotIn("Phones Funnel", html)
         # Must not pull inbound CAC title-bucket logic into Lead Gen Pipelines.
         self.assertNotIn("Lead Locker", html)
         self.assertNotIn("Solar Reviews", html)

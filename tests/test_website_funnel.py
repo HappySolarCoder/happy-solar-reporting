@@ -282,14 +282,14 @@ class WebsiteFunnelNavTests(unittest.TestCase):
         self.assertIn('href="/api/website_funnel"', html)
         self.assertIn("Website Funnel", html)
         self.assertLess(html.find("Project Management"), html.find("Website Funnel"))
-        self.assertIn('class="navlink navbtn active" href="/api/website_funnel"', html)
+        self.assertIn('class="navlink active" href="/api/website_funnel"', html)
         self.assertIn('href="/api/website_traffic"', html)
         self.assertLess(html.find("Website Funnel"), html.find("Website Traffic"))
         self.assertNotIn('summary class="navbtn active"', html)
 
     def test_pm_dropdown_still_active_for_hub(self):
         html = nav.render_dashboard_nav("project_management_hub")
-        self.assertIn("navlink navbtn active", html)
+        self.assertIn("navlink active", html)
         self.assertIn("Project Hub", html)
         self.assertIn("Website Funnel", html)
 

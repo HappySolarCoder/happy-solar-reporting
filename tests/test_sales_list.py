@@ -721,7 +721,7 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("Sales List", html)
         self.assertNotIn('href="/api/essential_sales"', html)
         self.assertNotIn("Essential Sales", html)
-        self.assertIn("navlink navbtn active", html)
+        self.assertIn("navlink active", html)
         self.assertLess(html.find("Sales Dashboard"), html.find("Sales List"))
         self.assertLess(html.find("Sales List"), html.find("Rep Daily Recap"))
 

@@ -9,56 +9,54 @@ def dashboard_nav_css() -> str:
 
 
 def _sidebar_link_css() -> str:
-    """Beat legacy page `.navbtn` pill rules on Operations sidebar anchors.
+    """Lock Operations sidebar anchors to the Company Overview link look.
 
-    Shared nav links are `class="navlink navbtn"`. Several older pages append
-    `.navbtn { background:#fff; color:#1f2937; border-radius:12px }` after this
-    sheet. An id selector keeps the Company Overview link look on those pages
-    without restyling in-page pills that are not inside `#sidebar`.
+    Legacy pages append `.navbtn { background:#fff; border-radius:12px }` after
+    this sheet. Sidebar anchors are `navlink` only, and these declarations use
+    !important so a later page rule cannot paint them as pills.
     """
     return """
-    #sidebar a.navlink,
-    #sidebar a.navbtn {
-      display: flex;
+    #sidebar a.navlink {
+      display: flex !important;
       align-items: center;
       gap: 10px;
       width: auto;
-      margin: 2px 0;
-      padding: 11px 12px;
-      border: 0;
-      border-radius: 6px;
-      background: transparent;
-      box-shadow: none;
-      color: #a7bfd2;
-      font-size: 12px;
-      font-weight: 400;
+      margin: 2px 0 !important;
+      padding: 11px 12px !important;
+      border: 0 !important;
+      border-radius: 6px !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      color: #a7bfd2 !important;
+      font-size: 12px !important;
+      font-weight: 400 !important;
       line-height: 1.3;
       letter-spacing: 0;
-      text-decoration: none;
+      text-decoration: none !important;
       text-transform: none;
-      white-space: normal;
-      flex: none;
+      white-space: normal !important;
+      flex: none !important;
     }
-    #sidebar a.navlink:hover,
-    #sidebar a.navbtn:hover {
-      background: #102e46;
-      color: #fff;
-      border-color: transparent;
-      box-shadow: none;
-      text-decoration: none;
+    #sidebar a.navlink:hover {
+      background: #102e46 !important;
+      background-color: #102e46 !important;
+      color: #fff !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+      text-decoration: none !important;
       transform: translateX(2px);
     }
-    #sidebar a.navlink.active,
-    #sidebar a.navbtn.active {
-      background: #123e52;
-      color: #26d9eb;
-      border-color: transparent;
-      box-shadow: inset 2px 0 #26d9eb;
-      text-decoration: none;
+    #sidebar a.navlink.active {
+      background: #123e52 !important;
+      background-color: #123e52 !important;
+      color: #26d9eb !important;
+      border-color: transparent !important;
+      box-shadow: inset 2px 0 #26d9eb !important;
+      text-decoration: none !important;
     }
     @media (prefers-reduced-motion: reduce) {
-      #sidebar a.navlink:hover,
-      #sidebar a.navbtn:hover { transform: none; }
+      #sidebar a.navlink:hover { transform: none; }
     }
     button.mobile-menu.oc-menu-btn {
       display: none;
@@ -324,7 +322,9 @@ def _legacy_nav_css() -> str:
     body.oc-root th { color: #91abc0 !important; background: #0a2236; }
     body.oc-root td { color: #d5e3ec; border-color: #1b384c; }
     body.oc-root .wrap a.navbtn,
-    body.oc-root .wrap .navbtn { color: #d5e3ec; }
+    body.oc-root .wrap .navbtn { color: #1f2937 !important; }
+    body.oc-root .wrap a.navbtn.active,
+    body.oc-root .wrap .navbtn.active { color: #0a7a34 !important; }
     body.oc-root input,
     body.oc-root select {
       background: #091e30;
@@ -489,7 +489,7 @@ def render_dashboard_nav(current: str) -> str:
             if href.startswith("http"):
                 external = ' target="_blank" rel="noopener noreferrer"'
             links.append(
-                f'<a class="navlink navbtn{active}" href="{href}"{external}>{title}</a>'
+                f'<a class="navlink{active}" href="{href}"{external}>{title}</a>'
             )
         groups.append(
             f'<div class="navgroup">{label}</div>' + "".join(links)

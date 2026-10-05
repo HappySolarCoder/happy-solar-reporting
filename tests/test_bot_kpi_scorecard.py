@@ -287,7 +287,7 @@ class NavTests(unittest.TestCase):
         self.assertIn("Bot KPI", html)
         self.assertIn("/api/bot_kpi_scorecard", html)
         self.assertIn('href="/api/bot_kpi_scorecard"', html)
-        self.assertIn("navbtn active", html)
+        self.assertIn("navlink active", html)
         project = html.find("PROJECT MANAGEMENT")
         bot = html.find("Bot KPI Scorecard")
         website = html.find("Website Funnel")

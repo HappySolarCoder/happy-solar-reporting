@@ -261,12 +261,12 @@ class WebsiteTrafficNavTests(unittest.TestCase):
         self.assertIn('href="/api/website_funnel"', html)
         self.assertIn('href="/api/website_traffic"', html)
         self.assertLess(html.find("Website Funnel"), html.find("Website Traffic"))
-        self.assertIn('class="navlink navbtn active" href="/api/website_traffic"', html)
-        self.assertNotIn('class="navlink navbtn active" href="/api/website_funnel"', html)
+        self.assertIn('class="navlink active" href="/api/website_traffic"', html)
+        self.assertNotIn('class="navlink active" href="/api/website_funnel"', html)
 
     def test_funnel_page_does_not_mark_traffic_active(self):
         html = nav.render_dashboard_nav("website_funnel")
-        self.assertIn('class="navlink navbtn active" href="/api/website_funnel"', html)
+        self.assertIn('class="navlink active" href="/api/website_funnel"', html)
         self.assertIn('href="/api/website_traffic"', html)
         self.assertNotIn('class="navbtn active" href="/api/website_traffic"', html)
 
@@ -357,7 +357,7 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
 
     def test_page_handler_uses_traffic_nav(self):
         html = page.render_html()
-        self.assertIn('class="navlink navbtn active" href="/api/website_traffic"', html)
+        self.assertIn('class="navlink active" href="/api/website_traffic"', html)
 
     def test_html_first_paint_shows_live_numbers_not_example_tags(self):
         payload = live_payload(

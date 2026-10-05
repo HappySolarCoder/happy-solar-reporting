@@ -162,7 +162,7 @@ def _nav_collapse_css() -> str:
       margin-right: 3px;
     }
     @media (min-width: 801px) {
-      html.oc-nav-collapsed #sidebar { width: 64px; }
+      html.oc-nav-collapsed #sidebar { width: 64px; box-sizing: border-box; }
       html.oc-nav-collapsed #sidebar .oc-nav-tools {
         justify-content: center;
         padding: 10px 6px 0;

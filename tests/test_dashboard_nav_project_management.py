@@ -88,7 +88,7 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn("hsOpsNavCollapsed", html)
         self.assertIn("localStorage.getItem('hsOpsNavCollapsed')", css)
         self.assertIn("oc-nav-collapsed", css)
-        self.assertIn("html.oc-nav-collapsed #sidebar { width: 64px; }", css)
+        self.assertIn("html.oc-nav-collapsed #sidebar { width: 64px; box-sizing: border-box; }", css)
         self.assertIn("margin-left: 64px !important;", css)
         self.assertIn("prefers-reduced-motion: reduce", css)
         self.assertIn("transition: none !important;", css)

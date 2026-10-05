@@ -168,6 +168,8 @@ class BloomGoalParseTests(unittest.TestCase):
         payload = bloom.build_payload("2026-10", documents)
         self.assertEqual(payload["company_sales"]["target"], 60)
         self.assertTrue(payload["company_sales"]["stored"])
+        self.assertIn("scope:company", payload["unset"]["company_sales"])
+        self.assertNotIn("No scope:company sales goal is stored", payload["unset"]["company_sales"])
         self.assertNotEqual(payload["company_sales"]["target"], 37 + 17 + 7)
         self.assertIsNone(payload["demo_pct"])
         self.assertIsNone(payload["opp2prelim"])

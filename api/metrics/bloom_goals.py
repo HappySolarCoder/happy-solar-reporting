@@ -261,6 +261,9 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
             )
             continue
         territories.append(_goal_row(name, period_id, None, stored=False, locked_default=False))
+    unset = dict(UNSET)
+    if company is not None:
+        unset["company_sales"] = "Stored on scope:company for this month."
     return {
         "available": True,
         "source": "portal_goal_documents",
@@ -278,7 +281,7 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
         "opportunities_created": None,
         "demo_pct": None,
         "opp2prelim": None,
-        "unset": dict(UNSET),
+        "unset": unset,
         "blocker": None,
     }
 

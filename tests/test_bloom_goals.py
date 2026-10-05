@@ -101,6 +101,85 @@ class BloomGoalParseTests(unittest.TestCase):
         self.assertTrue(virtual["locked_default"])
         self.assertFalse(virtual["stored"])
 
+    def test_october_2026_company_sales_document_is_not_a_territory_sum(self):
+        company = {
+            "id": "account_goal_company_company_sales_2026-10",
+            "scope": "company",
+            "territory": None,
+            "metricKey": "sales",
+            "periodId": "2026-10",
+            "periodStart": "2026-10-01",
+            "periodEnd": "2026-11-01",
+            "timezone": "America/New_York",
+            "target": 60,
+            "unit": "count",
+            "version": 1,
+            "updatedBy": "evan-october-2026-company-sales",
+            "updatedAt": "2026-10-05T23:00:00.000Z",
+        }
+        documents = [
+            ("scope:company", _doc([company])),
+            (
+                "scope:territory:Buffalo",
+                _doc(
+                    [
+                        {
+                            "scope": "territory",
+                            "territory": "Buffalo",
+                            "metricKey": "sales",
+                            "periodId": "2026-10",
+                            "target": 37,
+                            "unit": "count",
+                        }
+                    ]
+                ),
+            ),
+            (
+                "scope:territory:Rochester",
+                _doc(
+                    [
+                        {
+                            "scope": "territory",
+                            "territory": "Rochester",
+                            "metricKey": "sales",
+                            "periodId": "2026-10",
+                            "target": 17,
+                            "unit": "count",
+                        }
+                    ]
+                ),
+            ),
+            (
+                "scope:territory:Virtual/Sweeper",
+                _doc(
+                    [
+                        {
+                            "scope": "territory",
+                            "territory": "Virtual/Sweeper",
+                            "metricKey": "sales",
+                            "periodId": "2026-10",
+                            "target": 7,
+                            "unit": "count",
+                        }
+                    ]
+                ),
+            ),
+        ]
+        payload = bloom.build_payload("2026-10", documents)
+        self.assertEqual(payload["company_sales"]["target"], 60)
+        self.assertTrue(payload["company_sales"]["stored"])
+        self.assertNotEqual(payload["company_sales"]["target"], 37 + 17 + 7)
+        self.assertIsNone(payload["demo_pct"])
+        self.assertIsNone(payload["opp2prelim"])
+        self.assertIsNone(payload["opportunities_created"])
+        by_name = {row["territory"]: row for row in payload["territory_sales"]}
+        self.assertEqual(by_name["Buffalo"]["target"], 37)
+        self.assertEqual(by_name["Rochester"]["target"], 17)
+        self.assertEqual(by_name["Virtual/Sweeper"]["target"], 7)
+        self.assertFalse(by_name["Virtual/Sweeper"]["locked_default"])
+        november = bloom.build_payload("2026-11", documents)
+        self.assertIsNone(november["company_sales"])
+
     def test_company_sales_goal_is_not_a_sum_of_territories(self):
         documents = [
             (

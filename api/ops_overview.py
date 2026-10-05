@@ -74,8 +74,8 @@ def render_body(nav_html: str) -> str:
         </div>
       </main>
       <footer><span>HAPPY SOLAR <b>/</b> OPERATIONS CONTROL</span><span id="footerScope">America/New_York</span></footer>
+      <div id="overlay" class="overlay" hidden></div>
     </div>
-    <div id="overlay" class="overlay" hidden></div>
     <script>
       const INBOUND_KEYS = ['Inbound'];
       const THREE_PL_KEYS = ['3PL'];

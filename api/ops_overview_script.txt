@@ -237,9 +237,9 @@
   function fillStage(prefix, stats) {
     setText(prefix + "Created", numText(stats.created));
     setText(prefix + "Demo", rateText(stats.demos, stats.ran));
-    setText(prefix + "DemoCounts", stats.demos == null || stats.ran == null ? "Demos — / ran —" : stats.demos + " / " + stats.ran + " ran");
+    setText(prefix + "DemoCounts", !Number(stats.ran) ? "Demos — / ran —" : stats.demos + " / " + stats.ran + " ran");
     setText(prefix + "Opp2", rateText(stats.sales, stats.ran));
-    setText(prefix + "Opp2Counts", stats.sales == null || stats.ran == null ? "Sales — / ran —" : stats.sales + " / " + stats.ran + " ran");
+    setText(prefix + "Opp2Counts", !Number(stats.ran) ? "Sales — / ran —" : stats.sales + " / " + stats.ran + " ran");
     setText(prefix + "Sales", numText(stats.sales));
   }
   function donut(pipe, total) {
@@ -463,8 +463,8 @@
     const f = pageFilters || filters();
     const stages = [
       stageButton("Opportunities created", numText(stats.created), "Created in selected period", 0),
-      stageButton("Demo %", rateText(stats.demos, stats.ran), (stats.demos == null ? "—" : stats.demos) + " demos / " + (stats.ran == null ? "—" : stats.ran) + " ran", 1),
-      stageButton("Opp2Prelim", rateText(stats.sales, stats.ran), (stats.sales == null ? "—" : stats.sales) + " sales / " + (stats.ran == null ? "—" : stats.ran) + " ran", 2),
+      stageButton("Demo %", rateText(stats.demos, stats.ran), !Number(stats.ran) ? "Demos — / ran —" : stats.demos + " demos / " + stats.ran + " ran", 1),
+      stageButton("Opp2Prelim", rateText(stats.sales, stats.ran), !Number(stats.ran) ? "Sales — / ran —" : stats.sales + " sales / " + stats.ran + " ran", 2),
       stageButton("Sales", numText(stats.sales), "Sold in selected period", 3),
     ].join("");
     modal(name + " · funnel & monthly trend",

@@ -830,6 +830,16 @@ def compute(
 
     if funnel_docs is None:
         funnel_docs = get_docs_by_ids(db, FUNNEL_COLLECTION, funnel_ids)
+        today = (as_of or ny_now()).date().isoformat()
+        present = {compact_str(doc.get("date") or doc.get("_id")) for doc in funnel_docs if isinstance(doc, dict)}
+        elapsed = [day for day in window.dates if day <= today and day not in present]
+        if elapsed and db is not None:
+            try:
+                funnel_mod = _website_funnel_module()
+                funnel_mod.backfill_elapsed_days(db, elapsed, present, today=today, limit=3)
+                funnel_docs = get_docs_by_ids(db, FUNNEL_COLLECTION, funnel_ids)
+            except Exception:
+                pass
 
     loaded_social = get_week_doc(db, SOCIAL_COLLECTION, window.week_id) if social_doc is None else social_doc
     loaded_raydar = get_week_doc(db, RAYDAR_WEEK_COLLECTION, window.week_id) if raydar_doc is None else raydar_doc

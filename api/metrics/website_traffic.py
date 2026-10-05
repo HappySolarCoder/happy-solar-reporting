@@ -1431,6 +1431,7 @@ def example_degrade_payload(
         "live_fields": live_fields,
         "stub_fields": stub_fields,
         "overview": empty_overview(),
+        "meta": {"status": "unavailable", "reason": "do_not_invent_meta_spend", "spend": None, "impressions": None, "clicks": None, "reach": None},
         "acquisition": {"rows": [], "fb_organic": None, "fb_paid": None},
         "funnel": {
             "brand_site_sessions": None,
@@ -1495,6 +1496,54 @@ def example_degrade_payload(
     if error:
         payload["error"] = error
     return payload
+
+
+def read_meta_strip(start: str, end: str) -> dict[str, Any]:
+    """Account impressions, outbound clicks, and spend. Reach is not requested.
+
+    A failed read stays unavailable. The dollar amount is not invented.
+    """
+    try:
+        name = "hs_website_traffic_paid_social"
+        module = sys.modules.get(name)
+        if module is None:
+            spec = importlib.util.spec_from_file_location(name, _METRICS_DIR / "paid_social_funnel.py")
+            if spec is None or spec.loader is None:
+                return {"status": "unavailable", "reason": "meta_reader_missing", "spend": None, "impressions": None, "clicks": None, "reach": None}
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[name] = module
+            spec.loader.exec_module(module)
+        tz = ZoneInfo(TIMEZONE_NAME)
+        start_local = datetime.fromisoformat(start).replace(tzinfo=tz)
+        end_local = datetime.fromisoformat(end).replace(tzinfo=tz) + timedelta(days=1)
+        daily = module.fetch_meta_daily(start_local, end_local)
+    except Exception:
+        return {"status": "unavailable", "reason": "meta_read_failed", "spend": None, "impressions": None, "clicks": None, "reach": None}
+    if not isinstance(daily, dict) or daily.get("status") != "ok":
+        reason = daily.get("reason") if isinstance(daily, dict) else "unavailable"
+        return {"status": "unavailable", "reason": reason or "unavailable", "spend": None, "impressions": None, "clicks": None, "reach": None}
+    rows = [row for row in (daily.get("rows") or []) if isinstance(row, dict)]
+
+    def total(key: str):
+        values = [row.get(key) for row in rows]
+        if not rows or any(value is None for value in values):
+            return None
+        if key == "spend":
+            return round(sum(float(value) for value in values), 2)
+        return int(sum(int(value) for value in values))
+
+    spend = total("spend")
+    if spend is None:
+        return {"status": "unavailable", "reason": "spend_missing", "spend": None, "impressions": None, "clicks": None, "reach": None}
+    return {
+        "status": "ok",
+        "reason": None,
+        "spend": spend,
+        "impressions": total("impressions"),
+        "clicks": total("outbound_clicks"),
+        "reach": None,
+        "note": "Meta account insights. Reach is not in this read.",
+    }
 
 
 def compute_website_traffic(
@@ -1623,6 +1672,8 @@ def compute_website_traffic(
     fb_ready = acq_status == "ok" and bool(acq.get("has_facebook"))
     content_ready = path_summary is not None and bool(path_summary.get("top_landings"))
     users_ready = overview_status == "ok" and users is not None
+    meta = read_meta_strip(start_key, end_key) if fetch_remote else {"status": "unavailable", "reason": "fetch_remote_off"}
+    meta_live = meta.get("status") == "ok" and meta.get("spend") is not None
 
     tiles = {
         "overview": tile(TILE_LIVE if (split_ready or users_ready) else TILE_EXAMPLE, source="warehouse+ga4" if split_ready else None),
@@ -1636,7 +1687,11 @@ def compute_website_traffic(
         "cta_taps": tile(TILE_LIVE if cta_ready else TILE_EXAMPLE, source="estimate_cta_click" if cta_ready else None),
         "fb_post_sessions": tile(TILE_LIVE if fb_ready else TILE_EXAMPLE, source="ga4_session_source" if fb_ready else None),
         "paid_mismatch": tile(TILE_EXAMPLE, reason="landing_x_source_not_queried"),
-        "meta_spend": tile(TILE_NOT_WIRED, reason="do_not_invent_meta_spend"),
+        "meta_spend": tile(
+            TILE_LIVE if meta_live else TILE_NOT_WIRED,
+            source="meta_account_insights" if meta_live else None,
+            reason=None if meta_live else (meta.get("reason") or "do_not_invent_meta_spend"),
+        ),
         "contact_step": tile(TILE_EXAMPLE, reason="no_contact_event"),
     }
     live_fields = sorted(name for name, info in tiles.items() if info.get("status") == TILE_LIVE)
@@ -1679,7 +1734,11 @@ def compute_website_traffic(
         "Brand site sessions are a separate Overview KPI.",
         "Instant Form / 3PL are not website leads.",
         "Named fills are Marketing aggregates only. PII stays gated.",
-        "Meta spend is not wired and was not invented.",
+        (
+            "Meta spend, impressions, and outbound clicks are the account insights read. Reach is not in that read."
+            if meta_live
+            else "Meta spend is not wired and was not invented."
+        ),
         "Charles QA before treating preview numbers as live.",
     ]
     dated_strategy = compact_str((ga4_paths_daily or {}).get("strategy"))
@@ -1736,6 +1795,7 @@ def compute_website_traffic(
         "live_fields": live_fields,
         "stub_fields": stub_fields,
         "overview": overview,
+        "meta": meta,
         "acquisition": {
             "rows": acq.get("rows") or [],
             "fb_organic": acq.get("fb_organic"),

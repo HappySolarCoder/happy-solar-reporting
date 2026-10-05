@@ -90,7 +90,7 @@ class handler(BaseHTTPRequestHandler):
                 if date:
                     payload = metric.compute_day_snapshot(db, date)
                 else:
-                    payload = metric.compute_month(db, year=year, month=month)
+                    payload = metric.compute_month(db, year=year, month=month, backfill=True)
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

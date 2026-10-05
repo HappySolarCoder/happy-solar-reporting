@@ -701,6 +701,48 @@ __DASHBOARD_NAV_HTML__
 
   // Setter demo table range persistence (table-only)
   const setterRangeKey = 'fms_setter_table_range_v1';
+  function normGoalName(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  function mergeBloomPersonGoals(goalsRows, roster, personGoals) {
+    if (!Array.isArray(personGoals) || !personGoals.length) return;
+    const have = {};
+    for (const row of goalsRows) {
+      const pk = String(row.person_key || '');
+      const metric = String(row.metric || '');
+      if (pk && metric) have[pk + '|' + metric] = true;
+    }
+    const byName = {};
+    const byLast = {};
+    for (const person of roster || []) {
+      const name = normGoalName(person.display_name || person.ghl_user_name || person.raydar_user_name);
+      if (name && !byName[name]) byName[name] = person;
+      const last = normGoalName(person.ghl_setter_last_name);
+      if (!last) continue;
+      if (Object.prototype.hasOwnProperty.call(byLast, last)) byLast[last] = null;
+      else byLast[last] = person;
+    }
+    for (const goal of personGoals) {
+      const metric = String(goal.settings_metric || '');
+      if (!metric || goal.target == null) continue;
+      const name = normGoalName(goal.name);
+      let person = name ? byName[name] : null;
+      if (!person && name) {
+        const parts = name.split(' ').filter(Boolean);
+        const last = parts[parts.length - 1];
+        const candidate = byLast[last];
+        if (candidate) {
+          const cand = normGoalName(candidate.display_name || candidate.ghl_user_name || '');
+          const first = parts[0];
+          if (!first || cand.split(' ')[0] === first) person = candidate;
+        }
+      }
+      const pk = person ? String(person.person_key || '') : '';
+      if (!pk || have[pk + '|' + metric]) continue;
+      have[pk + '|' + metric] = true;
+      goalsRows.push({ person_key: pk, metric: metric, value: Number(goal.target), source: 'bloom' });
+    }
+  }
   function getSetterRange() {
     try {
       const raw = localStorage.getItem(setterRangeKey);
@@ -1104,7 +1146,7 @@ __DASHBOARD_NAV_HTML__
         let salesUrl = `/api/metrics/sales?format=json&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
         if (oppLs) salesUrl += `&lead_source=${encodeURIComponent(oppLs)}`;
 
-        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, rayMonthRes, roleRes, oppRes, salesRes] = await Promise.all([
+        const [demoRes, settingsRes, oppTopRes, rayTopRes, rayTableRes, rayMonthRes, roleRes, oppRes, salesRes, bloomRes] = await Promise.all([
           fetch(demoUrl),
           fetch('/api/settings_api', settingsReq),
           fetch(oppTopUrl),
@@ -1114,6 +1156,7 @@ __DASHBOARD_NAV_HTML__
           fetch('/api/metrics/raydar_user_roles?format=json'),
           fetch(oppUrl),
           fetch(salesUrl),
+          fetch('/api/metrics/bloom_goals?period=' + encodeURIComponent(monthStr)),
         ]);
 
         const demoData = demoRes.ok ? await demoRes.json() : null;
@@ -1122,7 +1165,9 @@ __DASHBOARD_NAV_HTML__
 
         const settings = settingsRes.ok ? await settingsRes.json() : null;
         const roster = settings && Array.isArray(settings.roster_people) ? settings.roster_people : [];
-        const goalsRows = settings && Array.isArray(settings.goals_for_month) ? settings.goals_for_month : [];
+        const goalsRows = settings && Array.isArray(settings.goals_for_month) ? settings.goals_for_month.slice() : [];
+        const bloomPayload = bloomRes && bloomRes.ok ? await bloomRes.json() : null;
+        mergeBloomPersonGoals(goalsRows, roster, bloomPayload && bloomPayload.person_goals);
 
         const setterToPerson = {};
         const setterToRaydar = {};

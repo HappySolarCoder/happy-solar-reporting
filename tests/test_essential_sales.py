@@ -55,7 +55,7 @@ class EssentialSalesMappingTests(unittest.TestCase):
             [
                 "Submission Date",
                 "Finance type",
-                "Cient",
+                "Client",
                 "Salesperson",
                 "WC",
                 "ASI",

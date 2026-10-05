@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Goals Dashboard. Bloom targets stay Goal Not Set until a read path exists."""
+"""Goals Dashboard. Company and territory sales goals come from Bloom portal_goal_documents."""
 
 from __future__ import annotations
 
@@ -75,8 +75,52 @@ def render_html() -> str:
         renderFilters(); load();
       }});
     }}
-    function goalCard(title, actual, detail) {{
-      return '<article class="goal-tile"><div class="goal-tile-head"><h3>'+esc(title)+'</h3><span class="badge warn">Needs Data</span></div><div class="goal-actual">'+esc(actual)+' <span>actual</span></div><div class="goal-meter"><i style="width:0%"></i></div><div class="goal-tile-foot"><span>Goal Not Set</span><span>'+esc(detail)+'</span></div><p>No matching Bloom target for this scope, so pace is not scored On Track or Behind.</p></article>';
+    function daysInMonth(period) {{
+      return new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).getUTCDate();
+    }}
+    function elapsedDays(period) {{
+      const today = nyToday();
+      if (today.slice(0, 7) < period) return 0;
+      if (today.slice(0, 7) > period) return daysInMonth(period);
+      return Number(today.slice(8, 10));
+    }}
+    function goalCard(title, actual, detail, goal) {{
+      const unset = !goal || goal.target == null;
+      if (unset) {{
+        return '<article class="goal-tile"><div class="goal-tile-head"><h3>'+esc(title)+'</h3><span class="badge warn">Goal Not Set</span></div><div class="goal-actual">'+esc(actual)+' <span>actual</span></div><div class="goal-meter"><i style="width:0%"></i></div><div class="goal-tile-foot"><span>Goal Not Set</span><span>'+esc(detail)+'</span></div><p>No matching Bloom target for this scope, so pace is not scored On Track or Behind.</p></article>';
+      }}
+      const target = Number(goal.target);
+      const actualNumber = actual == null || actual === "—" || Number.isNaN(Number(actual)) ? null : Number(actual);
+      const width = actualNumber == null || !target ? 0 : Math.max(0, Math.min(100, 100 * actualNumber / target));
+      const period = goal.period_id;
+      const days = daysInMonth(period);
+      const elapsed = elapsedDays(period);
+      const expected = target * elapsed / days;
+      let status = "Needs Data";
+      let badge = "warn";
+      if (actualNumber != null && elapsed === 0) {{ status = "Not started"; badge = "cyan"; }}
+      else if (actualNumber != null) {{
+        status = actualNumber + 1e-9 >= expected ? "On Track" : "Behind";
+        badge = status === "On Track" ? "good" : "warn";
+      }}
+      const marker = days ? Math.max(0, Math.min(100, 100 * elapsed / days)) : 0;
+      const locked = goal.locked_default ? " · locked default" : "";
+      return '<article class="goal-tile"><div class="goal-tile-head"><h3>'+esc(title)+'</h3><span class="badge '+badge+'">'+esc(status)+'</span></div><div class="goal-actual">'+esc(actual)+' <span>actual</span></div><div class="goal-meter"><i style="width:'+width.toFixed(1)+'%"></i><span style="left:'+marker.toFixed(1)+'%"></span></div><div class="goal-tile-foot"><span>Goal '+esc(target)+esc(locked)+'</span><span>day '+elapsed+' of '+days+'</span></div><p>'+esc(detail)+'</p></article>';
+    }}
+    function territoryRow(bloom, name) {{
+      const rows = (bloom && bloom.territory_sales) || [];
+      for (let i = 0; i < rows.length; i += 1) if (rows[i].territory === name) return rows[i];
+      return null;
+    }}
+    function territoryListCard(actual, bloom) {{
+      const rows = (bloom && bloom.territory_sales) || [];
+      const known = rows.filter(function (row) {{ return row.target != null; }});
+      if (!known.length) return goalCard("Territory sales", actual, "No territory sales goals for this month.", null);
+      const body = rows.map(function (row) {{
+        const value = row.target == null ? "Goal Not Set" : ("Goal " + row.target + (row.locked_default ? " locked" : ""));
+        return '<div class="statrow"><div><strong>' + esc(row.territory) + '</strong></div><div class="value">' + esc(value) + '</div></div>';
+      }}).join("");
+      return '<article class="goal-tile"><div class="goal-tile-head"><h3>Territory sales</h3><span class="badge good">Synced</span></div><div class="goal-actual">' + esc(actual) + ' <span>actual</span></div>' + body + '<p>Stored Bloom territory sales goals. They are not added into a company goal.</p></article>';
     }}
     async function load() {{
       const f = filters();
@@ -89,7 +133,7 @@ def render_html() -> str:
       if (f.source === "Sweeper") params.set("sweeper", "1");
       else if (f.source !== "All") params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
       const snapRes = await fetch("/api/metrics/company_snapshot?" + params.toString());
-      const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1");
+      const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(f.start.slice(0, 7)));
       const snap = snapRes.ok ? await snapRes.json() : null;
       const bloom = bloomRes.ok ? await bloomRes.json() : null;
       const data = (snap && snap.data) || {{}};
@@ -99,16 +143,24 @@ def render_html() -> str:
       const demoText = demo && demo.ran_count ? (Number(demo.result).toFixed(1) + "%") : "—";
       const oppText = demo && demo.ran_count && sales != null ? ((100 * Number(sales) / Number(demo.ran_count)).toFixed(1) + "%") : "—";
       const pipe = (data.sales && data.sales.breakdowns && data.sales.breakdowns.sales_by_pipeline) || {{}};
+      const territoryName = f.territory === "Virtual" ? "Virtual/Sweeper" : f.territory;
       const territoryActual = f.territory === "All" ? (sales == null ? "—" : sales) : (pipe[f.territory] == null ? "—" : pipe[f.territory]);
+      const territoryGoal = f.territory === "All" ? null : territoryRow(bloom, territoryName);
+      const territoryDetail = f.territory === "All"
+        ? ((bloom && bloom.territory_sales) || []).map(function (row) {{ return row.territory + " " + (row.target == null ? "Goal Not Set" : row.target); }}).join(" · ") || "No territory sales goals"
+        : territoryName + " sales goal";
+      const unset = (bloom && bloom.unset) || {{}};
       document.getElementById("scorecard").innerHTML = [
-        goalCard("Company sales", sales == null ? "—" : sales, "Distinct-contact sales"),
-        goalCard("Territory sales", territoryActual, f.territory === "All" ? "Sum of pipeline sales" : f.territory),
-        goalCard("Opportunities created", created == null ? "—" : created, "Created in the selected dates"),
-        goalCard("Demo %", demoText, demo ? (demo.sit_count + " demos / " + demo.ran_count + " ran") : "Demo rate unavailable"),
-        goalCard("Opp2Prelim", oppText, "Sales / ran. Not prorated by days elapsed.")
+        goalCard("Company sales", sales == null ? "—" : sales, "Distinct-contact sales. " + (unset.company_sales || ""), bloom && bloom.company_sales),
+        (f.territory === "All" ? territoryListCard(territoryActual, bloom) : goalCard("Territory sales", territoryActual, territoryDetail, territoryGoal)),
+        goalCard("Opportunities created", created == null ? "—" : created, unset.opportunities_created || "Created in the selected dates", null),
+        goalCard("Demo %", demoText, (demo ? (demo.sit_count + " demos / " + demo.ran_count + " ran. ") : "") + (unset.demo_pct || ""), null),
+        goalCard("Opp2Prelim", oppText, "Sales / ran. " + (unset.opp2prelim || "Not prorated by days elapsed."), null)
       ].join("");
       document.getElementById("actualsAsOf").textContent = (data.sales && data.sales.generated_at) || "unavailable";
-      document.getElementById("bloomStatus").textContent = (bloom && bloom.blocker) || "Bloom goal status unavailable.";
+      document.getElementById("bloomStatus").textContent = bloom && bloom.available
+        ? ("Read portal_goal_documents for " + bloom.period_id + ". " + (bloom.company_sales ? ("Company sales goal " + bloom.company_sales.target + ". ") : (unset.company_sales || "")) + territoryDetail)
+        : ((bloom && bloom.blocker) || "Bloom goal status unavailable.");
       document.getElementById("bloomBadge").textContent = bloom && bloom.available ? "Synced" : "Goal Not Set";
       document.getElementById("asOf").textContent = bloom && bloom.checked_at ? ("Bloom check " + bloom.checked_at) : "Bloom unread";
       const month = f.start.slice(0, 7);
@@ -117,10 +169,19 @@ def render_html() -> str:
       if (!roster.ok) {{ host.textContent = "Roster goals unavailable."; return; }}
       const payload = await roster.json();
       const rows = payload.goals_for_month || [];
-      if (!rows.length) {{ host.innerHTML = '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '.</p>'; return; }}
-      host.innerHTML = '<table><thead><tr><th>Person</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + rows.map(function(row) {{
-        return '<tr><td>' + esc(row.person_key) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.value) + '</td></tr>';
-      }}).join("") + '</tbody></table>';
+      const bloomPeople = (bloom && bloom.person_goals) || [];
+      if (!rows.length && !bloomPeople.length) {{ host.innerHTML = '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '. Bloom has no person goals for this month either.</p>'; return; }}
+      const firestoreTable = rows.length
+        ? '<table><thead><tr><th>Person</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + rows.map(function(row) {{
+            return '<tr><td>' + esc(row.person_key) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.value) + '</td></tr>';
+          }}).join("") + '</tbody></table>'
+        : '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '.</p>';
+      const bloomTable = bloomPeople.length
+        ? '<p class="chart-note">Bloom person goals from portal_goal_documents.</p><table><thead><tr><th>Person</th><th>Role</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + bloomPeople.map(function(row) {{
+            return '<tr><td>' + esc(row.name || row.assignee_user_id) + '</td><td>' + esc(row.role) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.target) + '</td></tr>';
+          }}).join("") + '</tbody></table>'
+        : '';
+      host.innerHTML = firestoreTable + bloomTable;
     }}
     renderFilters();
     load();

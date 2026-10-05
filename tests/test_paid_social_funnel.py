@@ -659,20 +659,20 @@ class MetaAndVisitorTests(unittest.TestCase):
             end_local=end_local,
             daily_meta=daily,
             aggregate_spend=metric.cac.MetaSpendResult(
-                spend=110.60,
+                spend=130.60,
                 spend_status="ok",
                 account_id=metric.META_ACCOUNT_ID,
             ),
         )
         gap = payload["spend"]["gap"]
-        self.assertEqual(gap["account_insights_total"], 110.60)
+        self.assertEqual(gap["account_insights_total"], 130.60)
         self.assertEqual(gap["daily_rows_sum"], 110.11)
         self.assertIn("does not pick one", gap["note"])
         self.assertIn("Neither figure is tied to a lead or an opp", gap["note"])
         self.assertIsNone(payload["spend"]["spend"])
         self.assertIsNone(payload["kpis"]["cost_per_lead"]["value"])
         by_spend = payload["kpis"]["cost_per_lead"]["by_spend"]
-        self.assertEqual(by_spend["account_insights_total"], round(110.60 / 2, 2))
+        self.assertEqual(by_spend["account_insights_total"], round(130.60 / 2, 2))
         self.assertEqual(by_spend["daily_rows_sum"], round(110.11 / 2, 2))
         self.assertNotEqual(by_spend["account_insights_total"], by_spend["daily_rows_sum"])
         views = {step["key"]: step for step in payload["funnel"]}["ad_views"]
@@ -918,6 +918,52 @@ class GrowthFixtureTests(unittest.TestCase):
         self.assertIsNone(model["kpis"]["cpl"]["value"])
         self.assertIsNone(model["kpis"]["spend"]["value"])
         self.assertTrue(any(item["id"] == "rec-spend-gap" for item in model["recommendations"]))
+
+    def test_cent_level_spend_difference_uses_the_account_total(self):
+        start_local, end_local, counts = MetaAndVisitorTests()._counts()
+        counts["leads"] = 3
+        daily = {
+            "status": "ok",
+            "rows": [
+                {"date": "2026-10-01", "impressions": 10, "outbound_clicks": 1, "spend": 100.00},
+                {"date": "2026-10-02", "impressions": 10, "outbound_clicks": 1, "spend": 85.28},
+            ],
+            "lead_actions_ignored": False,
+        }
+        payload = metric.assemble_paid_social(
+            counts,
+            start_local=start_local,
+            end_local=end_local,
+            daily_meta=daily,
+            aggregate_spend=metric.cac.MetaSpendResult(
+                spend=185.00,
+                spend_status="ok",
+                account_id=metric.META_ACCOUNT_ID,
+            ),
+        )
+        self.assertIsNone(payload["spend"]["gap"])
+        self.assertEqual(payload["spend"]["spend"], 185.00)
+
+    def test_lead_chart_includes_the_as_of_day(self):
+        from datetime import date as date_cls
+        from zoneinfo import ZoneInfo
+
+        days = [
+            {"date": f"2026-10-0{day}", "leads": 0, "known": True}
+            for day in range(1, 5)
+        ]
+        days.append({"date": "2026-10-05", "leads": 3, "known": True})
+        as_of = datetime(2026, 10, 5, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+        pace = growth._pace("2026-10", 10, date_cls(2026, 10, 1), date_cls(2026, 10, 5), as_of.date(), days, 3)
+        self.assertEqual(pace["actual"], 3)
+        self.assertEqual(pace["status"], "ahead")
+        chart = growth._lead_chart(
+            {"goal_month": "2026-10", "days": days, "as_of": as_of},
+            pace,
+            3,
+        )
+        self.assertIn("3 actual", chart["summary"])
+        self.assertNotIn("0 actual", chart["summary"])
 
 
 class PageTests(unittest.TestCase):

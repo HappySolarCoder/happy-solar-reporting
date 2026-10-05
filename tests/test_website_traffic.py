@@ -344,8 +344,8 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
 
     def test_strips_footer_and_cta(self):
         html = page.render_html()
-        self.assertIn("when Ads ACTIVE", html)
         self.assertIn("Meta is not wired", html)
+        self.assertIn("Reach was not invented", html)
         self.assertIn("estimate/LP visits ↑ · starts → 0", html)
         self.assertIn("408492342", html)
         self.assertIn("G-V02RZFR4SZ", html)

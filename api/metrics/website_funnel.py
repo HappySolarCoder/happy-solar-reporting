@@ -84,7 +84,7 @@ from __future__ import annotations
 import json
 import os
 from calendar import monthrange
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
@@ -1074,10 +1074,18 @@ def cumulative_form_ratios(days: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -> dict[str, Any]:
+def aggregate_daily_docs(
+    docs: list[dict[str, Any]],
+    *,
+    year: int,
+    month: int,
+    as_of: date | None = None,
+) -> dict[str, Any]:
     dates = month_dates(year, month)
     present = {compact_str(row.get("date")) for row in docs if compact_str(row.get("date"))}
-    missing = [day for day in dates if day not in present]
+    today = (as_of or datetime.now(ZoneInfo(TIMEZONE_NAME)).date()).isoformat()
+    missing = [day for day in dates if day not in present and day <= today]
+    future = [day for day in dates if day > today]
     ga4_statuses = [compact_str(row.get("ga4")) or "unknown" for row in docs]
     if not docs:
         ga4_status = "missing_docs"
@@ -1158,6 +1166,10 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
     elif missing:
         notes.append(
             f"Missing {len(missing)} daily warehouse doc(s): {', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}."
+        )
+    if future:
+        notes.append(
+            f"{len(future)} later day(s) in this month have not happened yet and are not missing warehouse docs."
         )
     if ga4_status == "not_configured":
         notes.append("GA4 is not_configured. Session/start/completed-form counts are null — traffic was not faked.")
@@ -1249,6 +1261,7 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
         "days_requested": len(dates),
         "days_present": len(present),
         "missing_dates": missing,
+        "future_dates": future,
         "ga4": ga4_status,
         "totals": totals,
         "days": days,
@@ -1310,9 +1323,31 @@ def aggregate_daily_docs(docs: list[dict[str, Any]], *, year: int, month: int) -
     }
 
 
-def compute_month(db: firestore.Client, *, year: int, month: int) -> dict[str, Any]:
+def backfill_elapsed_days(db: firestore.Client, dates: list[str], present: set[str], *, today: str, limit: int = 3) -> list[str]:
+    """Write the existing daily rollup for elapsed days that have no doc yet."""
+    filled: list[str] = []
+    for day in dates:
+        if day in present or day > today:
+            continue
+        if len(filled) >= limit:
+            break
+        rollup_day(db, day)
+        filled.append(day)
+    return filled
+
+
+def compute_month(db: firestore.Client, *, year: int, month: int, backfill: bool = False) -> dict[str, Any]:
     docs = read_month_docs(db, year, month)
-    return aggregate_daily_docs(docs, year=year, month=month)
+    today = datetime.now(ZoneInfo(TIMEZONE_NAME)).date().isoformat()
+    if backfill:
+        present = {compact_str(row.get("date")) for row in docs if compact_str(row.get("date"))}
+        try:
+            filled = backfill_elapsed_days(db, month_dates(year, month), present, today=today)
+        except Exception:
+            filled = []
+        if filled:
+            docs = read_month_docs(db, year, month)
+    return aggregate_daily_docs(docs, year=year, month=month, as_of=date.fromisoformat(today))
 
 
 def render_html(year: int, month: int, nav_css: str = "", nav_html: str = "") -> str:
@@ -1577,7 +1612,8 @@ async function load() {
     if (share[key] == null) return;
     if (topShare == null || share[key] > topShare) topShare = share[key];
   });
-  paintKpi('kpiPageShare', pct(topShare), 'informational');
+  var formCount = (k.completed_form || {}).value;
+  paintKpi('kpiPageShare', topShare == null && formCount === 0 ? '0%' : pct(topShare), 'informational');
 
   paintKpi('kpiAddress', num(((secondary.address_complete || {}).value)), 'informational');
   document.getElementById('kpiAddressMeta').textContent =
@@ -1610,8 +1646,9 @@ async function load() {
   var tbody = document.querySelector('#pageTable tbody');
   tbody.innerHTML = rows.map(function(pair) {
     var g = pair[0], label = pair[1], b = byPage[g] || {};
+    var shareText = share[g] == null && formCount === 0 ? '0%' : pct(share[g]);
     return '<tr><td>' + label + '</td><td>' + num(b.sessions) + '</td><td>' + num(b.starts) +
-      '</td><td>' + num(b.completed_forms) + '</td><td>' + pct(share[g]) + '</td></tr>';
+      '</td><td>' + num(b.completed_forms) + '</td><td>' + shareText + '</td></tr>';
   }).join('');
 
   var days = data.days || [];

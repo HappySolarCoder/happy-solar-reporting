@@ -10,6 +10,7 @@
   let historyMode = "counts";
   let pageFilters = null;
   let snapshot = null;
+  let bloomGoals = null;
 
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
@@ -63,6 +64,48 @@
   function numText(value) {
     if (value == null || Number.isNaN(Number(value))) return "—";
     return String(Math.round(Number(value)));
+  }
+  function daysInMonth(period) {
+    return new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).getUTCDate();
+  }
+  function elapsedDays(period) {
+    const today = nyToday();
+    if (today.slice(0, 7) < period) return 0;
+    if (today.slice(0, 7) > period) return daysInMonth(period);
+    return Number(today.slice(8, 10));
+  }
+  function salesGoalFor(bloom, territory) {
+    if (!bloom || !bloom.available) return null;
+    if (!territory || territory === "All") return bloom.company_sales && bloom.company_sales.target != null ? bloom.company_sales : null;
+    const want = territory === "Virtual" ? "Virtual/Sweeper" : territory;
+    const rows = bloom.territory_sales || [];
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i].territory === want && rows[i].target != null) return rows[i];
+    }
+    return null;
+  }
+  function paceCaption(actual, goal) {
+    if (!goal || goal.target == null) return "Goal Not Set";
+    const target = Number(goal.target);
+    const period = goal.period_id;
+    const days = daysInMonth(period);
+    const elapsed = elapsedDays(period);
+    if (actual == null || Number.isNaN(Number(actual))) return "Goal " + target + " · actual unavailable";
+    const value = Number(actual);
+    if (!elapsed) return value + " of " + target + " · month not started";
+    const expected = target * elapsed / days;
+    const state = value + 1e-9 >= expected ? "On Track" : "Behind";
+    const locked = goal.locked_default ? " locked default" : "";
+    return value + " of " + target + locked + " · day " + elapsed + " of " + days + " · " + state;
+  }
+  function territoryGoalLine(bloom) {
+    const rows = (bloom && bloom.territory_sales) || [];
+    if (!rows.length) return "";
+    return rows.map(function (row) {
+      const name = row.territory;
+      if (row.target == null) return name + " Goal Not Set";
+      return name + " " + row.target + (row.locked_default ? " locked" : "");
+    }).join(" · ");
   }
   function setText(id, value) {
     const node = document.getElementById(id);
@@ -284,17 +327,38 @@
     setText("demoRate", "—");
     setText("opp2", "—");
   }
-  function attention(stats) {
+  function renderGoalsPanel(bloom) {
+    const host = document.getElementById("companyGoalsBody");
+    if (!host) return;
+    if (!bloom || !bloom.available) {
+      host.innerHTML = '<p class="chart-note">' + esc((bloom && bloom.blocker) || "Bloom goals could not be read.") + '</p><a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
+      return;
+    }
+    const company = bloom.company_sales && bloom.company_sales.target != null
+      ? "Company sales goal " + bloom.company_sales.target + " for " + bloom.period_id + "."
+      : "No company sales goal is stored for " + bloom.period_id + ".";
+    const rows = (bloom.territory_sales || []).map(function (row) {
+      const value = row.target == null ? "Goal Not Set" : ("Goal " + row.target + (row.locked_default ? " · locked default" : ""));
+      return '<div class="statrow"><div><strong>' + esc(row.territory) + ' sales</strong><p>' + esc(row.period_id) + ' · America/New_York</p></div><div class="value">' + esc(value) + '</div></div>';
+    }).join("");
+    host.innerHTML = '<p class="chart-note">' + esc(company) + " " + esc((bloom.unset && bloom.unset.demo_pct) || "") + '</p>' + rows + '<a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
+  }
+  function attention(stats, bloom) {
     const host = document.getElementById("attentionHost");
     const items = [];
-    items.push('<button type="button" id="attnGoals">Company and territory goals are not readable from Bloom <span>→</span></button>');
+    const line = territoryGoalLine(bloom);
+    const goalText = bloom && bloom.available
+      ? (line ? ("Territory sales goals · " + line) : "Bloom goals loaded")
+      : "Bloom sales goals could not be read";
+    items.push('<button type="button" id="attnGoals">' + esc(goalText) + " <span>→</span></button>");
     if (stats && stats.ran && stats.demos != null) {
-      items.push('<button type="button" data-open="Company">Demo % is ' + rateText(stats.demos, stats.ran) + " with no Bloom target loaded <span>→</span></button>");
+      items.push('<button type="button" data-open="Company">Demo % is ' + rateText(stats.demos, stats.ran) + " · no company Demo % target is stored <span>→</span></button>");
     }
     items.push('<a class="navlink" href="/api/missing_dispos">Missing dispositions are a separate queue <span>→</span></a>');
     host.innerHTML = '<div class="attention-strip"><span class="attention-label">NEEDS ATTENTION</span>' + items.join("") + "</div>";
     document.getElementById("attnGoals").addEventListener("click", function () { window.location.href = "/api/goals_dashboard"; });
-    host.querySelector("[data-open]").addEventListener("click", function () { openFunnelHistory("Company"); });
+    const opener = host.querySelector("[data-open]");
+    if (opener) opener.addEventListener("click", function () { openFunnelHistory("Company"); });
   }
   function applySnapshot(payload) {
     const data = (payload && payload.data) || {};
@@ -308,13 +372,17 @@
     const map = { Company: "Company", Doors: "Doors", "Self gen": "SelfGen", Sweeper: "Sweeper", Inbound: "Inbound", "3PL": "3pl" };
     names.forEach(function (name) { fillStage("lg" + map[name], stats[name]); });
     const company = stats.Company;
+    const f = pageFilters || filters();
     setText("totalSales", numText(company.sales));
     setText("oppsCreated", numText(company.created));
     setText("demoRate", rateText(company.demos, company.ran));
     setText("demoSub", company.demos == null ? "Demos unavailable" : company.demos + " demos / " + company.ran + " ran");
     setText("opp2", rateText(company.sales, company.ran));
     setText("opp2Sub", company.sales == null ? "Sales unavailable" : company.sales + " sales / " + company.ran + " ran");
-    setText("salesPace", "Goal Not Set");
+    const goal = salesGoalFor(bloomGoals, f.territory);
+    const salesPace = goal ? paceCaption(company.sales, goal) : (f.territory === "All" ? ("Goal Not Set · " + (territoryGoalLine(bloomGoals) || "no company sales goal")) : "Goal Not Set");
+    setText("salesPace", salesPace);
+    setText("mobilePace", salesPace);
     setText("createdPace", "Goal Not Set");
     setText("demoGoal", "Goal Not Set");
     setText("opp2Goal", "Goal Not Set");
@@ -326,8 +394,8 @@
       "Demo % is demos divided by ran. Opp2Prelim is sales divided by ran. UI copy says Demo."];
     if (broken.length) note.unshift("Missing: " + broken.join(", ") + ". Those figures stay blank.");
     document.getElementById("pageNote").textContent = note.join(" ");
-    attention(company);
-    const f = pageFilters || filters();
+    renderGoalsPanel(bloomGoals);
+    attention(company, bloomGoals);
     if (f.territory === "All" && f.source === "All") loadTrends();
     else {
       document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend stays hidden while a territory or source filter is on, so an unfiltered series is not shown as this scope.</p>';
@@ -335,6 +403,25 @@
       document.getElementById("sparkSales").innerHTML = "";
       document.getElementById("sparkCreated").innerHTML = "";
     }
+  }
+  function seriesChart(rows, key, label, suffix) {
+    const values = rows.filter(function (row) { return row[key] != null && !Number.isNaN(Number(row[key])); });
+    if (!values.length) return '<p class="chart-note">Monthly trend unavailable.</p>';
+    const max = Math.max(1, Math.max.apply(null, values.map(function (row) { return Number(row[key]); })));
+    const x = 36, y = 12, w = 680, h = 160;
+    const step = values.length > 1 ? w / (values.length - 1) : w;
+    let path = "";
+    const dots = values.map(function (row, i) {
+      const px = x + i * step;
+      const py = y + h - (Number(row[key]) / max) * h;
+      path += (i ? "L" : "M") + px + "," + py + " ";
+      return '<circle cx="' + px + '" cy="' + py + '" r="3.5" fill="#0b2439" stroke="#26d9eb" stroke-width="2"><title>' + esc(row.month) + " " + label + " " + row[key] + (suffix || "") + "</title></circle>";
+    }).join("");
+    const labels = values.map(function (row, i) {
+      if (values.length > 8 && i % 2) return "";
+      return '<text x="' + (x + i * step) + '" y="198" text-anchor="middle">' + esc(String(row.month).slice(2)) + "</text>";
+    }).join("");
+    return '<svg class="history-chart" viewBox="0 0 740 214" role="img" aria-label="' + esc(label) + ' from company_trends"><path d="' + path + '" fill="none" stroke="#26d9eb" stroke-width="2.5" stroke-linejoin="round"/>' + dots + labels + "</svg>";
   }
   async function loadTrends() {
     const res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8");
@@ -344,32 +431,26 @@
     }
     const payload = await res.json();
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    let sales = 0;
-    let created = 0;
-    const salesCum = [];
-    const createdCum = [];
-    rows.forEach(function (row) {
-      if (row.sales == null || row.opps_created == null) return;
-      sales += Number(row.sales);
-      created += Number(row.opps_created);
-      salesCum.push(sales);
-      createdCum.push(created);
-    });
-    document.getElementById("sparkSales").innerHTML = spark(salesCum, "Monthly cumulative sales since August 2025. Not a daily count.");
-    document.getElementById("sparkCreated").innerHTML = spark(createdCum, "Monthly cumulative opportunities created since August 2025. Not a daily count.");
-    document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly cumulative sales, August 2025 through the latest closed trend month. Not a daily series and not filtered by a short date range.</p>' + spark(salesCum, "Sales cumulative");
-    document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly cumulative opportunities created over the same months.</p>' + spark(createdCum, "Created cumulative");
+    const sales = rows.map(function (row) { return row.sales == null ? null : Number(row.sales); }).filter(function (n) { return n != null; });
+    const created = rows.map(function (row) { return row.opps_created == null ? null : Number(row.opps_created); }).filter(function (n) { return n != null; });
+    document.getElementById("sparkSales").innerHTML = spark(sales, "Monthly sales since August 2025. Not a daily count.");
+    document.getElementById("sparkCreated").innerHTML = spark(created, "Monthly opportunities created since August 2025. Not a daily count.");
+    document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly sales from company_trends, August 2025 through the latest trend month. Not a daily series and not filtered by a short date range.</p>' + seriesChart(rows, "sales", "Sales", "");
+    document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly opportunities created from the same company_trends months.</p>' + seriesChart(rows, "opps_created", "Opportunities created", "");
   }
   async function load() {
     const token = ++requestToken;
     pageFilters = filters();
     document.getElementById("pageNote").textContent = "Loading live metrics…";
+    const period = (pageFilters.start || "").slice(0, 7);
     const response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
+    const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period));
     if (token !== requestToken) return;
     if (!response.ok) {
       showError("Company snapshot failed (HTTP " + response.status + "). Retry from Reset filters.");
       return;
     }
+    bloomGoals = bloomRes.ok ? await bloomRes.json() : null;
     applySnapshot(await response.json());
   }
 

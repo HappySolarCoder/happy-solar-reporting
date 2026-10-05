@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-JS = Path(__file__).with_name("ops_overview.js").read_text(encoding="utf-8")
+JS = Path(__file__).with_name("ops_overview_script.txt").read_text(encoding="utf-8")
 
 FUNNELS = (
     ("Company", "Company", "Company"),

@@ -8,9 +8,11 @@ with DATABASE_URL. This route uses that same env var (POSTGRES_URL is
 the fallback). Person goals are a second select of the company, team,
 and user documents. It does not read portal_users.
 
-Account goals are sales counts. A missing scope:company row, and missing
-Demo % / Opp2Prelim / opportunities-created targets, stay unset. Virtual/
-Sweeper uses the portal's locked default of 7 when that month has no
+Account goals are sales counts. The company sales goal for a month is the
+scope:company accountGoals row (metricKey sales, unit count, periodId
+YYYY-MM). It is not the sum of territory goals. A missing scope:company
+row, and missing Demo % / Opp2Prelim / opportunities-created targets, stay
+unset. Virtual/Sweeper uses the portal's locked default of 7 when that month has no
 stored goal (mergeLockedTerritoryGoals). Person goals are the company,
 team, and user documents (door knocks, appointments, demos, sales).
 """
@@ -259,6 +261,9 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
             )
             continue
         territories.append(_goal_row(name, period_id, None, stored=False, locked_default=False))
+    unset = dict(UNSET)
+    if company is not None:
+        unset["company_sales"] = "Stored on scope:company for this month."
     return {
         "available": True,
         "source": "portal_goal_documents",
@@ -276,7 +281,7 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
         "opportunities_created": None,
         "demo_pct": None,
         "opp2prelim": None,
-        "unset": dict(UNSET),
+        "unset": unset,
         "blocker": None,
     }
 

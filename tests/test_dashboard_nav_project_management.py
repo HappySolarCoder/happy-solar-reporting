@@ -77,6 +77,31 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn("body.menu-open #sidebar { transform: translateX(0); }", css)
         self.assertIn("button.mobile-menu.oc-menu-btn", css)
 
+    def test_ops_nav_collapse_control_is_accessible_and_persistent(self):
+        html = render_dashboard_nav("company_overview")
+        css = nav.dashboard_nav_css()
+        self.assertIn('id="ocNavToggle"', html)
+        self.assertIn('aria-controls="sidebar"', html)
+        self.assertIn('aria-expanded="true"', html)
+        self.assertIn('aria-label="Collapse navigation"', html)
+        self.assertIn("Expand navigation", html)
+        self.assertIn("hsOpsNavCollapsed", html)
+        self.assertIn("localStorage.getItem('hsOpsNavCollapsed')", css)
+        self.assertIn("oc-nav-collapsed", css)
+        self.assertIn("html.oc-nav-collapsed #sidebar { width: 64px; }", css)
+        self.assertIn("margin-left: 64px !important;", css)
+        self.assertIn("prefers-reduced-motion: reduce", css)
+        self.assertIn("transition: none !important;", css)
+        self.assertIn("hsOpsReflowCharts", html)
+        self.assertIn("dispatchEvent(new Event('resize'))", html)
+        self.assertIn('<div class="navgroup">COMPANY</div>', html)
+        self.assertIn('<span class="navlabel">Company Overview</span>', html)
+        self.assertIn('class="navlink active" href="/api/company_overview"', html)
+        self.assertIn("box-shadow: inset 2px 0 #26d9eb !important", css)
+        self.assertIn("@media (max-width: 800px)", css)
+        self.assertNotIn(">Collapse navigation<", html)
+        self.assertNotRegex(html, r"\bsits\b")
+
 
 if __name__ == "__main__":
     unittest.main()

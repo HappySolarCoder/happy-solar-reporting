@@ -5,7 +5,17 @@ from pathlib import Path
 
 def dashboard_nav_css() -> str:
     theme = Path(__file__).with_name("ops_theme.css").read_text(encoding="utf-8")
-    return _legacy_nav_css() + "\n" + theme + "\n" + _sidebar_link_css()
+    return (
+        _legacy_nav_css()
+        + "\n"
+        + theme
+        + "\n"
+        + _sidebar_link_css()
+        + "\n"
+        + _nav_collapse_css()
+        + "\n"
+        + _nav_state_boot()
+    )
 
 
 def _sidebar_link_css() -> str:
@@ -83,6 +93,196 @@ def _sidebar_link_css() -> str:
       }
     }
     """
+
+
+def _nav_mark(title: str) -> str:
+    """Two-letter rail mark. Acronyms keep their first two letters."""
+    cleaned = title.replace("&", " ").replace("/", " ")
+    words = [word for word in cleaned.split() if any(ch.isalnum() for ch in word)]
+    if not words:
+        return "•"
+    first = "".join(ch for ch in words[0] if ch.isalnum())
+    if len(words) == 1 or (first.isupper() and len(first) >= 3):
+        return first[:2].upper()
+    second = "".join(ch for ch in words[1] if ch.isalnum())
+    return (first[:1] + (second[:1] or first[1:2])).upper()
+
+
+def _nav_collapse_css() -> str:
+    """Desktop/tablet rail. Mobile keeps the existing off-canvas drawer."""
+    return """
+    .oc-nav-tools {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 10px 10px 0;
+      flex: none;
+    }
+    #sidebar .navmark { display: none; }
+    #ocNavToggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      padding: 0;
+      margin: 0;
+      border: 1px solid #2b4c63;
+      border-radius: 7px;
+      background: #102d43;
+      color: #f1f6ff;
+      box-shadow: none;
+      cursor: pointer;
+      line-height: 1;
+      font-weight: 600;
+      flex: none;
+    }
+    #ocNavToggle:hover {
+      background: #193c54;
+      border-color: #40657d;
+      color: #fff;
+    }
+    #ocNavToggle:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: 2px;
+    }
+    .oc-nav-chevron {
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(135deg);
+      margin-left: 3px;
+    }
+    html.oc-nav-collapsed .oc-nav-chevron {
+      transform: rotate(-45deg);
+      margin-left: 0;
+      margin-right: 3px;
+    }
+    @media (min-width: 801px) {
+      html.oc-nav-collapsed #sidebar { width: 64px; }
+      html.oc-nav-collapsed #sidebar .oc-nav-tools {
+        justify-content: center;
+        padding: 10px 6px 0;
+      }
+      html.oc-nav-collapsed #sidebar .brand {
+        height: auto;
+        padding: 8px 6px 10px;
+        justify-content: center;
+        gap: 0;
+      }
+      html.oc-nav-collapsed #sidebar .brand-copy,
+      html.oc-nav-collapsed #sidebar .navlabel,
+      html.oc-nav-collapsed #sidebar .sidebottom > div {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
+      html.oc-nav-collapsed #sidebar .navgroup {
+        height: 0;
+        margin: 8px 12px 4px;
+        padding: 0;
+        overflow: hidden;
+        color: transparent;
+        font-size: 0;
+        letter-spacing: 0;
+        border-top: 1px solid #234358;
+      }
+      html.oc-nav-collapsed #sidebar .navgroup:first-child {
+        height: 0;
+        margin-top: 4px;
+        padding: 0;
+        border-top: 0;
+      }
+      html.oc-nav-collapsed #sidebar .navmark {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.6em;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: inherit;
+      }
+      html.oc-nav-collapsed #sidebar a.navlink {
+        justify-content: center !important;
+        gap: 0 !important;
+        margin: 2px 6px !important;
+        padding: 8px 4px !important;
+      }
+      html.oc-nav-collapsed #sidebar a.navlink:hover { transform: none !important; }
+      html.oc-nav-collapsed #sidebar .sidebottom {
+        min-height: 72px;
+        padding: 10px 6px;
+        justify-content: center;
+      }
+      html.oc-nav-collapsed .workspace,
+      html.oc-nav-collapsed body.oc-root .wrap,
+      html.oc-nav-collapsed .wrap {
+        margin-left: 64px !important;
+        max-width: calc(100% - 64px);
+        min-width: 0;
+        box-sizing: border-box;
+      }
+      html.oc-nav-collapsed body:not(:has(.wrap)):not(:has(.workspace)) {
+        padding-left: 64px !important;
+      }
+    }
+    @media (min-width: 801px) and (prefers-reduced-motion: no-preference) {
+      #sidebar { transition: width .18s ease; }
+      .workspace,
+      body.oc-root .wrap,
+      html.oc-nav-collapsed .wrap {
+        transition: margin-left .18s ease;
+      }
+      body.oc-root:not(:has(.wrap)):not(:has(.workspace)) {
+        transition: padding-left .18s ease;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #sidebar,
+      .workspace,
+      .wrap,
+      .oc-nav-chevron {
+        transition: none !important;
+      }
+    }
+    @media (max-width: 800px) {
+      .oc-nav-tools { display: none !important; }
+      html.oc-nav-collapsed #sidebar { width: 222px; }
+      html.oc-nav-collapsed .workspace,
+      html.oc-nav-collapsed .wrap,
+      html.oc-nav-collapsed body.oc-root .wrap {
+        margin-left: 0 !important;
+        max-width: none;
+      }
+      html.oc-nav-collapsed body:not(:has(.wrap)):not(:has(.workspace)) {
+        padding-left: 0 !important;
+      }
+    }
+    """
+
+
+def _nav_state_boot() -> str:
+    """Apply the saved rail before first paint.
+
+    Callers place dashboard_nav_css() inside a <style> block in the document
+    head. Closing that block here lets the saved choice land on <html> before
+    the body is parsed, including when Bloom frames the page.
+    """
+    return (
+        "</style><script>(function(){try{if(localStorage.getItem('hsOpsNavCollapsed')==='1')"
+        "{document.documentElement.classList.add('oc-nav-collapsed');}}catch(e){}})();"
+        "</script><style>"
+    )
 
 
 def _legacy_nav_css() -> str:
@@ -488,8 +688,11 @@ def render_dashboard_nav(current: str) -> str:
             external = ""
             if href.startswith("http"):
                 external = ' target="_blank" rel="noopener noreferrer"'
+            mark = _nav_mark(title)
             links.append(
-                f'<a class="navlink{active}" href="{href}"{external}>{title}</a>'
+                f'<a class="navlink{active}" href="{href}" aria-label="{title}"{external}>'
+                f'<span class="navmark" aria-hidden="true">{mark}</span>'
+                f'<span class="navlabel">{title}</span></a>'
             )
         groups.append(
             f'<div class="navgroup">{label}</div>' + "".join(links)
@@ -499,7 +702,21 @@ def render_dashboard_nav(current: str) -> str:
         {render_dashboard_loader()}
         <button type="button" class="mobile-menu oc-menu-btn" aria-label="Toggle navigation" onclick="document.body.classList.toggle('menu-open')">☰</button>
         <aside id="sidebar">
-          <div class="brand"><span class="brandmark">☀</span><div>HAPPY SOLAR<small>OPERATIONS</small></div></div>
+          <div class="oc-nav-tools">
+            <button type="button" id="ocNavToggle" class="oc-nav-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse navigation">
+              <span class="oc-nav-chevron" aria-hidden="true"></span>
+            </button>
+          </div>
+          <script>
+            (function() {{
+              var toggle = document.getElementById('ocNavToggle');
+              if (!toggle) return;
+              var collapsed = document.documentElement.classList.contains('oc-nav-collapsed');
+              toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+              toggle.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+            }})();
+          </script>
+          <div class="brand"><span class="brandmark" aria-hidden="true">☀</span><div class="brand-copy">HAPPY SOLAR<small>OPERATIONS</small></div></div>
           <nav class="navscroll" aria-label="Operations">{menu}</nav>
           <div class="sidebottom"><div><b>Operations control</b>America/New_York</div></div>
         </aside>
@@ -507,6 +724,90 @@ def render_dashboard_nav(current: str) -> str:
           (function() {{
             document.documentElement.classList.add('oc-root');
             document.body.classList.add('oc-root');
+            var NAV_COLLAPSE_KEY = 'hsOpsNavCollapsed';
+            function navIsCollapsed() {{
+              return document.documentElement.classList.contains('oc-nav-collapsed');
+            }}
+            function syncNavToggle() {{
+              var toggle = document.getElementById('ocNavToggle');
+              var collapsed = navIsCollapsed();
+              if (toggle) {{
+                toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                toggle.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+              }}
+              var links = document.querySelectorAll('#sidebar a.navlink');
+              for (var i = 0; i < links.length; i++) {{
+                var label = links[i].getAttribute('aria-label') || '';
+                if (collapsed && label) links[i].setAttribute('title', label);
+                else links[i].removeAttribute('title');
+              }}
+            }}
+            function remeasureCharts() {{
+              var root = document.querySelector('.workspace') || document.querySelector('.wrap') || document.body;
+              if (root) void root.offsetWidth;
+              var nodes = document.querySelectorAll('svg.chart, svg.history-chart, svg.lineChart, svg.sparkline, .chart svg, .chartBox svg, .vchart, canvas');
+              for (var n = 0; n < nodes.length; n++) {{
+                var node = nodes[n];
+                if (!node || !node.getBoundingClientRect) continue;
+                var parent = node.parentElement;
+                var parentW = parent ? parent.clientWidth : 0;
+                if (node.tagName === 'SVG' && parentW) {{
+                  var attr = node.getAttribute('width');
+                  var vb = node.viewBox && node.viewBox.baseVal;
+                  if (attr && /^[0-9]+(\\.[0-9]+)?$/.test(attr) && vb && vb.width > 0) {{
+                    var next = Math.floor(parentW);
+                    if (Math.abs(parseFloat(attr) - next) > 1) {{
+                      node.setAttribute('width', String(next));
+                      var heightAttr = node.getAttribute('height');
+                      if (heightAttr && /^[0-9]+(\\.[0-9]+)?$/.test(heightAttr) && vb.height > 0) {{
+                        node.setAttribute('height', String(Math.max(1, Math.round(next * (vb.height / vb.width)))));
+                      }}
+                    }}
+                  }}
+                }}
+                if (node.tagName === 'CANVAS') {{
+                  var chart = null;
+                  if (window.Chart && typeof window.Chart.getChart === 'function') chart = window.Chart.getChart(node);
+                  if (!chart) chart = node.chart || null;
+                  if (chart && typeof chart.resize === 'function') chart.resize();
+                }}
+                node.getBoundingClientRect();
+              }}
+              window.dispatchEvent(new Event('resize'));
+            }}
+            function scheduleChartRemeasure() {{
+              remeasureCharts();
+              window.requestAnimationFrame(function() {{
+                remeasureCharts();
+                window.setTimeout(remeasureCharts, 240);
+              }});
+            }}
+            function setNavCollapsed(collapsed) {{
+              document.documentElement.classList.toggle('oc-nav-collapsed', !!collapsed);
+              try {{ localStorage.setItem(NAV_COLLAPSE_KEY, collapsed ? '1' : '0'); }} catch (err) {{}}
+              syncNavToggle();
+              scheduleChartRemeasure();
+            }}
+            try {{
+              if (localStorage.getItem(NAV_COLLAPSE_KEY) === '1') {{
+                document.documentElement.classList.add('oc-nav-collapsed');
+              }}
+            }} catch (err) {{}}
+            syncNavToggle();
+            window.hsOpsReflowCharts = remeasureCharts;
+            var navToggle = document.getElementById('ocNavToggle');
+            if (navToggle) {{
+              navToggle.addEventListener('click', function(event) {{
+                event.stopPropagation();
+                setNavCollapsed(!navIsCollapsed());
+              }});
+            }}
+            var navSide = document.getElementById('sidebar');
+            if (navSide) {{
+              navSide.addEventListener('transitionend', function(event) {{
+                if (event.propertyName === 'width') remeasureCharts();
+              }});
+            }}
             var loader = document.getElementById('hsDashboardLoader');
             var pendingFetches = 0;
             var hideTimer = null;

@@ -450,6 +450,13 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("/api/copilot/chat", html)
         self.assertIn("/api/copilot/feedback", html)
         self.assertIn("Explain Opp2Prelim", html)
+        self.assertIn('src="/goose-headset.png"', html)
+        self.assertIn('aria-label="Ask about our data"', html)
+        self.assertIn("html.goose-framed .goose-open { bottom: calc(16px + 64px + env(safe-area-inset-bottom, 0px)); }", html)
+        self.assertIn(".goose-suggest button", html)
+        self.assertIn("background: #fff; color: #1a2b4a", html)
+        self.assertIn(".goose-form button { border: 1px solid #0a7a34; background: #0a7a34; color: #fff;", html)
+        self.assertNotIn(">Ask about our data<", html)
 
     def test_feedback_refuses_when_copilot_disabled(self):
         from copilot import feedback as feedback_mod

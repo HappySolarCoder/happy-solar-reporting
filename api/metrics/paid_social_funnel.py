@@ -530,7 +530,14 @@ def _spend_block(aggregate: cac.MetaSpendResult | None, daily_rows: list[dict[st
             aggregate_spend = aggregate.spend
     daily_spend = _sum_present(daily_rows, "spend") if daily_status == "ok" else None
     gap = None
-    if aggregate_spend is not None and daily_spend is not None and round(float(aggregate_spend), 2) != round(float(daily_spend), 2):
+    # Account insights and the daily-row sum often differ by a few cents.
+    # A gap under a dollar is the same spend. A larger gap stays unmatched.
+    spend_differs = (
+        aggregate_spend is not None
+        and daily_spend is not None
+        and abs(round(float(aggregate_spend), 2) - round(float(daily_spend), 2)) >= 1
+    )
+    if spend_differs:
         gap = {
             "account_insights_total": aggregate_spend,
             "daily_rows_sum": daily_spend,

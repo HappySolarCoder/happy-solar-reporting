@@ -650,7 +650,7 @@ def _pace(goal_month, goal, start, end, cutoff, days, override_actual):
         current = date.fromisoformat(day["date"])
         if current < month_start or current > month_end:
             continue
-        if current >= cutoff or current < start or current > end:
+        if current > cutoff or current < start or current > end:
             continue
         completed.append(day)
         if day.get("leads") is None:
@@ -778,6 +778,8 @@ def _spend_kpi(spend, ads: dict, gap) -> dict:
     active_label = "unavailable"
     if ads.get("status") == "ok":
         active_label = f"{int(ads.get('active') or 0)} active"
+    elif spend is not None and not gap:
+        active_label = "Account total"
     return {
         "value": value,
         "display": display,
@@ -983,7 +985,7 @@ def _lead_chart(spec: dict, pace: dict, actual_total) -> dict:
         current = date(year, month, index)
         row = by_date.get(current.isoformat())
         value = None
-        if row is not None and current < cutoff:
+        if row is not None and current <= cutoff:
             if row.get("leads") is None:
                 value = None
                 running_out = None
@@ -998,11 +1000,11 @@ def _lead_chart(spec: dict, pace: dict, actual_total) -> dict:
         cumulative.append(
             {
                 "date": current.isoformat(),
-                "actual": value if row is not None and current < cutoff and row.get("leads") is not None else None,
+                "actual": value if row is not None and current <= cutoff and row.get("leads") is not None else None,
                 "pace": pace_value,
             }
         )
-        if row is not None and current < cutoff and row.get("leads") is None:
+        if row is not None and current <= cutoff and row.get("leads") is None:
             cumulative[-1]["actual"] = None
     y_max = goal or 0
     for point in cumulative:
@@ -1336,10 +1338,8 @@ def _trim_number(value: float) -> str:
 
 
 def _as_of_label(as_of: datetime, is_demo: bool) -> str:
-    completed = as_of.date() - timedelta(days=1)
-    clock = as_of.strftime("%b %-d, %Y, %-I:%M %p") if "%" in "%-d" else _clock(as_of)
     zone = ACCOUNT_TZ_NAME if is_demo else CRM_TZ_NAME
-    return f"Completed days through {format_day(completed)}. As of {_clock(as_of)} {zone}."
+    return f"Counts through {format_day(as_of.date())}. As of {_clock(as_of)} {zone}."
 
 
 def _clock(moment: datetime) -> str:

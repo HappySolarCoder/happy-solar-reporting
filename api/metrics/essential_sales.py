@@ -38,7 +38,7 @@ INSTALLER_FIELD_ID = "JbTL2wtTiUUZ5wPZswDn"  # Installer (raw GHL value)
 ESSENTIAL_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submissionDate", "Submission Date"),
     ("financeType", "Finance type"),
-    ("client", "Cient"),
+    ("client", "Client"),
     ("salesperson", "Salesperson"),
     ("wc", "WC"),
     ("asi", "ASI"),

@@ -5,13 +5,14 @@
 happy-solar-bloom-portal stores those goals in portal_goal_documents
 (scope:company and scope:territory:*). lib/account-goals.ts reads them
 with DATABASE_URL. This route uses that same env var (POSTGRES_URL is
-the fallback) and selects only the scope rows. It does not read person
-documents or portal_users.
+the fallback). Person goals are a second select of the company, team,
+and user documents. It does not read portal_users.
 
 Account goals are sales counts. A missing scope:company row, and missing
 Demo % / Opp2Prelim / opportunities-created targets, stay unset. Virtual/
 Sweeper uses the portal's locked default of 7 when that month has no
-stored goal (mergeLockedTerritoryGoals).
+stored goal (mergeLockedTerritoryGoals). Person goals are the company,
+team, and user documents (door knocks, appointments, demos, sales).
 """
 
 from __future__ import annotations
@@ -43,6 +44,17 @@ SCOPE_SQL = (
     "SELECT subject_id, document FROM portal_goal_documents "
     "WHERE subject_id = 'scope:company' OR subject_id LIKE 'scope:territory:%'"
 )
+PERSON_SQL = (
+    "SELECT subject_id, document FROM portal_goal_documents "
+    "WHERE subject_id = 'company' OR subject_id LIKE 'team:%' OR subject_id LIKE 'user:%'"
+)
+PERSON_SETTINGS_METRIC = {
+    "door-knocks": "doors_goal",
+    "appointments-set": "appts_goal",
+    "demos": "demos_goal",
+    "sales": "sales_goal",
+    "self-gen-opps": "self_gen_opps_goal",
+}
 UNSET = {
     "company_sales": "No scope:company sales goal is stored for this month.",
     "opportunities_created": (
@@ -126,6 +138,61 @@ def parse_account_goals(subject_id: str, raw: Any) -> list[dict[str, Any]]:
             }
         )
     return goals
+
+
+def parse_person_goals(documents: list[tuple[str, Any]], period_id: str) -> list[dict[str, Any]]:
+    """Monthly person goals copied onto company, team, and user documents.
+
+    The portal writes the same goal to the assignee document and, for a
+    production person, the company document. The newest version wins.
+    """
+    chosen: dict[tuple[str, str], dict[str, Any]] = {}
+    for subject_id, raw in documents:
+        subject = str(subject_id or "")
+        if subject != "company" and not subject.startswith(("team:", "user:")):
+            continue
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(raw, dict):
+            continue
+        for item in raw.get("goals") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("periodId") != period_id:
+                continue
+            metric = item.get("metricKey")
+            assignee = item.get("assigneeUserId")
+            if not isinstance(metric, str) or not isinstance(assignee, str) or not assignee:
+                continue
+            target = _finite_target(item.get("target"))
+            if target is None:
+                continue
+            if float(target).is_integer():
+                target = int(target)
+            version = item.get("version")
+            version_n = int(version) if isinstance(version, int) and version > 0 else 1
+            row = {
+                "assignee_user_id": assignee,
+                "name": item.get("assigneeNameSnapshot") if isinstance(item.get("assigneeNameSnapshot"), str) else "",
+                "role": item.get("role") if item.get("role") in {"fma", "closer", "manager"} else "",
+                "metric": metric,
+                "settings_metric": PERSON_SETTINGS_METRIC.get(metric),
+                "target": target,
+                "period_id": period_id,
+                "version": version_n,
+            }
+            key = (assignee, metric)
+            current = chosen.get(key)
+            if current is None or version_n >= int(current.get("version") or 0):
+                chosen[key] = row
+    rows = list(chosen.values())
+    rows.sort(key=lambda row: (str(row.get("name") or "").lower(), str(row.get("metric") or "")))
+    for row in rows:
+        row.pop("version", None)
+    return rows
 
 
 def rows_from_neon(payload: Any) -> list[dict[str, Any]]:
@@ -223,13 +290,13 @@ class _RefuseRedirect(HTTPRedirectHandler):
         raise RuntimeError("neon_redirect")
 
 
-def fetch_scope_documents(url: str, opener=None) -> list[tuple[str, Any]]:
+def _neon_documents(url: str, query: str, opener=None) -> list[tuple[str, Any]]:
     host = urlparse(url).hostname
     if not host:
         raise RuntimeError("database_url_host")
     request = Request(
         f"https://{host}/sql",
-        data=json.dumps({"query": SCOPE_SQL, "params": []}).encode("utf-8"),
+        data=json.dumps({"query": query, "params": []}).encode("utf-8"),
         headers={"Content-Type": "application/json", "Neon-Connection-String": url},
         method="POST",
     )
@@ -238,9 +305,23 @@ def fetch_scope_documents(url: str, opener=None) -> list[tuple[str, Any]]:
         payload = json.loads(response.read().decode("utf-8"))
     documents = []
     for row in rows_from_neon(payload):
-        subject_id = str(row.get("subject_id") or "")
+        documents.append((str(row.get("subject_id") or ""), row.get("document")))
+    return documents
+
+
+def fetch_scope_documents(url: str, opener=None) -> list[tuple[str, Any]]:
+    documents = []
+    for subject_id, raw in _neon_documents(url, SCOPE_SQL, opener=opener):
         if subject_id == COMPANY_SUBJECT or subject_id.startswith(TERRITORY_PREFIX):
-            documents.append((subject_id, row.get("document")))
+            documents.append((subject_id, raw))
+    return documents
+
+
+def fetch_person_documents(url: str, opener=None) -> list[tuple[str, Any]]:
+    documents = []
+    for subject_id, raw in _neon_documents(url, PERSON_SQL, opener=opener):
+        if subject_id == "company" or subject_id.startswith(("team:", "user:")):
+            documents.append((subject_id, raw))
     return documents
 
 
@@ -258,11 +339,16 @@ def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
                 "This app reads them with DATABASE_URL, the same variable happy-solar-bloom-portal uses. "
                 "DATABASE_URL is not set here."
             ),
+            "person_goals": [],
             "checked_at": checked_at,
         }
     try:
         documents = fetch_scope_documents(url, opener=opener)
         payload = build_payload(period_id, documents)
+        try:
+            payload["person_goals"] = parse_person_goals(fetch_person_documents(url, opener=opener), period_id)
+        except Exception:
+            payload["person_goals"] = []
     except Exception as exc:
         return {
             "available": False,
@@ -270,6 +356,7 @@ def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
             "source": "portal_goal_documents",
             "period_id": period_id,
             "blocker": "Bloom sales goals could not be read from portal_goal_documents (" + type(exc).__name__ + ").",
+            "person_goals": [],
             "checked_at": checked_at,
         }
     payload["checked_at"] = checked_at

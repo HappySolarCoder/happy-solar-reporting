@@ -122,6 +122,63 @@ class BloomGoalParseTests(unittest.TestCase):
         payload = bloom.build_payload("2026-10", documents)
         self.assertEqual(payload["company_sales"]["target"], 40)
 
+    def test_person_goals_keep_the_newest_version(self):
+        older = {
+            "goals": [
+                {
+                    "assigneeUserId": "user-1",
+                    "assigneeNameSnapshot": "Ada Setter",
+                    "role": "fma",
+                    "metricKey": "door-knocks",
+                    "periodId": "2026-10",
+                    "target": 100,
+                    "unit": "count",
+                    "version": 1,
+                }
+            ]
+        }
+        newer = {
+            "goals": [
+                {
+                    "assigneeUserId": "user-1",
+                    "assigneeNameSnapshot": "Ada Setter",
+                    "role": "fma",
+                    "metricKey": "door-knocks",
+                    "periodId": "2026-10",
+                    "target": 320,
+                    "unit": "count",
+                    "version": 2,
+                },
+                {
+                    "assigneeUserId": "user-1",
+                    "assigneeNameSnapshot": "Ada Setter",
+                    "role": "fma",
+                    "metricKey": "demos",
+                    "periodId": "2026-10",
+                    "target": 12,
+                    "unit": "count",
+                    "version": 1,
+                },
+                {
+                    "assigneeUserId": "user-2",
+                    "assigneeNameSnapshot": "Bo Closer",
+                    "role": "closer",
+                    "metricKey": "sales",
+                    "periodId": "2026-09",
+                    "target": 4,
+                    "unit": "count",
+                    "version": 1,
+                },
+            ]
+        }
+        rows = bloom.parse_person_goals([("team:a", older), ("company", newer)], "2026-10")
+        by_metric = {row["metric"]: row for row in rows}
+        self.assertEqual(set(by_metric), {"door-knocks", "demos"})
+        self.assertEqual(by_metric["door-knocks"]["target"], 320)
+        self.assertEqual(by_metric["door-knocks"]["settings_metric"], "doors_goal")
+        self.assertEqual(by_metric["demos"]["settings_metric"], "demos_goal")
+        self.assertNotIn("updatedBy", by_metric["demos"])
+
     def test_query_selects_only_scope_rows(self):
         self.assertIn("portal_goal_documents", bloom.SCOPE_SQL)
         self.assertIn("scope:company", bloom.SCOPE_SQL)

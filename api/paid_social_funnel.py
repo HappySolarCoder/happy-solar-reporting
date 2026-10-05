@@ -270,10 +270,10 @@ def _header(model: dict, badge: str) -> str:
               <label>End <input type="date" name="end" value="{_esc(model["range_end"])}" /></label>
               <button type="submit">Apply custom range</button>
             </form>
-            <p class="fine">Goal month: {_esc(model["goal_month_label"])}. Pace uses completed days.</p>
+            <p class="fine">Goal month: {_esc(model["goal_month_label"])}. Pace counts selected days through today.</p>
           </div>
         </details>
-        <a class="mode-link" href="{_esc(_href(model, source="live" if model.get("is_demo") else "demo"))}">{'Live data' if model.get('is_demo') else 'Sample fixture'}</a>
+        <a class="mode-link" href="{_esc(_href(model, source="live" if model.get("is_demo") else "demo"))}">{'Live data' if model.get('is_demo') else 'Open the Sample fixture'}</a>
       </div>
     </header>
     """

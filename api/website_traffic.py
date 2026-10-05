@@ -440,6 +440,19 @@ def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str
         vs_prior_kpi = "—"
     else:
         vs_prior_kpi = f"{'+' if vs_prior > 0 else ''}{float(vs_prior) * 100:.1f}%"
+    meta_block = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    if tile_status(data, "meta_spend") == "live" and meta_block.get("spend") is not None:
+        meta_value = f"${float(meta_block['spend']):,.2f}"
+        bits = []
+        if meta_block.get("impressions") is not None:
+            bits.append(f"{int(meta_block['impressions']):,} impressions")
+        if meta_block.get("clicks") is not None:
+            bits.append(f"{int(meta_block['clicks']):,} outbound clicks")
+        bits.append("Reach is not in this read")
+        meta_note = " · ".join(bits)
+    else:
+        meta_value = "—"
+        meta_note = "Meta is not wired. Do not treat the dash as spend. Reach was not invented."
     cta = fmt_num(overview.get("cta_taps")) if tile_status(data, "cta_taps") == "live" else "—"
     fb_post = (
         fmt_num(overview.get("fb_organic_sessions"))
@@ -466,7 +479,12 @@ def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str
         "STATUS_BANNER": (
             f"LIVE: {', '.join(live) or 'none'}. EXAMPLE / not-wired: {', '.join(stub) or 'none'}"
             ". Funnel top is estimate/LP, not all-site. Instant Form / 3PL are not website leads. "
-            "Meta spend was not invented. Charles QA before treating as live."
+            + (
+                "Meta account spend is on the strip. Reach is not in that read. "
+                if tile_status(data, "meta_spend") == "live"
+                else "Meta spend was not invented. "
+            )
+            + "Charles QA before treating as live."
         ),
         "CHROME_LABEL": (
             f"Range {start} → {end} ET · domain {domain_label(domain_key)}"
@@ -504,6 +522,8 @@ def first_paint_substitutions(data: dict, start: str, end: str) -> dict[str, str
         "TAG_CONTENT": example_tag_html(data, "content"),
         "TAG_AUDIENCE": example_tag_html(data, "audience"),
         "TAG_NAMED": example_tag_html(data, "named_fills"),
+        "KPI_META": escape(meta_value),
+        "META_META": escape(meta_note),
         "KPI_SESSIONS": escape(fmt_num(overview.get("sessions"))),
         "KPI_USERS": escape(fmt_num(overview.get("users"))),
         "KPI_NEW_RET": escape(new_ret),
@@ -733,8 +753,8 @@ __DASHBOARD_NAV_HTML__
       <div class="section-label">Strips</div>
       <div class="card span-4">
         <div class="card-title">Meta spend / reach / clicks __TAG_META_SPEND__</div>
-        <div class="kpi">—</div>
-        <div class="meta">Meta is not wired. Do not treat the dash as spend. Shown when Ads ACTIVE in a later wiring pass. Do not invent Ads Manager numbers.</div>
+        <div class="kpi" id="kpiMeta">__KPI_META__</div>
+        <div class="meta" id="metaMeta">__META_META__</div>
       </div>
       <div class="card span-4">
         <div class="card-title">Scoreboard __TAG_FUNNEL__</div>
@@ -1037,6 +1057,18 @@ var initialPayload = __PAYLOAD__;
     var acq = data.acquisition || {};
     var content = data.content || {};
     markTiles(data);
+    var metaBlock = data.meta || {};
+    if (tileStatus(data, 'meta_spend') === 'live' && metaBlock.spend != null) {
+      setText('kpiMeta', '$' + Number(metaBlock.spend).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+      var metaBits = [];
+      if (metaBlock.impressions != null) metaBits.push(Number(metaBlock.impressions).toLocaleString() + ' impressions');
+      if (metaBlock.clicks != null) metaBits.push(Number(metaBlock.clicks).toLocaleString() + ' outbound clicks');
+      metaBits.push('Reach is not in this read');
+      setText('metaMeta', metaBits.join(' · '));
+    } else {
+      setText('kpiMeta', '—');
+      setText('metaMeta', 'Meta is not wired. Do not treat the dash as spend. Reach was not invented.');
+    }
     setText('kpiSessions', num(o.sessions));
     setText('kpiUsers', num(o.users));
     setText('kpiNewRet', (o.new_share == null && o.returning_share == null) ? '—' : (pct(o.new_share) + ' / ' + pct(o.returning_share)));
@@ -1102,8 +1134,15 @@ var initialPayload = __PAYLOAD__;
     if (banner) {
       var live = (data.live_fields || []).join(', ') || 'none';
       var stub = (data.stub_fields || []).join(', ') || 'none';
+      var metaLine = tileStatus(data, 'meta_spend') === 'live'
+        ? 'Meta account spend is on the strip. Reach is not in that read. '
+        : 'Meta spend was not invented. ';
       banner.textContent = 'LIVE: ' + live + '. EXAMPLE / not-wired: ' + stub +
-        '. Funnel top is estimate/LP, not all-site. Instant Form / 3PL are not website leads. Meta spend was not invented. Charles QA before treating as live.';
+        '. Funnel top is estimate/LP, not all-site. Instant Form / 3PL are not website leads. ' + metaLine + 'Charles QA before treating as live.';
+      var fbCallout = document.getElementById('fbCallout');
+      if (fbCallout && tileStatus(data, 'meta_spend') === 'live') {
+        fbCallout.textContent = 'Facebook / Instagram organic vs paid from GA4. Meta account spend is in the strip. Reach is not in that read.';
+      }
     }
     paintCharts(data);
     paintChrome(data);

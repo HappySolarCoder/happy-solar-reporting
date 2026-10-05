@@ -465,6 +465,48 @@ __DASHBOARD_NAV_HTML__
         .replaceAll('"', '&quot;');
     }
 
+    function normGoalName(value) {
+      return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+    function mergeBloomPersonGoals(goalsRows, roster, personGoals) {
+      if (!Array.isArray(personGoals) || !personGoals.length) return;
+      const have = {};
+      for (const row of goalsRows) {
+        const pk = String(row.person_key || '');
+        const metric = String(row.metric || '');
+        if (pk && metric) have[pk + '|' + metric] = true;
+      }
+      const byName = {};
+      const byLast = {};
+      for (const person of roster || []) {
+        const name = normGoalName(person.display_name || person.ghl_user_name || person.raydar_user_name);
+        if (name && !byName[name]) byName[name] = person;
+        const last = normGoalName(person.ghl_setter_last_name);
+        if (!last) continue;
+        if (Object.prototype.hasOwnProperty.call(byLast, last)) byLast[last] = null;
+        else byLast[last] = person;
+      }
+      for (const goal of personGoals) {
+        const metric = String(goal.settings_metric || '');
+        if (!metric || goal.target == null) continue;
+        const name = normGoalName(goal.name);
+        let person = name ? byName[name] : null;
+        if (!person && name) {
+          const parts = name.split(' ').filter(Boolean);
+          const last = parts[parts.length - 1];
+          const candidate = byLast[last];
+          if (candidate) {
+            const cand = normGoalName(candidate.display_name || candidate.ghl_user_name || '');
+            const first = parts[0];
+            if (!first || cand.split(' ')[0] === first) person = candidate;
+          }
+        }
+        const pk = person ? String(person.person_key || '') : '';
+        if (!pk || have[pk + '|' + metric]) continue;
+        have[pk + '|' + metric] = true;
+        goalsRows.push({ person_key: pk, metric: metric, value: Number(goal.target), source: 'bloom' });
+      }
+    }
     function normSetter(v) {
       return String(v || '').trim();
     }
@@ -570,13 +612,14 @@ __DASHBOARD_NAV_HTML__
           body: JSON.stringify({ action: 'bootstrap', month: monthStr })
         };
 
-        const [demoData, salesData, settingsData] = await Promise.all([
+        const [demoData, salesData, settingsData, bloomData] = await Promise.all([
           fetchJson(`/api/metrics/demo_rate?${q}`),
           fetchJson(`/api/metrics/sales?${q}`),
           fetch('/api/settings_api', settingsReq).then(async res => {
             if (!res.ok) throw new Error(`HTTP ${res.status} for /api/settings_api`);
             return await res.json();
-          })
+          }),
+          fetchJson('/api/metrics/bloom_goals?period=' + encodeURIComponent(monthStr)).catch(() => null)
         ]);
 
         // Per-sit cutoff lives in demo_rate (SWEEPER_ATTRIBUTION_START 2026-09-24).
@@ -585,7 +628,8 @@ __DASHBOARD_NAV_HTML__
         const salesBySetter = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_setter_last_name) || {};
 
         const roster = Array.isArray(settingsData && settingsData.roster_people) ? settingsData.roster_people : [];
-        const goals = Array.isArray(settingsData && settingsData.goals_for_month) ? settingsData.goals_for_month : [];
+        const goals = Array.isArray(settingsData && settingsData.goals_for_month) ? settingsData.goals_for_month.slice() : [];
+        mergeBloomPersonGoals(goals, roster, bloomData && bloomData.person_goals);
 
         const goalsByPerson = {};
         for (const g of goals) {

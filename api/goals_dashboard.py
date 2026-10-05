@@ -169,10 +169,19 @@ def render_html() -> str:
       if (!roster.ok) {{ host.textContent = "Roster goals unavailable."; return; }}
       const payload = await roster.json();
       const rows = payload.goals_for_month || [];
-      if (!rows.length) {{ host.innerHTML = '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '.</p>'; return; }}
-      host.innerHTML = '<table><thead><tr><th>Person</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + rows.map(function(row) {{
-        return '<tr><td>' + esc(row.person_key) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.value) + '</td></tr>';
-      }}).join("") + '</tbody></table>';
+      const bloomPeople = (bloom && bloom.person_goals) || [];
+      if (!rows.length && !bloomPeople.length) {{ host.innerHTML = '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '. Bloom has no person goals for this month either.</p>'; return; }}
+      const firestoreTable = rows.length
+        ? '<table><thead><tr><th>Person</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + rows.map(function(row) {{
+            return '<tr><td>' + esc(row.person_key) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.value) + '</td></tr>';
+          }}).join("") + '</tbody></table>'
+        : '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '.</p>';
+      const bloomTable = bloomPeople.length
+        ? '<p class="chart-note">Bloom person goals from portal_goal_documents.</p><table><thead><tr><th>Person</th><th>Role</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + bloomPeople.map(function(row) {{
+            return '<tr><td>' + esc(row.name || row.assignee_user_id) + '</td><td>' + esc(row.role) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.target) + '</td></tr>';
+          }}).join("") + '</tbody></table>'
+        : '';
+      host.innerHTML = firestoreTable + bloomTable;
     }}
     renderFilters();
     load();

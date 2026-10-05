@@ -449,6 +449,18 @@ class WebsiteFunnelLogicTests(unittest.TestCase):
         self.assertNotIn("orphan", notes)
         self.assertNotIn("ghl", notes)
 
+    def test_future_month_days_are_not_missing_docs(self):
+        from datetime import date as date_cls
+
+        docs = [{"date": f"2026-10-0{day}", "ga4": "ok", "sessions": 10, "completed_forms": 0} for day in range(1, 5)]
+        payload = funnel.aggregate_daily_docs(docs, year=2026, month=10, as_of=date_cls(2026, 10, 5))
+        self.assertEqual(payload["missing_dates"], ["2026-10-05"])
+        self.assertNotIn("2026-10-06", payload["missing_dates"])
+        self.assertIn("2026-10-31", payload["future_dates"])
+        notes = " ".join(payload["notes"])
+        self.assertIn("have not happened yet", notes)
+        self.assertNotIn("2026-10-06", notes)
+
     def test_missing_docs_and_ga4_not_configured_are_plain(self):
         empty = funnel.aggregate_daily_docs([], year=2026, month=8)
         self.assertEqual(empty["ga4"], "missing_docs")

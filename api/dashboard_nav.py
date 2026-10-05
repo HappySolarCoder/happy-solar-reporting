@@ -5,7 +5,86 @@ from pathlib import Path
 
 def dashboard_nav_css() -> str:
     theme = Path(__file__).with_name("ops_theme.css").read_text(encoding="utf-8")
-    return _legacy_nav_css() + "\n" + theme
+    return _legacy_nav_css() + "\n" + theme + "\n" + _sidebar_link_css()
+
+
+def _sidebar_link_css() -> str:
+    """Beat legacy page `.navbtn` pill rules on Operations sidebar anchors.
+
+    Shared nav links are `class="navlink navbtn"`. Several older pages append
+    `.navbtn { background:#fff; color:#1f2937; border-radius:12px }` after this
+    sheet. An id selector keeps the Company Overview link look on those pages
+    without restyling in-page pills that are not inside `#sidebar`.
+    """
+    return """
+    #sidebar a.navlink,
+    #sidebar a.navbtn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: auto;
+      margin: 2px 0;
+      padding: 11px 12px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      box-shadow: none;
+      color: #a7bfd2;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.3;
+      letter-spacing: 0;
+      text-decoration: none;
+      text-transform: none;
+      white-space: normal;
+      flex: none;
+    }
+    #sidebar a.navlink:hover,
+    #sidebar a.navbtn:hover {
+      background: #102e46;
+      color: #fff;
+      border-color: transparent;
+      box-shadow: none;
+      text-decoration: none;
+      transform: translateX(2px);
+    }
+    #sidebar a.navlink.active,
+    #sidebar a.navbtn.active {
+      background: #123e52;
+      color: #26d9eb;
+      border-color: transparent;
+      box-shadow: inset 2px 0 #26d9eb;
+      text-decoration: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #sidebar a.navlink:hover,
+      #sidebar a.navbtn:hover { transform: none; }
+    }
+    button.mobile-menu.oc-menu-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #102d43;
+      color: #f1f6ff;
+      border: 1px solid #2b4c63;
+      border-radius: 7px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+    }
+    @media (max-width: 800px) {
+      #sidebar { transform: translateX(-100%); width: 222px; }
+      body.menu-open #sidebar { transform: translateX(0); }
+      button.mobile-menu.oc-menu-btn {
+        display: inline-flex;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 40;
+        padding: 8px 10px;
+      }
+    }
+    """
 
 
 def _legacy_nav_css() -> str:

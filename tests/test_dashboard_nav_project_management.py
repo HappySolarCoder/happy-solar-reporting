@@ -62,6 +62,17 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn("Project Hub", hub_html)
         self.assertIn("Hold / Cancelled", hold_html)
 
+    def test_sidebar_links_beat_legacy_navbtn_pills(self):
+        css = nav.dashboard_nav_css()
+        override = css.find("#sidebar a.navlink,\n    #sidebar a.navbtn")
+        theme_link = css.find(".navlink{display:flex")
+        self.assertGreater(theme_link, -1)
+        self.assertGreater(override, theme_link)
+        self.assertIn("background: transparent", css[override:])
+        self.assertIn("color: #a7bfd2", css[override:])
+        self.assertIn("body.menu-open #sidebar { transform: translateX(0); }", css)
+        self.assertIn("button.mobile-menu.oc-menu-btn", css)
+
 
 if __name__ == "__main__":
     unittest.main()

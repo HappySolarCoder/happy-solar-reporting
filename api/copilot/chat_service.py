@@ -10,7 +10,7 @@ from typing import Any
 
 from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
-from copilot.auth import chat_allowed, identity_from_headers
+from copilot.auth import identity_for_chat
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
 from copilot.messages import (
     BUDGET_LIMIT,
@@ -339,6 +339,7 @@ def handle_chat(
     metrics=None,
     model=None,
     body_identity: dict | None = None,
+    bloom_token_secret: str | None = None,
 ) -> dict[str, Any]:
     del body_identity  # never authorize from the body
     if store.paused or not config.enabled:
@@ -349,8 +350,14 @@ def handle_chat(
     text = message or ""
     if len(text) > config.max_message_chars:
         return _response(413, ok=False, code="too_large", answer=NARROW)
-    identity = identity_from_headers(headers, settings_password=settings_password)
-    if not chat_allowed(identity, config.allowed_roles):
+    identity = identity_for_chat(
+        headers,
+        settings_password=settings_password,
+        allowed_roles=config.allowed_roles,
+        token_secret=bloom_token_secret,
+        now=now,
+    )
+    if identity is None:
         return _response(401, ok=False, code="unauthorized", answer=SIGN_IN_REQUIRED)
     assert identity is not None
     remembered = store.remembered_response(request_id, identity.actor_id)

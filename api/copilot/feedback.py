@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""POST /api/copilot/feedback — stores a review item for an authenticated admin."""
+"""POST /api/copilot/feedback — stores a review item for a signed-in employee or admin."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from copilot.admin_actions import save_feedback
-from copilot.auth import identity_from_headers
+from copilot.auth import identity_for_chat, identity_from_headers
 from copilot.config import config_from_env
 from copilot.firestore_store import open_store
 from copilot.messages import PAUSED, SIGN_IN_REQUIRED
@@ -51,6 +51,15 @@ class handler(BaseHTTPRequestHandler):
         except Exception:
             data = {}
         identity = identity_from_headers(self.headers)
+        if identity is None:
+            # Bloom bearer is the employee path. It does not grant admin, and a
+            # missing or invalid token stays anonymous and is refused.
+            identity = identity_for_chat(
+                self.headers,
+                settings_password=None,
+                allowed_roles=config_from_env().allowed_roles,
+                now=datetime.now(timezone.utc),
+            )
         if identity is None:
             body = {"ok": False, "answer": SIGN_IN_REQUIRED}
             status = 401

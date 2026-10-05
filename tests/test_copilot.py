@@ -18,7 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
 
 from copilot.admin_actions import approve_term
-from copilot.auth import identity_from_headers
+from copilot.auth import (
+    identity_for_chat,
+    identity_from_bloom_bearer,
+    identity_from_headers,
+    sign_bloom_token,
+    verify_bloom_token,
+)
 from copilot.chat_service import handle_chat
 from copilot.config import config_from_env
 from copilot.dictionary import is_official, load_seed
@@ -97,7 +103,36 @@ def _enabled_config():
     )
 
 
-def _chat(message, *, config=None, store=None, headers=None, metrics=None, model=None, filters=None, request_id=None, body_identity=None):
+# Shared with happy-solar-bloom-portal/lib/goose-token.test.ts. Do not edit one side only.
+BLOOM_TOKEN_VECTOR = (
+    "eyJhdWQiOiJnb29zZS1jb3BpbG90IiwiZXhwIjoxNzYwMDAwMzAwLCJpYXQiOjE3NjAwMDAwMDAs"
+    "ImlzcyI6ImhhcHB5LXNvbGFyLWJsb29tIiwicm9sZSI6Im1hbmFnZXIiLCJzdGF0dXMiOiJhY3RpdmUi"
+    "LCJzdWIiOiJ1c2VyX2V2YW4iLCJ2IjoxfQ.drGdVXUYo0Y3jz9wgcTLuswlW4j6IGV4SenUNo0pGmg"
+)
+BLOOM_VECTOR_NOW = datetime(2025, 10, 9, 8, 55, tzinfo=timezone.utc)
+
+
+def _bloom_claims(**overrides):
+    claims = {
+        "aud": "goose-copilot",
+        "exp": 1791126300,
+        "iat": 1791126000,
+        "iss": "happy-solar-bloom",
+        "role": "manager",
+        "status": "active",
+        "sub": "user_evan",
+        "v": 1,
+    }
+    claims.update(overrides)
+    return claims
+
+
+def _bloom_auth(secret="test-secret", **overrides):
+    token = sign_bloom_token(_bloom_claims(**overrides), secret)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _chat(message, *, config=None, store=None, headers=None, metrics=None, model=None, filters=None, request_id=None, body_identity=None, bloom_token_secret=None):
     return handle_chat(
         message=message,
         filters=filters or {"start": "2026-10-01", "end": "2026-10-04"},
@@ -111,6 +146,7 @@ def _chat(message, *, config=None, store=None, headers=None, metrics=None, model
         metrics=metrics if metrics is not None else FakeMetrics(),
         model=model,
         body_identity=body_identity,
+        bloom_token_secret=bloom_token_secret,
     )
 
 
@@ -457,6 +493,13 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("background: #fff; color: #1a2b4a", html)
         self.assertIn(".goose-form button { border: 1px solid #0a7a34; background: #0a7a34; color: #fff;", html)
         self.assertNotIn(">Ask about our data<", html)
+        self.assertIn("happy-solar-goose", html)
+        self.assertIn("request-token", html)
+        self.assertIn("token-unavailable", html)
+        self.assertIn("Bearer ", html)
+        self.assertIn("https://happy-solar-bloom-portal.vercel.app", html)
+        self.assertNotIn('"user_id"', html)
+        self.assertNotIn("per-employee sign-in", html)
 
     def test_feedback_refuses_when_copilot_disabled(self):
         from copilot import feedback as feedback_mod
@@ -573,6 +616,154 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("2026-10-04", answer)
         for word in (" sit ", " sits ", " sat "):
             self.assertNotIn(word, f" {answer} ")
+
+    def test_sign_in_copy_no_longer_denies_employee_sign_in(self):
+        self.assertNotIn("does not have per-employee sign-in", SIGN_IN_REQUIRED)
+        self.assertIn("signed-in authorized employee", SIGN_IN_REQUIRED)
+
+    def test_bloom_token_vector_and_basic_password_still_authorize(self):
+        claims = verify_bloom_token(BLOOM_TOKEN_VECTOR, "test-secret", BLOOM_VECTOR_NOW)
+        self.assertEqual(claims["sub"], "user_evan")
+        self.assertEqual(claims["role"], "manager")
+        self.assertIsNone(verify_bloom_token(BLOOM_TOKEN_VECTOR, "other-secret", BLOOM_VECTOR_NOW))
+        self.assertIsNone(verify_bloom_token(BLOOM_TOKEN_VECTOR + "x", "test-secret", BLOOM_VECTOR_NOW))
+        basic = identity_from_headers(_auth(user="evan"), settings_password="secret")
+        self.assertEqual(basic.actor_id, "settings_admin")
+        self.assertEqual(basic.role, "settings_admin")
+        self.assertIsNone(identity_from_headers(_bloom_auth(), settings_password="secret"))
+
+    def test_bloom_bearer_chats_as_employee_without_settings_password(self):
+        store = MemoryStore()
+        result = _chat(
+            "Explain Opp2Prelim",
+            headers=_bloom_auth(),
+            store=store,
+            request_id="req_bloom_chat_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(result["status"], 200)
+        self.assertNotEqual(result["body"]["answer"], SIGN_IN_REQUIRED)
+        self.assertIn("not company policy", result["body"]["answer"].lower())
+        conversation = store.get_conversation("conv_test", "bloom:user_evan")
+        self.assertIsNotNone(conversation)
+        self.assertIsNone(store.get_conversation("conv_test", "settings_admin"))
+        body_only = _chat(
+            "Explain Opp2Prelim",
+            headers={"Authorization": "Bearer not-a-token"},
+            request_id="req_bloom_bad_01",
+            bloom_token_secret="test-secret",
+            body_identity={"role": "settings_admin", "user_id": "user_evan"},
+        )
+        self.assertEqual(body_only["status"], 401)
+        self.assertEqual(body_only["body"]["answer"], SIGN_IN_REQUIRED)
+
+    def test_bloom_role_maps_onto_allowed_roles_only(self):
+        mapped = identity_for_chat(
+            _bloom_auth(),
+            settings_password="secret",
+            allowed_roles=frozenset({"settings_admin"}),
+            token_secret="test-secret",
+            now=NOW,
+        )
+        self.assertEqual(mapped.actor_id, "bloom:user_evan")
+        self.assertEqual(mapped.role, "settings_admin")
+        listed = identity_for_chat(
+            _bloom_auth(),
+            settings_password="secret",
+            allowed_roles=frozenset({"manager"}),
+            token_secret="test-secret",
+            now=NOW,
+        )
+        self.assertEqual(listed.role, "manager")
+        self.assertEqual(listed.actor_id, "bloom:user_evan")
+        denied = identity_for_chat(
+            _bloom_auth(),
+            settings_password="secret",
+            allowed_roles=frozenset({"coach"}),
+            token_secret="test-secret",
+            now=NOW,
+        )
+        self.assertIsNone(denied)
+        forged_admin = _bloom_auth(role="settings_admin")
+        self.assertIsNone(
+            identity_from_bloom_bearer(forged_admin, token_secret="test-secret", now=NOW)
+        )
+        inactive = _bloom_auth(status="onboarding")
+        self.assertIsNone(identity_from_bloom_bearer(inactive, token_secret="test-secret", now=NOW))
+        expired = _bloom_auth(iat=1791120000, exp=1791120300)
+        self.assertIsNone(identity_from_bloom_bearer(expired, token_secret="test-secret", now=NOW))
+        long_lived = _bloom_auth(iat=1791126000, exp=1791126000 + 601)
+        self.assertIsNone(identity_from_bloom_bearer(long_lived, token_secret="test-secret", now=NOW))
+        self.assertIsNone(identity_from_bloom_bearer(_bloom_auth(), token_secret="", now=NOW))
+
+    def test_admin_rejects_bloom_bearer(self):
+        from copilot import admin as admin_mod
+
+        token = sign_bloom_token(_bloom_claims(), "test-secret")
+        sent = {}
+        fake = admin_mod.handler.__new__(admin_mod.handler)
+        fake.headers = {"Authorization": f"Bearer {token}"}
+        fake.wfile = io.BytesIO()
+
+        def send_response(code):
+            sent["status"] = code
+
+        fake.send_response = send_response
+        fake.send_header = lambda *_args: None
+        fake.end_headers = lambda: None
+
+        def opened():
+            raise AssertionError("admin opened the store for a Bloom bearer")
+
+        with patch.dict(os.environ, {"SETTINGS_PASSWORD": "secret", "COPILOT_BLOOM_TOKEN_SECRET": "test-secret"}):
+            with patch.object(admin_mod, "open_store", opened):
+                fake.do_GET()
+        self.assertEqual(sent["status"], 401)
+        self.assertIn(b"Unauthorized", fake.wfile.getvalue())
+
+    def test_feedback_accepts_bloom_bearer_and_still_refuses_anonymous(self):
+        from copilot import feedback as feedback_mod
+
+        current = int(datetime.now(timezone.utc).timestamp())
+        token = sign_bloom_token(_bloom_claims(iat=current - 10, exp=current + 300), "test-secret")
+        raw = b'{"message":"the chart looks wrong"}'
+        sent = {}
+        saved = {}
+
+        class Fake:
+            headers = {"Content-Length": str(len(raw)), "Authorization": f"Bearer {token}"}
+            rfile = io.BytesIO(raw)
+            wfile = io.BytesIO()
+
+            def send_response(self, code):
+                sent["status"] = code
+
+            def send_header(self, *_args):
+                return None
+
+            def end_headers(self):
+                return None
+
+        def capture(_store, *, actor, message, now):
+            saved["actor"] = actor
+            saved["message"] = message
+            return {"feedback_id": "fb_bloom"}
+
+        env = {
+            "COPILOT_ENABLED": "true",
+            "COPILOT_BLOOM_TOKEN_SECRET": "test-secret",
+            "COPILOT_ALLOWED_ROLES": "settings_admin",
+            "SETTINGS_PASSWORD": "secret",
+        }
+        with patch.dict(os.environ, env):
+            with patch.object(feedback_mod, "open_store", return_value=object()):
+                with patch.object(feedback_mod, "save_feedback", capture):
+                    feedback_mod.handler.do_POST(Fake())
+        body = json.loads(Fake.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(sent["status"], 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(saved["actor"], "bloom:user_evan")
+        self.assertNotEqual(saved["actor"], "settings_admin")
 
 
 if __name__ == "__main__":

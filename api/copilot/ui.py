@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import json
+
+from copilot.auth import bloom_parent_origins
 from copilot.messages import UI_TITLE, WELCOME
 
 
 def render_panel() -> str:
     welcome = WELCOME.replace("'", "\\'")
     title = UI_TITLE
+    origins_json = json.dumps(bloom_parent_origins())
     return f"""
 <button type="button" id="gooseOpen" class="goose-open" aria-label="Ask about our data" title="Ask about our data"><img src="/goose-headset.png" alt="" width="56" height="56" /></button>
 <div id="goosePanel" class="goose-panel" hidden>
@@ -72,6 +76,85 @@ def render_panel() -> str:
   const input = document.getElementById('gooseInput');
   const sources = ['doors','self_gen','phones','inbound','3pl'];
   const labels = {{doors:'Doors', self_gen:'Self Gen', phones:'Phones', inbound:'Inbound', '3pl':'3PL'}};
+  const bloomParents = new Set({origins_json});
+  let bloomBearer = '';
+  let bloomBearerExp = 0;
+  const bloomWaiters = [];
+
+  function parentOrigin() {{
+    if (window.parent === window) return '';
+    try {{
+      if (document.referrer) {{
+        const origin = new URL(document.referrer).origin;
+        return bloomParents.has(origin) ? origin : '';
+      }}
+    }} catch (err) {{
+      return '';
+    }}
+    return bloomParents.size === 1 ? Array.from(bloomParents)[0] : '';
+  }}
+
+  function tokenStillFresh() {{
+    return Boolean(bloomBearer) && bloomBearerExp - Date.now() > 15000;
+  }}
+
+  function rememberToken(data) {{
+    if (!data || data.type !== 'happy-solar-goose' || data.action !== 'token') return false;
+    if (typeof data.token !== 'string') return false;
+    const token = data.token;
+    if (token.length < 20 || token.length > 4000 || token.indexOf(' ') !== -1 || token.indexOf('.') < 1) return false;
+    let exp = Number(data.expiresAt);
+    try {{
+      let body = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+      while (body.length % 4) body += '=';
+      const claims = JSON.parse(atob(body));
+      if (!claims || claims.aud !== 'goose-copilot' || typeof claims.exp !== 'number') return false;
+      exp = claims.exp * 1000;
+    }} catch (err) {{
+      return false;
+    }}
+    if (!Number.isFinite(exp)) return false;
+    bloomBearer = token;
+    bloomBearerExp = exp;
+    return true;
+  }}
+
+  function releaseWaiters(token) {{
+    const waiters = bloomWaiters.splice(0, bloomWaiters.length);
+    waiters.forEach((resolve) => resolve(token));
+  }}
+
+  window.addEventListener('message', (event) => {{
+    if (!bloomParents.has(event.origin)) return;
+    const data = event.data;
+    if (data && data.type === 'happy-solar-goose' && data.action === 'token-unavailable') {{
+      releaseWaiters('');
+      return;
+    }}
+    if (!rememberToken(data)) return;
+    releaseWaiters(tokenStillFresh() ? bloomBearer : '');
+  }});
+
+  function requestBloomToken() {{
+    const origin = parentOrigin();
+    if (!origin) return Promise.resolve('');
+    if (tokenStillFresh()) return Promise.resolve(bloomBearer);
+    return new Promise((resolve) => {{
+      const timer = window.setTimeout(() => resolve(tokenStillFresh() ? bloomBearer : ''), 2500);
+      bloomWaiters.push((token) => {{
+        window.clearTimeout(timer);
+        resolve(token);
+      }});
+      window.parent.postMessage({{ type: 'happy-solar-goose', action: 'request-token' }}, origin);
+    }});
+  }}
+
+  async function authHeaders() {{
+    const headers = {{ 'Content-Type': 'application/json' }};
+    const token = await requestBloomToken();
+    if (token) headers.Authorization = 'Bearer ' + token;
+    return headers;
+  }}
   function selectedDates() {{
     const start = document.getElementById('startDate');
     const end = document.getElementById('endDate');
@@ -114,7 +197,7 @@ def render_panel() -> str:
     add(message, []);
     const response = await fetch('/api/copilot/chat', {{
       method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
+      headers: await authHeaders(),
       body: JSON.stringify({{
         message: message,
         filters: {{start: dates.start, end: dates.end, sources: selectedSources()}},
@@ -131,6 +214,7 @@ def render_panel() -> str:
   document.getElementById('gooseOpen').addEventListener('click', () => {{
     panel.hidden = false;
     drawChips();
+    requestBloomToken();
     if (!log.dataset.welcomed) {{
       add('{welcome}', []);
       log.dataset.welcomed = '1';
@@ -150,7 +234,7 @@ def render_panel() -> str:
     if (!note) return;
     const response = await fetch('/api/copilot/feedback', {{
       method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
+      headers: await authHeaders(),
       body: JSON.stringify({{message: note}})
     }});
     const payload = await response.json();

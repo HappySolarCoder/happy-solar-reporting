@@ -44,10 +44,7 @@ TIMEZONE_UNCONFIRMED = (
     "dates as a reporting period."
 )
 
-SIGN_IN_REQUIRED = (
-    "Goose can only answer for a signed-in authorized employee. This dashboard "
-    "does not have per-employee sign-in yet."
-)
+SIGN_IN_REQUIRED = "Goose can only answer for a signed-in authorized employee."
 
 MODEL_UNAVAILABLE = (
     "The language model is not connected. Figures below, when present, come "

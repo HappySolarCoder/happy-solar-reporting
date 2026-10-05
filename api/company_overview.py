@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -716,15 +717,27 @@ __DASHBOARD_NAV_HTML__
     const ih = H - m.t - m.b;
 
     const labels = rows.map(r => String(r.month || ''));
-    const vals = rows.map(r => Number(r[key] || 0));
-    const yMax = Math.max(1, ...vals);
+    const vals = rows.map(r => {
+      const raw = r[key];
+      if (raw === null || raw === undefined || raw === '') return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    });
+    const plotted = vals.filter(v => v !== null);
+    const yMax = Math.max(1, ...(plotted.length ? plotted : [0]));
 
     const sx = (i) => m.l + (labels.length <= 1 ? 0 : (i/(labels.length-1))*iw);
     const sy = (v) => m.t + ih - (v / yMax) * ih;
-    const path = vals.map((v,i)=>`${i===0?'M':'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
+    let path = '';
+    vals.forEach((v, i) => {
+      if (v === null) return;
+      const cmd = (i === 0 || vals[i - 1] === null) ? 'M' : 'L';
+      path += `${cmd} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)} `;
+    });
 
     let pointMarks = '';
     for (let i=0;i<vals.length;i++) {
+      if (vals[i] === null) continue;
       const x = sx(i), y = sy(vals[i]);
       const valTxt = (key === 'opp2prelim') ? `${Number(vals[i]).toFixed(1)}%` : `${Math.round(vals[i])}`;
       pointMarks += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.2" />`;
@@ -788,6 +801,17 @@ __DASHBOARD_NAV_HTML__
     return `${yyyy}-${mm}-${dd}`;
   }
 
+  function companyToday() {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const part = (type) => Number(parts.find(item => item.type === type).value);
+    return new Date(part('year'), part('month') - 1, part('day'));
+  }
+
   if (urlStart && urlEnd) {
     document.getElementById('startDate').value = urlStart;
     document.getElementById('endDate').value = urlEnd;
@@ -811,7 +835,7 @@ __DASHBOARD_NAV_HTML__
       const per = p.dataset.period;
       const y = Number(yearSel.value);
       const m = Number(monthSel.value);
-      const today = new Date();
+      const today = companyToday();
 
       if (per === 'custom') {
         setActive('custom');
@@ -988,7 +1012,11 @@ __DASHBOARD_NAV_HTML__
     document.getElementById('lgInboundCreated').textContent = String(sumByAliases(createdByLead, INBOUND_KEYS));
     document.getElementById('lg3plCreated').textContent = String(sumByAliases(createdByLead, THREE_PL_KEYS));
 
-    const fmtPct = (d) => (d && typeof d.result !== 'undefined') ? `${Number(d.result).toFixed(1)}%` : '—';
+    const fmtPct = (d) => {
+      if (!d || d.ran_count === 0 || d.result === null || d.result === undefined) return '—';
+      const n = Number(d.result);
+      return Number.isFinite(n) ? `${n.toFixed(1)}%` : '—';
+    };
     const fmtCounts = (d) => {
       if (!d) return 'Demos: — • Ran: —';
       const demos = (typeof d.sit_count !== 'undefined') ? Number(d.sit_count) : null;
@@ -1006,7 +1034,7 @@ __DASHBOARD_NAV_HTML__
       const ran = sumByAliases(ranLead, aliases);
       const sit = sumByAliases(sitLead, aliases);
       return {
-        result: ran > 0 ? (sit / ran) * 100 : 0,
+        result: ran > 0 ? (sit / ran) * 100 : null,
         ran_count: ran,
         sit_count: sit,
       };
@@ -1094,14 +1122,42 @@ __DASHBOARD_NAV_HTML__
 </body>
 </html>"""
 
-    return html.replace("__YEAR__", str(year)).replace("__MONTH__", str(month)).replace("__DASHBOARD_NAV_CSS__", nav_css).replace("__DASHBOARD_NAV_HTML__", nav_html)
+    rendered = (
+        html.replace("__YEAR__", str(year))
+        .replace("__MONTH__", str(month))
+        .replace("__DASHBOARD_NAV_CSS__", nav_css)
+        .replace("__DASHBOARD_NAV_HTML__", nav_html)
+    )
+    panel = _copilot_panel()
+    if not panel:
+        return rendered
+    return rendered.replace("</body>", panel + "\n</body>")
+
+
+def _copilot_panel() -> str:
+    """Goose markup only when COPILOT_ENABLED is true. Flag-off HTML is unchanged."""
+    try:
+        from copilot.config import config_from_env
+
+        enabled = config_from_env().enabled
+    except Exception:
+        return ""
+    if not enabled:
+        return ""
+    try:
+        from copilot.ui import render_panel
+
+        return render_panel()
+    except Exception:
+        return ""
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             qs = parse_qs(urlparse(self.path).query)
-            now = datetime.utcnow()
+            # Approved company reporting zone. The UTC clock is not this timezone.
+            now = datetime.now(ZoneInfo("America/New_York"))
             year = int(qs.get("year", [str(now.year)])[0])
             month = int(qs.get("month", [str(now.month)])[0])
 

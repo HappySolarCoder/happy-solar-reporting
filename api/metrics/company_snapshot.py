@@ -25,8 +25,18 @@ def _base_url(handler: BaseHTTPRequestHandler) -> str:
     return f"{proto}://{host}"
 
 
-def _fetch_json(url: str, timeout: int = 25) -> dict | None:
-    req = Request(url, headers={"Accept": "application/json"})
+def _auth_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
+    """Preview deployments reject anonymous self-fetches. Forward the caller's auth."""
+    headers = {"Accept": "application/json"}
+    for name in ("cookie", "authorization", "x-vercel-protection-bypass"):
+        value = handler.headers.get(name)
+        if value:
+            headers["Cookie" if name == "cookie" else name] = value
+    return headers
+
+
+def _fetch_json(url: str, timeout: int = 25, headers: dict[str, str] | None = None) -> dict | None:
+    req = Request(url, headers=headers or {"Accept": "application/json"})
     with urlopen(req, timeout=timeout) as resp:  # nosec - controlled internal URL
         body = resp.read()
         return json.loads(body.decode("utf-8"))
@@ -34,7 +44,7 @@ def _fetch_json(url: str, timeout: int = 25) -> dict | None:
 
 def _clean_qs(qs: dict[str, list[str]]) -> str:
     out = {}
-    for k in ("year", "month", "start", "end"):
+    for k in ("year", "month", "start", "end", "lead_source", "pipeline", "sweeper"):
         v = (qs.get(k, [""])[0] or "").strip()
         if v:
             out[k] = v
@@ -63,6 +73,7 @@ class handler(BaseHTTPRequestHandler):
 
             base = _base_url(self)
             suffix = f"&{q}" if q else ""
+            forwarded = _auth_headers(self)
 
             urls = {
                 "sales": f"{base}/api/metrics/sales?format=json{suffix}",
@@ -73,7 +84,7 @@ class handler(BaseHTTPRequestHandler):
 
             out = {}
             with ThreadPoolExecutor(max_workers=4) as ex:
-                futs = {k: ex.submit(_fetch_json, u) for k, u in urls.items()}
+                futs = {k: ex.submit(_fetch_json, u, 25, forwarded) for k, u in urls.items()}
                 for k, f in futs.items():
                     try:
                         out[k] = f.result()

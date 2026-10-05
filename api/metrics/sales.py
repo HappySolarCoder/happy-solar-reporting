@@ -24,15 +24,23 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 import re
 from urllib.parse import parse_qs, urlparse
 
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+from pipeline_scope import pipeline_in_scope, truthy_flag
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -219,7 +227,7 @@ def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[in
 
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, on_sale: Any = None) -> dict[str, Any]:
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False, on_sale: Any = None) -> dict[str, Any]:
     if start and end:
         start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
     else:
@@ -477,6 +485,10 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             if str(lead_src).strip().lower() != want.lower():
                 continue
 
+        pname_for_filter = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
+        if not pipeline_in_scope(pname_for_filter, pipeline=pipeline, sweeper=sweeper):
+            continue
+
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
 
@@ -688,13 +700,15 @@ class Handler(BaseHTTPRequestHandler):
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
+            pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
+            sweeper = truthy_flag(qs.get("sweeper", [""])[0])
 
             # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
             tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()
-            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source)
+            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source, pipeline=pipeline, sweeper=sweeper)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

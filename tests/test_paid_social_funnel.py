@@ -952,8 +952,8 @@ class PageTests(unittest.TestCase):
         self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, PAGE_SRC)
         self.assertNotIn(metric.META_CAMPAIGN_NOT_MODIFIED, html)
         nav_html = nav.render_dashboard_nav("paid_social_funnel")
-        self.assertLess(nav_html.find("Website Traffic"), nav_html.find("Paid Social"))
-        self.assertIn('class="navbtn active" href="/api/paid_social_funnel"', nav_html)
+        self.assertLess(nav_html.find("Ads & Inbound Funnel"), nav_html.find("Website Traffic"))
+        self.assertIn('class="navlink active" href="/api/paid_social_funnel"', nav_html)
         self.assertEqual(
             index.dispatch_route("/api/metrics/paid_social_funnel?start=2026-09-07&end=2026-10-04"),
             "metrics/paid_social_funnel",

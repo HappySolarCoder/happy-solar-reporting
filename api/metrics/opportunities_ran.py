@@ -22,14 +22,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+from pipeline_scope import pipeline_in_scope, truthy_flag
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -387,7 +395,7 @@ def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     return m
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -507,6 +515,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             lead = "none"
 
         if lead_source_norm and str(lead).strip().lower() != str(lead_source_norm).strip().lower():
+            continue
+        if not pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper):
             continue
 
         # distinct count (after all filters)
@@ -681,10 +691,12 @@ class Handler(BaseHTTPRequestHandler):
             start = (qs.get("start", [""])[0] or "").strip() or None
             end = (qs.get("end", [""])[0] or "").strip() or None
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
+            pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
+            sweeper = truthy_flag(qs.get("sweeper", [""])[0])
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline=pipeline, sweeper=sweeper)
 
             if want_json:
                 body = json.dumps(json_safe(payload)).encode("utf-8")

@@ -1,7 +1,91 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def dashboard_nav_css() -> str:
+    theme = Path(__file__).with_name("ops_theme.css").read_text(encoding="utf-8")
+    return _legacy_nav_css() + "\n" + theme + "\n" + _sidebar_link_css()
+
+
+def _sidebar_link_css() -> str:
+    """Lock Operations sidebar anchors to the Company Overview link look.
+
+    Legacy pages append `.navbtn { background:#fff; border-radius:12px }` after
+    this sheet. Sidebar anchors are `navlink` only, and these declarations use
+    !important so a later page rule cannot paint them as pills.
+    """
+    return """
+    #sidebar a.navlink {
+      display: flex !important;
+      align-items: center;
+      gap: 10px;
+      width: auto;
+      margin: 2px 0 !important;
+      padding: 11px 12px !important;
+      border: 0 !important;
+      border-radius: 6px !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      color: #a7bfd2 !important;
+      font-size: 12px !important;
+      font-weight: 400 !important;
+      line-height: 1.3;
+      letter-spacing: 0;
+      text-decoration: none !important;
+      text-transform: none;
+      white-space: normal !important;
+      flex: none !important;
+    }
+    #sidebar a.navlink:hover {
+      background: #102e46 !important;
+      background-color: #102e46 !important;
+      color: #fff !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+      text-decoration: none !important;
+      transform: translateX(2px);
+    }
+    #sidebar a.navlink.active {
+      background: #123e52 !important;
+      background-color: #123e52 !important;
+      color: #26d9eb !important;
+      border-color: transparent !important;
+      box-shadow: inset 2px 0 #26d9eb !important;
+      text-decoration: none !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #sidebar a.navlink:hover { transform: none; }
+    }
+    button.mobile-menu.oc-menu-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #102d43;
+      color: #f1f6ff;
+      border: 1px solid #2b4c63;
+      border-radius: 7px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+    }
+    @media (max-width: 800px) {
+      #sidebar { transform: translateX(-100%); width: 222px; }
+      body.menu-open #sidebar { transform: translateX(0); }
+      button.mobile-menu.oc-menu-btn {
+        display: inline-flex;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 40;
+        padding: 8px 10px;
+      }
+    }
+    """
+
+
+def _legacy_nav_css() -> str:
     return """
     .hs-loader {
       position: fixed;
@@ -204,6 +288,115 @@ def dashboard_nav_css() -> str:
         min-width: 200px;
       }
     }
+
+    body.oc-root {
+      background: #061727 !important;
+      color: #f1f6ff;
+      font-family: "DM Sans", Arial, sans-serif;
+    }
+    body.oc-root .wrap {
+      margin-left: 222px;
+      max-width: 1800px;
+    }
+    body.oc-root .card,
+    body.oc-root .topbar,
+    body.oc-root .panel {
+      background: #0d293f !important;
+      color: #f1f6ff !important;
+      border-color: #2b4e66 !important;
+      box-shadow: none;
+    }
+    body.oc-root .title,
+    body.oc-root .card-title,
+    body.oc-root h1,
+    body.oc-root h2 {
+      color: #f1f6ff;
+    }
+    body.oc-root .subtitle,
+    body.oc-root .meta,
+    body.oc-root .section-title {
+      color: #91abc0 !important;
+    }
+    body.oc-root .pinkline { display: none; }
+    body.oc-root table { color: #d5e3ec; }
+    body.oc-root th { color: #91abc0 !important; background: #0a2236; }
+    body.oc-root td { color: #d5e3ec; border-color: #1b384c; }
+    body.oc-root .wrap a.navbtn,
+    body.oc-root .wrap .navbtn { color: #1f2937 !important; }
+    body.oc-root .wrap a.navbtn.active,
+    body.oc-root .wrap .navbtn.active { color: #0a7a34 !important; }
+    body.oc-root input,
+    body.oc-root select {
+      background: #091e30;
+      color: #bed1df;
+      border-color: #29485e;
+    }
+    .oc-menu-btn { display: none; }
+    @media (max-width: 1100px) and (min-width: 801px) {
+      body.oc-root .wrap { margin-left: 194px; }
+    }
+    @media (max-width: 800px) {
+      body.oc-root .wrap { margin-left: 0; }
+      .oc-menu-btn { display: inline-flex; position: fixed; top: 10px; left: 10px; z-index: 40; }
+    }
+    .oc-injected-filters { margin: 12px 16px 16px; }
+    .oc-injected-filters .global-filterbar,
+    .oc-injected-filters.global-filterbar {
+      background: #0a2438;
+      border: 1px solid #31566f;
+      border-radius: 10px;
+      padding: 12px 15px;
+    }
+    .oc-injected-filters .filter-controls {
+      display: flex;
+      align-items: end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .oc-injected-filters label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+      min-width: 140px;
+      font-size: 11px;
+      color: #82a9c0;
+    }
+    .oc-injected-filters input,
+    .oc-injected-filters select {
+      height: 35px;
+      border-radius: 7px;
+      padding: 0 8px;
+    }
+    .oc-injected-filters .filter-reset {
+      height: 35px;
+      border: 1px solid #2b4c63;
+      background: #102d43;
+      color: #f1f6ff;
+      border-radius: 7px;
+      padding: 0 12px;
+    }
+    .oc-injected-filters .filter-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      color: #91abc0;
+      font-size: 12px;
+    }
+    .oc-injected-filters .filter-chips button {
+      border: 1px solid #2b4c63;
+      background: #102d43;
+      color: #f1f6ff;
+      border-radius: 999px;
+      padding: 4px 10px;
+    }
+    @media (min-width: 1101px) {
+      body.oc-root:not(:has(.wrap)):not(:has(.workspace)) { padding-left: 222px; }
+    }
+    @media (max-width: 1100px) and (min-width: 801px) {
+      body.oc-root:not(:has(.wrap)):not(:has(.workspace)) { padding-left: 194px; }
+    }
     """
 
 
@@ -223,74 +416,105 @@ def render_dashboard_loader() -> str:
     """
 
 
+
+
+NAV_GROUPS = (
+    (
+        "COMPANY",
+        (
+            ("company_overview", "Company Overview", "/api/company_overview"),
+            ("goals_dashboard", "Goals Dashboard", "/api/goals_dashboard"),
+            ("daily_update", "Daily Dashboard", "/api/daily_update"),
+            ("morning_brief", "Morning Brief", "/api/morning_brief"),
+        ),
+    ),
+    (
+        "SALES",
+        (
+            ("sales_dashboard", "Sales Dashboard", "/api/sales_dashboard"),
+            ("sales_list", "Sales List", "/api/sales_list"),
+            ("rep_daily_recap", "Rep Daily Recap", "/api/rep_daily_recap"),
+            ("missing_dispos", "Missing Dispositions", "/api/missing_dispos"),
+        ),
+    ),
+    (
+        "LEAD GENERATION",
+        (
+            ("fma_dashboard", "FMA Dashboard", "/api/fma_dashboard"),
+            ("appointment_outcomes", "Appointment Outcomes", "/api/appointment_outcomes"),
+            ("fma_commissions", "FMA Commissions", "/api/fma_commissions"),
+        ),
+    ),
+    (
+        "PROJECT MANAGEMENT",
+        (
+            (
+                "project_management_hub",
+                "Project Hub",
+                "https://happy-solar-monday-pm.vercel.app/project-management-hub.html",
+            ),
+            (
+                "hold_cancelled",
+                "Hold / Cancelled",
+                "https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html",
+            ),
+        ),
+    ),
+    (
+        "INBOUND",
+        (
+            ("paid_social_funnel", "Ads & Inbound Funnel", "/api/paid_social_funnel"),
+            ("website_funnel", "Website Funnel", "/api/website_funnel"),
+            ("website_traffic", "Website Traffic", "/api/website_traffic"),
+        ),
+    ),
+    (
+        "OTHER",
+        (
+            ("sale_cancellation_report", "Sale Cancellations", "/api/sale_cancellation_report"),
+            ("bot_kpi_scorecard", "Bot KPI Scorecard", "/api/bot_kpi_scorecard"),
+            ("settings", "Admin Settings", "/api/settings"),
+        ),
+    ),
+)
+
+
 def render_dashboard_nav(current: str) -> str:
-    sales_active = current in {
-        "sales_dashboard",
-        "sale_cancellation_report",
-        "essential_sales",
-        "sales_list",
-        "rep_daily_recap",
-    }
-    lead_gen_active = current in {
-        "fma_dashboard",
-        "virtual_team_dashboard",
-        "powerline_dashboard",
-        "appointment_outcomes",
-        "fma_commissions",
-        "fma_monthly_kickoff",
-    }
-    project_management_active = current in {"project_management_hub", "hold_cancelled"}
-
-    def active(name: str) -> str:
-        return " active" if current == name else ""
-
+    groups = []
+    for label, items in NAV_GROUPS:
+        links = []
+        for key, title, href in items:
+            active = " active" if current == key else ""
+            external = ""
+            if href.startswith("http"):
+                external = ' target="_blank" rel="noopener noreferrer"'
+            links.append(
+                f'<a class="navlink{active}" href="{href}"{external}>{title}</a>'
+            )
+        groups.append(
+            f'<div class="navgroup">{label}</div>' + "".join(links)
+        )
+    menu = "".join(groups)
     return f"""
         {render_dashboard_loader()}
-        <div class="nav">
-          <a class="navbtn{active('company_overview')}" href="/api/company_overview">Company Overview</a>
-          <details class="navmenu">
-            <summary class="navbtn{' active' if sales_active else ''}">Sales <span class="navmenu-caret">▾</span></summary>
-            <div class="navmenu-list">
-              <a class="navmenu-item{active('sales_dashboard')}" href="/api/sales_dashboard">Sales Dashboard</a>
-              <a class="navmenu-item{active('sales_list')}" href="/api/sales_list">Sales List</a>
-              <a class="navmenu-item{active('essential_sales')}" href="/api/essential_sales">Essential Sales</a>
-              <a class="navmenu-item{active('sale_cancellation_report')}" href="/api/sale_cancellation_report">Sale Cancellations</a>
-              <a class="navmenu-item{active('rep_daily_recap')}" href="/api/rep_daily_recap">Rep Daily Recap</a>
-            </div>
-          </details>
-          <details class="navmenu">
-            <summary class="navbtn{' active' if lead_gen_active else ''}">Lead Generation <span class="navmenu-caret">▾</span></summary>
-            <div class="navmenu-list">
-              <a class="navmenu-item{active('fma_dashboard')}" href="/api/fma_dashboard">FMA Dashboard</a>
-              <a class="navmenu-item{active('virtual_team_dashboard')}" href="/api/virtual_team_dashboard">Virtual Dashboard</a>
-              <a class="navmenu-item{active('powerline_dashboard')}" href="/api/powerline_dashboard">Powerline Dashboard</a>
-            </div>
-          </details>
-          <a class="navbtn{active('daily_update')}" href="/api/daily_update">Daily Dashboard</a>
-          <details class="navmenu">
-            <summary class="navbtn{' active' if project_management_active else ''}">Project Management <span class="navmenu-caret">▾</span></summary>
-            <div class="navmenu-list">
-              <a class="navmenu-item{active('project_management_hub')}" href="https://happy-solar-monday-pm.vercel.app/project-management-hub.html" target="_blank" rel="noopener noreferrer">Project Management Hub</a>
-              <a class="navmenu-item{active('hold_cancelled')}" href="https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html" target="_blank" rel="noopener noreferrer">Hold/Cancelled</a>
-            </div>
-          </details>
-          <a class="navbtn{active('bot_kpi_scorecard')}" href="/api/bot_kpi_scorecard">Bot KPI</a>
-          <a class="navbtn{active('website_funnel')}" href="/api/website_funnel">Website Funnel</a>
-          <a class="navbtn{active('website_traffic')}" href="/api/website_traffic">Website Traffic</a>
-          <a class="navbtn{active('paid_social_funnel')}" href="/api/paid_social_funnel">Paid Social</a>
-        </div>
+        <button type="button" class="mobile-menu oc-menu-btn" aria-label="Toggle navigation" onclick="document.body.classList.toggle('menu-open')">☰</button>
+        <aside id="sidebar">
+          <div class="brand"><span class="brandmark">☀</span><div>HAPPY SOLAR<small>OPERATIONS</small></div></div>
+          <nav class="navscroll" aria-label="Operations">{menu}</nav>
+          <div class="sidebottom"><div><b>Operations control</b>America/New_York</div></div>
+        </aside>
         <script>
           (function() {{
+            document.documentElement.classList.add('oc-root');
+            document.body.classList.add('oc-root');
             var loader = document.getElementById('hsDashboardLoader');
             var pendingFetches = 0;
             var hideTimer = null;
-
             function setLoaderVisible(visible) {{
               if (!loader) return;
               loader.classList.toggle('is-hidden', !visible);
               loader.setAttribute('aria-hidden', visible ? 'false' : 'true');
             }}
-
             function scheduleLoaderHide() {{
               if (!loader) return;
               if (hideTimer) window.clearTimeout(hideTimer);
@@ -298,7 +522,6 @@ def render_dashboard_nav(current: str) -> str:
                 if (pendingFetches <= 0) setLoaderVisible(false);
               }}, 180);
             }}
-
             function shouldTrackFetch(input) {{
               var raw = '';
               if (typeof input === 'string') raw = input;
@@ -314,74 +537,132 @@ def render_dashboard_nav(current: str) -> str:
                 return false;
               }}
             }}
-
             window.HSDashboardLoader = {{
-              show: function() {{
-                if (hideTimer) window.clearTimeout(hideTimer);
-                setLoaderVisible(true);
-              }},
-              hide: function() {{
-                pendingFetches = 0;
-                scheduleLoaderHide();
-              }},
+              show: function() {{ if (hideTimer) window.clearTimeout(hideTimer); setLoaderVisible(true); }},
+              hide: function() {{ pendingFetches = 0; scheduleLoaderHide(); }},
             }};
-
-            if (window.fetch && !window.__hsDashboardLoaderPatched) {{
-              window.__hsDashboardLoaderPatched = true;
+            var FILTER_KEY = 'hsOpsFilters';
+            function readStored() {{
+              try {{ return JSON.parse(localStorage.getItem(FILTER_KEY) || '{{}}') || {{}}; }} catch (e) {{ return {{}}; }}
+            }}
+            function nyToday() {{
+              return new Intl.DateTimeFormat('en-CA', {{ timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }}).format(new Date());
+            }}
+            window.hsOpsReadFilters = function() {{
+              var params = new URLSearchParams(window.location.search);
+              var stored = readStored();
+              var today = nyToday();
+              return {{
+                start: params.get('start') || stored.start || (today.slice(0, 8) + '01'),
+                end: params.get('end') || stored.end || today,
+                territory: params.get('territory') || stored.territory || 'All',
+                source: params.get('source') || stored.source || 'All'
+              }};
+            }};
+            window.hsOpsWriteFilters = function(filters) {{
+              localStorage.setItem(FILTER_KEY, JSON.stringify(filters));
+            }};
+            if (window.fetch && !window.__hsOpsFetchPatched) {{
+              window.__hsOpsFetchPatched = true;
               var originalFetch = window.fetch.bind(window);
               window.fetch = function(input, init) {{
                 var tracked = shouldTrackFetch(input);
+                var next = input;
+                try {{
+                  var raw = typeof input === 'string' ? input : (input && input.url) || '';
+                  var url = new URL(raw, window.location.href);
+                  if (url.origin === window.location.origin && url.pathname.indexOf('/api/metrics/') === 0 && !url.searchParams.has('oc_raw')) {{
+                    var f = window.hsOpsReadFilters();
+                    var ownsDates = url.searchParams.has('start') || url.searchParams.has('end') || url.searchParams.has('year') || url.searchParams.has('month');
+                    if (!ownsDates && f.start && f.end) {{
+                      url.searchParams.set('start', f.start);
+                      url.searchParams.set('end', f.end);
+                    }}
+                    var specialized = url.searchParams.has('lead_source') || url.searchParams.has('pipeline') || url.searchParams.has('sweeper') || url.searchParams.has('pipeline_scope');
+                    if (!specialized) {{
+                      if (f.territory && f.territory !== 'All') url.searchParams.set('pipeline', f.territory);
+                      if (f.source === 'Sweeper') url.searchParams.set('sweeper', '1');
+                      else if (f.source && f.source !== 'All') {{
+                        url.searchParams.set('lead_source', f.source === 'Self gen' ? 'Self Gen' : f.source);
+                      }}
+                    }}
+                    next = url.toString();
+                  }}
+                }} catch (_err) {{}}
                 if (tracked) {{
                   pendingFetches += 1;
                   window.HSDashboardLoader.show();
                 }}
-                return originalFetch(input, init).finally(function() {{
+                return originalFetch(next, init).finally(function() {{
                   if (!tracked) return;
                   pendingFetches = Math.max(0, pendingFetches - 1);
                   if (pendingFetches === 0) scheduleLoaderHide();
                 }});
               }};
             }}
-
             setLoaderVisible(true);
             scheduleLoaderHide();
-
-            var nav = document.currentScript && document.currentScript.parentElement
-              ? document.currentScript.parentElement.querySelector('.nav')
-              : null;
-            if (!nav || !nav.classList || !nav.classList.contains('nav')) return;
-            var menus = Array.prototype.slice.call(nav.querySelectorAll('.navmenu'));
-
-            function closeOthers(currentMenu) {{
-              menus.forEach(function(menu) {{
-                if (menu !== currentMenu) menu.removeAttribute('open');
-              }});
-            }}
-
-            menus.forEach(function(menu) {{
-              menu.addEventListener('toggle', function() {{
-                if (menu.hasAttribute('open')) closeOthers(menu);
-              }});
-
-              var links = menu.querySelectorAll('.navmenu-item');
-              links.forEach(function(link) {{
-                link.addEventListener('click', function() {{
-                  menu.removeAttribute('open');
-                }});
-              }});
-            }});
-
-            document.addEventListener('click', function(event) {{
-              if (!nav.contains(event.target)) {{
-                menus.forEach(function(menu) {{ menu.removeAttribute('open'); }});
-              }}
-            }});
-
             document.addEventListener('keydown', function(event) {{
-              if (event.key === 'Escape') {{
-                menus.forEach(function(menu) {{ menu.removeAttribute('open'); }});
-              }}
+              if (event.key === 'Escape') document.body.classList.remove('menu-open');
             }});
+            document.addEventListener('click', function(event) {{
+              var side = document.getElementById('sidebar');
+              var btn = document.querySelector('.oc-menu-btn');
+              if (!document.body.classList.contains('menu-open')) return;
+              if (side && (side.contains(event.target) || (btn && btn.contains(event.target)))) return;
+              document.body.classList.remove('menu-open');
+            }});
+            if (document.body.getAttribute('data-oc-native-filters') === '1') return;
+            var host = document.querySelector('.wrap') || document.body;
+            var f = window.hsOpsReadFilters();
+            var bar = document.createElement('div');
+            bar.className = 'global-filterbar oc-injected-filters';
+            bar.innerHTML = '<div class="filter-controls"><label>Dates from<input id="ocStart" type="date" aria-label="Start date" value="'+f.start+'"></label><label>Dates to<input id="ocEnd" type="date" aria-label="End date" value="'+f.end+'"></label><label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div><div class="filter-chips" id="ocChips"></div>';
+            host.insertBefore(bar, host.firstChild);
+            function chips() {{
+              var cur = window.hsOpsReadFilters();
+              var html = '';
+              if (cur.territory !== 'All') html += '<button type="button" data-k="territory">'+cur.territory+' <span>×</span></button>';
+              if (cur.source !== 'All') html += '<button type="button" data-k="source">'+cur.source+' <span>×</span></button>';
+              html += '<span>Filters apply to metric requests. Pages with their own date control still show that control.</span>';
+              document.getElementById('ocChips').innerHTML = html;
+            }}
+            function apply(partial) {{
+              var cur = window.hsOpsReadFilters();
+              var next = {{
+                start: document.getElementById('ocStart').value || cur.start,
+                end: document.getElementById('ocEnd').value || cur.end,
+                territory: document.getElementById('ocTerritory').value,
+                source: document.getElementById('ocSource').value
+              }};
+              if (partial) Object.assign(next, partial);
+              window.hsOpsWriteFilters(next);
+              var u = new URL(window.location.href);
+              u.searchParams.set('start', next.start);
+              u.searchParams.set('end', next.end);
+              if (next.territory === 'All') u.searchParams.delete('territory'); else u.searchParams.set('territory', next.territory);
+              if (next.source === 'All') u.searchParams.delete('source'); else u.searchParams.set('source', next.source);
+              window.location.href = u.toString();
+            }}
+            ['ocStart','ocEnd','ocTerritory','ocSource'].forEach(function(id) {{
+              document.getElementById(id).addEventListener('change', function() {{ apply(); }});
+            }});
+            document.getElementById('ocReset').addEventListener('click', function() {{
+              var today = nyToday();
+              document.getElementById('ocStart').value = today.slice(0, 8) + '01';
+              document.getElementById('ocEnd').value = today;
+              document.getElementById('ocTerritory').value = 'All';
+              document.getElementById('ocSource').value = 'All';
+              apply();
+            }});
+            document.getElementById('ocChips').addEventListener('click', function(event) {{
+              var b = event.target.closest('button');
+              if (!b) return;
+              var patch = {{}};
+              patch[b.getAttribute('data-k')] = 'All';
+              apply(patch);
+            }});
+            chips();
           }})();
         </script>
     """

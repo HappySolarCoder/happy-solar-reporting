@@ -7,7 +7,7 @@
       "collection": "report_guide",
       "source_uri": "api/company_overview.py",
       "source_revision": "repository-inspection-2026-10-04",
-      "content": "The company overview page loads /api/metrics/company_snapshot for sales, opportunities created, opportunities ran, and demo rate, then /api/metrics/company_trends from August 2025. Snapshot responses are cached about 60 seconds. Trend responses are cached about 6 hours. Cards for Doors, Self Gen, Phones, Inbound, and 3PL sum alias keys in the browser. This document says how to retrieve those figures. It does not store sales totals.",
+      "content": "The company overview page loads /api/metrics/company_snapshot for sales, opportunities created, opportunities ran, and demo rate, then /api/metrics/company_trends from August 2025 when no territory or source filter is on. Snapshot responses are cached about 60 seconds. Trend responses are cached about 6 hours. Funnels are Company, Doors, Self Gen, Sweeper, Inbound, and 3PL. Sweeper is the Sweeper and Rehash pipelines. Phones is not its own funnel; Virtual still normalizes to Phones inside the company total. This document says how to retrieve those figures. It does not store sales totals.",
       "owner": null,
       "visibility_scope": "employee",
       "approval_status": "DRAFT",

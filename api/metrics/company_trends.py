@@ -31,8 +31,17 @@ def _base_url(h: BaseHTTPRequestHandler) -> str:
     return f"{proto}://{host}"
 
 
-def _fetch_json(url: str, timeout: int = 25) -> dict | None:
-    req = Request(url, headers={"Accept": "application/json"})
+def _auth_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    for name in ("cookie", "authorization", "x-vercel-protection-bypass"):
+        value = handler.headers.get(name)
+        if value:
+            headers["Cookie" if name == "cookie" else name] = value
+    return headers
+
+
+def _fetch_json(url: str, timeout: int = 25, headers: dict[str, str] | None = None) -> dict | None:
+    req = Request(url, headers=headers or {"Accept": "application/json"})
     with urlopen(req, timeout=timeout) as resp:  # nosec - internal URL
         return json.loads(resp.read().decode("utf-8"))
 
@@ -75,17 +84,21 @@ class handler(BaseHTTPRequestHandler):
 
             base = _base_url(self)
             months = _months(start_y, start_m, end_y, end_m)
+            forwarded = _auth_headers(self)
 
             def one(ym: tuple[int, int]) -> dict:
                 y, m = ym
                 q = urlencode({"format": "json", "year": y, "month": m})
-                sales = _fetch_json(f"{base}/api/metrics/sales?{q}") or {}
-                created = _fetch_json(f"{base}/api/metrics/opportunities_created?{q}&pipeline_scope=all") or {}
-                ran = _fetch_json(f"{base}/api/metrics/opportunities_ran?{q}") or {}
-                s = float(sales.get("result") or 0)
-                c = float(created.get("result") or 0)
-                r = float(ran.get("result") or 0)
-                opp2 = (s / r * 100.0) if r > 0 else None
+                sales = _fetch_json(f"{base}/api/metrics/sales?{q}", headers=forwarded) or {}
+                created = _fetch_json(f"{base}/api/metrics/opportunities_created?{q}&pipeline_scope=all", headers=forwarded) or {}
+                ran = _fetch_json(f"{base}/api/metrics/opportunities_ran?{q}", headers=forwarded) or {}
+                s = None if sales.get("error") or "result" not in sales else float(sales.get("result"))
+                c = None if created.get("error") or "result" not in created else float(created.get("result"))
+                r = None if ran.get("error") or "result" not in ran else float(ran.get("result"))
+                if s is None or r is None:
+                    opp2 = None
+                else:
+                    opp2 = (s / r * 100.0) if r > 0 else None
                 return {
                     "month": f"{y}-{str(m).zfill(2)}",
                     "sales": s,

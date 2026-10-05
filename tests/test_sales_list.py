@@ -715,15 +715,15 @@ class SearchAndSortTests(unittest.TestCase):
 
 
 class NavAndPageTests(unittest.TestCase):
-    def test_nav_includes_sales_list_and_keeps_essential_sales(self):
+    def test_nav_includes_sales_list_without_essential_sales(self):
         html = nav.render_dashboard_nav("sales_list")
         self.assertIn('href="/api/sales_list"', html)
         self.assertIn("Sales List", html)
-        self.assertIn('href="/api/essential_sales"', html)
-        self.assertIn("Essential Sales", html)
-        self.assertIn("navmenu-item active", html)
-        self.assertIn('summary class="navbtn active"', html)
-        self.assertLess(html.find("Sales List"), html.find("Essential Sales"))
+        self.assertNotIn('href="/api/essential_sales"', html)
+        self.assertNotIn("Essential Sales", html)
+        self.assertIn("navlink active", html)
+        self.assertLess(html.find("Sales Dashboard"), html.find("Sales List"))
+        self.assertLess(html.find("Sales List"), html.find("Rep Daily Recap"))
 
     def test_page_defaults_to_all_time_and_all_installers(self):
         html = page.render_html()

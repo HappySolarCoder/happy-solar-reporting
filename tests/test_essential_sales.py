@@ -203,11 +203,11 @@ class EssentialSalesMappingTests(unittest.TestCase):
         self.assertLess(source.find("unique_contact_ids.add"), source.find("if on_sale is not None"))
         self.assertIn("if len(contrib_rows) < 50:", source)
 
-    def test_nav_includes_essential_sales(self):
+    def test_nav_omits_essential_sales_page(self):
         html = render_dashboard_nav("essential_sales")
-        self.assertIn('href="/api/essential_sales"', html)
-        self.assertIn("Essential Sales", html)
-        self.assertIn("navmenu-item active", html)
+        self.assertNotIn('href="/api/essential_sales"', html)
+        self.assertNotIn("Essential Sales", html)
+        self.assertIn('href="/api/sales_list"', html)
 
     def test_result_comes_from_sales_payload(self):
         captured = {}

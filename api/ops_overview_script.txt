@@ -1,0 +1,603 @@
+/* Operations Control — Company Overview. Numbers come from live metric endpoints. */
+(function () {
+  const SELF_KEYS = ["Self Gen", "self gen", "selfgen", "SelfGen"];
+  const INBOUND_KEYS = ["Inbound"];
+  const THREE_PL_KEYS = ["3PL"];
+  const DOOR_KEYS = ["Doors"];
+  let requestToken = 0;
+  let lastFocus = null;
+  let historyChannel = "Company";
+  let historyMode = "counts";
+  let pageFilters = null;
+  let snapshot = null;
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch];
+    });
+  }
+  function nyToday() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  }
+  function filters() {
+    if (window.hsOpsReadFilters) return window.hsOpsReadFilters();
+    const today = nyToday();
+    return { start: today.slice(0, 8) + "01", end: today, territory: "All", source: "All" };
+  }
+  function saveFilters(next) {
+    if (window.hsOpsWriteFilters) window.hsOpsWriteFilters(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("start", next.start);
+    url.searchParams.set("end", next.end);
+    if (next.territory === "All") url.searchParams.delete("territory");
+    else url.searchParams.set("territory", next.territory);
+    if (next.source === "All") url.searchParams.delete("source");
+    else url.searchParams.set("source", next.source);
+    history.replaceState(null, "", url.toString());
+  }
+  function sumKeys(obj, keys) {
+    if (!obj || typeof obj !== "object") return null;
+    const wants = keys.map(function (k) { return k.toLowerCase(); });
+    let total = 0;
+    Object.keys(obj).forEach(function (key) {
+      if (wants.indexOf(String(key).toLowerCase()) >= 0) total += Number(obj[key] || 0);
+    });
+    return total;
+  }
+  function sumSweeper(obj) {
+    if (!obj || typeof obj !== "object") return null;
+    let total = 0;
+    Object.keys(obj).forEach(function (key) {
+      const low = String(key).toLowerCase();
+      if (low === "sweeper" || low === "rehash") total += Number(obj[key] || 0);
+    });
+    return total;
+  }
+  function rateText(num, den) {
+    if (num == null || den == null || Number.isNaN(Number(num)) || Number.isNaN(Number(den))) return "—";
+    if (!Number(den)) return "—";
+    return (100 * Number(num) / Number(den)).toFixed(1) + "%";
+  }
+  function numText(value) {
+    if (value == null || Number.isNaN(Number(value))) return "—";
+    return String(Math.round(Number(value)));
+  }
+  function setText(id, value) {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value;
+  }
+  function metricQuery(extra) {
+    const f = pageFilters || filters();
+    const parts = f.start.split("-");
+    const params = new URLSearchParams();
+    params.set("year", parts[0]);
+    params.set("month", String(Number(parts[1])));
+    params.set("start", f.start);
+    params.set("end", f.end);
+    if (f.territory !== "All") params.set("pipeline", f.territory);
+    if (f.source === "Sweeper") params.set("sweeper", "1");
+    else if (f.source !== "All") params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
+    Object.keys(extra || {}).forEach(function (key) { params.set(key, extra[key]); });
+    return params;
+  }
+  function channelQuery(name, month) {
+    const params = new URLSearchParams();
+    params.set("oc_raw", "1");
+    params.set("year", String(month.year));
+    params.set("month", String(month.month));
+    if (month.partial) {
+      params.set("start", month.start);
+      params.set("end", month.end);
+    }
+    const f = pageFilters || filters();
+    if (f.territory !== "All") params.set("pipeline", f.territory);
+    if (name === "Sweeper" || f.source === "Sweeper") params.set("sweeper", "1");
+    else if (name === "Doors") params.set("lead_source", "Doors");
+    else if (name === "Self gen") params.set("lead_source", "Self Gen");
+    else if (name === "Inbound") params.set("lead_source", "Inbound");
+    else if (name === "3PL") params.set("lead_source", "3PL");
+    else if (f.source !== "All" && name === "Company") {
+      params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
+    }
+    return params;
+  }
+  function recentMonths() {
+    const today = nyToday();
+    const endY = Number(today.slice(0, 4));
+    const endM = Number(today.slice(5, 7));
+    const months = [];
+    let y = endY;
+    let m = endM;
+    for (let i = 0; i < 8; i += 1) {
+      const id = y + "-" + String(m).padStart(2, "0");
+      const start = id + "-01";
+      const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const end = id + "-" + String(last).padStart(2, "0");
+      const partial = y === endY && m === endM;
+      const label = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short" }).format(new Date(Date.UTC(y, m - 1, 15, 17)));
+      months.unshift({
+        year: y, month: m, label: partial ? label + " MTD" : label,
+        partial: partial, start: start, end: partial ? today : end, asOf: partial ? today : end,
+      });
+      m -= 1;
+      if (m === 0) { m = 12; y -= 1; }
+    }
+    return months;
+  }
+
+  function renderFilterBar() {
+    const f = filters();
+    pageFilters = f;
+    const territories = ["All", "Buffalo", "Rochester", "Syracuse", "Virtual"];
+    const sources = ["All", "Doors", "Self gen", "Sweeper", "Inbound", "3PL"];
+    const chips = [];
+    if (f.territory !== "All") chips.push('<button type="button" data-clear="territory">' + esc(f.territory) + " <span>×</span></button>");
+    if (f.source !== "All") chips.push('<button type="button" data-clear="source">' + esc(f.source) + " <span>×</span></button>");
+    if (f.start || f.end) chips.push('<button type="button" data-clear="dates">' + esc(f.start) + " – " + esc(f.end) + " <span>×</span></button>");
+    document.getElementById("filterHost").innerHTML =
+      '<div class="global-filterbar"><div class="filter-controls">' +
+      '<label>From<input id="ocStart" type="date" aria-label="Start date" value="' + esc(f.start) + '"></label>' +
+      '<label>To<input id="ocEnd" type="date" aria-label="End date" value="' + esc(f.end) + '"></label>' +
+      '<label>Territory<select id="ocTerritory" aria-label="Territory">' + territories.map(function (x) {
+        return '<option' + (f.territory === x ? " selected" : "") + ">" + x + "</option>";
+      }).join("") + "</select></label>" +
+      '<label>Lead source<select id="ocSource" aria-label="Lead source">' + sources.map(function (x) {
+        return '<option' + (f.source === x ? " selected" : "") + ">" + x + "</option>";
+      }).join("") + "</select></label>" +
+      '<button type="button" class="filter-reset" id="ocReset">Reset filters</button></div>' +
+      '<div class="filter-chips">' + chips.join("") + '<span>America/New_York · filters kept across pages</span></div></div>';
+    document.getElementById("ocStart").addEventListener("change", applyFilters);
+    document.getElementById("ocEnd").addEventListener("change", applyFilters);
+    document.getElementById("ocTerritory").addEventListener("change", applyFilters);
+    document.getElementById("ocSource").addEventListener("change", applyFilters);
+    document.getElementById("ocReset").addEventListener("click", function () {
+      const today = nyToday();
+      saveFilters({ start: today.slice(0, 8) + "01", end: today, territory: "All", source: "All" });
+      renderFilterBar();
+      load();
+    });
+    document.querySelectorAll("#filterHost [data-clear]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        const key = button.getAttribute("data-clear");
+        const next = Object.assign({}, filters());
+        if (key === "dates") {
+          const today = nyToday();
+          next.start = today.slice(0, 8) + "01";
+          next.end = today;
+        } else next[key] = "All";
+        saveFilters(next);
+        renderFilterBar();
+        load();
+      });
+    });
+  }
+  function applyFilters() {
+    const today = nyToday();
+    const next = {
+      start: document.getElementById("ocStart").value || today.slice(0, 8) + "01",
+      end: document.getElementById("ocEnd").value || today,
+      territory: document.getElementById("ocTerritory").value,
+      source: document.getElementById("ocSource").value,
+    };
+    if (next.end < next.start) next.end = next.start;
+    saveFilters(next);
+    renderFilterBar();
+    load();
+  }
+
+  function clean(value) {
+    if (value == null || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  function pack(created, ran, demos, sales) {
+    return { created: clean(created), ran: clean(ran), demos: clean(demos), sales: clean(sales) };
+  }
+  function channelsFrom(data) {
+    const sales = data.sales || {};
+    const created = data.created || {};
+    const ran = data.ran || {};
+    const demo = data.demo || {};
+    const salesLead = (sales.breakdowns || {}).sales_by_lead_gen_source || null;
+    const createdLead = (created.breakdowns || {}).created_by_lead_gen_source || null;
+    const ranLead = (demo.breakdowns || {}).ran_by_lead_gen_source || (ran.breakdowns || {}).ran_by_lead_gen_source || null;
+    const sitLead = (demo.breakdowns || {}).sit_by_lead_gen_source || null;
+    const salesPipe = (sales.breakdowns || {}).sales_by_pipeline || null;
+    const createdPipe = (created.breakdowns || {}).created_by_pipeline || null;
+    const ranPipe = (demo.breakdowns || {}).ran_by_pipeline || (demo.breakdowns || {}).demo_rate_by_pipeline || null;
+    const sitPipe = (demo.breakdowns || {}).sit_by_pipeline || null;
+    const company = pack(
+      created && created.error ? null : Number(created.result),
+      demo && demo.error ? null : Number(demo.ran_count),
+      demo && demo.error ? null : Number(demo.sit_count),
+      sales && sales.error ? null : Number(sales.result)
+    );
+    function leadPack(keys) {
+      return pack(sumKeys(createdLead, keys), sumKeys(ranLead, keys), sumKeys(sitLead, keys), sumKeys(salesLead, keys));
+    }
+    const sweeper = pack(sumSweeper(createdPipe), sumSweeper(ranPipe), sumSweeper(sitPipe), sumSweeper(salesPipe));
+    return {
+      Company: company,
+      Doors: leadPack(DOOR_KEYS),
+      "Self gen": leadPack(SELF_KEYS),
+      Sweeper: sweeper,
+      Inbound: leadPack(INBOUND_KEYS),
+      "3PL": leadPack(THREE_PL_KEYS),
+      salesPipe: salesPipe,
+      salesTotal: company.sales,
+    };
+  }
+  function visibleNames() {
+    const source = (pageFilters || filters()).source;
+    if (source === "All") return ["Company", "Doors", "Self gen", "Sweeper", "Inbound", "3PL"];
+    return ["Company", source];
+  }
+  function fillStage(prefix, stats) {
+    setText(prefix + "Created", numText(stats.created));
+    setText(prefix + "Demo", rateText(stats.demos, stats.ran));
+    setText(prefix + "DemoCounts", !Number(stats.ran) ? "Demos — / ran —" : stats.demos + " / " + stats.ran + " ran");
+    setText(prefix + "Opp2", rateText(stats.sales, stats.ran));
+    setText(prefix + "Opp2Counts", !Number(stats.ran) ? "Sales — / ran —" : stats.sales + " / " + stats.ran + " ran");
+    setText(prefix + "Sales", numText(stats.sales));
+  }
+  function donut(pipe, total) {
+    const host = document.getElementById("territoryDonut");
+    if (!host) return;
+    if (!pipe || total == null) {
+      host.innerHTML = '<div class="pace-caption">Territory split unavailable</div>';
+      return;
+    }
+    const entries = Object.keys(pipe).map(function (name) { return [name, Number(pipe[name] || 0)]; }).filter(function (row) { return row[1] > 0; });
+    const sliceSum = entries.reduce(function (sum, row) { return sum + row[1]; }, 0);
+    const colors = ["#26d9eb", "#2ea8fa", "#b59bff", "#24d4a6", "#ffbe45", "#ff8292"];
+    let cursor = 0;
+    const stops = entries.map(function (row, index) {
+      const start = total ? (cursor / total) * 100 : 0;
+      cursor += row[1];
+      const end = total ? (cursor / total) * 100 : 0;
+      return colors[index % colors.length] + " " + start + "% " + end + "%";
+    });
+    if (cursor < total) stops.push("#244559 " + (total ? (cursor / total) * 100 : 0) + "% 100%");
+    const legend = entries.map(function (row, index) {
+      return '<span><i style="background:' + colors[index % colors.length] + '"></i>' + esc(row[0]) + " <b>" + row[1] + "</b></span>";
+    }).join("");
+    const note = sliceSum === total ? "" : '<div class="pace-caption">Pipeline split ' + sliceSum + " vs sales total " + total + "</div>";
+    host.innerHTML = '<div class="territory-content"><div class="ring" style="background:conic-gradient(' + (stops.join(",") || "#244559 0 100%") + ')" role="img" aria-label="' + esc(entries.map(function (row) { return row[0] + " " + row[1]; }).join(", ")) + '"><div class="ring-in">' + (total == null ? "—" : total) + '</div></div><div class="territory-legend">' + (legend || "<span>No sales in this scope</span>") + "</div></div>" + note;
+  }
+  function spark(values, label) {
+    if (!values || values.length < 2) return "";
+    const max = Math.max.apply(null, values.concat([1]));
+    const points = values.map(function (n, i) {
+      return (2 + i * 136 / (values.length - 1)) + "," + (27 - (n / max) * 24);
+    }).join(" ");
+    return '<svg class="sparkline" viewBox="0 0 140 30" role="img" aria-label="' + esc(label) + '"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="' + points + '"/></svg>';
+  }
+  function showError(message) {
+    document.getElementById("pageNote").textContent = message;
+    ["Company", "Doors", "SelfGen", "Sweeper", "Inbound", "3pl"].forEach(function (prefix) {
+      ["Created", "Demo", "Opp2", "Sales"].forEach(function (stage) { setText("lg" + prefix + stage, "—"); });
+    });
+    setText("totalSales", "—");
+    setText("oppsCreated", "—");
+    setText("demoRate", "—");
+    setText("opp2", "—");
+  }
+  function attention(stats) {
+    const host = document.getElementById("attentionHost");
+    const items = [];
+    items.push('<button type="button" id="attnGoals">Company and territory goals are not readable from Bloom <span>→</span></button>');
+    if (stats && stats.ran && stats.demos != null) {
+      items.push('<button type="button" data-open="Company">Demo % is ' + rateText(stats.demos, stats.ran) + " with no Bloom target loaded <span>→</span></button>");
+    }
+    items.push('<a class="navlink" href="/api/missing_dispos">Missing dispositions are a separate queue <span>→</span></a>');
+    host.innerHTML = '<div class="attention-strip"><span class="attention-label">NEEDS ATTENTION</span>' + items.join("") + "</div>";
+    document.getElementById("attnGoals").addEventListener("click", function () { window.location.href = "/api/goals_dashboard"; });
+    host.querySelector("[data-open]").addEventListener("click", function () { openFunnelHistory("Company"); });
+  }
+  function applySnapshot(payload) {
+    const data = (payload && payload.data) || {};
+    snapshot = data;
+    const broken = ["sales", "created", "ran", "demo"].filter(function (key) { return !data[key] || data[key].error; });
+    const stats = channelsFrom(data);
+    const names = visibleNames();
+    document.querySelectorAll(".source-funnel").forEach(function (card) {
+      card.hidden = names.indexOf(card.getAttribute("data-channel")) < 0;
+    });
+    const map = { Company: "Company", Doors: "Doors", "Self gen": "SelfGen", Sweeper: "Sweeper", Inbound: "Inbound", "3PL": "3pl" };
+    names.forEach(function (name) { fillStage("lg" + map[name], stats[name]); });
+    const company = stats.Company;
+    setText("totalSales", numText(company.sales));
+    setText("oppsCreated", numText(company.created));
+    setText("demoRate", rateText(company.demos, company.ran));
+    setText("demoSub", company.demos == null ? "Demos unavailable" : company.demos + " demos / " + company.ran + " ran");
+    setText("opp2", rateText(company.sales, company.ran));
+    setText("opp2Sub", company.sales == null ? "Sales unavailable" : company.sales + " sales / " + company.ran + " ran");
+    setText("salesPace", "Goal Not Set");
+    setText("createdPace", "Goal Not Set");
+    setText("demoGoal", "Goal Not Set");
+    setText("opp2Goal", "Goal Not Set");
+    donut(stats.salesPipe, company.sales);
+    const asOf = (data.sales && (data.sales.generated_at || data.sales.window_end_local)) || "";
+    setText("asOf", "Live metrics" + (asOf ? " · as of " + asOf : ""));
+    const note = ["Sweeper counts the Sweeper and Rehash pipelines. It is not the Phones lead source.",
+      "Doors, Self Gen, Inbound and 3PL are lead-source buckets. A Sweeper pipeline opportunity can also carry a lead source, so the six funnels are not a partition of the company total.",
+      "Demo % is demos divided by ran. Opp2Prelim is sales divided by ran. UI copy says Demo."];
+    if (broken.length) note.unshift("Missing: " + broken.join(", ") + ". Those figures stay blank.");
+    document.getElementById("pageNote").textContent = note.join(" ");
+    attention(company);
+    const f = pageFilters || filters();
+    if (f.territory === "All" && f.source === "All") loadTrends();
+    else {
+      document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend stays hidden while a territory or source filter is on, so an unfiltered series is not shown as this scope.</p>';
+      document.getElementById("trendCreated").innerHTML = "";
+      document.getElementById("sparkSales").innerHTML = "";
+      document.getElementById("sparkCreated").innerHTML = "";
+    }
+  }
+  async function loadTrends() {
+    const res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8");
+    if (!res.ok) {
+      document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+      return;
+    }
+    const payload = await res.json();
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    let sales = 0;
+    let created = 0;
+    const salesCum = [];
+    const createdCum = [];
+    rows.forEach(function (row) {
+      if (row.sales == null || row.opps_created == null) return;
+      sales += Number(row.sales);
+      created += Number(row.opps_created);
+      salesCum.push(sales);
+      createdCum.push(created);
+    });
+    document.getElementById("sparkSales").innerHTML = spark(salesCum, "Monthly cumulative sales since August 2025. Not a daily count.");
+    document.getElementById("sparkCreated").innerHTML = spark(createdCum, "Monthly cumulative opportunities created since August 2025. Not a daily count.");
+    document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly cumulative sales, August 2025 through the latest closed trend month. Not a daily series and not filtered by a short date range.</p>' + spark(salesCum, "Sales cumulative");
+    document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly cumulative opportunities created over the same months.</p>' + spark(createdCum, "Created cumulative");
+  }
+  async function load() {
+    const token = ++requestToken;
+    pageFilters = filters();
+    document.getElementById("pageNote").textContent = "Loading live metrics…";
+    const response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
+    if (token !== requestToken) return;
+    if (!response.ok) {
+      showError("Company snapshot failed (HTTP " + response.status + "). Retry from Reset filters.");
+      return;
+    }
+    applySnapshot(await response.json());
+  }
+
+  function modal(title, body) {
+    lastFocus = document.activeElement;
+    const overlay = document.getElementById("overlay");
+    overlay.hidden = false;
+    overlay.classList.remove("drawer-mode");
+    overlay.innerHTML = '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="ocDialogTitle"><div class="modal-head"><h2 id="ocDialogTitle">' + esc(title) + '</h2><button type="button" id="ocClose" aria-label="Close">Close</button></div><div class="modal-body">' + body + "</div></div>";
+    document.body.classList.add("dialog-open");
+    document.getElementById("ocClose").focus();
+    document.getElementById("ocClose").addEventListener("click", closeModal);
+  }
+  function closeModal() {
+    const overlay = document.getElementById("overlay");
+    overlay.hidden = true;
+    overlay.innerHTML = "";
+    overlay.classList.remove("drawer-mode", "expanded-mode", "funnel-history-mode");
+    document.body.classList.remove("dialog-open");
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  function openDrawer(title, body) {
+    modal(title, body);
+    document.getElementById("overlay").classList.add("drawer-mode");
+  }
+  function stageButton(label, value, detail, index) {
+    const colors = ["#125975", "#124962", "#123e54", "#104d48"];
+    return '<div class="compact-stage" style="--inset:' + (index * 4) + "%;--next:" + ((index + 1) * 4) + "%;--stage-color:" + colors[index] + '"><span>' + esc(label) + "</span><strong>" + esc(value) + "</strong><small>" + esc(detail) + "</small></div>";
+  }
+  async function monthRow(name, month) {
+    const response = await fetch("/api/metrics/company_snapshot?" + channelQuery(name, month).toString());
+    if (!response.ok) return { month: month.label, missing: true };
+    const payload = await response.json();
+    const stats = channelsFrom(payload.data || {}).Company;
+    return { month: month.label, partial: month.partial, asOf: month.asOf, created: stats.created, ran: stats.ran, demos: stats.demos, sales: stats.sales };
+  }
+  function historyLines(rows, mode) {
+    const config = mode === "counts"
+      ? [["created", "Opps created", "#26d9eb"], ["ran", "Opps ran", "#2ea8fa"], ["demos", "Demos", "#b59bff"], ["sales", "Sales", "#24d4a6"]]
+      : [["demoRate", "Demo %", "#26d9eb"], ["prelimRate", "Opp2Prelim", "#b59bff"]];
+    const values = rows.filter(function (row) { return !row.missing; }).map(function (row) {
+      return Object.assign({}, row, {
+        demoRate: row.ran ? row.demos / row.ran * 100 : null,
+        prelimRate: row.ran ? row.sales / row.ran * 100 : null,
+      });
+    });
+    if (!values.length) return '<p class="chart-note">Monthly history unavailable.</p>';
+    const max = mode === "rates" ? 100 : Math.max(4, Math.ceil(Math.max.apply(null, values.flatMap(function (row) {
+      return config.map(function (item) { return row[item[0]] == null ? 0 : row[item[0]]; });
+    })) / 4) * 4);
+    const x = 45, y = 18, w = 680, h = 200, step = values.length > 1 ? w / (values.length - 1) : w;
+    const legend = '<div class="history-legend">' + config.map(function (item) {
+      return '<span><i style="background:' + item[2] + '"></i>' + item[1] + "</span>";
+    }).join("") + "</div>";
+    const grid = Array.from({ length: 5 }, function (_, i) {
+      return '<line x1="' + x + '" x2="' + (x + w) + '" y1="' + (y + i * h / 4) + '" y2="' + (y + i * h / 4) + '" stroke="#29495f" stroke-dasharray="3 5"/><text x="' + (x - 10) + '" y="' + (y + i * h / 4 + 4) + '" text-anchor="end">' + (max - i * max / 4) + (mode === "rates" ? "%" : "") + "</text>";
+    }).join("");
+    const paths = config.map(function (item) {
+      let path = "";
+      let active = false;
+      values.forEach(function (row, i) {
+        const value = row[item[0]];
+        if (value == null) { active = false; return; }
+        path += (active ? "L" : "M") + (x + i * step) + "," + (y + h - value / max * h) + " ";
+        active = true;
+      });
+      const dots = values.map(function (row, i) {
+        if (row[item[0]] == null) return "";
+        return '<circle cx="' + (x + i * step) + '" cy="' + (y + h - row[item[0]] / max * h) + '" r="4" fill="#0b2439" stroke="' + item[2] + '" stroke-width="2"><title>' + esc(row.month) + " · " + item[1] + ": " + Number(row[item[0]].toFixed(1)) + (mode === "rates" ? "%" : "") + "</title></circle>";
+      }).join("");
+      return '<path d="' + path + '" fill="none" stroke="' + item[2] + '" stroke-width="2.5" stroke-linejoin="round"/>' + dots;
+    }).join("");
+    const labels = values.map(function (row, i) {
+      return '<text x="' + (x + i * step) + '" y="247" text-anchor="middle"' + (row.partial ? ' fill="#ffbe45"' : "") + ">" + esc(row.month) + "</text>";
+    }).join("");
+    return legend + '<div class="history-chart-scroll"><svg class="history-chart" viewBox="0 0 760 265" role="img" aria-label="' + (mode === "counts" ? "Monthly totals" : "Monthly conversion rates") + '">' + grid + paths + labels + "</svg></div>";
+  }
+  function historyTable(rows) {
+    return '<table><thead><tr><th>Month</th><th>Created</th><th>Ran</th><th>Demos</th><th>Sales</th><th>Demo %</th><th>Opp2Prelim</th></tr></thead><tbody>' +
+      rows.map(function (row) {
+        if (row.missing) return "<tr><td>" + esc(row.month) + '</td><td colspan="6">Unavailable</td></tr>';
+        return "<tr><td>" + esc(row.month) + "</td><td>" + numText(row.created) + "</td><td>" + numText(row.ran) + "</td><td>" + numText(row.demos) + "</td><td>" + numText(row.sales) + "</td><td>" + rateText(row.demos, row.ran) + "</td><td>" + rateText(row.sales, row.ran) + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+  async function openFunnelHistory(name) {
+    historyChannel = name;
+    historyMode = "counts";
+    const stats = channelsFrom(snapshot || {}).Company && name === "Company"
+      ? channelsFrom(snapshot || {})[name]
+      : (channelsFrom(snapshot || {})[name] || pack(null, null, null, null));
+    const f = pageFilters || filters();
+    const stages = [
+      stageButton("Opportunities created", numText(stats.created), "Created in selected period", 0),
+      stageButton("Demo %", rateText(stats.demos, stats.ran), !Number(stats.ran) ? "Demos — / ran —" : stats.demos + " demos / " + stats.ran + " ran", 1),
+      stageButton("Opp2Prelim", rateText(stats.sales, stats.ran), !Number(stats.ran) ? "Sales — / ran —" : stats.sales + " sales / " + stats.ran + " ran", 2),
+      stageButton("Sales", numText(stats.sales), "Sold in selected period", 3),
+    ].join("");
+    modal(name + " · funnel & monthly trend",
+      '<div class="drawer-context">' + esc(f.territory === "All" ? "All territories" : f.territory) + " · " + esc(f.start) + " – " + esc(f.end) + " · America/New_York</div>" +
+      '<section class="popup-funnel-area"><div class="popup-funnel-heading"><h3>' + esc(name) + " funnel</h3><p>" + esc(f.start) + " – " + esc(f.end) + "</p></div><div class=\"popup-funnel\">" + stages + "</div></section>" +
+      '<section class="popup-history"><div class="history-heading"><div><h3>Month-to-month performance</h3><p id="historyRange">Loading monthly history…</p></div><div class="history-switch" role="group" aria-label="Monthly graph metric"><button type="button" id="history-counts" aria-pressed="true" class="active">Monthly totals</button><button type="button" id="history-rates" aria-pressed="false">Conversion rates</button></div></div><div id="monthlyHistoryContent"><p class="chart-note">Loading…</p></div><p class="chart-note">The current month is month-to-date. Full prior months are not compared as if they were partial. Source and territory filters stay on. This graph does not reuse a short funnel date range.</p><details class="history-data"><summary>View exact monthly values</summary><div class="tablewrap" id="historyTable"></div></details></section>' +
+      '<div class="modal-actions"><button type="button" id="viewRecords">View opportunity records →</button></div>');
+    document.getElementById("overlay").classList.add("expanded-mode", "funnel-history-mode");
+    document.getElementById("history-counts").addEventListener("click", function () { setHistoryMode("counts"); });
+    document.getElementById("history-rates").addEventListener("click", function () { setHistoryMode("rates"); });
+    document.getElementById("viewRecords").addEventListener("click", function () { openRecords(historyChannel); });
+    const months = recentMonths();
+    const rows = [];
+    for (const month of months) rows.push(await monthRow(name, month));
+    if (document.getElementById("overlay").hidden) return;
+    window.__ocHistoryRows = rows;
+    const partial = rows.filter(function (row) { return row.partial; })[0];
+    document.getElementById("historyRange").textContent = rows[0].month + " – " + rows[rows.length - 1].month + (partial ? " · through " + partial.asOf : "") + " · " + name;
+    document.getElementById("historyTable").innerHTML = historyTable(rows);
+    setHistoryMode("counts");
+  }
+  function setHistoryMode(mode) {
+    historyMode = mode;
+    const host = document.getElementById("monthlyHistoryContent");
+    if (!host) return;
+    host.innerHTML = historyLines(window.__ocHistoryRows || [], mode);
+    ["counts", "rates"].forEach(function (id) {
+      const button = document.getElementById("history-" + id);
+      if (!button) return;
+      button.classList.toggle("active", mode === id);
+      button.setAttribute("aria-pressed", String(mode === id));
+    });
+  }
+  async function openRecords(name) {
+    const params = metricQuery({ format: "json", pipeline_scope: "all" });
+    if (name === "Sweeper") { params.set("sweeper", "1"); params.delete("lead_source"); }
+    else if (name === "Doors") params.set("lead_source", "Doors");
+    else if (name === "Self gen") params.set("lead_source", "Self Gen");
+    else if (name === "Inbound") params.set("lead_source", "Inbound");
+    else if (name === "3PL") params.set("lead_source", "3PL");
+    const createdRes = await fetch("/api/metrics/opportunities_created?" + params.toString());
+    const demoRes = await fetch("/api/metrics/demo_rate?" + params.toString());
+    const salesRes = await fetch("/api/metrics/sales?" + params.toString());
+    const created = createdRes.ok ? await createdRes.json() : null;
+    const demo = demoRes.ok ? await demoRes.json() : null;
+    const sales = salesRes.ok ? await salesRes.json() : null;
+    const createdRows = (created && created.sample_rows) || [];
+    const demoRows = (demo && (demo.rows || demo.sample_rows)) || [];
+    const salesRows = (sales && sales.sample_rows) || [];
+    function table(headers, rows) {
+      return '<div class="tablewrap"><table><thead><tr>' + headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+        (rows.length ? rows.slice(0, 200).map(function (row) { return "<tr>" + row.map(function (cell) { return "<td>" + esc(cell) + "</td>"; }).join("") + "</tr>"; }).join("") : '<tr><td colspan="' + headers.length + '">No rows returned.</td></tr>') +
+        "</tbody></table></div>";
+    }
+    openDrawer(name + " · opportunity records",
+      '<p class="chart-note">Created rows are the created population. Demo rows are ran appointments; demos are the numerator and ran is the denominator. Sales rows are the distinct-contact sold grain, capped at the 50 records the sales metric returns.</p>' +
+      "<h3>Created</h3>" + table(["Opportunity", "Pipeline", "Lead source", "Setter"], createdRows.slice(0, 200).map(function (row) {
+        return [row.opportunityId, row.pipeline, row.leadGenSource, row.setterLastName];
+      })) +
+      "<h3>Ran and demos</h3>" + table(["Opportunity", "Pipeline", "Lead source", "Outcome"], demoRows.slice(0, 200).map(function (row) {
+        return [row.opportunityId, row.pipeline, row.lead_source, row.disposition === "Sit" ? "Demo" : row.disposition];
+      })) +
+      "<h3>Sales</h3>" + table(["Opportunity", "Pipeline", "Sold date", "Last name"], salesRows.map(function (row) {
+        return [row.opportunityId, row.pipelineName, row.dateSold, row.lastName_contact];
+      })) +
+      '<p><a class="link" href="/api/sales_list?start=' + encodeURIComponent((pageFilters || filters()).start) + "&end=" + encodeURIComponent((pageFilters || filters()).end) + '">Open Sales List</a></p>');
+  }
+  function bindFunnels() {
+    document.querySelectorAll("[data-open-funnel]").forEach(function (node) {
+      node.addEventListener("click", function () { openFunnelHistory(node.getAttribute("data-open-funnel")); });
+    });
+    document.querySelectorAll(".expand-btn").forEach(function (button) {
+      button.addEventListener("click", function (event) {
+        if (button.hasAttribute("data-open-funnel")) return;
+        event.stopPropagation();
+        const card = button.closest(".panel");
+        modal(button.getAttribute("aria-label") || "Expanded", card ? card.innerHTML : "");
+        document.getElementById("overlay").classList.add("expanded-mode");
+      });
+    });
+  }
+  function goFunnel(index) {
+    const rail = document.getElementById("funnelCarousel");
+    const card = rail && rail.children[index];
+    if (!card) return;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rail.scrollTo({ left: card.offsetLeft - rail.children[0].offsetLeft, behavior: reduce ? "auto" : "smooth" });
+  }
+  function bindCarousel() {
+    const prev = document.getElementById("funnelPrev");
+    const next = document.getElementById("funnelNext");
+    const rail = document.getElementById("funnelCarousel");
+    function visibleIndex() {
+      if (!rail || window.innerWidth > 800) return 0;
+      let closest = 0; let best = Infinity;
+      Array.prototype.forEach.call(rail.children, function (card, i) {
+        if (card.hidden) return;
+        const delta = Math.abs(card.offsetLeft - rail.children[0].offsetLeft - rail.scrollLeft);
+        if (delta < best) { best = delta; closest = i; }
+      });
+      return closest;
+    }
+    function dots() {
+      document.querySelectorAll(".carousel-dot").forEach(function (dot, i) {
+        const on = i === visibleIndex();
+        dot.classList.toggle("active", on);
+        dot.setAttribute("aria-pressed", String(on));
+      });
+    }
+    if (prev) prev.addEventListener("click", function () { goFunnel(Math.max(0, visibleIndex() - 1)); });
+    if (next) next.addEventListener("click", function () { goFunnel(Math.min(rail.children.length - 1, visibleIndex() + 1)); });
+    document.querySelectorAll(".carousel-dot").forEach(function (dot) {
+      dot.addEventListener("click", function () { goFunnel(Number(dot.getAttribute("data-index"))); });
+    });
+    if (rail) rail.addEventListener("scroll", dots);
+  }
+  document.addEventListener("keydown", function (event) {
+    const overlay = document.getElementById("overlay");
+    if (!overlay || overlay.hidden) return;
+    if (event.key === "Escape") { event.preventDefault(); closeModal(); return; }
+    if (event.key !== "Tab") return;
+    const focusable = overlay.querySelectorAll("button, a, input, select, summary");
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
+  document.getElementById("overlay").addEventListener("click", function (event) {
+    if (event.target.id === "overlay") closeModal();
+  });
+  renderFilterBar();
+  bindFunnels();
+  bindCarousel();
+  load();
+})();

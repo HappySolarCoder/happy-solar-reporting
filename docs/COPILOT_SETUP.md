@@ -12,7 +12,9 @@ The page still loads `/api/metrics/company_snapshot` and `/api/metrics/company_t
 
 Goose numeric tools call those same metric modules through `api/copilot/metrics_port.py`. They do not reimplement the formulas and they do not change report responses. Source cards sum the same alias lists the overview uses (`Phones`+`Virtual`, the Self Gen spellings, and the single-label cards).
 
-Company overview itself has no per-employee session. Settings pages use one shared `SETTINGS_PASSWORD` over HTTP basic auth. Goose uses that same password. The username is ignored, so every successful login is the actor `settings_admin`. A `user_id` or `role` in the JSON body is discarded.
+Direct dashboard and admin use still share one `SETTINGS_PASSWORD` over HTTP basic auth. The username is ignored, so that login is the actor `settings_admin`. A `user_id` or `role` in the JSON body is discarded.
+
+Company Overview is also framed inside Bloom Data Center. Bloom's `hs_session` cookie is httpOnly and does not cross into this origin, and Bloom does not use Firebase. The framed Goose panel asks the Bloom parent for a short-lived HMAC token (`postMessage`, type `happy-solar-goose`) and sends it as `Authorization: Bearer`. Reporting verifies that token with `COPILOT_BLOOM_TOKEN_SECRET`. The signed portal role is used when it is already listed in `COPILOT_ALLOWED_ROLES`. Otherwise an active employee is mapped to `settings_admin` when that role is listed. The actor id is `bloom:<user id>`, not the admin actor. Bearer does not open `/api/copilot/admin`. Unset the shared secret to turn the Bloom path off without touching the password path.
 
 `COPILOT_COMPANY_TIMEZONE` defaults to `America/New_York`. That zone was approved on 2026-10-04. Company overview dates, filter chips, and Goose answer periods use it. They do not use the server clock or UTC. `COPILOT_BILLING_TIMEZONE` is still unset. Do not copy America/New_York into it.
 
@@ -58,8 +60,8 @@ Set these in the Vercel project. Do not commit them.
 | `COPILOT_ENABLED` | Stays false. Do not turn it on from this change. |
 | `COPILOT_COMPANY_TIMEZONE` | Defaults to `America/New_York`. Approved 2026-10-04. |
 | `COPILOT_BILLING_TIMEZONE` | Leave unset. The Google billing period timezone is not verified. |
-| `COPILOT_ALLOWED_ROLES` | `settings_admin` matches the only role this app can prove. Do not invent finer roles. |
-| `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. |
+| `COPILOT_ALLOWED_ROLES` | `settings_admin` is the password actor. Portal roles Bloom can prove are `fma`, `closer`, `coach`, `manager`, and `inbound`. Chat keeps a portal role only when that role is listed. If it is not listed, an active Bloom employee maps to `settings_admin` when `settings_admin` is listed. That mapping does not open admin. Do not add a role the token did not prove. |
+| `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. Do not put `settings_admin` here, or Bloom employees mapped onto that role would receive rankings. |
 | `GOOGLE_CLOUD_PROJECT` | Dedicated inference project. Do not reuse `GCP_PROJECT_ID` for this. |
 | `GOOGLE_CLOUD_LOCATION` | `global`, matching the pinned rate card. |
 | `COPILOT_MODEL_ID` | `gemini-3.1-flash-lite`. Any other id disables paid calls. |
@@ -68,9 +70,41 @@ Set these in the Vercel project. Do not commit them.
 | `COPILOT_INCREMENTAL_NON_MODEL_USD` | Other new monthly cost. The model cap shrinks so model plus this stays within 20. |
 | `COPILOT_OUTPUT_CAP_ENFORCED` | Leave false until an owner proves `max_output_tokens` caps response plus reasoning. |
 | `FIREBASE_SERVICE_ACCOUNT_JSON`, `GCP_PROJECT_ID`, `FIRESTORE_DATABASE_ID` | Existing data-center Firestore. Required for the ledger. Missing values fail closed. |
-| `SETTINGS_PASSWORD` | Existing settings gate. Required for chat and admin. |
+| `SETTINGS_PASSWORD` | Existing settings gate. Required for admin, and for chat on the direct dashboard. |
+| `COPILOT_BLOOM_TOKEN_SECRET` | Shared HMAC secret with `happy-solar-bloom-portal`. Set the same value on both Vercel projects. Do not commit it. Unset rejects Bearer and leaves basic auth working. |
+| `COPILOT_BLOOM_ORIGINS` | Comma-separated HTTPS parent origins that may post the Goose token. Default `https://happy-solar-bloom-portal.vercel.app`. No wildcards. |
 
 `COPILOT_STORE=memory` is for local tests only. Production must not set it.
+
+## Bloom token
+
+Bloom mints the token. This app only verifies it. There is no Firebase project in Bloom auth.
+
+The parent listens for `postMessage` from the reporting iframe:
+
+```json
+{ "type": "happy-solar-goose", "action": "request-token" }
+```
+
+It answers only that iframe, and only when `event.origin` is the reporting origin:
+
+```json
+{ "type": "happy-solar-goose", "action": "token", "token": "<hmac>", "expiresAt": 0 }
+```
+
+`expiresAt` is unix milliseconds. The token itself is `base64url(json).base64url(hmac-sha256)`. The JSON keys, sorted, are `aud`, `exp`, `iat`, `iss`, `role`, `status`, `sub`, and `v`.
+
+| Claim | Value |
+| --- | --- |
+| `iss` | `happy-solar-bloom` |
+| `aud` | `goose-copilot` |
+| `v` | `1` |
+| `sub` | Bloom user id. Stored as actor `bloom:<sub>`. |
+| `role` | `fma`, `closer`, `coach`, `manager`, or `inbound`. Not `settings_admin`. |
+| `status` | `active` |
+| `iat`, `exp` | Unix seconds. Lifetime at most 10 minutes. Bloom mints 5 minutes. |
+
+The sibling change in `HappySolarCoder/happy-solar-bloom-portal` is `lib/goose-token.ts`, `lib/goose-token.test.ts`, `app/api/goose-token/route.ts`, `components/data-center.tsx`, and `components/frame-stage.tsx`. Bloom's env var is the same `COPILOT_BLOOM_TOKEN_SECRET`. Optional `NEXT_PUBLIC_GOOSE_REPORTING_ORIGINS` adds preview reporting origins next to `https://database-migration-chi.vercel.app`. Both pull requests have to be deployed, and the shared secret has to be set, before a signed-in Bloom employee can chat. Rollback of this path is reverting those pull requests or unsetting the secret.
 
 ## Model and rates
 

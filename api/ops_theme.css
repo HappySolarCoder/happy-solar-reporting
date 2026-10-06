@@ -86,8 +86,9 @@ body.oc-root .tablewrap a,
 body.oc-root .tableWrap a,
 body.oc-root td a,
 body.oc-root a.clientlink,
-body.oc-root a.jsonlink,
-body.oc-root .jsonlink {
+body.oc-root .card:not(.spotlight) .jsonlink,
+body.oc-root .panel .jsonlink,
+body.oc-root .topbar .jsonlink {
   color: #8ef0c8 !important;
 }
 body.oc-root .note-status.ok { color: #8ef0c8 !important; }
@@ -101,12 +102,13 @@ body.oc-root .card:not(.spotlight) .meta,
 body.oc-root .panel .meta,
 body.oc-root .stat-label,
 body.oc-root .stat-sub,
-body.oc-root .filters label,
-body.oc-root .filter label,
+body.oc-root .filters label:not(.check),
+body.oc-root .filter label:not(.check),
 body.oc-root .muted { color: #91abc0 !important; }
-body.oc-root .filter-label {
+body.oc-root .filter-label,
+body.oc-root label.check {
   color: #1f2937 !important;
-  background: #f0f2f5;
+  background: #f0f2f5 !important;
 }
 body.oc-root code {
   background: #12344a;
@@ -166,8 +168,10 @@ body.oc-root a[title="Secret Lab"] {
   border-color: #2b4e66 !important;
   opacity: 1 !important;
 }
-body.oc-root label,
-body.oc-root .dashboardSwitch label,
+body.oc-root .topbar label:not(.check),
+body.oc-root .card:not(.spotlight) label:not(.check),
+body.oc-root .panel label:not(.check),
+body.oc-root .dashboardSwitch label:not(.check),
 body.oc-root .empty,
 body.oc-root .empty-state,
 body.oc-root .footer-note,
@@ -181,6 +185,41 @@ body.oc-root .barvalue {
   color: #91abc0 !important;
 }
 body.oc-root .lane-title { color: #f1f6ff !important; }
+body.oc-root .section-label,
+body.oc-root .card:not(.spotlight) .goal,
+body.oc-root .card:not(.spotlight) .legend,
+body.oc-root .card:not(.spotlight) .chartEmpty {
+  color: #d5e3ec !important;
+}
+body.oc-root .card:not(.spotlight) .map b {
+  color: #f1f6ff !important;
+}
+body.oc-root .tabbtn.active {
+  background: #123e52 !important;
+  border-color: #28758a !important;
+  color: #b6f6ff !important;
+}
+body.oc-root #apply {
+  background: #0a7a34 !important;
+  border-color: #0a7a34 !important;
+  color: #fff !important;
+}
+body.oc-root .step {
+  color: #0f172a !important;
+  background: #f8fafc !important;
+}
+body.oc-root .card:not(.spotlight) .step .meta,
+body.oc-root .step .meta { color: #1f2937 !important; }
+body.oc-root .step .name { color: #334155 !important; }
+body.oc-root .pii-gate {
+  color: #1e3a8a !important;
+  background: #f8fbff !important;
+}
+body.oc-root .callout { color: #1e3a8a !important; background: #f8fbff !important; }
+body.oc-root .callout.warn { color: #92400e !important; background: #fffbeb !important; }
+body.oc-root .chip { color: #92400e !important; background: #fffbeb !important; }
+body.oc-root .footer { color: #334155 !important; background: #fff !important; }
+body.oc-root .footer .jsonlink { color: #0a7a34 !important; }
 body.oc-root .kpi.danger,
 body.oc-root .danger:not(button):not(.btn) { color: #ff99a5 !important; }
 body.oc-root [style*="color: var(--muted)"],

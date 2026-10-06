@@ -627,7 +627,7 @@ button, input, summary, a, label { font-family:inherit; }
 #screen-trends:checked ~ .sidebar label[for="screen-trends"],
 #screen-activity:checked ~ .sidebar label[for="screen-activity"],
 #screen-settings:checked ~ .sidebar label[for="screen-settings"] {
-  background:var(--blue); color:#fff; border-left-color:#F1F6FF; font-weight:650;
+  background:#0b5cab; color:#fff; border-left-color:#F1F6FF; font-weight:650;
 }
 .content { min-width:0; padding:18px; display:flex; flex-direction:column; gap:12px; }
 .panel { display:none; gap:12px; min-width:0; }
@@ -715,7 +715,7 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .tabs label { border:1px solid var(--border); border-radius:8px; padding:6px 10px; color:var(--secondary); cursor:pointer; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .section-head label[for^="cost-cpl-"],
 .cost-panel input[id^="cost-demo-"]:checked ~ .section-head label[for^="cost-demo-"],
-.cost-panel input[id^="cost-cpa-"]:checked ~ .section-head label[for^="cost-cpa-"] { background:var(--blue); color:#fff; border-color:var(--blue); }
+.cost-panel input[id^="cost-cpa-"]:checked ~ .section-head label[for^="cost-cpa-"] { background:#0b5cab; color:#fff; border-color:#0b5cab; }
 .cost-panel .chart { display:none; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .chart.cpl,
 .cost-panel input[id^="cost-demo-"]:checked ~ .chart.demo,

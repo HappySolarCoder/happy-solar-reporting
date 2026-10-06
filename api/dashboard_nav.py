@@ -283,10 +283,17 @@ def _nav_state_boot() -> str:
     Callers place dashboard_nav_css() inside a <style> block in the document
     head. Closing that block here lets the saved choice land on <html> before
     the body is parsed, including when Bloom frames the page.
+
+    When the page is framed (Bloom's Data Center) and the viewer has not made
+    a choice yet, start on the slim rail so Bloom's sidebar is the one full
+    navigation layer.
     """
     return (
-        "</style><script>(function(){try{if(localStorage.getItem('hsOpsNavCollapsed')==='1')"
-        "{document.documentElement.classList.add('oc-nav-collapsed');}}catch(e){}})();"
+        "</style><script>(function(){var d=document.documentElement,f=false;"
+        "try{f=window.self!==window.top;}catch(e){f=true;}"
+        "if(f){d.classList.add('oc-embedded');}"
+        "try{var s=localStorage.getItem('hsOpsNavCollapsed');"
+        "if(s==='1'||(f&&s===null)){d.classList.add('oc-nav-collapsed');}}catch(e){}})();"
         "</script><style>"
     )
 
@@ -796,7 +803,9 @@ def render_dashboard_nav(current: str) -> str:
               scheduleChartRemeasure();
             }}
             try {{
-              if (localStorage.getItem(NAV_COLLAPSE_KEY) === '1') {{
+              var savedNav = localStorage.getItem(NAV_COLLAPSE_KEY);
+              var framedNav = document.documentElement.classList.contains('oc-embedded');
+              if (savedNav === '1' || (framedNav && savedNav === null)) {{
                 document.documentElement.classList.add('oc-nav-collapsed');
               }}
             }} catch (err) {{}}
@@ -883,16 +892,22 @@ def render_dashboard_nav(current: str) -> str:
             if (document.body.getAttribute('data-oc-native-filters') === '1') return;
             var host = document.querySelector('.wrap') || document.body;
             var f = window.hsOpsReadFilters();
+            var ownDates = document.body.getAttribute('data-oc-own-dates') === '1';
             var bar = document.createElement('div');
-            bar.className = 'global-filterbar oc-injected-filters';
-            bar.innerHTML = '<div class="filter-controls"><label>Dates from<input id="ocStart" type="date" aria-label="Start date" value="'+f.start+'"></label><label>Dates to<input id="ocEnd" type="date" aria-label="End date" value="'+f.end+'"></label><label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div><div class="filter-chips" id="ocChips"></div>';
+            bar.className = 'global-filterbar oc-injected-filters' + (ownDates ? ' oc-own-dates' : '');
+            var dateControls = ownDates
+              ? '<input id="ocStart" type="hidden" value="'+f.start+'"><input id="ocEnd" type="hidden" value="'+f.end+'">'
+              : '<label>Dates from<input id="ocStart" type="date" aria-label="Start date" value="'+f.start+'"></label><label>Dates to<input id="ocEnd" type="date" aria-label="End date" value="'+f.end+'"></label>';
+            bar.innerHTML = '<div class="filter-controls">'+dateControls+'<label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div><div class="filter-chips" id="ocChips"></div>';
             host.insertBefore(bar, host.firstChild);
             function chips() {{
               var cur = window.hsOpsReadFilters();
               var html = '';
               if (cur.territory !== 'All') html += '<button type="button" data-k="territory">'+cur.territory+' <span>×</span></button>';
               if (cur.source !== 'All') html += '<button type="button" data-k="source">'+cur.source+' <span>×</span></button>';
-              html += '<span>Filters apply to metric requests. Pages with their own date control still show that control.</span>';
+              html += ownDates
+                ? '<span>This page sets its own dates below, so the shared date filter is hidden here. Territory and lead source apply to cards that have no filter of their own.</span>'
+                : '<span>Filters apply to metric requests. Pages with their own date control still show that control.</span>';
               document.getElementById('ocChips').innerHTML = html;
             }}
             function apply(partial) {{

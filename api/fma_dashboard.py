@@ -208,6 +208,10 @@ __DASHBOARD_NAV_CSS__
 
     .card-header { display:flex; align-items:flex-start; justify-content: space-between; gap: 10px; }
     .card-title { font-size: 13px; font-weight: 900; color: var(--muted); }
+    .scopeNote { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:8px 0 4px; padding:8px 12px; border:1px solid var(--border); border-radius:10px; background:#fff; font-size:12.5px; color:#475569; line-height:1.4; }
+    .scopeNote strong { color:#0f172a; font-weight:900; }
+    .scopeNoteInline { margin:6px 0 0; }
+    .scopeTag { display:inline-block; padding:2px 8px; border-radius:999px; background:#fde7f1; color:#9d174d; font-size:11px; font-weight:900; letter-spacing:.04em; text-transform:uppercase; }
     .meta { margin-top: 6px; color: var(--muted2); font-size: 12px; }
 
     .span-12 { grid-column: span 12; }
@@ -495,12 +499,12 @@ __DASHBOARD_NAV_CSS__
     #seeAllModal td { color:#0f172a; font-weight:800; }
 </style>
 </head>
-<body>
+<body data-oc-own-dates="1">
   <div class="wrap">
     <div class="topbar">
       <div class="topbarMain">
         <div class="title">FMA Dashboard</div>
-        <div class="subtitle">Team Performance — real-time setter metrics (Raydar-style cards)</div>
+        <div class="subtitle">Team Performance — setter door activity, appointments and demo rate</div>
         <div class="pinkline"></div>
 __DASHBOARD_NAV_HTML__
         <div class="dashboardSwitch">
@@ -538,6 +542,11 @@ __DASHBOARD_NAV_HTML__
       <div class="pill" data-period="thismo">This Mo</div>
       <div class="pill" data-period="lastmo">Last Mo</div>
       <div class="pill" data-period="all">All</div>
+    </div>
+    <div class="scopeNote" id="topScopeNote">
+      <span class="scopeTag">Page dates</span>
+      <strong id="rangeMeta">Today</strong>
+      <span>Control Total Knocks, Appointments, Appt % Knocks and both Top Performers lists. The Demo Rate by Setter table has its own dates.</span>
     </div>
 
     <div class="grid">
@@ -601,7 +610,8 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header setterHeader">
           <div>
-            <div class="card-title">GHL — Demo Rate by Setter (Current Month)</div>
+            <div class="card-title">GHL — Demo Rate by Setter</div>
+            <div class="scopeNote scopeNoteInline"><span class="scopeTag">Table dates</span><strong id="setterScopeMeta">Current month to date</strong><span>Set with Start and End below. The page dates above do not change this table.</span></div>
             <div class="meta">Opps Ran / Demos / Demo % (Demos / Ran). On or after Thu Sep 24, 2026 (ET), a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
           </div>
         </div>
@@ -688,9 +698,9 @@ __DASHBOARD_NAV_HTML__
       </div>
 
 <div class="card span-12">
-        <div class="card-title">Status</div>
+        <div class="card-title">About these numbers</div>
         <div class="meta">
-          UI is built to match Raydar. Next step: confirm metric definitions + exact field mappings (Knocks, Convos, Appts, Go-backs) and wire these cards.
+          Knocks and appointments come from Raydar door activity. The demo-rate table comes from GoHighLevel opportunities. Times are Eastern (America/New_York).
         </div>
       </div>
     </div>
@@ -821,8 +831,11 @@ __DASHBOARD_NAV_HTML__
       if (startEl) startEl.value = urlStart;
       if (endEl) endEl.value = urlEnd;
       setRange({ start: urlStart, end: urlEnd });
-      if (metaEl) metaEl.textContent = `Custom range: ${urlStart} → ${urlEnd}`;
       setActivePeriod(inferActivePeriod(urlStart, urlEnd));
+      const activePill = document.querySelector('#periodTabs .pill.active');
+      const pillLabel = activePill ? String(activePill.textContent || '').trim() : '';
+      const span = urlStart === urlEnd ? urlStart : `${urlStart} → ${urlEnd}`;
+      if (metaEl) metaEl.textContent = pillLabel ? `${pillLabel}: ${span}` : `Custom: ${span}`;
       return;
     }
 
@@ -1102,6 +1115,9 @@ __DASHBOARD_NAV_HTML__
           ? { start: srTable.start, end: srTable.end }
           : currentNyMonthToDateRange();
         const rangeParam = `&start=${encodeURIComponent(tableRange.start)}&end=${encodeURIComponent(tableRange.end)}`;
+        setText('setterScopeMeta', (srTable && srTable.start && srTable.end)
+          ? `${tableRange.start} → ${tableRange.end}`
+          : `Current month to date (${tableRange.start} → ${tableRange.end})`);
 
         // Build all URLs first, then fetch in parallel for speed.
         const monthStr = `${y}-${String(m).padStart(2,'0')}`;

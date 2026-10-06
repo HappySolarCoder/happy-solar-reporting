@@ -60,11 +60,11 @@ PERSON_SETTINGS_METRIC = {
 UNSET = {
     "company_sales": "No scope:company sales goal is stored for this month.",
     "opportunities_created": (
-        "Bloom account goals store sales counts only. "
-        "No opportunities-created target is in portal_goal_documents."
+        "Bloom goals track sales counts only. "
+        "No opportunities-created goal is set in Bloom."
     ),
-    "demo_pct": "No company Demo % target is stored in portal_goal_documents.",
-    "opp2prelim": "No company Opp2Prelim target is stored in portal_goal_documents.",
+    "demo_pct": "No company Demo % goal is set in Bloom.",
+    "opp2prelim": "No company Opp2Prelim goal is set in Bloom.",
 }
 
 
@@ -340,9 +340,8 @@ def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
             "source": None,
             "period_id": period_id,
             "blocker": (
-                "Bloom sales goals are in portal_goal_documents on the Bloom Neon database. "
-                "This app reads them with DATABASE_URL, the same variable happy-solar-bloom-portal uses. "
-                "DATABASE_URL is not set here."
+                "Sales goals set in Bloom can't be shown yet: this dashboard isn't connected to "
+                "the Bloom database (DATABASE_URL is not set)."
             ),
             "person_goals": [],
             "checked_at": checked_at,
@@ -360,7 +359,7 @@ def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
             "goals": None,
             "source": "portal_goal_documents",
             "period_id": period_id,
-            "blocker": "Bloom sales goals could not be read from portal_goal_documents (" + type(exc).__name__ + ").",
+            "blocker": "Sales goals set in Bloom could not be loaded right now (" + type(exc).__name__ + "). Try again shortly.",
             "person_goals": [],
             "checked_at": checked_at,
         }

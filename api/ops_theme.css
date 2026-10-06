@@ -246,3 +246,4 @@ body.oc-root th.sortable .sort-ind { color: #8ef0c8; }
 body.oc-root .delta.down { color: #ff99a5; }
 body.oc-root .delta.up { color: #8ef0c8; }
 body.oc-root .trendlabel { color: #d5e3ec; }
+body.oc-root .hbar-label { color: #d5e3ec !important; } body.oc-root .hbar-val { color: #91abc0 !important; }

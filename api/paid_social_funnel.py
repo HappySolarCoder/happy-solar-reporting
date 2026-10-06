@@ -709,6 +709,7 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .funnel-scroll { container-type:inline-size; max-width:100%; overflow:visible; }
 .funnel-row { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); gap:8px; align-items:stretch; min-width:0; }
 .funnel-step { display:contents; }
+.funnel-panel { overflow:visible; }
 .stage { background:var(--raised); border:1px solid var(--border); border-radius:8px; min-width:0; }
 .stage summary { list-style:none; cursor:pointer; padding:12px 10px; display:grid; grid-template-rows:40px auto auto; align-content:start; gap:4px; min-height:96px; }
 .stage summary::-webkit-details-marker { display:none; }
@@ -717,6 +718,14 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .stage-state { color:var(--muted); font-size:13px; line-height:18px; min-height:18px; }
 .stage-detail { padding:0 12px 12px; color:var(--secondary); }
 .ratio { align-self:center; justify-self:center; color:var(--secondary); font-size:14px; line-height:18px; font-weight:650; white-space:nowrap; }
+@container (max-width:1224px) {
+  .funnel-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px 8px; }
+  .funnel-step { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; }
+  .ratio { align-self:center; padding:2px 0 4px; }
+}
+@container (max-width:540px) {
+  .funnel-row { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+}
 .tabs { display:flex; gap:6px; }
 .tabs label { border:1px solid var(--border); border-radius:8px; padding:6px 10px; color:var(--secondary); cursor:pointer; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .section-head label[for^="cost-cpl-"],
@@ -725,7 +734,7 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .cost-panel .chart { display:none; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .chart.cpl,
 .cost-panel input[id^="cost-demo-"]:checked ~ .chart.demo,
-.cost-panel input[id^="cost-cpa-"]:checked ~ .chart.cpa { display:block; }
+.cost-panel input[id^="cost-cpa-"]:checked ~ .chart.cpa { display:flex; flex-direction:column; min-height:0; }
 .ads-panel { display:flex; flex-direction:column; min-height:0; }
 .ads-panel .table-scroll { flex:1 1 auto; min-height:0; overflow:auto; max-width:100%; }
 .table-scroll { overflow:auto; max-width:100%; }
@@ -757,14 +766,6 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   .kpis { grid-template-columns:repeat(3, minmax(0,1fr)); }
   .main-row { grid-template-columns:1fr 1fr; min-height:0; }
   .lead-panel { grid-column:1 / -1; min-height:240px; }
-  @container (max-width:1120px) {
-    .funnel-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px 8px; }
-    .funnel-step { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; }
-    .ratio { align-self:center; padding:2px 0 4px; }
-  }
-  @container (max-width:540px) {
-    .funnel-row { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-  }
 }
 @media (max-width:767px) {
   .app { grid-template-columns:minmax(0,1fr); }
@@ -786,62 +787,20 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   .kpi { min-height:0; }
 }
 @media (min-width:1200px) and (min-height:960px) {
-  .app { height:100vh; }
-  .content { height:100vh; overflow:hidden; }
-  html.oc-embedded .app {
-    min-height:calc(100vh - var(--oc-embed-bar));
-    height:calc(100vh - var(--oc-embed-bar));
-  }
+  html.oc-embedded .app,
   html.oc-embedded .content,
-  html.oc-embedded .sidebar { height:calc(100vh - var(--oc-embed-bar)); min-height:0; }
-  #screen-overview:checked ~ .content .panel-overview {
-    height:calc(100vh - 36px);
-    display:grid;
-    grid-template-rows:auto auto minmax(160px,1fr) minmax(min-content, auto) minmax(160px,1fr);
-    overflow:hidden;
-  }
-  html.oc-embedded #screen-overview:checked ~ .content .panel-overview {
-    height:calc(100vh - 36px - var(--oc-embed-bar));
-  }
-  #screen-overview:checked ~ .content { overflow:hidden; }
-  #screen-overview:checked ~ .content .panel-overview .main-row,
-  #screen-overview:checked ~ .content .panel-overview .bottom-row {
-    min-height:0;
-    height:100%;
-  }
-  #screen-overview:checked ~ .content .panel-overview .lead-panel,
-  #screen-overview:checked ~ .content .panel-overview .cost-panel {
-    min-height:0;
-    overflow:hidden;
-  }
-  #screen-overview:checked ~ .content .panel-overview .funnel-panel {
-    min-height:min-content;
+  html.oc-embedded .sidebar {
+    min-height:calc(100vh - var(--oc-embed-bar));
     height:auto;
-    overflow:visible;
   }
+  #screen-overview:checked ~ .content .panel-overview,
+  #screen-overview:checked ~ .content .panel-overview .funnel-panel,
+  #screen-overview:checked ~ .content .panel-overview .bot-panel,
   #screen-overview:checked ~ .content .panel-overview .lead-panel,
   #screen-overview:checked ~ .content .panel-overview .cost-panel {
-    display:flex;
-    flex-direction:column;
+    overflow:visible;
+    height:auto;
+    min-height:min-content;
   }
-  #screen-overview:checked ~ .content .panel-overview .chart-frame,
-  #screen-overview:checked ~ .content .panel-overview .cost-panel .chart {
-    flex:1 1 auto;
-    min-height:0;
-  }
-  #screen-overview:checked ~ .content .panel-overview .chart-svg {
-    width:100%;
-    height:100%;
-  }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel {
-    height:100%;
-    overflow:hidden;
-    padding:12px;
-  }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel .section-head { margin-bottom:4px; }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel .fine { margin-top:4px; }
-  #screen-overview:checked ~ .content .panel-overview .funnel-panel { padding:12px; }
-  #screen-overview:checked ~ .content .panel-overview .stage summary { min-height:0; padding:8px; }
-  #screen-overview:checked ~ .content .panel-overview .stage-state:empty { display:none; }
 }
 """

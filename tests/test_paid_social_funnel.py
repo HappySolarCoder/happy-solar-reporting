@@ -1046,14 +1046,16 @@ class PageTests(unittest.TestCase):
         self.assertIn(".stage-label { color:var(--secondary); font-size:16px; line-height:20px; font-weight:650; min-height:40px; }", html)
         self.assertIn("grid-template-rows:32px auto minmax(0,1fr)", html)
         self.assertIn("container-type:inline-size", html)
-        self.assertIn("@container (max-width:1120px)", html)
+        self.assertIn("@container (max-width:1224px)", html)
         self.assertIn("@container (max-width:540px)", html)
         self.assertLess(
+            html.find("@container (max-width:1224px)"),
             html.find("@media (max-width:1199px)"),
-            html.find("@container (max-width:1120px)"),
         )
-        self.assertIn("minmax(min-content, auto)", html)
+        self.assertNotIn("@container (max-width:1120px)", html)
+        self.assertIn("min-height:min-content", html)
         self.assertNotIn("minmax(136px,168px)", html)
+        self.assertNotIn(".content { height:100vh; overflow:hidden; }", html)
         self.assertIn("overflow:visible", html)
         self.assertNotIn("min-width:980px", html)
         self.assertIn("--muted:#A3C2D3", html)

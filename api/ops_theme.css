@@ -244,4 +244,5 @@ body.oc-root .meta { color: #91abc0 !important; }
 #seeAllModal .modal-section-title { color: #0f172a !important; }
 body.oc-root th.sortable .sort-ind { color: #8ef0c8; }
 body.oc-root .delta.down { color: #ff99a5; }
+body.oc-root .delta.up { color: #8ef0c8; }
 body.oc-root .trendlabel { color: #d5e3ec; }

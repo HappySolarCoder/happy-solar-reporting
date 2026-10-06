@@ -11,10 +11,11 @@ and user documents. It does not read portal_users.
 Account goals are sales counts. The company sales goal for a month is the
 scope:company accountGoals row (metricKey sales, unit count, periodId
 YYYY-MM). It is not the sum of territory goals. A missing scope:company
-row, and missing Demo % / Opp2Prelim / opportunities-created targets, stay
-unset. Virtual/Sweeper uses the portal's locked default of 7 when that month has no
-stored goal (mergeLockedTerritoryGoals). Person goals are the company,
-team, and user documents (door knocks, appointments, demos, sales).
+row, and missing Opp2Prelim / opportunities-created targets, stay unset.
+A missing company Demo % target uses COMPANY_DEMO_PCT_TARGET. Virtual/Sweeper
+uses the portal's locked default of 7 when that month has no stored goal
+(mergeLockedTerritoryGoals). Person goals are the company, team, and user
+documents (door knocks, appointments, demos, sales).
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ COMPANY_SUBJECT = "scope:company"
 TERRITORY_PREFIX = "scope:territory:"
 VIRTUAL_SWEEPER = "Virtual/Sweeper"
 VIRTUAL_SWEEPER_SALES_GOAL = 7
+# Percent. Used wherever a stored company Demo % target is missing.
+COMPANY_DEMO_PCT_TARGET = 50
 BLOOM_TERRITORIES = ("Buffalo", "Rochester", "Syracuse", "Other", "Virtual/Sweeper")
 OPS_NAME = {
     "Buffalo": "Buffalo",
@@ -63,7 +66,6 @@ UNSET = {
         "Bloom goals track sales counts only. "
         "No opportunities-created goal is set in Bloom."
     ),
-    "demo_pct": "No company Demo % goal is set in Bloom.",
     "opp2prelim": "No company Opp2Prelim goal is set in Bloom.",
 }
 
@@ -89,6 +91,42 @@ def _finite_target(value: Any) -> float | None:
     if value != value or value <= 0 or value > 1_000_000:
         return None
     return float(value)
+
+
+def _percent_number(target: float | int) -> int | float:
+    if isinstance(target, float) and target.is_integer():
+        return int(target)
+    return target
+
+
+def company_demo_pct_goal(period_id: str, stored_target: Any = None) -> dict[str, Any]:
+    """Company Demo % target, in percent.
+
+    Bloom account goals are sales counts, so a company Demo % target is
+    usually absent. A missing or unusable stored target is
+    COMPANY_DEMO_PCT_TARGET. A usable stored target is kept.
+    """
+    parsed = _finite_target(stored_target)
+    if parsed is None:
+        target: int | float = COMPANY_DEMO_PCT_TARGET
+        stored = False
+    else:
+        target = _percent_number(parsed)
+        stored = True
+    return {
+        "target": target,
+        "period_id": period_id,
+        "unit": "percent",
+        "metric": "demo_pct",
+        "stored": stored,
+    }
+
+
+def demo_pct_note(goal: dict[str, Any]) -> str:
+    shown = _percent_number(goal["target"])
+    if goal.get("stored"):
+        return f"Stored company Demo % target is {shown}%."
+    return f"Company Demo % target is {shown}%."
 
 
 def parse_account_goals(subject_id: str, raw: Any) -> list[dict[str, Any]]:
@@ -264,6 +302,9 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
     unset = dict(UNSET)
     if company is not None:
         unset["company_sales"] = "Stored on scope:company for this month."
+    # Bloom account goals are sales counts, so this lookup finds no stored Demo % target.
+    demo_pct = company_demo_pct_goal(period_id, None)
+    unset["demo_pct"] = demo_pct_note(demo_pct)
     return {
         "available": True,
         "source": "portal_goal_documents",
@@ -279,7 +320,7 @@ def build_payload(period_id: str, documents: list[tuple[str, Any]]) -> dict[str,
         },
         "territory_sales": territories,
         "opportunities_created": None,
-        "demo_pct": None,
+        "demo_pct": demo_pct,
         "opp2prelim": None,
         "unset": unset,
         "blocker": None,
@@ -330,22 +371,34 @@ def fetch_person_documents(url: str, opener=None) -> list[tuple[str, Any]]:
     return documents
 
 
+def _unread_goals(period_id: str, *, source: str | None, blocker: str, checked_at: str) -> dict[str, Any]:
+    demo_pct = company_demo_pct_goal(period_id, None)
+    return {
+        "available": False,
+        "goals": None,
+        "source": source,
+        "period_id": period_id,
+        "blocker": blocker,
+        "person_goals": [],
+        "checked_at": checked_at,
+        "demo_pct": demo_pct,
+        "unset": {"demo_pct": demo_pct_note(demo_pct)},
+    }
+
+
 def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
     url = database_url()
     checked_at = datetime.now(ZoneInfo("America/New_York")).isoformat()
     if not url:
-        return {
-            "available": False,
-            "goals": None,
-            "source": None,
-            "period_id": period_id,
-            "blocker": (
+        return _unread_goals(
+            period_id,
+            source=None,
+            blocker=(
                 "Sales goals set in Bloom can't be shown yet: this dashboard isn't connected to "
                 "the Bloom database (DATABASE_URL is not set)."
             ),
-            "person_goals": [],
-            "checked_at": checked_at,
-        }
+            checked_at=checked_at,
+        )
     try:
         documents = fetch_scope_documents(url, opener=opener)
         payload = build_payload(period_id, documents)
@@ -354,15 +407,12 @@ def read_bloom_goals(period_id: str, opener=None) -> dict[str, Any]:
         except Exception:
             payload["person_goals"] = []
     except Exception as exc:
-        return {
-            "available": False,
-            "goals": None,
-            "source": "portal_goal_documents",
-            "period_id": period_id,
-            "blocker": "Sales goals set in Bloom could not be loaded right now (" + type(exc).__name__ + "). Try again shortly.",
-            "person_goals": [],
-            "checked_at": checked_at,
-        }
+        return _unread_goals(
+            period_id,
+            source="portal_goal_documents",
+            blocker="Sales goals set in Bloom could not be loaded right now (" + type(exc).__name__ + "). Try again shortly.",
+            checked_at=checked_at,
+        )
     payload["checked_at"] = checked_at
     return payload
 

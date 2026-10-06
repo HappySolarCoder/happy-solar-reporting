@@ -82,7 +82,9 @@ class BloomGoalParseTests(unittest.TestCase):
         payload = bloom.build_payload("2026-10", documents)
         self.assertTrue(payload["available"])
         self.assertIsNone(payload["company_sales"])
-        self.assertIsNone(payload["demo_pct"])
+        self.assertEqual(payload["demo_pct"]["target"], bloom.COMPANY_DEMO_PCT_TARGET)
+        self.assertFalse(payload["demo_pct"]["stored"])
+        self.assertEqual(payload["demo_pct"]["unit"], "percent")
         self.assertIsNone(payload["opp2prelim"])
         self.assertIsNone(payload["opportunities_created"])
         by_name = {row["territory"]: row for row in payload["territory_sales"]}
@@ -171,7 +173,8 @@ class BloomGoalParseTests(unittest.TestCase):
         self.assertIn("scope:company", payload["unset"]["company_sales"])
         self.assertNotIn("No scope:company sales goal is stored", payload["unset"]["company_sales"])
         self.assertNotEqual(payload["company_sales"]["target"], 37 + 17 + 7)
-        self.assertIsNone(payload["demo_pct"])
+        self.assertEqual(payload["demo_pct"]["target"], bloom.COMPANY_DEMO_PCT_TARGET)
+        self.assertFalse(payload["demo_pct"]["stored"])
         self.assertIsNone(payload["opp2prelim"])
         self.assertIsNone(payload["opportunities_created"])
         by_name = {row["territory"]: row for row in payload["territory_sales"]}
@@ -317,6 +320,35 @@ class BloomGoalParseTests(unittest.TestCase):
         self.assertEqual(bloom.period_from_parts(start="2026-10-05"), "2026-10")
         self.assertEqual(bloom.period_from_parts(year="2026", month="8"), "2026-08")
 
+    def test_missing_company_demo_pct_target_is_50_percent(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertEqual(source.count("COMPANY_DEMO_PCT_TARGET = 50"), 1)
+        self.assertEqual(bloom.COMPANY_DEMO_PCT_TARGET, 50)
+        self.assertNotIn("No company Demo % goal is set in Bloom.", source)
+        for blank in (None, "", "none", False, 0, -5, 50_000_000):
+            goal = bloom.company_demo_pct_goal("2026-10", blank)
+            self.assertEqual(goal["target"], 50)
+            self.assertEqual(goal["unit"], "percent")
+            self.assertFalse(goal["stored"])
+            self.assertEqual(bloom.demo_pct_note(goal), "Company Demo % target is 50%.")
+        stored = bloom.company_demo_pct_goal("2026-10", 42)
+        self.assertEqual(stored["target"], 42)
+        self.assertTrue(stored["stored"])
+        self.assertEqual(bloom.demo_pct_note(stored), "Stored company Demo % target is 42%.")
+        payload = bloom.build_payload("2026-10", [])
+        self.assertEqual(payload["demo_pct"]["target"], bloom.COMPANY_DEMO_PCT_TARGET)
+        self.assertNotIn("no target", payload["unset"]["demo_pct"].lower())
+        self.assertNotIn("not set", payload["unset"]["demo_pct"].lower())
+        self.assertIsNone(payload["opp2prelim"])
+        self.assertIsNone(payload["opportunities_created"])
+        with mock.patch.dict("os.environ", {}, clear=True):
+            unread = bloom.read_bloom_goals("2026-10")
+        self.assertFalse(unread["available"])
+        self.assertIsNone(unread.get("company_sales"))
+        self.assertEqual(unread["demo_pct"]["target"], 50)
+        self.assertFalse(unread["demo_pct"]["stored"])
+        self.assertIn("50%", unread["unset"]["demo_pct"])
+
 
 class GoalsPageWiringTests(unittest.TestCase):
     def test_goals_dashboard_uses_bloom_targets(self):
@@ -334,6 +366,51 @@ class GoalsPageWiringTests(unittest.TestCase):
         self.assertIn('id="companyGoalsBody"', page)
         self.assertNotIn("not readable from this app yet", page)
         self.assertNotIn('class="navbtn"', page)
+
+    def test_attention_bar_is_gone_and_demo_target_uses_the_constant(self):
+        script = (ROOT / "api" / "ops_overview_script.txt").read_text(encoding="utf-8")
+        page = (ROOT / "api" / "ops_overview.py").read_text(encoding="utf-8")
+        css = (ROOT / "api" / "ops_theme.css").read_text(encoding="utf-8")
+        goals = (ROOT / "api" / "goals_dashboard.py").read_text(encoding="utf-8")
+        combined = script + page + css + goals
+        self.assertNotIn("NEEDS ATTENTION", combined)
+        self.assertNotIn("attentionHost", combined)
+        self.assertNotIn("attention-strip", css)
+        self.assertNotIn("attention-label", css)
+        self.assertNotIn("no company Demo % target is stored", combined)
+        self.assertNotIn('setText("demoGoal", "Goal Not Set")', script)
+        self.assertIn("__COMPANY_DEMO_PCT_TARGET__", script)
+        self.assertIn("companyDemoGoal", script)
+        self.assertIn("demoPaceCaption", script)
+        self.assertIn('id="filterHost"', page)
+        self.assertIn("/api/missing_dispos", page)
+        self.assertIn("/api/goals_dashboard", script)
+        self.assertIn("COMPANY_DEMO_PCT_TARGET", goals)
+        self.assertIn("rate: true", goals)
+        self.assertNotIn("Goal 50%", goals)
+        spec = importlib.util.spec_from_file_location("hs_ops_overview_demo_target", ROOT / "api" / "ops_overview.py")
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        ops = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ops)
+        overview = ops.render_body("")
+        self.assertIn('id="demoGoal">Goal 50%', overview)
+        self.assertIn("const COMPANY_DEMO_PCT_TARGET = 50;", overview)
+        self.assertNotIn("__COMPANY_DEMO_PCT_TARGET__", overview)
+        self.assertNotIn("NEEDS ATTENTION", overview)
+        self.assertNotIn("attentionHost", overview)
+        goals_spec = importlib.util.spec_from_file_location(
+            "hs_goals_dashboard_demo_target", ROOT / "api" / "goals_dashboard.py"
+        )
+        self.assertIsNotNone(goals_spec)
+        self.assertIsNotNone(goals_spec.loader)
+        goals_mod = importlib.util.module_from_spec(goals_spec)
+        goals_spec.loader.exec_module(goals_mod)
+        goals_html = goals_mod.render_html()
+        self.assertIn("const COMPANY_DEMO_PCT_TARGET = 50;", goals_html)
+        self.assertIn("rate: true", goals_html)
+        self.assertNotIn("No company Demo % goal is set", goals_html)
+        self.assertNotIn("NEEDS ATTENTION", goals_html)
 
 
 if __name__ == "__main__":

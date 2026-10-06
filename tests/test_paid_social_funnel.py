@@ -991,6 +991,20 @@ class PageTests(unittest.TestCase):
         self.assertIn("G-V02RZFR4SZ", html)
         self.assertIn("7nSEgeoBYXZiIS7x41Jy", html)
         self.assertIn('href="/api/paid_social_funnel', html)
+        self.assertIn('class="oc-embed-bar"', html)
+        self.assertIn('class="oc-embed-group-label">Lead Gen</span>', html)
+        lead_btn = html[html.find('id="oc-embed-btn-lead-gen"') : html.find('id="oc-embed-btn-lead-gen"') + 280]
+        self.assertIn('aria-current="true"', lead_btn)
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/paid_social_funnel" aria-current="page"',
+            html,
+        )
+        self.assertIn(".oc-embed-bar { display: none; }", html)
+        self.assertIn("html.oc-embedded .oc-embed-bar {", html)
+        self.assertIn("window.self!==window.top", html)
+        self.assertIn("embed=1", html)
+        self.assertIn('aria-haspopup="menu"', html)
+        self.assertNotIn('id="sidebar"', html)
         self.assertNotIn("/api/metrics/inbound_cac", html)
         self.assertNotIn("|| 0", html)
         self.assertNotIn("16%", html)

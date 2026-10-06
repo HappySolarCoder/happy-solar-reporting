@@ -574,6 +574,44 @@ def _render_embed_nav(current: str) -> str:
     )
 
 
+def embed_section_row_css() -> str:
+    """Embed-row CSS for a page that does not use the operations rail.
+
+    Place the return value inside a <style> block. The boot snippet closes
+    that block so the embedded class is set before the body is parsed.
+    """
+    return _embed_chrome_css() + "\n" + _nav_state_boot()
+
+
+def render_embed_section_row(current: str) -> str:
+    """Five-menu row only. Hidden until the page is framed or `?embed=1` is set."""
+    bar = _render_embed_nav(current)
+    script = """
+        <script>
+          (function() {
+            if (!document.documentElement.classList.contains('oc-embedded')) return;
+            var bar = document.querySelector('.oc-embed-bar');
+            var sectionNav = document.querySelector('.oc-embed-nav');
+            if (bar && bar.parentElement !== document.body) document.body.insertBefore(bar, document.body.firstChild);
+            if (!sectionNav) return;
+            try {
+              var params = new URLSearchParams(window.location.search);
+              if (params.get('embed') === '1') {
+                var sectionLinks = sectionNav.querySelectorAll('a[href^="/"]');
+                for (var s = 0; s < sectionLinks.length; s++) {
+                  var sectionUrl = new URL(sectionLinks[s].getAttribute('href'), window.location.href);
+                  sectionUrl.searchParams.set('embed', '1');
+                  sectionLinks[s].setAttribute('href', sectionUrl.pathname + sectionUrl.search + sectionUrl.hash);
+                }
+              }
+            } catch (err) {}
+            __EMBED_MENU_JS__
+          })();
+        </script>
+    """
+    return bar + script.replace("__EMBED_MENU_JS__", _EMBED_MENU_JS)
+
+
 def _legacy_nav_css() -> str:
     return """
     .hs-loader {

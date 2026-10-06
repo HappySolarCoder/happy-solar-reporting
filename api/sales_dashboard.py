@@ -229,8 +229,8 @@ __DASHBOARD_NAV_CSS__
     }
 
     button {
-      background: var(--green);
-      border-color: var(--green);
+      background: #0a7a34;
+      border-color: #0a7a34;
       color: #fff;
       font-weight: 900;
       cursor:pointer;
@@ -370,7 +370,13 @@ __DASHBOARD_NAV_CSS__
 
       .kpi { font-size: 34px; }
       .card { padding: 12px; }
-      table { display: block; overflow-x: auto; white-space: nowrap; }
+      .tablewrap { overflow-x: auto; }
+      .tablewrap table {
+        display: table;
+        width: max-content;
+        min-width: 0;
+        white-space: nowrap;
+      }
     }
 
     @media (max-width: 820px) {

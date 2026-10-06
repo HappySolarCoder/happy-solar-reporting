@@ -301,7 +301,7 @@ __DASHBOARD_NAV_CSS__
     .filters { display:flex; gap: 10px; flex-wrap: wrap; align-items:flex-end; margin-top: 10px; }
     .filters label { font-size: 12px; font-weight: 900; color: var(--muted); }
     .filters input { border:1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-weight: 900; }
-    .btn { background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 950; cursor:pointer; }
+    .btn { background: #be185d; border: 1px solid #be185d; color:#fff; border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 950; cursor:pointer; }
     .btn.secondary { background:#fff; border: 1px solid var(--border); color:#334155; }
   
 

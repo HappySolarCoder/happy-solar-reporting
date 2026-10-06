@@ -1358,7 +1358,7 @@ __DASHBOARD_NAV_CSS__
     .filters label {{ display:block; font-size:12px; color:var(--muted); font-weight:900; margin-bottom:6px; text-transform:uppercase; letter-spacing:.05em; }}
     .filters input[type=date] {{ padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#fff; font-size:14px; font-weight:800; }}
     .btn {{ display:inline-flex; align-items:center; justify-content:center; border-radius:12px; padding:10px 14px; border:1px solid var(--border); background:#fff; color:#334155; font-size:13px; font-weight:900; text-decoration:none; cursor:pointer; }}
-    .btn.primary {{ background:linear-gradient(90deg, var(--pink), #fb7185); color:#fff; border:none; }}
+    .btn.primary {{ background:linear-gradient(90deg, #9d174d, #be185d); color:#fff; border:none; }}
     .grid {{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:14px; margin-top:16px; }}
     .stat-card {{ background:var(--card); border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow); padding:18px; min-height:120px; }}
     .stat-label {{ color:var(--muted); font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.06em; }}

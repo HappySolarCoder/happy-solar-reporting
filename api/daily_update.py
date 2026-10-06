@@ -56,7 +56,7 @@ HTML = """<!doctype html>
     .topbar > div { min-width: 0; }
 
     .title { font-size: 24px; font-weight: 950; color: #1a2b4a; letter-spacing: -0.02em; display:flex; align-items:center; gap:8px; }
-    .sunLink { text-decoration:none; font-size:20px; line-height:1; }
+    .sunLink { text-decoration:none; font-size:20px; line-height:1; color:#ffbe45; }
     .sunLink:hover { transform: translateY(-1px); }
     .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
 
@@ -86,7 +86,7 @@ __DASHBOARD_NAV_CSS__
       background:#fff; color:#334155; font-size: 12px; font-weight: 900; cursor:pointer;
       text-decoration:none;
     }
-    .btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
+    .btn.primary { background: #0a7a34; border-color: #0a7a34; color: #fff; }
 
     .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 14px; }
     .grid-5 { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 14px; margin-top: 14px; }
@@ -193,7 +193,7 @@ __DASHBOARD_NAV_CSS__
     .card.spotlight table th, .card.spotlight table td, .card.spotlight .card-title, .card.spotlight .kpi-label, .card.spotlight .kpi, .card.spotlight .kpi-sub {
       color: #0f172a !important;
     }
-    .card.spotlight table th { font-size: 16px !important; padding: 12px 10px !important; }
+    .card.spotlight table th { font-size: 16px !important; padding: 12px 10px !important; background: #f8fafc !important; }
     .card.spotlight table td { font-size: 20px !important; padding: 12px 10px !important; font-weight: 900 !important; }
 
   </style>

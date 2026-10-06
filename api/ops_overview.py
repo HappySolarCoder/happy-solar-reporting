@@ -43,7 +43,7 @@ def render_body(nav_html: str) -> str:
     <div class="workspace oc-page">
       <header class="topbar">
         <div class="crumb">WORKSPACE <span>/</span> <strong>Company overview</strong></div>
-        <div class="top-right"><span id="asOf">Loading live metrics</span></div>
+        <div class="top-right"><span id="asOf">Live metrics</span></div>
       </header>
       <main id="main">
         <div id="filterHost"></div>
@@ -56,7 +56,7 @@ def render_body(nav_html: str) -> str:
         <div class="section-break"><div class="section-number">01</div><div><h2>Company pulse</h2><p>Filtered results · goal pace appears only when Bloom provides a matching target</p></div><div class="section-rule"></div></div>
         <div class="kpis overview-pulse">
           <div class="kpi primary-mobile"><div class="label">Total sales</div><div class="number" id="totalSales">—</div><div id="sparkSales"></div><div class="pace-caption" id="salesPace">Goal Not Set</div></div>
-          <div class="kpi territory-kpi"><div class="label">Territory sales</div><div id="territoryDonut"><div class="pace-caption">Loading territory split</div></div></div>
+          <div class="kpi territory-kpi"><div class="label">Territory sales</div><div id="territoryDonut"><div class="pace-caption">—</div></div></div>
           <div class="kpi"><div class="label">Opportunities created</div><div class="number" id="oppsCreated">—</div><div id="sparkCreated"></div><div class="pace-caption" id="createdPace">Goal Not Set</div></div>
           <div class="kpi"><div class="label">Demo %</div><div class="number" id="demoRate">—</div><div class="sub" id="demoSub">Demos / ran</div><div class="pace-caption" id="demoGoal">Goal Not Set</div></div>
           <div class="kpi"><div class="label">Opp2Prelim</div><div class="number" id="opp2">—</div><div class="sub" id="opp2Sub">Sales / ran</div><div class="pace-caption" id="opp2Goal">Goal Not Set</div></div>

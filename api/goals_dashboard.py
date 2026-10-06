@@ -123,44 +123,15 @@ def render_html() -> str:
       }}).join("");
       return '<article class="goal-tile"><div class="goal-tile-head"><h3>Territory sales</h3><span class="badge good">Synced</span></div><div class="goal-actual">' + esc(actual) + ' <span>actual</span></div>' + body + '<p>Stored Bloom territory sales goals. They are not added into a company goal.</p></article>';
     }}
-    async function load() {{
-      const token = ++requestToken;
-      const f = filters();
-      if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
-      const params = new URLSearchParams();
-      params.set("year", f.start.slice(0, 4));
-      params.set("month", String(Number(f.start.slice(5, 7))));
-      params.set("start", f.start);
-      params.set("end", f.end);
-      if (f.territory !== "All") params.set("pipeline", f.territory);
-      if (f.source === "Sweeper") params.set("sweeper", "1");
-      else if (f.source !== "All") params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
-      let snapRes;
-      let bloomRes;
-      try {{
-        snapRes = await fetch("/api/metrics/company_snapshot?" + params.toString());
-        bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(f.start.slice(0, 7)));
-      }} catch (error) {{
-        if (error && error.name === "AbortError") return;
-        if (token !== requestToken) return;
-        return;
-      }}
-      if (token !== requestToken) return;
-      if (!snapRes.ok) return;
-      let snap;
-      let bloom = null;
-      try {{
-        snap = await snapRes.json();
-        if (token !== requestToken) return;
-        if (bloomRes.ok) bloom = await bloomRes.json();
-      }} catch (error) {{
-        if (error && error.name === "AbortError") return;
-        if (token !== requestToken) return;
-        var generation = window.HappySolarLoading && window.HappySolarLoading.currentGeneration;
-        if (generation && !generation.settled) generation.failed = true;
-        return;
-      }}
-      if (token !== requestToken) return;
+    function markPageUnavailable() {{
+      const asOf = document.getElementById("asOf");
+      if (asOf && /^(loading|checking)\b/i.test((asOf.textContent || "").trim())) asOf.textContent = "Unavailable";
+      const bloomStatus = document.getElementById("bloomStatus");
+      if (bloomStatus && /^(loading|checking)\b/i.test((bloomStatus.textContent || "").trim())) bloomStatus.textContent = "Bloom goal status unavailable.";
+      const roster = document.getElementById("rosterGoals");
+      if (roster && /^(loading|checking)\b/i.test((roster.textContent || "").trim())) roster.textContent = "Roster goals unavailable.";
+    }}
+    function paint(snap, bloom, bloomState, f) {{
       const data = (snap && snap.data) || {{}};
       const sales = data.sales && !data.sales.error ? data.sales.result : null;
       const created = data.created && !data.created.error ? data.created.result : null;
@@ -183,11 +154,64 @@ def render_html() -> str:
         goalCard("Opp2Prelim", oppText, "Sales / ran. " + (unset.opp2prelim || "Not prorated by days elapsed."), null)
       ].join("");
       document.getElementById("actualsAsOf").textContent = (data.sales && data.sales.generated_at) || "unavailable";
-      document.getElementById("bloomStatus").textContent = bloom && bloom.available
+      document.getElementById("bloomStatus").textContent = bloomState === "pending"
+        ? "Loading Bloom sales goals…"
+        : bloom && bloom.available
         ? ("Read portal_goal_documents for " + bloom.period_id + ". " + (bloom.company_sales ? ("Company sales goal " + bloom.company_sales.target + ". ") : (unset.company_sales || "")) + territoryDetail)
         : ((bloom && bloom.blocker) || "Bloom goal status unavailable.");
       document.getElementById("bloomBadge").textContent = bloom && bloom.available ? "Synced" : "Goal Not Set";
-      document.getElementById("asOf").textContent = bloom && bloom.checked_at ? ("Bloom check " + bloom.checked_at) : "Bloom unread";
+      document.getElementById("asOf").textContent = bloom && bloom.checked_at ? ("Bloom check " + bloom.checked_at) : (bloomState === "pending" ? "Checking Bloom" : "Bloom unread");
+    }}
+    async function load() {{
+      const token = ++requestToken;
+      const f = filters();
+      if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
+      const params = new URLSearchParams();
+      params.set("year", f.start.slice(0, 4));
+      params.set("month", String(Number(f.start.slice(5, 7))));
+      params.set("start", f.start);
+      params.set("end", f.end);
+      if (f.territory !== "All") params.set("pipeline", f.territory);
+      if (f.source === "Sweeper") params.set("sweeper", "1");
+      else if (f.source !== "All") params.set("lead_source", f.source === "Self gen" ? "Self Gen" : f.source);
+      let snapRes;
+      try {{
+        snapRes = await fetch("/api/metrics/company_snapshot?" + params.toString());
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        if (token !== requestToken) return;
+        markPageUnavailable();
+        return;
+      }}
+      if (token !== requestToken) return;
+      if (!snapRes.ok) {{
+        markPageUnavailable();
+        return;
+      }}
+      let snap;
+      try {{
+        snap = await snapRes.json();
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        if (token !== requestToken) return;
+        var generation = window.HappySolarLoading && window.HappySolarLoading.currentGeneration;
+        if (generation && !generation.settled) generation.failed = true;
+        markPageUnavailable();
+        return;
+      }}
+      if (token !== requestToken) return;
+      paint(snap, null, "pending", f);
+      let bloom = null;
+      try {{
+        const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(f.start.slice(0, 7)), {{ hsOptional: true }});
+        if (token !== requestToken) return;
+        if (bloomRes.ok) bloom = await bloomRes.json();
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        if (token !== requestToken) return;
+      }}
+      if (token !== requestToken) return;
+      paint(snap, bloom, bloom ? "ready" : "missing", f);
       const month = f.start.slice(0, 7);
       let roster;
       try {{
@@ -217,6 +241,7 @@ def render_html() -> str:
       host.innerHTML = firestoreTable + bloomTable;
     }}
     window.hsOpsReload = load;
+    window.hsOpsRerenderFilters = renderFilters;
     renderFilters();
     load();
   </script>

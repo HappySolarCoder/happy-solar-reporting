@@ -230,6 +230,21 @@ async function mainTest() {
   assert(!/previewDashboardLoading/.test(source), "production script does not start a timed preview");
   assert(!/(^|[^0-9])5000([^0-9]|$)/.test(source), "production script has no five-second timer");
 
+  await wait(20);
+  let lateCommitted = false;
+  const latePage = loading
+    .fetch(laterFetch(400, http(true, { value: 3 })), "/api/metrics/sales?format=json&late=1")
+    .then(() => {
+      lateCommitted = true;
+    })
+    .catch(() => {});
+  await wait(180);
+  assert(!layer().hidden, "a page fetch that starts after boot still shows the overlay");
+  assert(layer()._html.includes("LOADING REQUESTED DATA"), "late page fetch uses the loading card");
+  loading.begin("view");
+  await latePage;
+  assert(!lateCommitted, "cancelling the late page fetch does not commit it");
+
   const starter = makeElement("button");
   starter.isConnected = true;
   starter.focus();
@@ -349,6 +364,9 @@ async function mainTest() {
   let retried = 0;
   globalThis.hsOpsReload = () => {
     retried += 1;
+    assert(!layer().hidden, "Try again keeps the overlay mounted");
+    assert(layer()._html.includes("LOADING REQUESTED DATA"), "Try again shows the loading card immediately");
+    assert(!layer()._html.includes("Try again"), "Try again does not leave the error card up");
     loading.begin("view");
     return loading.fetch(laterFetch(0, http(true, { value: 21 })), "/api/metrics/company_snapshot?retry=1");
   };
@@ -416,6 +434,79 @@ async function mainTest() {
   await loading.fetch(laterFetch(30, http(true, { cached: true })), "/api/metrics/company_snapshot?cached=1");
   await wait(40);
   assert(layer().hidden, "a tab switch over already-loaded data does not block");
+
+  loading.begin("view");
+  let releaseRequired;
+  const required = loading.fetch(
+    (_input, init) =>
+      new Promise((resolve, reject) => {
+        releaseRequired = () => resolve(http(true, { value: 6 }));
+        const signal = init && init.signal;
+        if (signal) {
+          signal.addEventListener("abort", () => {
+            const error = new Error("The operation was aborted.");
+            error.name = "AbortError";
+            reject(error);
+          });
+        }
+      }),
+    "/api/metrics/company_snapshot?required=1"
+  );
+  let trendDone = false;
+  const trend = loading
+    .fetch(laterFetch(500, http(true, { rows: [] })), "/api/metrics/company_trends?oc_raw=1")
+    .then(() => {
+      trendDone = true;
+    });
+  await wait(180);
+  assert(!layer().hidden, "the required snapshot shows the overlay");
+  releaseRequired();
+  await required;
+  await wait(50);
+  assert(layer().hidden, "the overlay hides while the optional trend is still running");
+  assert(!trendDone, "the trend request is still in flight after the overlay hides");
+  await trend;
+
+  const store = {};
+  globalThis.localStorage = {
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+    },
+    setItem(key, value) {
+      store[key] = String(value);
+    },
+    removeItem(key) {
+      delete store[key];
+    },
+  };
+  globalThis.history = {
+    replaceState(_state, _title, url) {
+      globalThis.location.href = String(url);
+    },
+  };
+  const goodHref = "https://database-migration-chi.vercel.app/api/company_overview?start=2026-10-01&end=2026-10-05";
+  globalThis.location.href = goodHref;
+  store.hsOpsFilters = JSON.stringify({ start: "2026-10-01", end: "2026-10-05", territory: "All", source: "All" });
+  let rerendered = 0;
+  globalThis.hsOpsRerenderFilters = () => {
+    rerendered += 1;
+  };
+  loading.begin("view");
+  await loading.fetch(laterFetch(0, http(true, { value: 6 })), "/api/metrics/company_snapshot?checkpoint=1");
+  await wait(40);
+  store.hsOpsFilters = JSON.stringify({ start: "2026-10-01", end: "2026-10-05", territory: "Buffalo", source: "All" });
+  globalThis.location.href = goodHref + "&territory=Buffalo";
+  loading.begin("filter");
+  await loading.fetch(laterFetch(0, http(false, { error: "nope" }, 500)), "/api/metrics/company_snapshot?buffalo=1");
+  await wait(30);
+  assert(!layer().hidden, "a failed filter change keeps the error card");
+  assert(String(store.hsOpsFilters).includes("Buffalo"), "the failed filter is stored until Back");
+  layer().querySelector("#loadingBack").dispatch("click", {});
+  assert(layer().hidden, "Back closes the error card");
+  assert(!String(store.hsOpsFilters).includes("Buffalo"), "Back restores the persisted filters");
+  assert(!String(globalThis.location.href).includes("territory=Buffalo"), "Back restores the URL");
+  assert(rerendered === 1, "Back rerenders the filter controls");
+  assert(loading.committed, "Back keeps the last good view committed");
 
   if (failures) {
     console.error(failures + " assertion(s) failed");

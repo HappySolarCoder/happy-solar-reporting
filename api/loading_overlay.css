@@ -6,13 +6,16 @@
 
 /* Production adaptation: typography, button focus, short viewports, and a quiet freshness chip.
    The rules above are the approved overlay stylesheet and stay unchanged. */
-.dashboard-loading{font-family:'DM Sans',Arial,sans-serif}
+.dashboard-loading{z-index:11000;font-family:'DM Sans',Arial,sans-serif}
+.dashboard-loading .loading-card{box-sizing:border-box;max-width:490px}
 .dashboard-loading button{border:1px solid #203e54;background:#102d43;border-radius:7px;padding:9px 13px;color:#f1f6ff;font:inherit;cursor:pointer}
 .dashboard-loading button:hover{background:#193c54;border-color:#40657d}
 .dashboard-loading button.primary{background:#26d9eb;color:#062035;border-color:#26d9eb;font-weight:700}
 .dashboard-loading button:focus-visible{outline:2px solid #26d9eb;outline-offset:3px}
 .dashboard-loading .loading-card p{font-family:'DM Sans',Arial,sans-serif}
-body.loading-open .goose-open,body.loading-open .goose-panel{pointer-events:none}
+body.loading-open .goose-open,body.loading-open .goose-panel{z-index:1;pointer-events:none}
+.hs-focus-target:focus{outline:none!important}
+.hs-focus-target:focus-visible{outline:2px solid #26d9eb!important;outline-offset:3px}
 .hs-freshness{position:fixed;right:16px;bottom:16px;z-index:30;margin:0;padding:6px 10px;border:1px solid #24435a;border-radius:999px;background:#0c253bcc;color:#9ab8c9;font:11px/1.4 'DM Sans',Arial,sans-serif;pointer-events:none}
 .hs-freshness[hidden]{display:none}
 @media(max-height:720px),(max-width:800px){

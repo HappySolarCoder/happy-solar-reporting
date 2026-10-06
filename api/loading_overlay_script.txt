@@ -13,6 +13,7 @@
   var committed = false;
   var sideAbort = null;
   var lastDiagnostic = "";
+  var checkpoint = null;
 
   function ensureSideAbort() {
     if (!sideAbort) sideAbort = new AbortController();
@@ -134,12 +135,120 @@
     if (active && active !== document.body && layer && !layer.contains(active)) focusReturn = active;
   }
 
+  function isVisible(el) {
+    if (!el || el.isConnected === false) return false;
+    if (typeof el.getClientRects !== "function") return true;
+    var rects = el.getClientRects();
+    if (!rects || !rects.length) return false;
+    if (typeof root.getComputedStyle === "function") {
+      var style = root.getComputedStyle(el);
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+    }
+    return true;
+  }
+
   function focusHeading() {
-    var heading = document.querySelector(".crumb strong, main h1, #main h1, main h2, #main h2");
+    var selectors = [
+      ".crumb strong",
+      "main h1",
+      "#main h1",
+      ".mobile-summary strong",
+      ".title",
+      "main h2",
+      "#main h2",
+      ".section-break h2",
+      "#main",
+      "main",
+    ];
+    var heading = null;
+    for (var i = 0; i < selectors.length && !heading; i += 1) {
+      var nodes = document.querySelectorAll(selectors[i]);
+      for (var j = 0; j < nodes.length; j += 1) {
+        if (isVisible(nodes[j])) {
+          heading = nodes[j];
+          break;
+        }
+      }
+    }
+    if (!heading) heading = document.querySelector(".crumb strong, main h1, #main h1, main h2, #main h2, .title");
     if (heading && heading.focus) {
       if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-      heading.focus();
+      if (heading.classList && heading.classList.add) heading.classList.add("hs-focus-target");
+      try {
+        heading.focus({ preventScroll: true });
+      } catch (error) {
+        heading.focus();
+      }
     }
+  }
+
+  function clearLoadingPlaceholders() {
+    var nodes = document.querySelectorAll("#asOf, #pageNote, #territoryDonut, #rosterGoals, #bloomStatus, #companyGoalsBody, #trendSales, #trendCreated, #actualsAsOf");
+    Array.prototype.forEach.call(nodes, function (node) {
+      var text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/^(loading|checking)\b/i.test(text)) return;
+      if (node.id === "territoryDonut") {
+        node.innerHTML = '<div class="pace-caption">—</div>';
+        return;
+      }
+      node.textContent = "Unavailable";
+    });
+    ["totalSales", "oppsCreated", "demoRate", "opp2"].forEach(function (id) {
+      var node = document.getElementById(id);
+      if (!node) return;
+      var text = (node.textContent || "").trim();
+      if (!text || text === "0" || /^loading/i.test(text)) node.textContent = "—";
+    });
+  }
+
+  function captureCheckpoint() {
+    var stored = null;
+    try {
+      if (typeof root.hsOpsReadFilters === "function") stored = JSON.stringify(root.hsOpsReadFilters());
+    } catch (error) {
+      stored = null;
+    }
+    if (stored == null) {
+      try {
+        if (root.localStorage) stored = root.localStorage.getItem("hsOpsFilters");
+      } catch (error) {
+        stored = null;
+      }
+    }
+    var asOfNode = document.getElementById("asOf");
+    checkpoint = {
+      href: root.location ? root.location.href : "",
+      stored: stored,
+      asOf: asOfNode ? asOfNode.textContent : null,
+    };
+  }
+
+  function restoreCheckpoint() {
+    if (!checkpoint) return;
+    try {
+      if (root.localStorage) {
+        if (checkpoint.stored == null) root.localStorage.removeItem("hsOpsFilters");
+        else root.localStorage.setItem("hsOpsFilters", checkpoint.stored);
+      }
+    } catch (error) {
+      /* storage can be blocked */
+    }
+    if (checkpoint.href && root.history && root.location && root.location.href !== checkpoint.href) {
+      try {
+        root.history.replaceState(null, "", checkpoint.href);
+      } catch (error) {
+        /* keep the in-memory filters even if the URL cannot move */
+      }
+    }
+    if (typeof root.hsOpsRerenderFilters === "function") {
+      try {
+        root.hsOpsRerenderFilters();
+      } catch (error) {
+        /* the page keeps its own filter markup */
+      }
+    }
+    var asOfNode = document.getElementById("asOf");
+    if (asOfNode && checkpoint.asOf != null) asOfNode.textContent = checkpoint.asOf;
   }
 
   function restoreFocus() {
@@ -151,12 +260,14 @@
 
   function showLoading() {
     var node = ensureLayer();
+    var alreadyOpen = !node.hidden;
     rememberFocus();
-    if (node.hidden) setBlocked(true);
-    node.className = "dashboard-loading";
+    if (!alreadyOpen) setBlocked(true);
+    if (node.classList && node.classList.remove) node.classList.remove("loading-error");
+    if (!alreadyOpen) node.className = "dashboard-loading";
     node.hidden = false;
     node.innerHTML = loadingMarkup();
-    node.focus();
+    if (document.activeElement !== node) node.focus();
   }
 
   function hideOverlay(options) {
@@ -188,6 +299,7 @@
         backToDashboard();
       });
     }
+    if (!committed) clearLoadingPlaceholders();
     if (retry) retry.focus();
     else node.focus();
   }
@@ -220,7 +332,10 @@
       showError();
       return;
     }
-    if (gen.saw) committed = true;
+    if (gen.saw) {
+      committed = true;
+      captureCheckpoint();
+    }
     if (gen.shown || (layer && !layer.hidden)) hideOverlay();
   }
 
@@ -242,6 +357,7 @@
 
   function begin(reason) {
     var previous = current;
+    var preserving = reason === "retry";
     if (
       previous &&
       !previous.settled &&
@@ -251,6 +367,10 @@
       !previous.saw
     ) {
       previous.reason = reason || previous.reason;
+      if (preserving) {
+        showLoading();
+        previous.shown = true;
+      }
       return previous;
     }
     if (previous && !previous.settled) {
@@ -268,8 +388,9 @@
       /* already aborted */
     }
     sideAbort = new AbortController();
-    if (previous && previous.settled && layer && !layer.hidden) hideOverlay({ restoreFocus: false });
-    var keepVisible = layer && !layer.hidden && !layer.classList.contains("loading-error");
+    if (!preserving && previous && previous.settled && layer && !layer.hidden) hideOverlay({ restoreFocus: false });
+    if (preserving) showLoading();
+    var keepVisible = layer && !layer.hidden && (preserving || !layer.classList.contains("loading-error"));
     var gen = {
       id: ++seq,
       reason: reason || "view",
@@ -315,9 +436,8 @@
     return response;
   }
 
-  function noteEnd(gen, optional, failed) {
-    if (gen.stale) return;
-    if (failed && !optional) gen.failed = true;
+  function noteEnd(gen, optional) {
+    if (gen.stale || optional) return;
     gen.inFlight = Math.max(0, gen.inFlight - 1);
     if (gen.inFlight === 0) scheduleSettle(gen);
   }
@@ -326,10 +446,12 @@
     var gen = current;
     var timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     var nextInit = Object.assign({}, init, { signal: mergeSignal(gen, init, timeoutSignal) });
-    gen.inFlight += 1;
-    gen.saw = true;
-    if (layer && !layer.hidden && !layer.classList.contains("loading-error")) gen.shown = true;
-    armShow(gen);
+    if (!optional) {
+      gen.inFlight += 1;
+      gen.saw = true;
+      if (layer && !layer.hidden && !layer.classList.contains("loading-error")) gen.shown = true;
+      armShow(gen);
+    }
     return Promise.resolve()
       .then(function () {
         return originalFetch(input, nextInit);
@@ -354,7 +476,7 @@
         throw error;
       })
       .finally(function () {
-        noteEnd(gen, optional, false);
+        noteEnd(gen, optional);
       });
   }
 
@@ -402,21 +524,25 @@
     var parsed = stripFlags(init);
     if (parsed.flags.background) return runBackground(originalFetch, input, parsed.init);
     if (parsed.flags.quiet || !shouldTrack(input)) return originalFetch(input, parsed.init);
+    var optional = parsed.flags.optional || isOptionalPath(input);
     if (!current || current.settled || current.stale) {
-      var quietInit = parsed.init;
-      var side = ensureSideAbort();
-      if (side.signal && typeof AbortSignal !== "undefined" && AbortSignal.any) {
-        quietInit = Object.assign({}, quietInit, {
-          signal: quietInit.signal ? AbortSignal.any([side.signal, quietInit.signal]) : side.signal,
-        });
+      if (!optional && !committed) begin("view");
+      else {
+        var quietInit = parsed.init;
+        var side = ensureSideAbort();
+        if (side.signal && typeof AbortSignal !== "undefined" && AbortSignal.any) {
+          quietInit = Object.assign({}, quietInit, {
+            signal: quietInit.signal ? AbortSignal.any([side.signal, quietInit.signal]) : side.signal,
+          });
+        }
+        return originalFetch(input, quietInit);
       }
-      return originalFetch(input, quietInit);
     }
-    return track(originalFetch, input, parsed.init, parsed.flags.optional || isOptionalPath(input));
+    return track(originalFetch, input, parsed.init, optional);
   }
 
   function retryLoading() {
-    hideOverlay({ restoreFocus: false });
+    showLoading();
     begin("retry");
     var reload = root.hsOpsReload;
     if (typeof reload === "function") {
@@ -433,6 +559,8 @@
 
   function backToDashboard() {
     if (current && !current.settled) return;
+    if (committed) restoreCheckpoint();
+    else clearLoadingPlaceholders();
     hideOverlay();
   }
 

@@ -930,6 +930,16 @@ def render_dashboard_nav(current: str) -> str:
               patch[b.getAttribute('data-k')] = 'All';
               apply(patch);
             }});
+            window.hsOpsRerenderFilters = function() {{
+              var cur = window.hsOpsReadFilters();
+              var start = document.getElementById('ocStart');
+              if (!start) return;
+              start.value = cur.start;
+              document.getElementById('ocEnd').value = cur.end;
+              document.getElementById('ocTerritory').value = cur.territory;
+              document.getElementById('ocSource').value = cur.source;
+              chips();
+            }};
             chips();
           }})();
         </script>

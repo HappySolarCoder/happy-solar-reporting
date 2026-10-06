@@ -281,7 +281,7 @@ __DASHBOARD_NAV_CSS__
     .filters label {{ font-size:12px; color:#6b7280; font-weight:700; }}
     .input, .select {{ height:36px; border:1px solid #d8dee6; border-radius:10px; padding:0 10px; font-size:13px; background:#fff; color:#0f172a; }}
     .btn {{ height:36px; border-radius:10px; padding:0 12px; border:1px solid #d8dee6; background:#fff; color:#0f172a; font-size:12px; font-weight:800; cursor:pointer; }}
-    .btn.primary {{ border-color:rgba(236,72,153,0.45); background:rgba(236,72,153,0.10); color:#b80b66; }}
+    .btn.primary {{ border-color:#9d174d; background:#be185d; color:#fff; }}
 
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:9px 10px; border-bottom:1px solid var(--border); font-size:13px; }}

@@ -128,12 +128,12 @@ HTML = """<!doctype html>
 
     .btn {
       display:inline-flex; align-items:center; justify-content:center;
-      background: var(--pink); border: 1px solid var(--pink);
+      background: #be185d; border: 1px solid #be185d;
       color:#fff; border-radius: 10px; padding: 9px 12px;
       font-size: 13px; font-weight: 950; cursor:pointer;
     }
     .btn.secondary { background:#fff; border: 1px solid var(--border); color:#334155; }
-    .btn.danger { background: var(--danger); border-color: var(--danger); }
+    .btn.danger { background: #b91c1c; border-color: #b91c1c; color:#fff; }
 
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { border-bottom: 1px solid var(--border); padding: 8px 10px; font-size: 12px; text-align:left; }
@@ -146,12 +146,11 @@ HTML = """<!doctype html>
 
     .stack { display:flex; flex-direction: column; gap: 12px; }
     .hgroup { display:flex; gap: 10px; align-items:center; flex-wrap:wrap; }
-
+__DASHBOARD_NAV_CSS__
     @media (max-width: 820px) {
       .wrap { padding: 12px; }
       .topbar { padding: 12px; gap: 10px; }
       .title { font-size: 20px; }
-__DASHBOARD_NAV_CSS__
       .navbtn { white-space:nowrap; flex:0 0 auto; padding:8px 10px; font-size:12px; }
       .card { padding: 12px; }
       th, td { font-size: 11px; }

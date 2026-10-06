@@ -109,7 +109,7 @@ __DASHBOARD_NAV_CSS__
     .filter-label { font-size:12px; color:var(--muted); background:#f0f2f5; padding:9px 10px; border-radius:10px; border:1px solid var(--border); }
     select, button, textarea, input[type="search"], input.dash-field { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }
     select.monthpick { min-width:132px; }
-    button { background:var(--green); border-color:var(--green); color:#fff; font-weight:900; cursor:pointer; }
+    button { background:#0a7a34; border-color:#0a7a34; color:#fff; font-weight:900; cursor:pointer; }
     button.tab { background:#fff; color:#1f2937; border-color:var(--border); font-weight:800; }
     button.tab.active { background:rgba(0,200,83,.10); border-color:rgba(0,200,83,.45); color:#0a7a34; }
     .tabs { display:flex; gap:8px; flex-wrap:wrap; }

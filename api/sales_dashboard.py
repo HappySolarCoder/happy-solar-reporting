@@ -229,8 +229,8 @@ __DASHBOARD_NAV_CSS__
     }
 
     button {
-      background: var(--green);
-      border-color: var(--green);
+      background: #0a7a34;
+      border-color: #0a7a34;
       color: #fff;
       font-weight: 900;
       cursor:pointer;

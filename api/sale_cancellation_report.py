@@ -41,7 +41,7 @@ __DASHBOARD_NAV_CSS__
     .filter { display:flex; align-items:center; gap:8px; }
     .filter-label { font-size:12px; color:var(--muted); background:#f0f2f5; padding:9px 10px; border-radius:10px; border:1px solid var(--border); }
     select, button, input[type=date] { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }
-    button { background:var(--pink); border-color:var(--pink); color:#fff; font-weight:900; cursor:pointer; }
+    button { background:#be185d; border-color:#be185d; color:#fff; font-weight:900; cursor:pointer; }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; margin-top:14px; }
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:0 1px 3px rgba(17,24,39,.06); min-height:120px; }
     .card-title { font-size:13px; font-weight:800; color:var(--muted); }

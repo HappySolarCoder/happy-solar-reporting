@@ -286,6 +286,12 @@ __DASHBOARD_NAV_CSS__
       border-color: rgba(236,72,153,0.40);
       color: #b80b66;
     }
+    /* White pillbar already meets AA; keep the pink chip instead of the navy active token. */
+    body.oc-root .wrap > .pillbar .pill.active {
+      background: #fde9f3 !important;
+      border-color: #9d174d !important;
+      color: #9d174d !important;
+    }
 
     .mobileFilterToggle { display:none; background:#fff; color:#1f2937; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px; font-weight:900; }
     /* Funnel */
@@ -314,9 +320,9 @@ __DASHBOARD_NAV_CSS__
       padding: 0 10px;
     }
 
-    .seg.blue { background: rgba(59,130,246,0.92); }
-    .seg.purple { background: rgba(139,92,246,0.92); }
-    .seg.green { background: rgba(16,185,129,0.92); }
+    .seg.blue { background: #1d4ed8; }
+    .seg.purple { background: #6d28d9; }
+    .seg.green { background: #047857; }
 
     .arrow { color: #94a3b8; font-weight: 900; }
 
@@ -514,11 +520,11 @@ __DASHBOARD_NAV_HTML__
     </div>
 
     <div class="filters" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:8px; margin-bottom:2px;">
-      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#64748b;">Start</span>
+      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#1f2937;">Start</span>
       <input id="startDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
-      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#64748b;">End</span>
+      <span style="background:#eef2f6; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; color:#1f2937;">End</span>
       <input id="endDate" type="date" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px;" />
-      <button id="applyRange" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
+      <button id="applyRange" style="background: #be185d; border: 1px solid #be185d; color:#fff; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:900; cursor:pointer;">Apply</button>
       <button id="clearRange" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:900; cursor:pointer;">Clear</button>
     </div>
 
@@ -629,7 +635,7 @@ __DASHBOARD_NAV_HTML__
             <input id="setterTableEnd" type="date" value="__SETTER_END__" style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; width:80%;" />
           </label>
 
-          <button id="setterTableApply" style="background: var(--pink); border: 1px solid var(--pink); color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Apply</button>
+          <button id="setterTableApply" style="background: #be185d; border: 1px solid #be185d; color:#fff; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Apply</button>
           <button id="setterTableClear" style="background:#fff; border:1px solid var(--border); color:#334155; border-radius:10px; padding:8px 10px; font-size:13px; font-weight:900; cursor:pointer; width:100%;">Clear</button>
         </div>
         <div id="setterSummary" style="display:grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap:10px; margin-top:10px;">
@@ -1421,7 +1427,7 @@ __DASHBOARD_NAV_HTML__
           const a = Number(actual || 0);
           const g = Number(goal || 0);
           const p = g > 0 ? Math.max(0, Math.min(160, (a / g) * 100)) : null;
-          const tone = (p === null) ? '#94a3b8' : (p >= 100 ? '#10b981' : (p >= 80 ? '#f59e0b' : '#ef4444'));
+          const tone = (p === null) ? '#94a3b8' : (p >= 100 ? '#8ef0c8' : (p >= 80 ? '#ffbe45' : '#ff99a5'));
           return `<div style="text-align:right; font-variant-numeric:tabular-nums;">
                     <span style="font-weight:800; color:#0f172a;">${a}</span>
                     <span style="color:#94a3b8;"> / </span>
@@ -1449,7 +1455,7 @@ __DASHBOARD_NAV_HTML__
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.ran || 0)}</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border);">${progressCell(r.sit, r.demosGoal)}</td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:center; font-variant-numeric: tabular-nums; font-weight:800;">${r.pct.toFixed(1)}%</td>
-                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#10b981':(r.score>=80?'#f59e0b':'#ef4444')};">${r.score? r.score.toFixed(0)+'%':'—'}</span></td>
+                <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right;"><span style="display:inline-block; min-width:50px; text-align:center; border-radius:999px; padding:3px 7px; font-weight:900; font-size:11px; color:#fff; background:${r.score>=100?'#047857':(r.score>=80?'#b45309':'#b91c1c')};">${r.score? r.score.toFixed(0)+'%':'—'}</span></td>
                 <td style="padding:8px 12px; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric: tabular-nums; font-weight:800;">${Number(r.sales || 0)}</td>
               </tr>`).join('');
           }

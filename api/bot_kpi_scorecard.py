@@ -180,7 +180,7 @@ def render_html(payload: dict) -> str:
     .filters {{ display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }}
     .filters label {{ display:block; font-size:12px; color:var(--muted); font-weight:900; margin-bottom:4px; }}
     input, button {{ background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:13px; }}
-    button {{ background:#10b981; border-color:#10b981; color:#fff; font-weight:900; cursor:pointer; }}
+    button {{ background:#047857; border-color:#047857; color:#fff; font-weight:900; cursor:pointer; }}
     .jsonlink {{ color:#0f766e; font-weight:800; text-decoration:none; align-self:center; }}
     .banner {{ margin-top:14px; padding:12px 14px; border-radius:12px; border:1px solid #fde68a; background:#fffbeb; color:#92400e; font-size:13px; font-weight:700; }}
     .card {{ background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 18px; box-shadow:0 1px 3px rgba(17,24,39,.06); margin-top:14px; }}

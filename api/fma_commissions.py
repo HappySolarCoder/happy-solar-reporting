@@ -196,8 +196,8 @@ __DASHBOARD_NAV_CSS__
       display:inline-flex;
       align-items:center;
       justify-content:center;
-      background: var(--pink);
-      border: 1px solid var(--pink);
+      background: #be185d;
+      border: 1px solid #be185d;
       color:#fff;
       border-radius: 10px;
       padding: 9px 12px;

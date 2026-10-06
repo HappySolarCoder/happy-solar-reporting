@@ -45,7 +45,7 @@ __DASHBOARD_NAV_CSS__
     .filters label{display:block;font-size:12px;color:var(--muted);font-weight:900;margin-bottom:4px}
     .filters input[type=date]{border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:13px;font-weight:900;background:#fff}
     .btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:#fff;color:#334155;font-size:12px;font-weight:900;cursor:pointer;text-decoration:none}
-    .btn.primary{background:#00C853;border-color:#00C853;color:#fff}
+    .btn.primary{background:#0a7a34;border-color:#0a7a34;color:#fff}
 
     .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin-top:12px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}

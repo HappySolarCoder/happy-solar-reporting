@@ -12,6 +12,7 @@
   let snapshot = null;
   let bloomGoals = null;
   let bloomPending = false;
+  const COMPANY_DEMO_PCT_TARGET = __COMPANY_DEMO_PCT_TARGET__;
 
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
@@ -84,6 +85,25 @@
       if (rows[i].territory === want && rows[i].target != null) return rows[i];
     }
     return null;
+  }
+  function companyDemoGoal(bloom) {
+    const goal = bloom && bloom.demo_pct;
+    if (goal && goal.target != null) return goal;
+    return { target: COMPANY_DEMO_PCT_TARGET, unit: "percent", metric: "demo_pct", stored: false };
+  }
+  function demoTargetNote(bloom, goal) {
+    if (bloom && bloom.unset && bloom.unset.demo_pct && bloom.demo_pct && bloom.demo_pct.target != null) {
+      return bloom.unset.demo_pct;
+    }
+    return "Company Demo % target is " + goal.target + "%.";
+  }
+  function demoPaceCaption(demos, ran, goal) {
+    const parsed = Number(goal && goal.target);
+    const target = Number.isFinite(parsed) ? parsed : COMPANY_DEMO_PCT_TARGET;
+    if (demos == null || ran == null || !Number(ran) || Number.isNaN(Number(demos))) return "Goal " + target + "%";
+    const shown = Number((100 * Number(demos) / Number(ran)).toFixed(1));
+    const state = shown + 1e-9 >= target ? "On Track" : "Behind";
+    return shown.toFixed(1) + "% vs " + target + "% target · " + state;
   }
   function paceCaption(actual, goal) {
     if (!goal || goal.target == null) return "Goal Not Set";
@@ -321,12 +341,15 @@
   function renderGoalsPanel(bloom) {
     const host = document.getElementById("companyGoalsBody");
     if (!host) return;
+    const demoGoal = companyDemoGoal(bloom);
+    const demoNote = demoTargetNote(bloom, demoGoal);
+    const demoRow = '<div class="statrow"><div><strong>Demo %</strong><p>' + esc(demoNote) + '</p></div><div class="value">Goal ' + esc(demoGoal.target) + '%</div></div>';
     if (bloomPending && (!bloom || !bloom.available)) {
-      host.innerHTML = '<p class="chart-note">Loading Bloom sales goals…</p>';
+      host.innerHTML = '<p class="chart-note">Loading Bloom sales goals…</p>' + demoRow;
       return;
     }
     if (!bloom || !bloom.available) {
-      host.innerHTML = '<p class="chart-note">' + esc((bloom && bloom.blocker) || "Bloom goals could not be read.") + '</p><a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
+      host.innerHTML = '<p class="chart-note">' + esc((bloom && bloom.blocker) || "Bloom goals could not be read.") + '</p>' + demoRow + '<a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
       return;
     }
     const company = bloom.company_sales && bloom.company_sales.target != null
@@ -336,26 +359,7 @@
       const value = row.target == null ? "Goal Not Set" : ("Goal " + row.target + (row.locked_default ? " · locked default" : ""));
       return '<div class="statrow"><div><strong>' + esc(row.territory) + ' sales</strong><p>' + esc(row.period_id) + ' · America/New_York</p></div><div class="value">' + esc(value) + '</div></div>';
     }).join("");
-    host.innerHTML = '<p class="chart-note">' + esc(company) + " " + esc((bloom.unset && bloom.unset.demo_pct) || "") + '</p>' + rows + '<a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
-  }
-  function attention(stats, bloom) {
-    const host = document.getElementById("attentionHost");
-    const items = [];
-    const line = territoryGoalLine(bloom);
-    const goalText = bloomPending && !(bloom && bloom.available)
-      ? "Loading Bloom sales goals"
-      : bloom && bloom.available
-      ? (line ? ("Territory sales goals · " + line) : "Bloom goals loaded")
-      : "Bloom sales goals could not be read";
-    items.push('<button type="button" id="attnGoals">' + esc(goalText) + " <span>→</span></button>");
-    if (stats && stats.ran && stats.demos != null) {
-      items.push('<button type="button" data-open="Company">Demo % is ' + rateText(stats.demos, stats.ran) + " · no company Demo % target is stored <span>→</span></button>");
-    }
-    items.push('<a class="navlink" href="/api/missing_dispos">Missing dispositions are a separate queue <span>→</span></a>');
-    host.innerHTML = '<div class="attention-strip"><span class="attention-label">NEEDS ATTENTION</span>' + items.join("") + "</div>";
-    document.getElementById("attnGoals").addEventListener("click", function () { window.location.href = "/api/goals_dashboard"; });
-    const opener = host.querySelector("[data-open]");
-    if (opener) opener.addEventListener("click", function () { openFunnelHistory("Company"); });
+    host.innerHTML = '<p class="chart-note">' + esc(company) + '</p>' + demoRow + rows + '<a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
   }
   function applySnapshot(payload) {
     const data = (payload && payload.data) || {};
@@ -377,7 +381,6 @@
     setText("opp2", rateText(company.sales, company.ran));
     setText("opp2Sub", company.sales == null ? "Sales unavailable" : company.sales + " sales / " + company.ran + " ran");
     setText("createdPace", "Goal Not Set");
-    setText("demoGoal", "Goal Not Set");
     setText("opp2Goal", "Goal Not Set");
     donut(stats.salesPipe, company.sales);
     paintBloom();
@@ -436,8 +439,8 @@
     const salesPace = goal ? paceCaption(company.sales, goal) : (f.territory === "All" ? ("Goal Not Set · " + (territoryGoalLine(bloom) || "no company sales goal")) : "Goal Not Set");
     setText("salesPace", salesPace);
     setText("mobilePace", salesPace);
+    setText("demoGoal", demoPaceCaption(company.demos, company.ran, companyDemoGoal(bloom)));
     renderGoalsPanel(bloom);
-    attention(company, bloom);
   }
   function clearTrendSparks() {
     const sparkSales = document.getElementById("sparkSales");
@@ -592,9 +595,10 @@
       return config.map(function (item) { return row[item[0]] == null ? 0 : row[item[0]]; });
     })) / 4) * 4);
     const x = 45, y = 18, w = 680, h = 200, step = values.length > 1 ? w / (values.length - 1) : w;
+    const demoTarget = Number(companyDemoGoal(bloomPending ? null : bloomGoals).target);
     const legend = '<div class="history-legend">' + config.map(function (item) {
       return '<span><i style="background:' + item[2] + '"></i>' + item[1] + "</span>";
-    }).join("") + "</div>";
+    }).join("") + (mode === "rates" && Number.isFinite(demoTarget) ? '<span><i style="background:#ffbe45"></i>Demo % goal ' + demoTarget + "%</span>" : "") + "</div>";
     const grid = Array.from({ length: 5 }, function (_, i) {
       return '<line x1="' + x + '" x2="' + (x + w) + '" y1="' + (y + i * h / 4) + '" y2="' + (y + i * h / 4) + '" stroke="#29495f" stroke-dasharray="3 5"/><text x="' + (x - 10) + '" y="' + (y + i * h / 4 + 4) + '" text-anchor="end">' + (max - i * max / 4) + (mode === "rates" ? "%" : "") + "</text>";
     }).join("");
@@ -616,7 +620,13 @@
     const labels = values.map(function (row, i) {
       return '<text x="' + (x + i * step) + '" y="247" text-anchor="middle"' + (row.partial ? ' fill="#ffbe45"' : "") + ">" + esc(row.month) + "</text>";
     }).join("");
-    return legend + '<div class="history-chart-scroll"><svg class="history-chart" viewBox="0 0 760 265" role="img" aria-label="' + (mode === "counts" ? "Monthly totals" : "Monthly conversion rates") + '">' + grid + paths + labels + "</svg></div>";
+    let goalLine = "";
+    if (mode === "rates" && Number.isFinite(demoTarget) && demoTarget > 0 && demoTarget <= max) {
+      const gy = y + h - (demoTarget / max) * h;
+      goalLine = '<line x1="' + x + '" x2="' + (x + w) + '" y1="' + gy + '" y2="' + gy + '" stroke="#ffbe45" stroke-width="1.5" stroke-dasharray="6 4"><title>Demo % goal ' + demoTarget + '%</title></line>';
+    }
+    const aria = mode === "counts" ? "Monthly totals" : ("Monthly conversion rates, Demo % goal " + demoTarget + "%");
+    return legend + '<div class="history-chart-scroll"><svg class="history-chart" viewBox="0 0 760 265" role="img" aria-label="' + esc(aria) + '">' + grid + goalLine + paths + labels + "</svg></div>";
   }
   function historyTable(rows) {
     return '<table><thead><tr><th>Month</th><th>Created</th><th>Ran</th><th>Demos</th><th>Sales</th><th>Demo %</th><th>Opp2Prelim</th></tr></thead><tbody>' +

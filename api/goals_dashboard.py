@@ -9,9 +9,13 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 API_DIR = Path(__file__).resolve().parent
+METRICS_DIR = API_DIR / "metrics"
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
 
+from bloom_goals import COMPANY_DEMO_PCT_TARGET
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
@@ -33,7 +37,7 @@ def render_html() -> str:
     <main>
       <div id="filterHost"></div>
       <div class="goals-connection"><div><strong>Bloom goals</strong><p id="bloomStatus">Checking whether company and territory goals can be read.</p></div><span class="badge warn" id="bloomBadge">Needs Data</span></div>
-      <div class="goal-period"><span>Period <b id="periodLabel">—</b></span><span>Actuals as of <b id="actualsAsOf">—</b></span><span>Pacing <b>Calendar days, only after a Bloom goal is present</b></span></div>
+      <div class="goal-period"><span>Period <b id="periodLabel">—</b></span><span>Actuals as of <b id="actualsAsOf">—</b></span><span>Pacing <b>Calendar days for sales counts. Demo % is compared with its target.</b></span></div>
       <div class="section-break"><div class="section-number">01</div><div><h2>Company scorecard</h2><p>Volume pace is not prorated onto Demo % or Opp2Prelim.</p></div><div class="section-rule"></div></div>
       <div class="goal-sales-grid" id="scorecard"></div>
       <div class="section-break"><div class="section-number">02</div><div><h2>Person goals in this data center</h2><p>These rows are goals_monthly_v1 from Admin Settings. They are not Bloom company or territory sales goals.</p></div><div class="section-rule"></div></div>
@@ -42,6 +46,30 @@ def render_html() -> str:
   </div>
   <script>
     let requestToken = 0;
+    const COMPANY_DEMO_PCT_TARGET = {COMPANY_DEMO_PCT_TARGET};
+    function companyDemoGoal(bloom) {{
+      const goal = bloom && bloom.demo_pct;
+      if (goal && goal.target != null) return goal;
+      return {{ target: COMPANY_DEMO_PCT_TARGET, unit: "percent", metric: "demo_pct", stored: false }};
+    }}
+    function demoTargetNote(bloom, goal) {{
+      if (bloom && bloom.unset && bloom.unset.demo_pct && bloom.demo_pct && bloom.demo_pct.target != null) return bloom.unset.demo_pct;
+      return "Company Demo % target is " + goal.target + "%.";
+    }}
+    function rateGoalCard(title, actual, detail, goal) {{
+      const target = Number(goal.target);
+      const raw = actual == null ? "" : String(actual).replace("%", "").trim();
+      const actualNumber = raw === "" || raw === "—" || Number.isNaN(Number(raw)) ? null : Number(raw);
+      const width = actualNumber == null || !target ? 0 : Math.max(0, Math.min(100, 100 * actualNumber / target));
+      let status = "Needs Data";
+      let badge = "warn";
+      if (actualNumber != null) {{
+        status = actualNumber + 1e-9 >= target ? "On Track" : "Behind";
+        badge = status === "On Track" ? "good" : "warn";
+      }}
+      const shown = Number.isInteger(target) ? String(target) : String(target);
+      return '<article class="goal-tile"><div class="goal-tile-head"><h3>'+esc(title)+'</h3><span class="badge '+badge+'">'+esc(status)+'</span></div><div class="goal-actual">'+esc(actual)+' <span>actual</span></div><div class="goal-meter"><i style="width:'+width.toFixed(1)+'%"></i></div><div class="goal-tile-foot"><span>Goal '+esc(shown)+'%</span><span>vs target</span></div><p>'+esc(detail)+'</p></article>';
+    }}
     const cards = [
       ["Company sales", "sales"],
       ["Territory sales", "territory"],
@@ -85,7 +113,8 @@ def render_html() -> str:
       if (today.slice(0, 7) > period) return daysInMonth(period);
       return Number(today.slice(8, 10));
     }}
-    function goalCard(title, actual, detail, goal) {{
+    function goalCard(title, actual, detail, goal, options) {{
+      if (options && options.rate && goal && goal.target != null) return rateGoalCard(title, actual, detail, goal);
       const unset = !goal || goal.target == null;
       if (unset) {{
         return '<article class="goal-tile"><div class="goal-tile-head"><h3>'+esc(title)+'</h3><span class="badge warn">Goal Not Set</span></div><div class="goal-actual">'+esc(actual)+' <span>actual</span></div><div class="goal-meter"><i style="width:0%"></i></div><div class="goal-tile-foot"><span>Goal Not Set</span><span>'+esc(detail)+'</span></div><p>No matching Bloom target for this scope, so pace is not scored On Track or Behind.</p></article>';
@@ -146,11 +175,12 @@ def render_html() -> str:
         ? ((bloom && bloom.territory_sales) || []).map(function (row) {{ return row.territory + " " + (row.target == null ? "Goal Not Set" : row.target); }}).join(" · ") || "No territory sales goals"
         : territoryName + " sales goal";
       const unset = (bloom && bloom.unset) || {{}};
+      const demoGoal = companyDemoGoal(bloom);
       document.getElementById("scorecard").innerHTML = [
         goalCard("Company sales", sales == null ? "—" : sales, "Distinct-contact sales. " + (unset.company_sales || ""), bloom && bloom.company_sales),
         (f.territory === "All" ? territoryListCard(territoryActual, bloom) : goalCard("Territory sales", territoryActual, territoryDetail, territoryGoal)),
         goalCard("Opportunities created", created == null ? "—" : created, unset.opportunities_created || "Created in the selected dates", null),
-        goalCard("Demo %", demoText, (demo ? (demo.sit_count + " demos / " + demo.ran_count + " ran. ") : "") + (unset.demo_pct || ""), null),
+        goalCard("Demo %", demoText, (demo ? (demo.sit_count + " demos / " + demo.ran_count + " ran. ") : "") + demoTargetNote(bloom, demoGoal), demoGoal, {{ rate: true }}),
         goalCard("Opp2Prelim", oppText, "Sales / ran. " + (unset.opp2prelim || "Not prorated by days elapsed."), null)
       ].join("");
       document.getElementById("actualsAsOf").textContent = (data.sales && data.sales.generated_at) || "unavailable";

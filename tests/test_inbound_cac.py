@@ -251,8 +251,8 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("data.performance_kpis", page_html)
         self.assertIn("opp_to_prelim", page_html)
         self.assertIn("demo_rate", page_html)
-        self.assertIn("that source’s sits ÷ opps created", page_html)
-        self.assertIn("not Bot KPI Sit/(Sit+No Sit)", page_html)
+        self.assertIn("that source’s demos ÷ opps created", page_html)
+        self.assertIn("not the bot KPI of demos divided by demos plus no-demos", page_html)
         self.assertIn(">Leads</th>", page_html)
         self.assertIn(">NR Leads</th>", page_html)
         self.assertIn(">Opps created</th>", page_html)
@@ -685,7 +685,7 @@ class PerformanceKpiTests(unittest.TestCase):
 
     def test_page_kpi_table_matches_ytd_row_shape(self):
         page_html = page.render_html(2026)
-        self.assertIn(">Sits</th>", PAGE_SRC)
+        self.assertIn(">Demos</th>", PAGE_SRC)
         self.assertIn("kpis.rows", PAGE_SRC)
         self.assertIn("kpis.overall", PAGE_SRC)
         self.assertIn("join_gap_short", PAGE_SRC)
@@ -810,8 +810,8 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertIn("lead_gen_source_is_not_the_split", METRIC_SRC)
 
     def test_demo_rate_is_not_sit_over_sit_plus_no_sit(self):
-        self.assertIn("not Bot KPI Sit/(Sit+No Sit)", METRIC_SRC)
-        self.assertIn("that source's sits / that source's opps_created", METRIC_SRC)
+        self.assertIn("not the bot KPI of demos divided by demos plus no-demos", METRIC_SRC)
+        self.assertIn("that source's demos / that source's opps_created", METRIC_SRC)
         self.assertEqual(metric.SIT_DISPOSITION, "Sit")
         self.assertEqual(metric.APPOINTMENT_OCCURRED_AT_FIELD, "appointmentOccurredAt")
         self.assertEqual(metric.INBOUND_COHORT_SCOPE, "territory_pipeline_attributed_via_inbound_contactId")

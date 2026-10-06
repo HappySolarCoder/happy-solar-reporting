@@ -11,6 +11,7 @@
   let pageFilters = null;
   let snapshot = null;
   let bloomGoals = null;
+  let bloomPending = false;
 
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
@@ -317,19 +318,13 @@
     }).join(" ");
     return '<svg class="sparkline" viewBox="0 0 140 30" role="img" aria-label="' + esc(label) + '"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="' + points + '"/></svg>';
   }
-  function showError(message) {
-    document.getElementById("pageNote").textContent = message;
-    ["Company", "Doors", "SelfGen", "Sweeper", "Inbound", "3pl"].forEach(function (prefix) {
-      ["Created", "Demo", "Opp2", "Sales"].forEach(function (stage) { setText("lg" + prefix + stage, "—"); });
-    });
-    setText("totalSales", "—");
-    setText("oppsCreated", "—");
-    setText("demoRate", "—");
-    setText("opp2", "—");
-  }
   function renderGoalsPanel(bloom) {
     const host = document.getElementById("companyGoalsBody");
     if (!host) return;
+    if (bloomPending && (!bloom || !bloom.available)) {
+      host.innerHTML = '<p class="chart-note">Loading Bloom sales goals…</p>';
+      return;
+    }
     if (!bloom || !bloom.available) {
       host.innerHTML = '<p class="chart-note">' + esc((bloom && bloom.blocker) || "Bloom goals could not be read.") + '</p><a class="link" href="/api/goals_dashboard">Open Goals dashboard →</a>';
       return;
@@ -347,7 +342,9 @@
     const host = document.getElementById("attentionHost");
     const items = [];
     const line = territoryGoalLine(bloom);
-    const goalText = bloom && bloom.available
+    const goalText = bloomPending && !(bloom && bloom.available)
+      ? "Loading Bloom sales goals"
+      : bloom && bloom.available
       ? (line ? ("Territory sales goals · " + line) : "Bloom goals loaded")
       : "Bloom sales goals could not be read";
     items.push('<button type="button" id="attnGoals">' + esc(goalText) + " <span>→</span></button>");
@@ -379,14 +376,11 @@
     setText("demoSub", company.demos == null ? "Demos unavailable" : company.demos + " demos / " + company.ran + " ran");
     setText("opp2", rateText(company.sales, company.ran));
     setText("opp2Sub", company.sales == null ? "Sales unavailable" : company.sales + " sales / " + company.ran + " ran");
-    const goal = salesGoalFor(bloomGoals, f.territory);
-    const salesPace = goal ? paceCaption(company.sales, goal) : (f.territory === "All" ? ("Goal Not Set · " + (territoryGoalLine(bloomGoals) || "no company sales goal")) : "Goal Not Set");
-    setText("salesPace", salesPace);
-    setText("mobilePace", salesPace);
     setText("createdPace", "Goal Not Set");
     setText("demoGoal", "Goal Not Set");
     setText("opp2Goal", "Goal Not Set");
     donut(stats.salesPipe, company.sales);
+    paintBloom();
     const asOf = (data.sales && (data.sales.generated_at || data.sales.window_end_local)) || "";
     setText("asOf", "Live metrics" + (asOf ? " · as of " + asOf : ""));
     const note = ["Sweeper counts the Sweeper and Rehash pipelines. It is not the Phones lead source.",
@@ -394,8 +388,6 @@
       "Demo % is demos divided by ran. Opp2Prelim is sales divided by ran. UI copy says Demo."];
     if (broken.length) note.unshift("Missing: " + broken.join(", ") + ". Those figures stay blank.");
     document.getElementById("pageNote").textContent = note.join(" ");
-    renderGoalsPanel(bloomGoals);
-    attention(company, bloomGoals);
     if (f.territory === "All" && f.source === "All") loadTrends();
     else {
       document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend stays hidden while a territory or source filter is on, so an unfiltered series is not shown as this scope.</p>';
@@ -423,13 +415,73 @@
     }).join("");
     return '<svg class="history-chart" viewBox="0 0 740 214" role="img" aria-label="' + esc(label) + ' from company_trends"><path d="' + path + '" fill="none" stroke="#26d9eb" stroke-width="2.5" stroke-linejoin="round"/>' + dots + labels + "</svg>";
   }
+  function showUnavailable() {
+    setText("asOf", "Metrics unavailable");
+    const donutHost = document.getElementById("territoryDonut");
+    if (donutHost && /loading/i.test(donutHost.textContent || "")) donutHost.innerHTML = '<div class="pace-caption">—</div>';
+    ["totalSales", "oppsCreated", "demoRate", "opp2"].forEach(function (id) {
+      const node = document.getElementById(id);
+      if (!node) return;
+      const text = (node.textContent || "").trim();
+      if (!text || text === "0") node.textContent = "—";
+    });
+  }
+  function paintBloom() {
+    if (!snapshot) return;
+    const stats = channelsFrom(snapshot);
+    const company = stats.Company;
+    const f = pageFilters || filters();
+    const bloom = bloomPending ? null : bloomGoals;
+    const goal = salesGoalFor(bloom, f.territory);
+    const salesPace = goal ? paceCaption(company.sales, goal) : (f.territory === "All" ? ("Goal Not Set · " + (territoryGoalLine(bloom) || "no company sales goal")) : "Goal Not Set");
+    setText("salesPace", salesPace);
+    setText("mobilePace", salesPace);
+    renderGoalsPanel(bloom);
+    attention(company, bloom);
+  }
+  function clearTrendSparks() {
+    const sparkSales = document.getElementById("sparkSales");
+    const sparkCreated = document.getElementById("sparkCreated");
+    if (sparkSales) sparkSales.innerHTML = "";
+    if (sparkCreated) sparkCreated.innerHTML = "";
+  }
+  function trendUnavailable() {
+    const salesHost = document.getElementById("trendSales");
+    const createdHost = document.getElementById("trendCreated");
+    if (salesHost) salesHost.innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+    if (createdHost) createdHost.innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+    clearTrendSparks();
+  }
   async function loadTrends() {
-    const res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8");
-    if (!res.ok) {
-      document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+    const salesHost = document.getElementById("trendSales");
+    const createdHost = document.getElementById("trendCreated");
+    if (salesHost) salesHost.innerHTML = '<p class="chart-note">Loading monthly trend…</p>';
+    if (createdHost) createdHost.innerHTML = '<p class="chart-note">Loading monthly trend…</p>';
+    clearTrendSparks();
+    let res;
+    try {
+      res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8", { hsOptional: true });
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      trendUnavailable();
       return;
     }
-    const payload = await res.json();
+    if (!res.ok) {
+      trendUnavailable();
+      return;
+    }
+    let payload;
+    try {
+      payload = await res.json();
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      trendUnavailable();
+      return;
+    }
+    if (!payload || !Array.isArray(payload.rows)) {
+      trendUnavailable();
+      return;
+    }
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     const sales = rows.map(function (row) { return row.sales == null ? null : Number(row.sales); }).filter(function (n) { return n != null; });
     const created = rows.map(function (row) { return row.opps_created == null ? null : Number(row.opps_created); }).filter(function (n) { return n != null; });
@@ -441,17 +493,55 @@
   async function load() {
     const token = ++requestToken;
     pageFilters = filters();
-    document.getElementById("pageNote").textContent = "Loading live metrics…";
+    if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
     const period = (pageFilters.start || "").slice(0, 7);
-    const response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
-    const bloomRes = await fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period));
-    if (token !== requestToken) return;
-    if (!response.ok) {
-      showError("Company snapshot failed (HTTP " + response.status + "). Retry from Reset filters.");
+    bloomPending = true;
+    bloomGoals = null;
+    const bloomTask = fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period), { hsOptional: true })
+      .then(function (res) { return res && res.ok ? res.json() : null; })
+      .catch(function (error) {
+        if (error && error.name === "AbortError") throw error;
+        return null;
+      });
+    let response;
+    try {
+      response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
+      if (!snapshot) showUnavailable();
       return;
     }
-    bloomGoals = bloomRes.ok ? await bloomRes.json() : null;
-    applySnapshot(await response.json());
+    if (token !== requestToken) return;
+    if (!response.ok) {
+      if (!snapshot) showUnavailable();
+      return;
+    }
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
+      const generation = window.HappySolarLoading && window.HappySolarLoading.currentGeneration;
+      if (generation && !generation.settled) generation.failed = true;
+      if (!snapshot) showUnavailable();
+      return;
+    }
+    if (token !== requestToken) return;
+    applySnapshot(payload);
+    bloomTask.then(function (bloom) {
+      if (token !== requestToken) return;
+      bloomPending = false;
+      bloomGoals = bloom || null;
+      paintBloom();
+    }).catch(function (error) {
+      if (error && error.name === "AbortError") return;
+      if (token !== requestToken) return;
+      bloomPending = false;
+      bloomGoals = null;
+      paintBloom();
+    });
   }
 
   function modal(title, body) {
@@ -680,5 +770,9 @@
   renderFilterBar();
   bindFunnels();
   bindCarousel();
+  window.hsOpsReload = load;
+  window.hsOpsRerenderFilters = function () {
+    renderFilterBar();
+  };
   load();
 })();

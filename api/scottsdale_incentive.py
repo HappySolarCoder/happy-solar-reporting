@@ -295,7 +295,7 @@ __DASHBOARD_NAV_HTML__
       <div class="statusCard">
         <div class="eyebrow">Incentive Window</div>
         <div class="heroRange">May 20, 2026 → September 30, 2026</div>
-        <div class="heroMeta">Sales goal: 43 sales. FMA goal: 63 sit demos.</div>
+        <div class="heroMeta">Sales goal: 43 sales. FMA goal: 63 demos.</div>
         <div class="heroMeta" id="statusText">Loading canonical metric feeds…</div>
       </div>
     </div>
@@ -339,7 +339,7 @@ __DASHBOARD_NAV_HTML__
     <div class="sectionHead">
       <div>
         <div class="sectionTitle">FMAs</div>
-        <div class="sectionMeta">Using sit demo counts from <code>/api/metrics/demo_rate</code>.</div>
+        <div class="sectionMeta">Using demo counts from <code>/api/metrics/demo_rate</code>.</div>
       </div>
       <div class="sectionMeta">Goal: <strong>63 demos</strong></div>
     </div>
@@ -363,8 +363,8 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-4">
         <div class="card-title">Demo Notes</div>
         <div class="meta">
-          Demos are <strong>Sit</strong> outcomes only, using the canonical demo metric appointment window semantics in
-          <code>America/New_York</code>. A filled Sweeper/Rehash Last Name replaces the setter only when the sit date is on or after 2026-09-24. Earlier sits in this window stay with the original setter.
+          Demos are marked-demo outcomes only, using the canonical demo metric appointment window semantics in
+          <code>America/New_York</code>. A filled Sweeper/Rehash Last Name replaces the setter only when the demo date is on or after 2026-09-24. Earlier demos in this window stay with the original setter.
         </div>
         <div class="meta">
           Breakdown source: <code>sit_by_setter_last_name</code>.
@@ -516,7 +516,7 @@ __DASHBOARD_NAV_HTML__
         document.getElementById('demoTopMeta').textContent = demoTop ? `${demoTop.name} currently leads` : 'No demos yet';
 
         renderLeaderboard('salesRows', salesRows, 'Sales');
-        renderLeaderboard('demoRows', demoRows, 'Sit Demos');
+        renderLeaderboard('demoRows', demoRows, 'Demos');
 
         document.getElementById('statusText').textContent = `Loaded canonical sales and demo metrics for ${START} → ${END}.`;
       } catch (err) {

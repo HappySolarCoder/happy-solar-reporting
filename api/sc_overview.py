@@ -1457,7 +1457,7 @@ def render_html(
 
       <div class="card span-4">
         <div class="card-title">Two-Touch Coaching</div>
-        <div class="meta">Shows who converts after a first-appointment `Sit` and later follow-up path, plus who has touch-stage opps going stale.</div>
+        <div class="meta">Shows who converts after a first-appointment demo and later follow-up path, plus who has touch-stage opps going stale.</div>
         <div class="kpi-grid">
           <div class="kpi"><div class="label">Two-Touch Closes</div><div id="kpiTouchCloses" class="kpi-value small">—</div></div>
           <div class="kpi"><div class="label">Two-Touch % of Sales</div><div id="kpiTouchRate" class="kpi-value small">—</div></div>
@@ -1468,7 +1468,7 @@ def render_html(
 
       <div class="card span-8">
         <div class="card-title">Two-Touch Close / Pipeline Work Rate</div>
-        <div class="meta">Two-touch close means the rep had a `Sit` on the first appointment, did not sell there, then later hit Demo-Negotiating, Demo-Not Interested, One Legger, or moved into Rehash/Sweeper before it sold in the selected Sold Date window. Rescheduled does not count. Open/stale touch-stage opps are current queue signals and are not sold-date filtered.</div>
+        <div class="meta">Two-touch close means the rep had a demo on the first appointment, did not sell there, then later hit Demo-Negotiating, Demo-Not Interested, One Legger, or moved into Rehash/Sweeper before it sold in the selected Sold Date window. Rescheduled does not count. Open/stale touch-stage opps are current queue signals and are not sold-date filtered.</div>
         <div id="touchWindowMeta" class="meta"></div>
         <form class="mini-filters" method="get" action="/api/sc_overview">
           <input type="hidden" name="team" value="{selected_team}" />

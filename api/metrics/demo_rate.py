@@ -512,7 +512,7 @@ def html_page(payload: dict) -> str:
       <div class="card">
         <div class="label">Demo Rate</div>
         <div class="kpi">{esc(payload.get('result'))}%</div>
-        <div class="meta">Sit {esc(payload.get('sit_count'))} / Ran {esc(payload.get('ran_count'))}</div>
+        <div class="meta">Demos {esc(payload.get('sit_count'))} / Ran {esc(payload.get('ran_count'))}</div>
       </div>
       <div class="card">
         <div class="label">Filters</div>
@@ -535,7 +535,7 @@ def html_page(payload: dict) -> str:
                 <th>opportunityId</th>
                 <th>pipeline</th>
                 <th>disposition</th>
-                <th>frozen sit timestamp</th>
+                <th>Demo timestamp</th>
                 <th>appointmentOccurredAt (raw)</th>
                 <th>dispositionDate</th>
                 <th>contactFirstName</th>
@@ -693,10 +693,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "sit_count": sit,
         "result": pct,
         "count_method": (
-            "Sit / Ran. Demos = Sit. Window = first-write-wins "
+            "Demos / Ran. Window = first-write-wins "
             "min(appointmentOccurredAt, dispositionDate). "
-            "GYGpLKBPfMpiBqyU2ogQ / dispositionValue Sit|No Sit. "
-            "Follow-up is not a second sit."
+            "GYGpLKBPfMpiBqyU2ogQ / dispositionValue for a demo or no demo. "
+            "Follow-up is not a second demo."
         ),
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),

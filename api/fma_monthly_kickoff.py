@@ -635,7 +635,7 @@ __DASHBOARD_NAV_HTML__
         { title: "Total Knocks", value: fmtInt(totals.knocks), meta: "Raydar dispositioned leads" },
         { title: "Total Appts Set", value: fmtInt(totals.appts), meta: "GHL opportunities created by setter" },
         { title: "Total Opps Ran", value: fmtInt(totals.oppsRan), meta: "GHL opportunities ran" },
-        { title: "Total Demos / Sales", value: `${fmtInt(totals.demos)} / ${fmtInt(totals.sales)}`, meta: "GHL sit demos and sales" },
+        { title: "Total Demos / Sales", value: `${fmtInt(totals.demos)} / ${fmtInt(totals.sales)}`, meta: "GHL demos and sales" },
       ];
 
       document.getElementById("summaryGrid").innerHTML = cards.map((card) => `

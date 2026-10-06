@@ -87,7 +87,7 @@ class SitTimestampFreezeTests(unittest.TestCase):
 
 class DemoRateContractTests(unittest.TestCase):
     def test_live_fma_formula_stays_sit_over_ran(self):
-        self.assertIn('Opps Ran / Demos / Demo % (Sit / Ran)', FMA_SRC)
+        self.assertIn('Opps Ran / Demos / Demo % (Demos / Ran)', FMA_SRC)
         self.assertIn("sit_by_setter_last_name", FMA_SRC)
         self.assertIn("/api/metrics/demo_rate", FMA_SRC)
         self.assertNotIn("Sit / (Sit + No Sit)", DEMO_SRC)

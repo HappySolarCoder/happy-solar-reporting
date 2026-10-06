@@ -157,7 +157,7 @@ def render_html() -> str:
       document.getElementById("bloomStatus").textContent = bloomState === "pending"
         ? "Loading Bloom sales goals…"
         : bloom && bloom.available
-        ? ("Read portal_goal_documents for " + bloom.period_id + ". " + (bloom.company_sales ? ("Company sales goal " + bloom.company_sales.target + ". ") : (unset.company_sales || "")) + territoryDetail)
+        ? ("Goals set in Bloom for " + bloom.period_id + (bloom.checked_at ? (", checked " + bloom.checked_at) : "") + ". " + (bloom.company_sales ? ("Company sales goal " + bloom.company_sales.target + ". ") : (unset.company_sales || "")) + territoryDetail)
         : ((bloom && bloom.blocker) || "Bloom goal status unavailable.");
       document.getElementById("bloomBadge").textContent = bloom && bloom.available ? "Synced" : "Goal Not Set";
       document.getElementById("asOf").textContent = bloom && bloom.checked_at ? ("Bloom check " + bloom.checked_at) : (bloomState === "pending" ? "Checking Bloom" : "Bloom unread");
@@ -244,7 +244,7 @@ def render_html() -> str:
           }}).join("") + '</tbody></table>'
         : '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '.</p>';
       const bloomTable = bloomPeople.length
-        ? '<p class="chart-note">Bloom person goals from portal_goal_documents.</p><table><thead><tr><th>Person</th><th>Role</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + bloomPeople.map(function(row) {{
+        ? '<p class="chart-note">Personal goals set by managers in Bloom for this month.</p><table><thead><tr><th>Person</th><th>Role</th><th>Metric</th><th>Target</th></tr></thead><tbody>' + bloomPeople.map(function(row) {{
             return '<tr><td>' + esc(row.name || row.assignee_user_id) + '</td><td>' + esc(row.role) + '</td><td>' + esc(row.metric) + '</td><td>' + esc(row.target) + '</td></tr>';
           }}).join("") + '</tbody></table>'
         : '';

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = fs.readFileSync(path.join(root, "api", "loading_overlay.js"), "utf8");
+const source = fs.readFileSync(path.join(root, "api", "loading_overlay_script.txt"), "utf8");
 
 if (typeof globalThis.requestAnimationFrame !== "function") {
   globalThis.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);

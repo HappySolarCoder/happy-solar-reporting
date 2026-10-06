@@ -934,7 +934,7 @@ def render_dashboard_nav(current: str) -> str:
           }})();
         </script>
     """
-    overlay = Path(__file__).with_name("loading_overlay.js").read_text(encoding="utf-8")
+    overlay = Path(__file__).with_name("loading_overlay_script.txt").read_text(encoding="utf-8")
     return html.replace(
         "<!-- HAPPY_SOLAR_LOADING -->",
         "<script>\n" + overlay + "\n</script>",

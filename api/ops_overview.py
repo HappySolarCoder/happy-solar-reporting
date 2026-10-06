@@ -49,9 +49,9 @@ def render_body(nav_html: str) -> str:
         <div id="filterHost"></div>
         <div id="attentionHost"></div>
         <section class="mobile-summary" aria-label="Company at a glance">
-          <div><span>COMPANY AT A GLANCE</span><strong id="mobileSales">— sales</strong></div>
-          <div id="mobilePace">Goal Not Set</div>
-          <a href="/api/missing_dispos">Review missing dispositions →</a>
+          <div class="glance-figure"><span>COMPANY AT A GLANCE</span><strong><span id="mobileSales">—</span> <span class="glance-unit">sales</span></strong></div>
+          <p id="mobilePace" class="glance-pace">Goal Not Set</p>
+          <a class="glance-link" href="/api/missing_dispos">Review missing dispositions →</a>
         </section>
         <div class="section-break"><div class="section-number">01</div><div><h2>Company pulse</h2><p>Filtered results · goal pace appears only when Bloom provides a matching target</p></div><div class="section-rule"></div></div>
         <div class="kpis overview-pulse">
@@ -86,7 +86,7 @@ def render_body(nav_html: str) -> str:
       const salesNode = document.getElementById('totalSales');
       const mobileNode = document.getElementById('mobileSales');
       if (salesNode && mobileNode) {{
-        new MutationObserver(function() {{ mobileNode.textContent = salesNode.textContent + ' sales'; }}).observe(salesNode, {{ childList: true }});
+        new MutationObserver(function() {{ mobileNode.textContent = salesNode.textContent; }}).observe(salesNode, {{ childList: true, characterData: true, subtree: true }});
       }}
     </script>
     """

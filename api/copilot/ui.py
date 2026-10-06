@@ -14,6 +14,7 @@ def render_panel() -> str:
     title = UI_TITLE
     origins_json = json.dumps(bloom_parent_origins())
     return f"""
+<script>document.documentElement.classList.add('goose-dock');</script>
 <button type="button" id="gooseOpen" class="goose-open" aria-label="Ask about our data" title="Ask about our data"><img src="/goose-headset.png" alt="" width="56" height="56" /></button>
 <div id="goosePanel" class="goose-panel" hidden>
   <div class="goose-head">
@@ -37,39 +38,44 @@ def render_panel() -> str:
   <button type="button" id="gooseIssue" class="goose-issue">Report an issue</button>
 </div>
 <style>
-  .goose-open {{ position: fixed; left: 16px; bottom: 16px; z-index: 10000; width: 56px; height: 56px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #fff; color: #1a2b4a; box-shadow: 0 6px 18px rgba(17,24,39,.22); cursor: pointer; overflow: hidden; line-height: 0; }}
+  .goose-open {{ position: fixed; left: 16px; bottom: 16px; z-index: 10000; width: 56px; height: 56px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #fff; color: #1a2b4a; box-shadow: 0 6px 18px rgba(17,24,39,.22); cursor: pointer; overflow: hidden; line-height: 0; box-sizing: border-box; }}
   .goose-open img {{ width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; pointer-events: none; }}
-  .goose-panel {{ position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); background: #fff; border-left: 1px solid #e8ecf0; z-index: 10001; display: flex; flex-direction: column; padding: 16px; box-shadow: -8px 0 24px rgba(17,24,39,.08); box-sizing: border-box; }}
+  .goose-panel {{ position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); background: #fff; color: #1a2b4a; border-left: 1px solid #e8ecf0; z-index: 10001; display: flex; flex-direction: column; padding: 16px; box-shadow: -8px 0 24px rgba(17,24,39,.08); box-sizing: border-box; }}
   .goose-panel[hidden] {{ display: none !important; }}
   .goose-head {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }}
   .goose-title {{ font-weight: 900; color: #1a2b4a; }}
-  .goose-sub {{ color: #6b7280; font-size: 12px; margin-top: 4px; }}
-  .goose-close, .goose-suggest button, .goose-issue {{ border: 1px solid #e8ecf0; background: #fff; color: #1a2b4a; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
+  .goose-sub {{ color: #3d4c63; font-size: 12px; margin-top: 4px; }}
+  .goose-close, .goose-suggest button, .goose-issue {{ border: 1px solid #c5ced6; background: #fff; color: #1a2b4a; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
   .goose-suggest button {{ max-width: 100%; white-space: normal; text-align: left; }}
   .goose-form button {{ border: 1px solid #0a7a34; background: #0a7a34; color: #fff; border-radius: 10px; padding: 8px 14px; font-weight: 800; cursor: pointer; }}
-  .goose-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }}
-  .goose-chips label {{ font-size: 12px; border: 1px solid #e8ecf0; border-radius: 999px; padding: 4px 8px; }}
+  .goose-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; color: #1a2b4a; }}
+  .goose-chips span, .goose-chips label {{ color: #1a2b4a; background: #fff; font-size: 12px; border: 1px solid #c5ced6; border-radius: 999px; padding: 4px 8px; }}
   .goose-suggest {{ display: flex; flex-wrap: wrap; gap: 6px; }}
-  .goose-log {{ flex: 1; overflow: auto; margin: 12px 0; font-size: 14px; }}
-  .goose-msg {{ margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; white-space: pre-wrap; }}
-  .goose-msg a {{ color: #0a7a34; }}
+  .goose-log {{ flex: 1; overflow: auto; margin: 12px 0; font-size: 14px; color: #1a2b4a; }}
+  .goose-msg {{ margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; color: #1a2b4a; white-space: pre-wrap; }}
+  .goose-msg a {{ color: #075e28; }}
   .goose-form {{ display: flex; gap: 8px; }}
-  .goose-form textarea {{ flex: 1; border: 1px solid #e8ecf0; border-radius: 10px; padding: 8px; font: inherit; }}
+  .goose-form textarea {{ flex: 1; border: 1px solid #c5ced6; border-radius: 10px; padding: 8px; font: inherit; color: #1a2b4a; background: #fff; }}
+  .goose-form textarea::placeholder {{ color: #3d4c63; opacity: 1; }}
   .goose-issue {{ margin-top: 8px; }}
   @media (max-width: 720px) {{ .goose-panel {{ width: 100%; }} }}
-  /* Bloom Data Center frames this page. Its mobile shell paints a 64px bottom nav over the iframe. */
-  @media (max-width: 860px) {{
-    html.goose-framed .goose-open {{ bottom: calc(16px + 64px + env(safe-area-inset-bottom, 0px)); }}
-    html.goose-framed .goose-panel {{ top: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); height: auto; }}
+  /* Keep the round launcher in a clear strip. Report text scrolls above it.
+     Bloom's Data Center iframe already ends above the portal bottom nav, so this
+     frame does not lift the launcher by another 64px. Default z-index stays under
+     the loading overlay rule (body.loading-open .goose-open). */
+  html.goose-dock #sidebar {{ box-sizing: border-box; padding-bottom: 88px; }}
+  @media (min-width: 801px) {{
+    html.oc-nav-collapsed.goose-dock .goose-open {{ left: 4px; }}
+  }}
+  @media (max-width: 800px) {{
+    html.goose-dock, html.goose-dock body.oc-root {{ height: 100dvh; overflow: hidden; }}
+    html.goose-dock .workspace {{ height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px)); max-height: calc(100dvh - 68px - env(safe-area-inset-bottom, 0px)); overflow: auto; }}
+    html.goose-dock .goose-open {{ width: 44px; height: 44px; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }}
   }}
 </style>
 <script>
 (function() {{
-  try {{
-    if (window.self !== window.top) document.documentElement.classList.add('goose-framed');
-  }} catch (e) {{
-    document.documentElement.classList.add('goose-framed');
-  }}
+  document.documentElement.classList.add('goose-dock');
   const panel = document.getElementById('goosePanel');
   const log = document.getElementById('gooseLog');
   const chips = document.getElementById('gooseChips');

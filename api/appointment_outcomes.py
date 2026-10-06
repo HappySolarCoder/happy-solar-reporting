@@ -317,7 +317,7 @@ __DASHBOARD_NAV_HTML__
         </div>
       </div>
 
-      <div class=\"brandCenter\"><img src=\"https://assets.zyrosite.com/cdn-cgi/image/format=auto,w=180,fit=crop,q=95/Aq2VyN6Nz4fD9PjZ/happy-solar-logo-m2W4o75D7Ks9NQj0.png\" alt=\"Happy Solar\" /></div>
+      <div class=\"brandCenter\"><img src=\"/happy-solar-logo.png\" alt=\"Happy Solar\" /></div>
 
       <div class=\"adminSettings\">
         <a class=\"navbtn\" href=\"/api/settings\">Admin Settings</a>

@@ -1389,6 +1389,8 @@ __DASHBOARD_NAV_CSS__
     .banner { grid-column:span 12; padding:12px 14px; border-radius:12px; border:1px solid #fde68a; background:#fffbeb; color:#92400e; font-size:13px; font-weight:700; }
     .banner.hidden { display:none; }
     table { width:100%; border-collapse:collapse; }
+    .table-scroll { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .grid > * { min-width:0; }
     th, td { border-bottom:1px solid var(--border); padding:9px 10px; text-align:left; font-size:13px; }
     th { color:#64748b; font-weight:900; background:#fafbfc; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
@@ -1450,12 +1452,12 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-title">Page contribution</div>
         <div class="meta" style="margin-bottom:10px">Share of completed forms by first page_group. /contact-me counts. Rows: home / buffalo / rochester / syracuse / ny-incentives / calculator / contact-me. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
-        <table id="pageTable">
+        <div class="table-scroll"><table id="pageTable">
           <thead>
             <tr><th>Page</th><th>Sessions</th><th>Starts</th><th>Completed forms</th><th>Form share</th></tr>
           </thead>
           <tbody></tbody>
-        </table>
+        </table></div>
       </div>
 
       <div class="section-label">Daily — live hosts only</div>

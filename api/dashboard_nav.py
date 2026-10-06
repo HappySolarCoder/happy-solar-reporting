@@ -303,11 +303,12 @@ def _nav_state_boot() -> str:
 
 
 def _embed_chrome_css() -> str:
-    """One section row when Bloom frames the app, or when `?embed=1` is set.
+    """Five section menus when Bloom frames the app, or when `?embed=1` is set.
 
     The rail and the operations crumb bar are the duplicate chrome. The
-    switcher keeps every section reachable. Standalone pages never match
-    `html.oc-embedded`, so their rail and top bar stay put.
+    menus keep every section reachable. Standalone pages never match
+    `html.oc-embedded`, so their rail and top bar stay put. Open menus use
+    position:fixed so an overflow rule on the row cannot clip them.
     """
     return """
     .oc-embed-bar { display: none; }
@@ -324,62 +325,150 @@ def _embed_chrome_css() -> str:
       height: var(--oc-embed-bar);
       z-index: 30;
       box-sizing: border-box;
+      width: 100%;
       max-width: 100%;
       background: #081e31;
       border-bottom: 1px solid #203e54;
       align-items: stretch;
-      overflow: hidden;
+      overflow: visible;
     }
     html.oc-embedded .oc-embed-nav {
       display: flex;
       flex: 1 1 auto;
       align-items: stretch;
       min-width: 0;
+      width: 100%;
+      max-width: 100%;
       margin: 0;
-      padding: 0 4px;
-      overflow-x: auto;
-      overflow-y: hidden;
-      overscroll-behavior-x: contain;
-      scrollbar-width: thin;
-      scrollbar-color: #29475c transparent;
+      padding: 0 2px;
+      gap: 0;
+      overflow: visible;
     }
-    html.oc-embedded .oc-embed-nav a {
-      flex: 0 0 auto;
+    html.oc-embedded .oc-embed-group {
+      position: relative;
+      display: flex;
+      flex: 0 1 auto;
+      align-items: stretch;
+      min-width: 0;
+      overflow: visible;
+    }
+    html.oc-embedded .oc-embed-group-btn {
+      flex: 1 1 auto;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
+      gap: 6px;
       box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      min-height: 44px;
       margin: 0;
       padding: 0 12px;
-      border: 0;
-      border-bottom: 2px solid transparent;
-      border-radius: 0;
+      border: 0 !important;
+      border-bottom: 2px solid transparent !important;
+      border-radius: 0 !important;
       background: transparent !important;
+      box-shadow: none !important;
       color: #a7bfd2 !important;
-      font: 12px/1.2 'DM Sans', Arial, sans-serif;
+      font: 500 12px/1.2 'DM Sans', Arial, sans-serif !important;
+      letter-spacing: 0;
       text-decoration: none !important;
       white-space: nowrap;
+      overflow: hidden;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
-    html.oc-embedded .oc-embed-nav a:hover {
+    html.oc-embedded .oc-embed-group-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    html.oc-embedded .oc-embed-caret {
+      flex: none;
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+    }
+    html.oc-embedded .oc-embed-group.is-open > .oc-embed-group-btn {
+      background: #102e46 !important;
+      color: #fff !important;
+    }
+    html.oc-embedded .oc-embed-group.is-open > .oc-embed-group-btn .oc-embed-caret {
+      transform: translateY(1px) rotate(225deg);
+    }
+    html.oc-embedded .oc-embed-group-btn:hover {
+      background: #102e46 !important;
+      color: #fff !important;
+    }
+    html.oc-embedded .oc-embed-group.is-current > .oc-embed-group-btn {
+      color: #26d9eb !important;
+      border-bottom-color: #26d9eb !important;
+    }
+    html.oc-embedded .oc-embed-group.is-current > .oc-embed-group-btn:hover,
+    html.oc-embedded .oc-embed-group.is-current.is-open > .oc-embed-group-btn {
+      background: #102e46 !important;
+      color: #26d9eb !important;
+      border-bottom-color: #26d9eb !important;
+    }
+    html.oc-embedded .oc-embed-group-btn:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: -2px;
+    }
+    html.oc-embedded .oc-embed-menu {
+      position: fixed;
+      z-index: 80;
+      top: 48px;
+      left: 8px;
+      min-width: min(220px, calc(100vw - 16px));
+      max-width: min(280px, calc(100vw - 16px));
+      width: max-content;
+      max-height: min(70vh, 420px);
+      margin: 0;
+      padding: 6px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      box-sizing: border-box;
+      background: #0c253b;
+      border: 1px solid #2b4e66;
+      border-radius: 8px;
+      box-shadow: 0 12px 28px rgba(2, 10, 18, 0.45);
+    }
+    html.oc-embedded .oc-embed-menu[hidden] {
+      display: none !important;
+    }
+    html.oc-embedded .oc-embed-menu a {
+      display: flex;
+      align-items: center;
+      box-sizing: border-box;
+      min-height: 44px;
+      margin: 0;
+      padding: 10px 12px;
+      border: 0 !important;
+      border-radius: 6px;
+      background: transparent !important;
+      color: #d5e6f2 !important;
+      font: 13px/1.3 'DM Sans', Arial, sans-serif !important;
+      text-decoration: none !important;
+      white-space: normal;
+    }
+    html.oc-embedded .oc-embed-menu a:hover {
       background: #102e46 !important;
       color: #fff !important;
       text-decoration: none !important;
     }
-    html.oc-embedded .oc-embed-nav a.active {
-      background: transparent !important;
+    html.oc-embedded .oc-embed-menu a.active {
+      background: #123e52 !important;
       color: #26d9eb !important;
-      border-bottom-color: #26d9eb;
+      box-shadow: inset 2px 0 #26d9eb;
     }
-    html.oc-embedded .oc-embed-nav a:focus-visible {
+    html.oc-embedded .oc-embed-menu a:focus-visible,
+    html.oc-embedded .oc-embed-group-btn:focus-visible {
       outline: 2px solid #26d9eb;
       outline-offset: -2px;
-    }
-    html.oc-embedded .oc-embed-sep {
-      flex: 0 0 auto;
-      align-self: center;
-      width: 1px;
-      height: 16px;
-      margin: 0 4px;
-      background: #234358;
     }
     html.oc-embedded .oc-embed-status {
       flex: 0 1 auto;
@@ -424,26 +513,59 @@ def _embed_chrome_css() -> str:
     }
     @media (max-width: 800px) {
       html.oc-embedded .oc-embed-status { display: none; }
-      html.oc-embedded .oc-embed-nav a { padding: 0 10px; }
+      html.oc-embedded .oc-embed-nav { padding: 0; }
+      html.oc-embedded .oc-embed-group { flex: 1 1 0; }
+      html.oc-embedded .oc-embed-group-btn {
+        padding: 0 4px;
+        gap: 3px;
+        font-size: 11px !important;
+      }
+    }
+    @media (max-width: 420px) {
+      html.oc-embedded .oc-embed-group-btn {
+        padding: 0 2px;
+        gap: 2px;
+        font-size: 10.5px !important;
+        letter-spacing: -0.01em;
+      }
+      html.oc-embedded .oc-embed-caret {
+        width: 5px;
+        height: 5px;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
-      html.oc-embedded .oc-embed-nav { scroll-behavior: auto; }
+      html.oc-embedded .oc-embed-caret { transition: none; }
     }
     """
 
 
 def _render_embed_nav(current: str) -> str:
     parts: list[str] = []
-    for index, (_label, items) in enumerate(NAV_GROUPS):
-        if index:
-            parts.append('<span class="oc-embed-sep" aria-hidden="true"></span>')
-        for key, title, href in items:
-            active = " active" if current == key else ""
-            current_attr = ' aria-current="page"' if current == key else ""
+    for label, slug, rows in embed_menu_plan():
+        owns_page = any(key == current for key, _title, _href in rows)
+        group_class = "oc-embed-group is-current" if owns_page else "oc-embed-group"
+        current_attr = ' aria-current="true"' if owns_page else ""
+        menu_id = f"oc-embed-menu-{slug}"
+        btn_id = f"oc-embed-btn-{slug}"
+        items: list[str] = []
+        for key, title, href in rows:
+            active = key == current
+            link_class = "oc-embed-link active" if active else "oc-embed-link"
+            page_attr = ' aria-current="page"' if active else ""
             external = ' target="_blank" rel="noopener noreferrer"' if href.startswith("http") else ""
-            parts.append(
-                f'<a class="oc-embed-link{active}" href="{href}"{current_attr}{external}>{title}</a>'
+            items.append(
+                f'<a role="menuitem" class="{link_class}" href="{href}"{page_attr}{external}>{title}</a>'
             )
+        parts.append(
+            f'<div class="{group_class}">'
+            f'<button type="button" class="oc-embed-group-btn" id="{btn_id}" '
+            f'aria-expanded="false" aria-haspopup="menu" aria-controls="{menu_id}"{current_attr}>'
+            f'<span class="oc-embed-group-label">{label}</span>'
+            f'<span class="oc-embed-caret" aria-hidden="true"></span></button>'
+            f'<div class="oc-embed-menu" id="{menu_id}" role="menu" aria-labelledby="{btn_id}" hidden>'
+            + "".join(items)
+            + "</div></div>"
+        )
     links = "".join(parts)
     return (
         '<div class="oc-embed-bar">'
@@ -846,6 +968,227 @@ NAV_GROUPS = (
 )
 
 
+# Top-row menus for the embedded Data Center. Labels are the visible names.
+# Every NAV_GROUPS dashboard is listed once. The left rail still uses NAV_GROUPS.
+EMBED_MENUS = (
+    (
+        "Company",
+        "company",
+        (
+            "company_overview",
+            "goals_dashboard",
+            "daily_update",
+            "morning_brief",
+        ),
+    ),
+    (
+        "Sales",
+        "sales",
+        (
+            "sales_dashboard",
+            "sales_list",
+            "rep_daily_recap",
+            "missing_dispos",
+        ),
+    ),
+    (
+        "Lead Gen",
+        "lead-gen",
+        (
+            "fma_dashboard",
+            "appointment_outcomes",
+            "fma_commissions",
+            "paid_social_funnel",
+            "website_funnel",
+            "website_traffic",
+        ),
+    ),
+    (
+        "Proj. Man.",
+        "proj-man",
+        (
+            "project_management_hub",
+            "hold_cancelled",
+        ),
+    ),
+    (
+        "Other",
+        "other",
+        (
+            "sale_cancellation_report",
+            "bot_kpi_scorecard",
+            "settings",
+        ),
+    ),
+)
+
+
+def embed_menu_plan():
+    """Return (label, slug, ((key, title, href), ...)) for the embedded row.
+
+    Raises if a sidebar dashboard is missing, duplicated, or unknown.
+    """
+    by_key = {}
+    for _label, items in NAV_GROUPS:
+        for key, title, href in items:
+            if key in by_key:
+                raise RuntimeError(f"duplicate nav key {key}")
+            by_key[key] = (title, href)
+    seen: list[str] = []
+    plan = []
+    for label, slug, keys in EMBED_MENUS:
+        rows = []
+        for key in keys:
+            if key not in by_key:
+                raise RuntimeError(f"embed menu key {key} is not a dashboard")
+            title, href = by_key[key]
+            rows.append((key, title, href))
+            seen.append(key)
+        plan.append((label, slug, tuple(rows)))
+    missing = [key for key in by_key if key not in seen]
+    if missing or len(seen) != len(set(seen)):
+        raise RuntimeError(f"embed menus must list each dashboard once; missing={missing}")
+    return tuple(plan)
+
+
+_EMBED_MENU_JS = r"""
+              (function wireEmbedMenus() {
+                var groups = sectionNav.querySelectorAll('.oc-embed-group');
+                function menuOf(group) { return group.querySelector('[role="menu"]'); }
+                function btnOf(group) { return group.querySelector('button'); }
+                function itemsOf(menu) { return menu.querySelectorAll('[role="menuitem"]'); }
+                function placeMenu(group) {
+                  var menu = menuOf(group);
+                  var btn = btnOf(group);
+                  if (!menu || !btn || menu.hidden) return;
+                  var margin = 8;
+                  var maxW = Math.max(160, window.innerWidth - margin * 2);
+                  menu.style.maxWidth = maxW + 'px';
+                  menu.style.right = 'auto';
+                  var btnRect = btn.getBoundingClientRect();
+                  var top = Math.round(btnRect.bottom + 4);
+                  menu.style.top = top + 'px';
+                  menu.style.left = margin + 'px';
+                  var width = Math.min(menu.getBoundingClientRect().width, maxW);
+                  var left = btnRect.left;
+                  if (left + width > window.innerWidth - margin) {
+                    left = window.innerWidth - margin - width;
+                  }
+                  if (left < margin) left = margin;
+                  menu.style.left = Math.round(left) + 'px';
+                  var available = window.innerHeight - top - margin;
+                  menu.style.maxHeight = Math.max(120, Math.floor(available)) + 'px';
+                }
+                function closeGroup(group, restoreFocus) {
+                  var btn = btnOf(group);
+                  var menu = menuOf(group);
+                  if (!btn || !menu) return;
+                  var wasOpen = btn.getAttribute('aria-expanded') === 'true';
+                  group.classList.remove('is-open');
+                  btn.setAttribute('aria-expanded', 'false');
+                  menu.hidden = true;
+                  if (restoreFocus && wasOpen) btn.focus({ preventScroll: true });
+                }
+                function openGroup(group, focusMode) {
+                  var i;
+                  for (i = 0; i < groups.length; i++) {
+                    if (groups[i] !== group) closeGroup(groups[i], false);
+                  }
+                  var btn = btnOf(group);
+                  var menu = menuOf(group);
+                  group.classList.add('is-open');
+                  btn.setAttribute('aria-expanded', 'true');
+                  menu.hidden = false;
+                  placeMenu(group);
+                  var items = itemsOf(menu);
+                  if (!items.length) return;
+                  var target = items[0];
+                  if (focusMode === 'last') target = items[items.length - 1];
+                  if (focusMode === 'current') {
+                    for (i = 0; i < items.length; i++) {
+                      if (items[i].getAttribute('aria-current') === 'page') target = items[i];
+                    }
+                  }
+                  if (focusMode) target.focus({ preventScroll: true });
+                }
+                var g;
+                for (g = 0; g < groups.length; g++) {
+                  (function(group) {
+                    var btn = btnOf(group);
+                    var menu = menuOf(group);
+                    btn.addEventListener('click', function() {
+                      if (btn.getAttribute('aria-expanded') === 'true') closeGroup(group, false);
+                      else openGroup(group, 'current');
+                    });
+                    btn.addEventListener('keydown', function(event) {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        openGroup(group, 'first');
+                      } else if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        openGroup(group, 'last');
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeGroup(group, true);
+                      }
+                    });
+                    menu.addEventListener('keydown', function(event) {
+                      var items = Array.prototype.slice.call(itemsOf(menu));
+                      if (!items.length) return;
+                      var index = items.indexOf(document.activeElement);
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeGroup(group, true);
+                      } else if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        items[(index + 1) % items.length].focus();
+                      } else if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        items[(index <= 0 ? items.length : index) - 1].focus();
+                      } else if (event.key === 'Home') {
+                        event.preventDefault();
+                        items[0].focus();
+                      } else if (event.key === 'End') {
+                        event.preventDefault();
+                        items[items.length - 1].focus();
+                      }
+                    });
+                    menu.addEventListener('click', function(event) {
+                      var item = event.target.closest ? event.target.closest('[role="menuitem"]') : null;
+                      if (item) closeGroup(group, false);
+                    });
+                  })(groups[g]);
+                }
+                document.addEventListener('click', function(event) {
+                  if (sectionNav.contains(event.target)) return;
+                  var i;
+                  for (i = 0; i < groups.length; i++) closeGroup(groups[i], false);
+                });
+                document.addEventListener('keydown', function(event) {
+                  if (event.key !== 'Escape') return;
+                  var i;
+                  for (i = 0; i < groups.length; i++) {
+                    if (btnOf(groups[i]).getAttribute('aria-expanded') === 'true') closeGroup(groups[i], true);
+                  }
+                });
+                document.addEventListener('focusin', function(event) {
+                  var i;
+                  for (i = 0; i < groups.length; i++) {
+                    var group = groups[i];
+                    if (btnOf(group).getAttribute('aria-expanded') !== 'true') continue;
+                    if (group.contains(event.target)) continue;
+                    closeGroup(group, false);
+                  }
+                });
+                window.addEventListener('resize', function() {
+                  var i;
+                  for (i = 0; i < groups.length; i++) placeMenu(groups[i]);
+                });
+              })();
+"""
+
+
 def render_dashboard_nav(current: str) -> str:
     groups = []
     for label, items in NAV_GROUPS:
@@ -911,14 +1254,7 @@ def render_dashboard_nav(current: str) -> str:
                   }}
                 }}
               }} catch (err) {{}}
-              function scrollActiveSection() {{
-                var activeSection = sectionNav.querySelector('a.active');
-                if (!activeSection || !sectionNav.clientWidth) return;
-                var nextLeft = activeSection.offsetLeft - Math.max(0, (sectionNav.clientWidth - activeSection.offsetWidth) / 2);
-                if (nextLeft > 0) sectionNav.scrollLeft = nextLeft;
-              }}
-              scrollActiveSection();
-              window.requestAnimationFrame(scrollActiveSection);
+              __EMBED_MENU_JS__
               function placeEmbedStatus() {{
                 var status = document.getElementById('asOf');
                 if (!bar || !status || bar.contains(status)) return;
@@ -1150,7 +1486,7 @@ def render_dashboard_nav(current: str) -> str:
         </script>
     """
     overlay = Path(__file__).with_name("loading_overlay_script.txt").read_text(encoding="utf-8")
-    return html.replace(
+    return html.replace("__EMBED_MENU_JS__", _EMBED_MENU_JS).replace(
         "<!-- HAPPY_SOLAR_LOADING -->",
         "<script>\n" + overlay + "\n</script>",
     )

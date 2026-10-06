@@ -130,6 +130,96 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
         self.assertNotRegex(css, r"\b(sit|sits|sat)\b")
 
+    def test_embedded_row_uses_five_menus_and_keeps_the_rail(self):
+        html = render_dashboard_nav("sales_list")
+        css = nav.dashboard_nav_css()
+        labels = [label for label, _slug, _keys in nav.EMBED_MENUS]
+        self.assertEqual(labels, ["Company", "Sales", "Lead Gen", "Proj. Man.", "Other"])
+        for label in labels:
+            self.assertEqual(html.count(f'class="oc-embed-group-label">{label}</span>'), 1)
+        self.assertEqual(html.count('aria-haspopup="menu"'), 5)
+        self.assertEqual(html.count('class="oc-embed-group-btn"'), 5)
+        self.assertEqual(html.count('class="oc-embed-menu"'), 5)
+        self.assertIn('type="button"', html)
+        self.assertIn("ArrowDown", html)
+        self.assertIn("ArrowUp", html)
+        self.assertIn("Escape", html)
+        self.assertIn("aria-expanded", html)
+        self.assertIn("position: fixed", css)
+        self.assertIn("overflow: visible", css)
+        self.assertNotIn("overflow-x: auto", css)
+        sidebar_labels = [label for label, _items in nav.NAV_GROUPS]
+        self.assertEqual(
+            sidebar_labels,
+            ["COMPANY", "SALES", "LEAD GENERATION", "PROJECT MANAGEMENT", "INBOUND", "OTHER"],
+        )
+        menu_count = html.count('role="menuitem" class="oc-embed-link')
+        sidebar_count = sum(len(items) for _label, items in nav.NAV_GROUPS)
+        self.assertEqual(menu_count, sidebar_count)
+        for _label, items in nav.NAV_GROUPS:
+            for _key, title, href in items:
+                self.assertIn(
+                    f'role="menuitem" class="oc-embed-link" href="{href}"',
+                    html.replace(
+                        'role="menuitem" class="oc-embed-link active"',
+                        'role="menuitem" class="oc-embed-link"',
+                    ),
+                )
+                self.assertIn(title, html)
+        sales_btn = _group_button(html, "Sales")
+        company_btn = _group_button(html, "Company")
+        self.assertIn('aria-current="true"', sales_btn)
+        self.assertNotIn('aria-current="true"', company_btn)
+        self.assertIn('class="oc-embed-group is-current"', html)
+        self.assertEqual(html.count('class="oc-embed-group is-current"'), 1)
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/sales_list" aria-current="page"',
+            html,
+        )
+        self.assertGreaterEqual(_contrast("#a7bfd2", "#081e31"), 4.5)
+        self.assertGreaterEqual(_contrast("#26d9eb", "#081e31"), 4.5)
+        self.assertGreaterEqual(_contrast("#d5e6f2", "#0c253b"), 4.5)
+        self.assertGreaterEqual(_contrast("#26d9eb", "#123e52"), 4.5)
+        self.assertGreaterEqual(_contrast("#ffffff", "#102e46"), 4.5)
+        lead = render_dashboard_nav("website_traffic")
+        self.assertIn('aria-current="true"', _group_button(lead, "Lead Gen"))
+        self.assertNotIn('aria-current="true"', _group_button(lead, "Sales"))
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/website_traffic" aria-current="page"',
+            lead,
+        )
+        project = render_dashboard_nav("hold_cancelled")
+        self.assertIn('aria-current="true"', _group_button(project, "Proj. Man."))
+        other = render_dashboard_nav("settings")
+        self.assertIn('aria-current="true"', _group_button(other, "Other"))
+        self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
+
+
+def _group_button(html: str, label: str) -> str:
+    token = f'class="oc-embed-group-label">{label}</span>'
+    idx = html.find(token)
+    if idx < 0:
+        raise AssertionError(f"missing group label {label}")
+    start = html.rfind("<button", 0, idx)
+    end = html.find("</button>", idx)
+    return html[start:end]
+
+
+def _contrast(fg: str, bg: str) -> float:
+    def channel(hexpair: str) -> float:
+        value = int(hexpair, 16) / 255
+        if value <= 0.04045:
+            return value / 12.92
+        return ((value + 0.055) / 1.055) ** 2.4
+
+    def lum(color: str) -> float:
+        color = color.lstrip("#")
+        red, green, blue = channel(color[0:2]), channel(color[2:4]), channel(color[4:6])
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    lighter, darker = sorted((lum(fg), lum(bg)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

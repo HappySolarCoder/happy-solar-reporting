@@ -312,7 +312,7 @@
       "scope": {"tables": ["ghl_opportunities_v2"], "fields": ["dispositionValue", "GYGpLKBPfMpiBqyU2ogQ"], "statuses": "Sit", "exclusions": "Follow-up is not a second sit", "deduplication": "one sit per opportunity in that module", "grouping": "lead source", "attribution": "unresolved"},
       "time": {"event_date_field": "min(appointmentOccurredAt, dispositionDate)", "timezone": "America/New_York hardcoded", "boundaries": "local window", "basis": "first-write-wins sit timestamp", "effective_from": null, "effective_to": null},
       "governance": {"status": "DRAFT", "version": 1, "owner": null, "approved_by": null, "approved_at": null},
-      "evidence": [{"path": "api/metrics/demo_rate.py", "excerpt": "Demos = Sit. Window = first-write-wins"}],
+      "evidence": [{"path": "api/metrics/demo_rate.py", "excerpt": "Demos / Ran. Window = first-write-wins"}],
       "examples": {"question": "What is a demo?", "correct_interpretation": "Use the word demo. Do not call the draft row company policy. The raw disposition string may be Sit.", "ambiguities": ["The label decision is recorded and the row stays draft."]},
       "ambiguities": ["Labels use demo. The raw value Sit is data only. The row is not approved."]
     },

@@ -957,8 +957,8 @@ def build_performance_kpis(
             "opps_pct": "that source's opps_created / that source's nr_leads",
             "opp_to_prelim": "that source's inbound_cac.sales / that source's opps_created",
             "demo_rate": (
-                "that source's sits / that source's opps_created "
-                "(not Bot KPI Sit/(Sit+No Sit))"
+                "that source's demos / that source's opps_created "
+                "(not the bot KPI of demos divided by demos plus no-demos)"
             ),
             "sits": (
                 "COUNT_DISTINCT territory-pipeline opps with dispositionValue==Sit "
@@ -1654,8 +1654,8 @@ def assemble_inbound_cac(
             "(opportunities_created is an alias of opps_created); "
             "opps_pct = opps_created / nr_leads (null if nr_leads=0); "
             "opp_to_prelim = that source's inbound_cac.sales / opps_created; "
-            "demo_rate = that source's territory sits / opps_created "
-            "(null if opps_created=0; not Bot KPI Sit/(Sit+No Sit)); "
+            "demo_rate = that source's territory demos / opps_created "
+            "(null if opps_created=0; not the bot KPI of demos divided by demos plus no-demos); "
             "unattributed territory opps are JSON leftover, not Overall; "
             "Inbound row is contact CF hd5QqHEOVSsPom5bJ32P=Inbound on territory "
             "pipelines (not title-bucket, not 3PL, not pipeline 7nSEgeo); "
@@ -1667,7 +1667,7 @@ def assemble_inbound_cac(
             "Inbound opps_created = territory-pipeline createdAt + CF=Inbound "
             "in the same clamped window; "
             "Inbound opps_pct = opps_created / leads (null if leads=0); "
-            "Inbound sits/sales keep CF-grain rules on the clamped window; "
+            "Inbound demos/sales keep CF-grain rules on the clamped window; "
             "spend is Meta Ads account insights for the same clamped since/until "
             "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
             "Inbound cost_per_lead = Meta spend / form-fill leads "

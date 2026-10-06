@@ -208,7 +208,7 @@ def app_html() -> str:
     function demoTable(demos, opts) {{
       opts = opts || {{}};
       var html = "<table class=\\"demos\\"><thead><tr>";
-      html += "<th>Customer</th><th>Sat (ET)</th><th>Pipeline</th><th>Lead source</th><th>Owner</th><th>Setter</th><th>Scheduling manager</th>";
+      html += "<th>Customer</th><th>Demo (ET)</th><th>Pipeline</th><th>Lead source</th><th>Owner</th><th>Setter</th><th>Scheduling manager</th>";
       if (opts.selfGen) html += "<th>Self-gen</th>";
       if (opts.reasons) html += "<th>Reasons</th>";
       html += "<th>Opportunity</th><th>Contact</th></tr></thead><tbody>";
@@ -245,7 +245,7 @@ def app_html() -> str:
     }}
 
     function renderScheduling(section) {{
-      var html = "<table><thead><tr><th>Scheduling Manager</th><th>Counted (excl. self-gen)</th><th>Excluded self-gen</th><th>Total sits</th></tr></thead><tbody>";
+      var html = "<table><thead><tr><th>Scheduling Manager</th><th>Counted (excl. self-gen)</th><th>Excluded self-gen</th><th>Total demos</th></tr></thead><tbody>";
       (section.rows || []).forEach(function (row, index) {{
         var id = "sm-row-" + index;
         html += '<tr class="click" data-target="' + id + '" aria-expanded="false">';

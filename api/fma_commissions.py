@@ -314,7 +314,7 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div style="min-width:280px;">
         <div class="card-title">Commission Rule</div>
-        <div class="meta">$100 per demo (Sit) and $500 per sale.</div>
+        <div class="meta">$100 per demo and $500 per sale.</div>
         <div class="meta" id="statusText">Loading…</div>
       </div>
     </div>
@@ -396,8 +396,8 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-6">
         <div class="card-title">Metric Notes</div>
         <div class="meta">
-          Demo commission is based on <strong>Sit</strong> outcomes from <code>/api/metrics/demo_rate</code>.
-          A filled Sweeper/Rehash Last Name replaces the setter only when the sit's America/New_York date is on or after 2026-09-24. Earlier sits stay with the original setter.
+          Demo commission is based on demo outcomes from <code>/api/metrics/demo_rate</code>.
+          A filled Sweeper/Rehash Last Name replaces the setter only when the demo's America/New_York date is on or after 2026-09-24. Earlier demos stay with the original setter.
           Sales commission is based on canonical Sales counts from <code>/api/metrics/sales</code>.
         </div>
       </div>

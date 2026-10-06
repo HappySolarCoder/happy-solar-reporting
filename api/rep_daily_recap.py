@@ -859,6 +859,14 @@ def outcome_class(outcome: str) -> str:
     return "pending"
 
 
+def outcome_label(outcome: str) -> str:
+    if outcome == "Sit":
+        return "Demo"
+    if outcome == "No Sit":
+        return "No demo"
+    return outcome
+
+
 def map_powerline_agent_to_owner(label: str, alias_index: dict[str, str]) -> str | None:
     key = normalize_name_key(label)
     if not key:
@@ -1222,7 +1230,7 @@ def render_owner_card(owner: dict[str, Any]) -> str:
               <tr{" class='self-gen-row'" if is_self_gen_lead_source(row.get("lead_source")) else ""}>
                 <td>{html_escape(row['time_local'])}</td>
                 <td>{html_escape(row['contact_name'])}</td>
-                <td><span class="outcome-pill {html_escape(row['outcome_class'])}">{html_escape(row['outcome'])}</span></td>
+                <td><span class="outcome-pill {html_escape(row['outcome_class'])}">{html_escape(outcome_label(row['outcome']))}</span></td>
                 <td>{html_escape(row['pipeline'])}</td>
                 <td>{html_escape(row['stage'])}</td>
                 <td>{html_escape(row['setter_last_name'])}</td>
@@ -1252,8 +1260,8 @@ def render_owner_card(owner: dict[str, Any]) -> str:
           <div class="mini-stat"><span>Appointments</span><strong>{html_escape(owner['appointment_total'])}</strong></div>
           <div class="mini-stat"><span>Self Gen</span><strong>{html_escape(owner.get('self_gen_appointment_total', 0))}</strong></div>
           <div class="mini-stat"><span>Completed</span><strong>{html_escape(owner['completed_total'])}</strong></div>
-          <div class="mini-stat"><span>Sits</span><strong>{html_escape(owner['sit_total'])}</strong></div>
-          <div class="mini-stat"><span>No Sits</span><strong>{html_escape(owner['no_sit_total'])}</strong></div>
+          <div class="mini-stat"><span>Demos</span><strong>{html_escape(owner['sit_total'])}</strong></div>
+          <div class="mini-stat"><span>No demos</span><strong>{html_escape(owner['no_sit_total'])}</strong></div>
           <div class="mini-stat"><span>Pending</span><strong>{html_escape(owner['pending_total'])}</strong></div>
           <div class="mini-stat"><span>Powerline Dials</span><strong>{html_escape(owner['powerline_dials'])}</strong></div>
           <div class="mini-stat"><span>Doors Knocked</span><strong>{html_escape(owner['doors_knocked'])}</strong></div>
@@ -1415,8 +1423,8 @@ __DASHBOARD_NAV_HTML__
     </section>
 
     <section class="grid">
-      {render_stat("Appointments", summary["appointments_total"], "Territory-pipeline (Buffalo/Rochester/Syracuse/Virtual) appointments scheduled in the selected ET day. Sits marked that day stay listed when the follow-up start moves.")}
-      {render_stat("Completed Outcomes", summary["completed_outcomes_total"], "Appointments with Sit or No Sit logged")}
+      {render_stat("Appointments", summary["appointments_total"], "Territory-pipeline (Buffalo/Rochester/Syracuse/Virtual) appointments scheduled in the selected ET day. Demos marked that day stay listed when the follow-up start moves.")}
+      {render_stat("Completed Outcomes", summary["completed_outcomes_total"], "Appointments with a demo or no demo logged")}
       {render_stat("Powerline Dials", summary["powerline_dials_total"], powerline_note)}
       {render_stat("Doors Knocked", summary["doors_knocked_total"], "Raydar knocks attributed to mapped rep actors")}
     </section>
@@ -1430,7 +1438,7 @@ __DASHBOARD_NAV_HTML__
       <br />
       Excluded non-territory appointments (Sweeper/Rehash/other): {html_escape(summary.get("excluded_non_territory_appointments_total", 0))}
       <br />
-      <strong>Marked demos:</strong> a Sit stays on the Eastern day it was marked
+      <strong>Marked demos:</strong> a demo stays on the Eastern day it was marked
       (earlier of appointmentOccurredAt and dispositionDate), even when the follow-up appointment start is later moved.
       <br />
       {html_escape(unmapped_note)}

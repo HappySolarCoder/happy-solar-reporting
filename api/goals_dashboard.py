@@ -166,6 +166,8 @@ def render_html() -> str:
       const token = ++requestToken;
       const f = filters();
       if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
+      const rosterHost = document.getElementById("rosterGoals");
+      if (rosterHost) rosterHost.textContent = "Loading roster goals…";
       const params = new URLSearchParams();
       params.set("year", f.start.slice(0, 4));
       params.set("month", String(Number(f.start.slice(5, 7))));
@@ -224,7 +226,15 @@ def render_html() -> str:
       if (token !== requestToken) return;
       const host = document.getElementById("rosterGoals");
       if (!roster.ok) {{ host.textContent = "Roster goals unavailable."; return; }}
-      const payload = await roster.json();
+      let payload;
+      try {{
+        payload = await roster.json();
+      }} catch (error) {{
+        if (error && error.name === "AbortError") return;
+        host.textContent = "Roster goals unavailable.";
+        return;
+      }}
+      if (!payload) {{ host.textContent = "Roster goals unavailable."; return; }}
       const rows = payload.goals_for_month || [];
       const bloomPeople = (bloom && bloom.person_goals) || [];
       if (!rows.length && !bloomPeople.length) {{ host.innerHTML = '<p class="chart-note">No goals_monthly_v1 rows for ' + esc(month) + '. Bloom has no person goals for this month either.</p>'; return; }}

@@ -173,7 +173,7 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. Inbound KPIs use 2026-08-01 ET → now. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = website form fills (named estimate fills), not territory opp counts. Opps created and sits are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s sits ÷ opps created (Evan’s formula — not Bot KPI Sit/(Sit+No Sit)). Rates are blank when the denominator is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. Inbound KPIs use 2026-08-01 ET → now. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = website form fills (named estimate fills), not territory opp counts. Opps created and demos are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s demos ÷ opps created (Evan’s formula — not the bot KPI of demos divided by demos plus no-demos). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
@@ -281,7 +281,7 @@ function renderKpiTable(el, kpis) {
   html += '<th class="num">NR Leads</th>';
   html += '<th class="num">Opps created</th>';
   html += '<th class="num">Opps %</th>';
-  html += '<th class="num">Sits</th>';
+  html += '<th class="num">Demos</th>';
   html += '<th class="num">Sales</th>';
   html += '<th class="num">Opp to prelim</th>';
   html += '<th class="num">Demo rate</th>';

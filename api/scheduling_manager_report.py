@@ -183,7 +183,7 @@ def render_html(start: str, end: str) -> str:
       <div class="card span-4">
         <div class="card-title">Demo'd Opps</div>
         <div id="kpiDemoed" class="kpi">—</div>
-        <div class="meta">Created-cohort opps whose appointment disposition is currently <strong>Sit</strong>.</div>
+        <div class="meta">Created-cohort opps whose appointment outcome is currently a demo.</div>
       </div>
       <div class="card span-4">
         <div class="card-title">Demo Percentage</div>
@@ -345,7 +345,7 @@ def render_html(start: str, end: str) -> str:
 
         const pipelineScope = document.getElementById('pipelineScope').value === 'all' ? 'all pipelines' : 'core pipelines';
         document.getElementById('footnote').textContent =
-          `Window ${{data.window_start_local}} to ${{data.window_end_local}} • Demo'd = disposition "Sit" on the created-opportunity cohort • Scope: ${{pipelineScope}}`;
+          `Window ${{data.window_start_local}} to ${{data.window_end_local}} • Demo'd = a marked demo on the created-opportunity cohort • Scope: ${{pipelineScope}}`;
 
         const pageUrl = new URL(window.location.href);
         pageUrl.searchParams.set('start', document.getElementById('start').value);

@@ -107,6 +107,14 @@ def parse_firestore_ts(value) -> datetime | None:
     return None
 
 
+def disposition_label(status: str) -> str:
+    if status == "Sit":
+        return "Demo"
+    if status == "No Sit":
+        return "No demo"
+    return status
+
+
 def normalize_disposition(v) -> str:
     if v is None:
         return ""
@@ -549,7 +557,7 @@ class handler(BaseHTTPRequestHandler):
                     "<tr>"
                     f"<td>{escape(format_local(r.get('dt_utc')))}</td>"
                     f"<td>{escape((r.get('setter') or ''))}</td>"
-                    f"<td>{escape((r.get('status') or ''))}</td>"
+                    f"<td>{escape(disposition_label(r.get('status') or ''))}</td>"
                     f"<td>{escape((r.get('disposition_notes') or ''))}</td>"
                     f"<td>{escape((r.get('contact') or ''))}</td>"
                     f"<td>{escape((r.get('owner') or ''))}</td>"

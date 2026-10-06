@@ -439,17 +439,25 @@
     renderGoalsPanel(bloom);
     attention(company, bloom);
   }
+  function clearTrendSparks() {
+    const sparkSales = document.getElementById("sparkSales");
+    const sparkCreated = document.getElementById("sparkCreated");
+    if (sparkSales) sparkSales.innerHTML = "";
+    if (sparkCreated) sparkCreated.innerHTML = "";
+  }
   function trendUnavailable() {
     const salesHost = document.getElementById("trendSales");
     const createdHost = document.getElementById("trendCreated");
     if (salesHost) salesHost.innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
     if (createdHost) createdHost.innerHTML = '<p class="chart-note">Monthly trend unavailable.</p>';
+    clearTrendSparks();
   }
   async function loadTrends() {
     const salesHost = document.getElementById("trendSales");
     const createdHost = document.getElementById("trendCreated");
     if (salesHost) salesHost.innerHTML = '<p class="chart-note">Loading monthly trend…</p>';
     if (createdHost) createdHost.innerHTML = '<p class="chart-note">Loading monthly trend…</p>';
+    clearTrendSparks();
     let res;
     try {
       res = await fetch("/api/metrics/company_trends?oc_raw=1&start_year=2025&start_month=8", { hsOptional: true });
@@ -462,7 +470,18 @@
       trendUnavailable();
       return;
     }
-    const payload = await res.json();
+    let payload;
+    try {
+      payload = await res.json();
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      trendUnavailable();
+      return;
+    }
+    if (!payload || !Array.isArray(payload.rows)) {
+      trendUnavailable();
+      return;
+    }
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     const sales = rows.map(function (row) { return row.sales == null ? null : Number(row.sales); }).filter(function (n) { return n != null; });
     const created = rows.map(function (row) { return row.opps_created == null ? null : Number(row.opps_created); }).filter(function (n) { return n != null; });
@@ -477,6 +496,7 @@
     if (window.HappySolarLoading) window.HappySolarLoading.begin("view");
     const period = (pageFilters.start || "").slice(0, 7);
     bloomPending = true;
+    bloomGoals = null;
     const bloomTask = fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period), { hsOptional: true })
       .then(function (res) { return res && res.ok ? res.json() : null; })
       .catch(function (error) {
@@ -513,12 +533,13 @@
     bloomTask.then(function (bloom) {
       if (token !== requestToken) return;
       bloomPending = false;
-      if (bloom) bloomGoals = bloom;
+      bloomGoals = bloom || null;
       paintBloom();
     }).catch(function (error) {
       if (error && error.name === "AbortError") return;
       if (token !== requestToken) return;
       bloomPending = false;
+      bloomGoals = null;
       paintBloom();
     });
   }

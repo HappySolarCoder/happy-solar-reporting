@@ -390,7 +390,7 @@ HTML = r"""<!doctype html>
 
       <div class="card span-4">
         <div class="card-title">Outcome Split By FMA</div>
-        <div class="meta">Sit vs No Sit vs Sales helps frame review conversations fast.</div>
+        <div class="meta">Demos vs no demos vs sales helps frame review conversations fast.</div>
         <div class="bars" id="outcomeBars"></div>
       </div>
 
@@ -660,12 +660,13 @@ HTML = r"""<!doctype html>
       }
       body.innerHTML = rows.map((row) => {
         const outcomeClass = row.outcome === 'Sit' ? 'sit' : 'nosit';
+        const outcomeLabel = row.outcome === 'Sit' ? 'Demo' : (row.outcome === 'No Sit' ? 'No demo' : (row.outcome || ''));
         const salePill = row.is_sale_stage ? '<span class="pill sale">Sale Stage</span>' : '';
         return `
           <tr>
             <td>${formatOccurred(row.appointment_occurred_at)}</td>
             <td>${row.display_name}</td>
-            <td><span class="pill ${outcomeClass}">${row.outcome}</span> ${salePill}</td>
+            <td><span class="pill ${outcomeClass}">${outcomeLabel}</span> ${salePill}</td>
             <td>${row.contact || ''}</td>
             <td>${row.owner || ''}</td>
             <td>${row.pipeline || ''}</td>

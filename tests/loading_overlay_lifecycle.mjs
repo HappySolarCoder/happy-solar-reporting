@@ -508,6 +508,63 @@ async function mainTest() {
   assert(rerendered === 1, "Back rerenders the filter controls");
   assert(loading.committed, "Back keeps the last good view committed");
 
+  loading.begin("view");
+  await Promise.allSettled([
+    loading.fetch(laterFetch(0, http(true, { result: 6 })), "/api/metrics/sales?daily=1"),
+    loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/powerline_dashboard?daily=1"),
+  ]);
+  await wait(40);
+  assert(layer().hidden, "a secondary powerline failure does not open the error card");
+  assert(!String(layer()._html).includes("couldn’t"), "a secondary failure leaves the error card off");
+
+  loading.begin("view");
+  await loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/powerline_dashboard?only=1");
+  await wait(30);
+  assert(!layer().hidden, "a powerline-only failure opens the error card");
+  layer().querySelector("#loadingBack").dispatch("click", {});
+
+  loading.begin("view");
+  await Promise.allSettled([
+    loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/metrics/sales?primary=1"),
+    loading.fetch(laterFetch(0, http(true, { tables: {} })), "/api/powerline_dashboard?primary=1"),
+  ]);
+  await wait(30);
+  assert(!layer().hidden, "a primary metrics failure still opens the error card");
+  layer().querySelector("#loadingBack").dispatch("click", {});
+
+  loading.begin("view");
+  let releasePrimary;
+  const primaryWave = loading.fetch(
+    () =>
+      new Promise((resolve) => {
+        releasePrimary = () => resolve(http(true, { result: 1 }));
+      }),
+    "/api/metrics/sales?wave=1"
+  );
+  await wait(0);
+  const laterWave = loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/metrics/sales?owner=1");
+  releasePrimary();
+  await Promise.allSettled([primaryWave, laterWave]);
+  await wait(40);
+  assert(layer().hidden, "a later metrics section failure does not open the error card");
+
+  loading.begin("view");
+  await Promise.allSettled([
+    loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/settings_api?all=1"),
+    loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/powerline_dashboard?all=1"),
+  ]);
+  await wait(30);
+  assert(!layer().hidden, "every section failing opens the error card");
+  layer().querySelector("#loadingBack").dispatch("click", {});
+
+  loading.begin("view");
+  await Promise.allSettled([
+    loading.fetch(laterFetch(0, http(true, { ok: true })), "/api/settings_api?partial=1"),
+    loading.fetch(laterFetch(0, http(false, {}, 500)), "/api/powerline_dashboard?partial=1"),
+  ]);
+  await wait(40);
+  assert(layer().hidden, "one successful section keeps the page when no metrics request is primary");
+
   if (failures) {
     console.error(failures + " assertion(s) failed");
     process.exit(1);

@@ -53,6 +53,10 @@
     return path.indexOf("/api/metrics/bloom_goals") === 0 || path.indexOf("/api/metrics/company_trends") === 0;
   }
 
+  function isMetricsPath(input) {
+    return pathnameOf(input).indexOf("/api/metrics/") === 0;
+  }
+
   function solarMark() {
     var rays = "";
     for (var i = 0; i < 12; i += 1) {
@@ -407,12 +411,16 @@
       controller: new AbortController(),
       inFlight: 0,
       saw: false,
+      sawMetrics: false,
       failed: false,
       stale: false,
       settled: false,
       shown: !!keepVisible,
       showTimer: null,
       settleQueued: false,
+      classified: false,
+      classifyQueued: false,
+      requests: [],
     };
     current = gen;
     return gen;
@@ -446,47 +454,123 @@
     return response;
   }
 
-  function noteEnd(gen, optional) {
-    if (gen.stale || optional) return;
+  function classify(gen) {
+    if (!gen || gen.classified || gen.stale) return;
+    gen.classified = true;
+    (gen.requests || []).forEach(function (req) {
+      if (!req.opening || req.optional) {
+        req.primary = false;
+        return;
+      }
+      req.primary = isMetricsPath(req.url);
+      var secondary = !req.primary && gen.sawMetrics;
+      if (secondary && req.held && !req.ended) {
+        req.held = false;
+        gen.inFlight = Math.max(0, gen.inFlight - 1);
+      }
+    });
+    if (gen.inFlight === 0 && gen.saw && !gen.settled) scheduleSettle(gen);
+  }
+
+  function recomputeFailed(gen) {
+    if (!gen || gen.settled || gen.stale) return;
+    var opening = (gen.requests || []).filter(function (req) {
+      return req.opening && !req.optional;
+    });
+    var primaryFailed = opening.some(function (req) {
+      return req.primary && req.failed;
+    });
+    if (primaryFailed) {
+      gen.failed = true;
+      return;
+    }
+    if (gen.sawMetrics) {
+      gen.failed = false;
+      return;
+    }
+    if (opening.some(function (req) { return !req.ended; })) return;
+    var anyOk = opening.some(function (req) { return req.ok; });
+    gen.failed = opening.length > 0 && !anyOk && opening.some(function (req) { return req.failed; });
+  }
+
+  function noteEnd(gen, req) {
+    if (!gen || gen.stale || !req || req.optional) return;
+    if (req.ended) return;
+    req.ended = true;
+    recomputeFailed(gen);
+    if (!req.held) return;
+    req.held = false;
     gen.inFlight = Math.max(0, gen.inFlight - 1);
     if (gen.inFlight === 0) scheduleSettle(gen);
+  }
+
+  function markRequestFailure(gen, req, diagnostic) {
+    if (!req || req.optional || gen.stale) return;
+    classify(gen);
+    req.ok = false;
+    req.failed = true;
+    lastDiagnostic = diagnostic;
+    recomputeFailed(gen);
   }
 
   function track(originalFetch, input, init, optional) {
     var gen = current;
     var timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     var nextInit = Object.assign({}, init, { signal: mergeSignal(gen, init, timeoutSignal) });
-    if (!optional) {
+    var req = {
+      url: requestUrl(input),
+      optional: !!optional,
+      opening: !gen.classified,
+      primary: false,
+      held: false,
+      ended: false,
+      ok: false,
+      failed: false,
+    };
+    gen.requests.push(req);
+    if (!optional && req.opening) {
       gen.inFlight += 1;
+      req.held = true;
       gen.saw = true;
+      if (isMetricsPath(input)) gen.sawMetrics = true;
       if (layer && !layer.hidden && !layer.classList.contains("loading-error")) gen.shown = true;
       armShow(gen);
+    }
+    if (!gen.classifyQueued) {
+      gen.classifyQueued = true;
+      var queue = typeof queueMicrotask === "function" ? queueMicrotask : function (fn) {
+        Promise.resolve().then(fn);
+      };
+      queue(function () {
+        if (gen === current) classify(gen);
+      });
     }
     return Promise.resolve()
       .then(function () {
         return originalFetch(input, nextInit);
       })
       .then(function (response) {
-        if (!gen.stale && !optional && response && response.ok === false) {
-          gen.failed = true;
-          lastDiagnostic = (response.status || "error") + " " + requestUrl(input);
+        if (!gen.stale && !optional) {
+          classify(gen);
+          req.ok = !!(response && response.ok !== false);
+          req.failed = !!(response && response.ok === false);
+          if (req.failed) lastDiagnostic = (response.status || "error") + " " + requestUrl(input);
+          recomputeFailed(gen);
         }
         return guardBody(response, gen);
       })
       .catch(function (error) {
         var aborted = gen.stale || (gen.controller && gen.controller.signal.aborted);
         var timedOut = timeoutSignal.aborted || (error && error.name === "TimeoutError");
-        if (!aborted && timedOut && !optional) {
-          gen.failed = true;
-          lastDiagnostic = "timeout " + requestUrl(input);
-        } else if (!aborted && !(error && error.name === "AbortError") && !optional) {
-          gen.failed = true;
-          lastDiagnostic = (error && error.name ? error.name : "error") + " " + requestUrl(input);
+        if (!aborted && timedOut) {
+          markRequestFailure(gen, req, "timeout " + requestUrl(input));
+        } else if (!aborted && !(error && error.name === "AbortError")) {
+          markRequestFailure(gen, req, (error && error.name ? error.name : "error") + " " + requestUrl(input));
         }
         throw error;
       })
       .finally(function () {
-        noteEnd(gen, optional);
+        noteEnd(gen, req);
       });
   }
 

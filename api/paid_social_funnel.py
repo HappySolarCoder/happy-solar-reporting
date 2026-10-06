@@ -320,8 +320,7 @@ def _kpi(label, value, note, tone, bar=None, extra="", title="") -> str:
         f'<article class="kpi tone-{_esc(tone)} {extra}"{tip}>'
         f'<p class="kpi-label">{_esc(label)}</p>'
         f'<p class="kpi-value num">{_esc(value)}</p>'
-        f"{bar_html}"
-        f'<p class="kpi-note">{_esc(note)}</p>'
+        f'<div class="kpi-foot">{bar_html}<p class="kpi-note">{_esc(note)}</p></div>'
         "</article>"
     )
 
@@ -410,8 +409,11 @@ def _funnel(model: dict) -> str:
             opp = "<p>Territory opps are not a funnel stage. The sample fixture does not invent an opp count.</p>"
         elif stage["key"] == "leads":
             opp = "<p>Territory opps are not a funnel stage. The live opp count is unavailable for this read.</p>"
+        ratio = ""
+        if index < len(stages) - 1:
+            ratio = f'<span class="ratio num">{_esc(stage["ratio_label"])}</span>'
         bits.append(
-            f'''<details class="stage">
+            f'''<div class="funnel-step"><details class="stage">
               <summary>
                 <span class="stage-label">{_esc(stage["label"])}</span>
                 <span class="stage-value num">{_esc(stage["display"])}</span>
@@ -422,10 +424,8 @@ def _funnel(model: dict) -> str:
                 <p>Window {_esc(model["range_label"])}. Dedup is within the stage definition. Mixed sources stay directional.</p>
                 {opp}
               </div>
-            </details>'''
+            </details>{ratio}</div>'''
         )
-        if index < len(stages) - 1:
-            bits.append(f'<span class="ratio num">{_esc(stage["ratio_label"])}</span>')
     bits.append("</div></div><p class=\"fine\">A Meta click is not a GA4 session. Ratios across those stages are directional.</p></section>")
     return "".join(bits)
 
@@ -607,7 +607,7 @@ CSS = r"""
 :root {
   --canvas:#071B2D; --sidebar:#0A2238; --panel:#0C253B; --raised:#14334A; --border:#24435A;
   --cyan:#26D9EB; --blue:#2EA8FA; --amber:#FFBE45; --success:#11C99B; --critical:#F16D79;
-  --text:#F1F6FF; --secondary:#B5C7DC; --muted:#8FA7BF;
+  --text:#F1F6FF; --secondary:#B5C7DC; --muted:#A3C2D3;
   --sidebar-w:194px;
 }
 * { box-sizing:border-box; }
@@ -663,9 +663,10 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .banner { margin:0; padding:10px 12px; border:1px solid var(--amber); border-radius:8px; color:var(--amber); background:rgba(255,190,69,.08); }
 .kpis { display:grid; grid-template-columns:1.3fr 1.1fr .7fr 1.1fr .7fr 1.1fr .7fr; gap:12px; }
 .kpi, .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; }
-.kpi { min-height:142px; display:flex; flex-direction:column; gap:6px; padding:12px; }
-.kpi-label { margin:0; color:var(--muted); font-size:12px; line-height:16px; }
+.kpi { min-height:142px; display:grid; grid-template-rows:32px auto minmax(0,1fr); align-content:start; gap:6px; padding:12px; }
+.kpi-label { margin:0; color:var(--muted); font-size:12px; line-height:16px; min-height:32px; }
 .kpi-value { margin:0; font-size:36px; line-height:40px; font-weight:650; letter-spacing:-.03em; }
+.kpi-foot { display:flex; flex-direction:column; gap:6px; min-width:0; }
 .kpi-note { margin:0; color:var(--secondary); font-size:12px; line-height:16px; }
 .tone-amber .kpi-note, .tone-amber { color:var(--amber); }
 .kpi.tone-amber .kpi-value { color:var(--text); }
@@ -677,15 +678,16 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .bar > span { display:block; height:100%; background:var(--cyan); }
 .main-row { display:grid; grid-template-columns:56fr 24fr 20fr; gap:12px; min-height:324px; }
 .bottom-row { display:grid; grid-template-columns:45fr 55fr; gap:12px; min-height:235px; }
+.main-row > *, .bottom-row > * { min-width:0; }
 .section-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
 .legend { display:flex; gap:8px; align-items:center; margin:0; color:var(--secondary); font-size:12px; }
 .swatch { width:16px; height:3px; display:inline-block; }
 .swatch.actual { background:var(--cyan); }
 .swatch.guide { background:transparent; border-top:2px dashed var(--secondary); height:0; }
 .chart-frame, .chart { min-width:0; }
-.chart-svg { width:100%; height:auto; display:block; }
+.chart-svg { width:100%; max-width:100%; height:auto; display:block; }
 .grid { stroke:#24435A; stroke-opacity:.55; }
-.tick { fill:#8FA7BF; font-size:11px; }
+.tick { fill:var(--muted); font-size:11px; }
 .actual { fill:none; stroke:#26D9EB; stroke-width:2.5; }
 .guide { fill:none; stroke:#B5C7DC; stroke-width:1.5; stroke-dasharray:5 4; }
 .area { fill:#26D9EB; opacity:.12; }
@@ -704,16 +706,26 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .rec dl { display:grid; gap:4px; }
 .rec dt { color:var(--muted); font-size:12px; }
 .rec dd { margin:0; }
-.funnel-scroll { overflow-x:auto; }
-.funnel-row { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); gap:8px; align-items:stretch; }
+.funnel-scroll { container-type:inline-size; max-width:100%; overflow:visible; }
+.funnel-row { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); gap:8px; align-items:stretch; min-width:0; }
+.funnel-step { display:contents; }
+.funnel-panel { overflow:visible; }
 .stage { background:var(--raised); border:1px solid var(--border); border-radius:8px; min-width:0; }
-.stage summary { list-style:none; cursor:pointer; padding:12px; display:flex; flex-direction:column; gap:4px; min-height:96px; }
+.stage summary { list-style:none; cursor:pointer; padding:12px 10px; display:grid; grid-template-rows:40px auto auto; align-content:start; gap:4px; min-height:96px; }
 .stage summary::-webkit-details-marker { display:none; }
-.stage-label { color:var(--muted); font-size:12px; line-height:16px; }
+.stage-label { color:var(--secondary); font-size:16px; line-height:20px; font-weight:650; min-height:40px; }
 .stage-value { font-size:22px; line-height:28px; font-weight:650; }
-.stage-state { color:var(--muted); font-size:12px; min-height:16px; }
+.stage-state { color:var(--muted); font-size:13px; line-height:18px; min-height:18px; }
 .stage-detail { padding:0 12px 12px; color:var(--secondary); }
-.ratio { align-self:center; color:var(--secondary); font-size:12px; }
+.ratio { align-self:center; justify-self:center; color:var(--secondary); font-size:14px; line-height:18px; font-weight:650; white-space:nowrap; }
+@container (max-width:1224px) {
+  .funnel-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px 8px; }
+  .funnel-step { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; }
+  .ratio { align-self:center; padding:2px 0 4px; }
+}
+@container (max-width:540px) {
+  .funnel-row { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+}
 .tabs { display:flex; gap:6px; }
 .tabs label { border:1px solid var(--border); border-radius:8px; padding:6px 10px; color:var(--secondary); cursor:pointer; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .section-head label[for^="cost-cpl-"],
@@ -722,7 +734,7 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .cost-panel .chart { display:none; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .chart.cpl,
 .cost-panel input[id^="cost-demo-"]:checked ~ .chart.demo,
-.cost-panel input[id^="cost-cpa-"]:checked ~ .chart.cpa { display:block; }
+.cost-panel input[id^="cost-cpa-"]:checked ~ .chart.cpa { display:flex; flex-direction:column; min-height:0; }
 .ads-panel { display:flex; flex-direction:column; min-height:0; }
 .ads-panel .table-scroll { flex:1 1 auto; min-height:0; overflow:auto; max-width:100%; }
 .table-scroll { overflow:auto; max-width:100%; }
@@ -754,7 +766,6 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   .kpis { grid-template-columns:repeat(3, minmax(0,1fr)); }
   .main-row { grid-template-columns:1fr 1fr; min-height:0; }
   .lead-panel { grid-column:1 / -1; min-height:240px; }
-  .funnel-row { min-width:980px; }
 }
 @media (max-width:767px) {
   .app { grid-template-columns:minmax(0,1fr); }
@@ -769,56 +780,27 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   .main-row, .bottom-row { grid-template-columns:1fr; }
   .lead-panel { min-height:240px; }
   .header { flex-direction:column; }
-  .funnel-scroll { overflow:visible; }
-  .funnel-row { min-width:0; display:flex; flex-direction:column; }
-  .ratio { align-self:flex-start; padding-left:12px; }
+  .header-tools { flex-wrap:wrap; }
+  .section-head { flex-wrap:wrap; }
+  .kpi-value { font-size:30px; line-height:34px; }
   h1 { font-size:26px; line-height:32px; }
   .kpi { min-height:0; }
 }
 @media (min-width:1200px) and (min-height:960px) {
-  .app { height:100vh; }
-  .content { height:100vh; overflow:hidden; }
-  #screen-overview:checked ~ .content .panel-overview {
-    height:calc(100vh - 36px);
-    display:grid;
-    grid-template-rows:auto auto minmax(200px,1fr) minmax(112px,128px) minmax(292px,1fr);
-    overflow:hidden;
+  html.oc-embedded .app,
+  html.oc-embedded .content,
+  html.oc-embedded .sidebar {
+    min-height:calc(100vh - var(--oc-embed-bar));
+    height:auto;
   }
-  #screen-overview:checked ~ .content { overflow:hidden; }
-  #screen-overview:checked ~ .content .panel-overview .main-row,
-  #screen-overview:checked ~ .content .panel-overview .bottom-row {
-    min-height:0;
-    height:100%;
-  }
-  #screen-overview:checked ~ .content .panel-overview .lead-panel,
-  #screen-overview:checked ~ .content .panel-overview .cost-panel,
-  #screen-overview:checked ~ .content .panel-overview .funnel-panel {
-    min-height:0;
-    overflow:hidden;
-  }
+  #screen-overview:checked ~ .content .panel-overview,
+  #screen-overview:checked ~ .content .panel-overview .funnel-panel,
+  #screen-overview:checked ~ .content .panel-overview .bot-panel,
   #screen-overview:checked ~ .content .panel-overview .lead-panel,
   #screen-overview:checked ~ .content .panel-overview .cost-panel {
-    display:flex;
-    flex-direction:column;
+    overflow:visible;
+    height:auto;
+    min-height:min-content;
   }
-  #screen-overview:checked ~ .content .panel-overview .chart-frame,
-  #screen-overview:checked ~ .content .panel-overview .cost-panel .chart {
-    flex:1 1 auto;
-    min-height:0;
-  }
-  #screen-overview:checked ~ .content .panel-overview .chart-svg {
-    width:100%;
-    height:100%;
-  }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel {
-    height:100%;
-    overflow:hidden;
-    padding:12px;
-  }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel .section-head { margin-bottom:4px; }
-  #screen-overview:checked ~ .content .panel-overview .ads-panel .fine { margin-top:4px; }
-  #screen-overview:checked ~ .content .panel-overview .funnel-panel { padding:12px; }
-  #screen-overview:checked ~ .content .panel-overview .stage summary { min-height:0; padding:8px; }
-  #screen-overview:checked ~ .content .panel-overview .stage-state:empty { display:none; }
 }
 """

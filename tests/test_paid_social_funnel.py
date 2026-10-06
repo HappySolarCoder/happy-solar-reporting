@@ -50,6 +50,25 @@ BUFFALO = "GQtUlcTmLJ61HZjrGEPC"
 WORD = re.compile(r"\b(sit|sits|sat)\b", re.IGNORECASE)
 
 
+def _channel(value: float) -> float:
+    value = value / 255
+    if value <= 0.04045:
+        return value / 12.92
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+def _contrast(foreground: str, background: str) -> float:
+    def lum(hex_color: str) -> float:
+        red = _channel(int(hex_color[1:3], 16))
+        green = _channel(int(hex_color[3:5], 16))
+        blue = _channel(int(hex_color[5:7], 16))
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    lighter = max(_lum_pair := (lum(foreground), lum(background)))
+    darker = min(_lum_pair)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 def contact(contact_id: str, source: str | None, sold: str | None = None) -> dict:
     fields = []
     if source is not None:
@@ -1019,6 +1038,34 @@ class PageTests(unittest.TestCase):
             "metrics/paid_social_funnel",
         )
         self.assertEqual(index.dispatch_route("/api/paid_social_funnel"), "paid_social_funnel")
+
+    def test_funnel_labels_share_a_number_row_and_wrap(self):
+        html = page.render_html(model=page.model_for_query({"source": ["demo"]}))
+        self.assertIn('class="funnel-step"', html)
+        self.assertIn('class="kpi-foot"', html)
+        self.assertIn(".stage-label { color:var(--secondary); font-size:16px; line-height:20px; font-weight:650; min-height:40px; }", html)
+        self.assertIn("grid-template-rows:32px auto minmax(0,1fr)", html)
+        self.assertIn("container-type:inline-size", html)
+        self.assertIn("@container (max-width:1224px)", html)
+        self.assertIn("@container (max-width:540px)", html)
+        self.assertLess(
+            html.find("@container (max-width:1224px)"),
+            html.find("@media (max-width:1199px)"),
+        )
+        self.assertNotIn("@container (max-width:1120px)", html)
+        self.assertIn("min-height:min-content", html)
+        self.assertNotIn("minmax(136px,168px)", html)
+        self.assertNotIn(".content { height:100vh; overflow:hidden; }", html)
+        self.assertIn("overflow:visible", html)
+        self.assertNotIn("min-width:980px", html)
+        self.assertIn("--muted:#A3C2D3", html)
+        self.assertGreaterEqual(_contrast("#A3C2D3", "#14334A"), 4.5)
+        self.assertGreaterEqual(_contrast("#A3C2D3", "#0C253B"), 4.5)
+        self.assertGreaterEqual(_contrast("#A3C2D3", "#071B2D"), 4.5)
+        self.assertGreaterEqual(_contrast("#B5C7DC", "#0C253B"), 4.5)
+        self.assertGreaterEqual(_contrast("#B5C7DC", "#071B2D"), 4.5)
+        self.assertGreaterEqual(_contrast("#B5C7DC", "#14334A"), 4.5)
+        self.assertIsNone(WORD.search(html))
 
     def test_explicit_sample_mode_still_renders_the_fixture(self):
         handler = page.handler.__new__(page.handler)

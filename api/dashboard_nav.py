@@ -283,10 +283,17 @@ def _nav_state_boot() -> str:
     Callers place dashboard_nav_css() inside a <style> block in the document
     head. Closing that block here lets the saved choice land on <html> before
     the body is parsed, including when Bloom frames the page.
+
+    When the page is framed (Bloom's Data Center) and the viewer has not made
+    a choice yet, start on the slim rail so Bloom's sidebar is the one full
+    navigation layer.
     """
     return (
-        "</style><script>(function(){try{if(localStorage.getItem('hsOpsNavCollapsed')==='1')"
-        "{document.documentElement.classList.add('oc-nav-collapsed');}}catch(e){}})();"
+        "</style><script>(function(){var d=document.documentElement,f=false;"
+        "try{f=window.self!==window.top;}catch(e){f=true;}"
+        "if(f){d.classList.add('oc-embedded');}"
+        "try{var s=localStorage.getItem('hsOpsNavCollapsed');"
+        "if(s==='1'||(f&&s===null)){d.classList.add('oc-nav-collapsed');}}catch(e){}})();"
         "</script><style>"
     )
 
@@ -796,7 +803,9 @@ def render_dashboard_nav(current: str) -> str:
               scheduleChartRemeasure();
             }}
             try {{
-              if (localStorage.getItem(NAV_COLLAPSE_KEY) === '1') {{
+              var savedNav = localStorage.getItem(NAV_COLLAPSE_KEY);
+              var framedNav = document.documentElement.classList.contains('oc-embedded');
+              if (savedNav === '1' || (framedNav && savedNav === null)) {{
                 document.documentElement.classList.add('oc-nav-collapsed');
               }}
             }} catch (err) {{}}

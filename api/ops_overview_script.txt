@@ -385,7 +385,7 @@
     setText("asOf", "Live metrics" + (asOf ? " · as of " + asOf : ""));
     const note = ["Sweeper counts the Sweeper and Rehash pipelines. It is not the Phones lead source.",
       "Doors, Self Gen, Inbound and 3PL are lead-source buckets. A Sweeper pipeline opportunity can also carry a lead source, so the six funnels are not a partition of the company total.",
-      "Demo % is demos divided by ran. Opp2Prelim is sales divided by ran. UI copy says Demo."];
+      "Demo % is demos divided by opportunities ran. Opp2Prelim is sales divided by opportunities ran."];
     if (broken.length) note.unshift("Missing: " + broken.join(", ") + ". Those figures stay blank.");
     document.getElementById("pageNote").textContent = note.join(" ");
     if (f.territory === "All" && f.source === "All") loadTrends();
@@ -413,7 +413,7 @@
       if (values.length > 8 && i % 2) return "";
       return '<text x="' + (x + i * step) + '" y="198" text-anchor="middle">' + esc(String(row.month).slice(2)) + "</text>";
     }).join("");
-    return '<svg class="history-chart" viewBox="0 0 740 214" role="img" aria-label="' + esc(label) + ' from company_trends"><path d="' + path + '" fill="none" stroke="#26d9eb" stroke-width="2.5" stroke-linejoin="round"/>' + dots + labels + "</svg>";
+    return '<svg class="history-chart" viewBox="0 0 740 214" role="img" aria-label="' + esc(label) + ', monthly company totals"><path d="' + path + '" fill="none" stroke="#26d9eb" stroke-width="2.5" stroke-linejoin="round"/>' + dots + labels + "</svg>";
   }
   function showUnavailable() {
     setText("asOf", "Metrics unavailable");
@@ -487,8 +487,8 @@
     const created = rows.map(function (row) { return row.opps_created == null ? null : Number(row.opps_created); }).filter(function (n) { return n != null; });
     document.getElementById("sparkSales").innerHTML = spark(sales, "Monthly sales since August 2025. Not a daily count.");
     document.getElementById("sparkCreated").innerHTML = spark(created, "Monthly opportunities created since August 2025. Not a daily count.");
-    document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly sales from company_trends, August 2025 through the latest trend month. Not a daily series and not filtered by a short date range.</p>' + seriesChart(rows, "sales", "Sales", "");
-    document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly opportunities created from the same company_trends months.</p>' + seriesChart(rows, "opps_created", "Opportunities created", "");
+    document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly company sales from GoHighLevel opportunities, August 2025 through the current month. One point per month, so the date range above does not change this chart.</p>' + seriesChart(rows, "sales", "Sales", "");
+    document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly opportunities created in GoHighLevel over the same months. The date range above does not change this chart.</p>' + seriesChart(rows, "opps_created", "Opportunities created", "");
   }
   async function load() {
     const token = ++requestToken;

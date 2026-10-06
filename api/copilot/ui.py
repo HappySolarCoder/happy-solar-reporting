@@ -66,6 +66,7 @@ def render_panel() -> str:
   html.goose-dock #sidebar {{ box-sizing: border-box; padding-bottom: 88px; }}
   @media (min-width: 801px) {{
     html.oc-nav-collapsed.goose-dock .goose-open {{ left: 4px; }}
+    html.oc-embedded.goose-dock .goose-open {{ left: 16px; }}
   }}
   @media (max-width: 800px) {{
     html.goose-dock, html.goose-dock body.oc-root {{ height: 100dvh; overflow: hidden; }}

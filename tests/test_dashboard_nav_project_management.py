@@ -102,6 +102,34 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotIn(">Collapse navigation<", html)
         self.assertNotRegex(html, r"\bsits\b")
 
+    def test_embedded_shell_keeps_section_switcher_and_standalone_rail(self):
+        html = render_dashboard_nav("company_overview")
+        css = nav.dashboard_nav_css()
+        self.assertIn('id="sidebar"', html)
+        self.assertIn('class="oc-embed-bar"', html)
+        self.assertIn('aria-label="Data Center sections"', html)
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/company_overview" aria-current="page"',
+            html,
+        )
+        self.assertIn('class="oc-embed-link" href="/api/sales_dashboard"', html)
+        self.assertIn('class="oc-embed-link" href="/api/website_funnel"', html)
+        self.assertIn(f'href="{PM_HUB_URL}" target="_blank"', html)
+        self.assertIn(".oc-embed-bar { display: none; }", css)
+        self.assertIn("html.oc-embedded .oc-embed-bar {", css)
+        self.assertIn("html.oc-embedded #sidebar,", css)
+        self.assertIn("display: none !important;", css)
+        self.assertIn("html.oc-embedded .workspace,", css)
+        self.assertIn("margin-left: 0 !important;", css)
+        self.assertIn("html.oc-embedded .oc-page .topbar {", css)
+        self.assertIn("html.oc-embedded .oc-page .global-filterbar {", css)
+        self.assertIn("window.self!==window.top", css)
+        self.assertIn("embed=1", css)
+        self.assertIn("searchParams.set('embed', '1')", html)
+        self.assertIn("html.oc-nav-collapsed #sidebar { width: 64px; box-sizing: border-box; }", css)
+        self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
+        self.assertNotRegex(css, r"\b(sit|sits|sat)\b")
+
 
 if __name__ == "__main__":
     unittest.main()

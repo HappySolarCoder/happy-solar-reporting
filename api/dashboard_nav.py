@@ -20,6 +20,8 @@ def dashboard_nav_css() -> str:
         + "\n"
         + _nav_state_boot()
         + "\n"
+        + _embed_chrome_css()
+        + "\n"
         + _loading_overlay_css()
     )
 
@@ -278,23 +280,175 @@ def _nav_collapse_css() -> str:
 
 
 def _nav_state_boot() -> str:
-    """Apply the saved rail before first paint.
+    """Apply saved rail state, and the embedded shell, before first paint.
 
     Callers place dashboard_nav_css() inside a <style> block in the document
-    head. Closing that block here lets the saved choice land on <html> before
-    the body is parsed, including when Bloom frames the page.
+    head. Closing that block here lets the class land on <html> before the
+    body is parsed.
 
-    When the page is framed (Bloom's Data Center) and the viewer has not made
-    a choice yet, start on the slim rail so Bloom's sidebar is the one full
-    navigation layer.
+    A framed page, or `?embed=1`, is `html.oc-embedded`. That shell hides the
+    sidebar and the operations top bar and shows the section switcher.
+    Standalone pages keep the rail. A framed viewer with no saved choice still
+    starts collapsed, which only shows when the rail itself is shown.
     """
     return (
-        "</style><script>(function(){var d=document.documentElement,f=false;"
+        "</style><script>(function(){var d=document.documentElement,f=false,q=false;"
         "try{f=window.self!==window.top;}catch(e){f=true;}"
-        "if(f){d.classList.add('oc-embedded');}"
+        "try{q=/(?:^|[?&])embed=1(?:&|$)/.test(location.search);}catch(e){}"
+        "if(f||q){d.classList.add('oc-embedded');}"
         "try{var s=localStorage.getItem('hsOpsNavCollapsed');"
         "if(s==='1'||(f&&s===null)){d.classList.add('oc-nav-collapsed');}}catch(e){}})();"
         "</script><style>"
+    )
+
+
+def _embed_chrome_css() -> str:
+    """One section row when Bloom frames the app, or when `?embed=1` is set.
+
+    The rail and the operations crumb bar are the duplicate chrome. The
+    switcher keeps every section reachable. Standalone pages never match
+    `html.oc-embedded`, so their rail and top bar stay put.
+    """
+    return """
+    .oc-embed-bar { display: none; }
+    html.oc-embedded {
+      --oc-embed-bar: 44px;
+      scroll-padding-top: var(--oc-embed-bar);
+    }
+    html.oc-embedded .oc-embed-bar {
+      display: flex;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--oc-embed-bar);
+      z-index: 30;
+      box-sizing: border-box;
+      max-width: 100%;
+      background: #081e31;
+      border-bottom: 1px solid #203e54;
+      align-items: stretch;
+      overflow: hidden;
+    }
+    html.oc-embedded .oc-embed-nav {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: stretch;
+      min-width: 0;
+      margin: 0;
+      padding: 0 4px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      scrollbar-color: #29475c transparent;
+    }
+    html.oc-embedded .oc-embed-nav a {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0 12px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      background: transparent !important;
+      color: #a7bfd2 !important;
+      font: 12px/1.2 'DM Sans', Arial, sans-serif;
+      text-decoration: none !important;
+      white-space: nowrap;
+    }
+    html.oc-embedded .oc-embed-nav a:hover {
+      background: #102e46 !important;
+      color: #fff !important;
+      text-decoration: none !important;
+    }
+    html.oc-embedded .oc-embed-nav a.active {
+      background: transparent !important;
+      color: #26d9eb !important;
+      border-bottom-color: #26d9eb;
+    }
+    html.oc-embedded .oc-embed-nav a:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: -2px;
+    }
+    html.oc-embedded .oc-embed-sep {
+      flex: 0 0 auto;
+      align-self: center;
+      width: 1px;
+      height: 16px;
+      margin: 0 4px;
+      background: #234358;
+    }
+    html.oc-embedded .oc-embed-status {
+      flex: 0 1 auto;
+      align-self: center;
+      max-width: 34%;
+      margin-left: 8px;
+      padding: 0 12px 0 8px;
+      overflow: hidden;
+      color: #91abc0;
+      font: 11px/1.2 'DM Sans', Arial, sans-serif;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    html.oc-embedded #sidebar,
+    html.oc-embedded .oc-menu-btn,
+    html.oc-embedded button.mobile-menu {
+      display: none !important;
+    }
+    html.oc-embedded .workspace,
+    html.oc-embedded body.oc-root .wrap,
+    html.oc-embedded .wrap {
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+      box-sizing: border-box;
+      padding-top: var(--oc-embed-bar) !important;
+    }
+    html.oc-embedded body,
+    html.oc-embedded body.oc-root,
+    html.oc-embedded body.oc-root:not(:has(.wrap)):not(:has(.workspace)) {
+      padding-left: 0 !important;
+    }
+    html.oc-embedded body:not(:has(.wrap)):not(:has(.workspace)) {
+      padding-top: var(--oc-embed-bar) !important;
+    }
+    html.oc-embedded .oc-page .topbar {
+      display: none !important;
+    }
+    html.oc-embedded .oc-page .global-filterbar {
+      top: var(--oc-embed-bar);
+    }
+    @media (max-width: 800px) {
+      html.oc-embedded .oc-embed-status { display: none; }
+      html.oc-embedded .oc-embed-nav a { padding: 0 10px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html.oc-embedded .oc-embed-nav { scroll-behavior: auto; }
+    }
+    """
+
+
+def _render_embed_nav(current: str) -> str:
+    parts: list[str] = []
+    for index, (_label, items) in enumerate(NAV_GROUPS):
+        if index:
+            parts.append('<span class="oc-embed-sep" aria-hidden="true"></span>')
+        for key, title, href in items:
+            active = " active" if current == key else ""
+            current_attr = ' aria-current="page"' if current == key else ""
+            external = ' target="_blank" rel="noopener noreferrer"' if href.startswith("http") else ""
+            parts.append(
+                f'<a class="oc-embed-link{active}" href="{href}"{current_attr}{external}>{title}</a>'
+            )
+    links = "".join(parts)
+    return (
+        '<div class="oc-embed-bar">'
+        f'<nav class="oc-embed-nav" aria-label="Data Center sections">{links}</nav>'
+        "</div>"
     )
 
 
@@ -711,6 +865,7 @@ def render_dashboard_nav(current: str) -> str:
             f'<div class="navgroup">{label}</div>' + "".join(links)
         )
     menu = "".join(groups)
+    embed_nav = _render_embed_nav(current)
     html = f"""
         {render_dashboard_loader()}
         <button type="button" class="mobile-menu oc-menu-btn" aria-label="Toggle navigation" onclick="document.body.classList.toggle('menu-open')">☰</button>
@@ -733,11 +888,46 @@ def render_dashboard_nav(current: str) -> str:
           <nav class="navscroll" aria-label="Operations">{menu}</nav>
           <div class="sidebottom"><div><b>Operations control</b>America/New_York</div></div>
         </aside>
+        {embed_nav}
         <!-- HAPPY_SOLAR_LOADING -->
         <script>
           (function() {{
             document.documentElement.classList.add('oc-root');
             document.body.classList.add('oc-root');
+            (function prepareEmbedNav() {{
+              if (!document.documentElement.classList.contains('oc-embedded')) return;
+              var bar = document.querySelector('.oc-embed-bar');
+              var sectionNav = document.querySelector('.oc-embed-nav');
+              if (bar && bar.parentElement !== document.body) document.body.insertBefore(bar, document.body.firstChild);
+              if (!sectionNav) return;
+              try {{
+                var params = new URLSearchParams(window.location.search);
+                if (params.get('embed') === '1') {{
+                  var sectionLinks = sectionNav.querySelectorAll('a[href^="/"]');
+                  for (var s = 0; s < sectionLinks.length; s++) {{
+                    var sectionUrl = new URL(sectionLinks[s].getAttribute('href'), window.location.href);
+                    sectionUrl.searchParams.set('embed', '1');
+                    sectionLinks[s].setAttribute('href', sectionUrl.pathname + sectionUrl.search + sectionUrl.hash);
+                  }}
+                }}
+              }} catch (err) {{}}
+              function scrollActiveSection() {{
+                var activeSection = sectionNav.querySelector('a.active');
+                if (!activeSection || !sectionNav.clientWidth) return;
+                var nextLeft = activeSection.offsetLeft - Math.max(0, (sectionNav.clientWidth - activeSection.offsetWidth) / 2);
+                if (nextLeft > 0) sectionNav.scrollLeft = nextLeft;
+              }}
+              scrollActiveSection();
+              window.requestAnimationFrame(scrollActiveSection);
+              function placeEmbedStatus() {{
+                var status = document.getElementById('asOf');
+                if (!bar || !status || bar.contains(status)) return;
+                status.classList.add('oc-embed-status');
+                bar.appendChild(status);
+              }}
+              if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', placeEmbedStatus);
+              else placeEmbedStatus();
+            }})();
             var NAV_COLLAPSE_KEY = 'hsOpsNavCollapsed';
             function navIsCollapsed() {{
               return document.documentElement.classList.contains('oc-nav-collapsed');

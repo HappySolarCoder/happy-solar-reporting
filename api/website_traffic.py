@@ -673,6 +673,9 @@ __DASHBOARD_NAV_CSS__
     .banner.gate { border-color:#bfdbfe; background:#eff6ff; color:#1e3a8a; }
     .banner.meta { border-color:#e5e7eb; background:#f8fafc; color:#334155; }
     table { width:100%; border-collapse:collapse; }
+    .table-scroll { width:100%; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .grid > * { min-width:0; }
+    @media (max-width:640px) { .filter { flex-wrap:wrap; min-width:0; max-width:100%; } .filters input[type="date"] { min-width:0; max-width:100%; } }
     th, td { border-bottom:1px solid var(--border); padding:9px 10px; text-align:left; font-size:13px; }
     th { color:#64748b; font-weight:900; background:#fafbfc; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
@@ -810,10 +813,10 @@ __DASHBOARD_NAV_HTML__
           </div>
           <div class="chartBox" id="trendChart">__TREND_SVG__</div>
           <div class="chart-fallback">
-            <table>
+            <div class="table-scroll"><table>
               <thead><tr><th>Date ET</th><th>Sessions</th><th>Estimate / LP</th><th>Prior sessions</th><th>Prior estimate/LP</th></tr></thead>
               <tbody id="trendBody">__TREND_BODY__</tbody>
-            </table>
+            </table></div>
           </div>
         </div>
       </div>
@@ -826,12 +829,12 @@ __DASHBOARD_NAV_HTML__
           <div class="card-title">Channel + source / medium __TAG_ACQUISITION__</div>
           <div class="meta" style="margin-bottom:10px">GA4 sessionDefaultChannelGroup + sessionSource / sessionMedium on allowlisted hosts. Not Meta spend. Bars are the top source/medium rows (cap 10).</div>
           <div class="hbars" id="acqBars">__ACQ_BARS__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Channel</th><th>Source / medium</th><th>Sessions</th><th>Users</th></tr></thead>
             <tbody id="acqBody">
               __ACQ_BODY__
             </tbody>
-          </table>
+          </table></div>
         </div>
         <div class="card span-4">
           <div class="card-title">FB organic vs Meta paid</div>
@@ -841,12 +844,12 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-12 callout warn">Paid landing mismatch: EXAMPLE — landing × source is not queried in v1. Do not read this as Ads numbers. Later wiring flags www-without-estimate_start.</div>
         <div class="card span-12">
           <div class="card-title">Landing × source — top 10 __TAG_PAID_MISMATCH__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>#</th><th>Landing</th><th>Source / medium</th><th>Sessions</th></tr></thead>
             <tbody>
               <tr><td colspan="4">EXAMPLE — extra landing × source report not pulled. Content/LPs shows path landings when cheap.</td></tr>
             </tbody>
-          </table>
+          </table></div>
         </div>
       </div>
     </section>
@@ -857,28 +860,28 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-12 callout">Call out: primary landing is <b>/estimate</b> on www.happyslr.com. Legacy wny.happyslr.com calculator pages stay in dual-domain history — do not drop them.</div>
         <div class="card span-4">
           <div class="card-title">Top landings __TAG_CONTENT__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Page</th><th>Sessions</th></tr></thead>
             <tbody id="landingBody">__LANDING_BODY__</tbody>
-          </table>
+          </table></div>
         </div>
         <div class="card span-4">
           <div class="card-title">Top pages __TAG_CONTENT__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Page</th><th>Views</th></tr></thead>
             <tbody id="pagesBody">__PAGES_BODY__</tbody>
-          </table>
+          </table></div>
         </div>
         <div class="card span-4">
           <div class="card-title">Top exits <span class="example-tag">EXAMPLE</span></div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Page</th><th>Exits</th></tr></thead>
             <tbody>
               <tr><td>/estimate</td><td>—</td></tr>
               <tr><td>/</td><td>—</td></tr>
               <tr><td>wny /calculator (legacy)</td><td>—</td></tr>
             </tbody>
-          </table>
+          </table></div>
           <div class="meta">Exit report not pulled (not cheap enough for v1).</div>
         </div>
       </div>
@@ -908,10 +911,10 @@ __DASHBOARD_NAV_HTML__
           <div class="meta">Live counts only. Funnel top is estimate/LP visits, not all-site sessions. Contact stays EXAMPLE — no invented step.</div>
           <div class="hbars" id="funnelBars">__FUNNEL_BARS__</div>
           <div class="chart-fallback">
-            <table>
+            <div class="table-scroll"><table>
               <thead><tr><th>Step</th><th>Count</th><th>Rate</th></tr></thead>
               <tbody id="funnelChartBody">__FUNNEL_CHART_BODY__</tbody>
-            </table>
+            </table></div>
           </div>
         </div>
         <div class="card span-12 callout warn">Instant Form and 3PL bought leads do not belong on this funnel. They are not website leads.</div>
@@ -923,7 +926,7 @@ __DASHBOARD_NAV_HTML__
         <div class="section-label">Audience</div>
         <div class="card span-6">
           <div class="card-title">WNY metros __TAG_AUDIENCE__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Metro</th><th>Sessions</th><th>Share</th></tr></thead>
             <tbody>
               <tr><td>Buffalo</td><td>—</td><td>—</td></tr>
@@ -932,19 +935,19 @@ __DASHBOARD_NAV_HTML__
               <tr><td>Niagara-area</td><td>—</td><td>—</td></tr>
               <tr><td>Other NY / unknown</td><td>—</td><td>—</td></tr>
             </tbody>
-          </table>
+          </table></div>
           <div class="meta">City report not pulled (not cheap enough for v1).</div>
         </div>
         <div class="card span-6">
           <div class="card-title">Device / browser __TAG_AUDIENCE__</div>
-          <table>
+          <div class="table-scroll"><table>
             <thead><tr><th>Device</th><th>Sessions</th><th>Browser</th><th>Share</th></tr></thead>
             <tbody>
               <tr><td>mobile</td><td>—</td><td>Chrome</td><td>—</td></tr>
               <tr><td>desktop</td><td>—</td><td>Safari</td><td>—</td></tr>
               <tr><td>tablet</td><td>—</td><td>Other</td><td>—</td></tr>
             </tbody>
-          </table>
+          </table></div>
           <div class="meta">Device report not pulled (not cheap enough for v1).</div>
         </div>
       </div>
@@ -964,10 +967,10 @@ __DASHBOARD_NAV_HTML__
           <div class="meta">Live counts from <b>named_fills.by_day</b>. Days without fills are omitted, not zeroed. PII stays gated.</div>
           <div class="hbars" id="namedBars">__NAMED_BARS__</div>
           <div class="chart-fallback">
-            <table>
+            <div class="table-scroll"><table>
               <thead><tr><th>Date ET</th><th>Live</th><th>Excluded</th></tr></thead>
               <tbody id="namedDayBody">__NAMED_DAY_BODY__</tbody>
-            </table>
+            </table></div>
           </div>
         </div>
         <div class="card span-6">
@@ -977,14 +980,14 @@ __DASHBOARD_NAV_HTML__
         <div class="card span-12">
           <div class="card-title">PII table — sales only <span class="example-tag">GATED</span></div>
           <div class="pii-wrap">
-            <table class="pii-mock" aria-hidden="true">
+            <div class="table-scroll"><table class="pii-mock" aria-hidden="true">
               <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Address</th><th>Source</th></tr></thead>
               <tbody>
                 <tr><td>A. Example</td><td>alex@example.com</td><td>716-555-0100</td><td>1 Sample St</td><td>new-site-estimate</td></tr>
                 <tr><td>B. Placeholder</td><td>blair@example.com</td><td>585-555-0142</td><td>2 Sample Ave</td><td>new-site-estimate</td></tr>
                 <tr><td>C. Mock</td><td>casey@example.com</td><td>315-555-0199</td><td>3 Sample Rd</td><td>legacy-wny</td></tr>
               </tbody>
-            </table>
+            </table></div>
             <div class="pii-gate">Blurred / disabled PII mock. Sales role unlocks this table in a later pass. Marketing stays on aggregates.</div>
           </div>
           <div class="meta disabled-note">Disabled. Not live warehouse rows. Marketing JSON never includes PII.</div>

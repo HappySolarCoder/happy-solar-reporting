@@ -385,6 +385,13 @@ __DASHBOARD_NAV_CSS__
       .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }
       .adminSettings, .missingDisposTop { position: static; top: auto; right: auto; }
       .brandCenter { display:none; }
+      .filters,
+      .filters .filter,
+      .filters input,
+      .filters select,
+      .filters button { box-sizing: border-box; min-width: 0; max-width: 100%; }
+      .filters .filter { flex-direction: column; align-items: stretch; }
+      .filters input, .filters select, .filters button { width: 100%; }
     }
 </style>
 </head>

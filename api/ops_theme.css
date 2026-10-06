@@ -82,6 +82,14 @@ body.oc-root .outcome-pill.pending {
   background: #1e3348 !important;
   color: #d5e3ec !important;
 }
+body.oc-root .outcome-pill.good {
+  background: #103d3b;
+  color: #b6ffe8;
+}
+body.oc-root .outcome-pill.warn {
+  background: #3b3327;
+  color: #ffbe45;
+}
 body.oc-root .tablewrap a,
 body.oc-root .tableWrap a,
 body.oc-root td a,
@@ -134,6 +142,10 @@ body.oc-root .mini-stat {
 body.oc-root .mini-stat { background: #102c42 !important; }
 body.oc-root .mini-stat span { color: #91abc0 !important; }
 body.oc-root .info-body { color: #d5e3ec !important; }
+body.oc-root .owner-total,
+body.oc-root .info-title {
+  color: #ff99a5;
+}
 body.oc-root .kpiVal { color: #f1f6ff !important; }
 body.oc-root .kpiVal.blue,
 body.oc-root .kpi.blue { color: #9ec5ff !important; }
@@ -230,3 +242,6 @@ body.oc-root .meta { color: #91abc0 !important; }
 #seeAllModal th { color: #334155 !important; background: #f8fafc !important; }
 #seeAllModal td,
 #seeAllModal .modal-section-title { color: #0f172a !important; }
+body.oc-root th.sortable .sort-ind { color: #8ef0c8; }
+body.oc-root .delta.down { color: #ff99a5; }
+body.oc-root .trendlabel { color: #d5e3ec; }

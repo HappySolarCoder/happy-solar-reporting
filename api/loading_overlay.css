@@ -14,6 +14,7 @@
 .dashboard-loading button:focus-visible{outline:2px solid #26d9eb;outline-offset:3px}
 .dashboard-loading .loading-card p{font-family:'DM Sans',Arial,sans-serif}
 body.loading-open .goose-open,body.loading-open .goose-panel{z-index:1;pointer-events:none}
+.dashboard-loading .loading-brand > span { color: #9ab8c9; }
 .hs-focus-target:focus,.hs-focus-target:focus-visible{outline:none!important}
 .hs-freshness{position:fixed;right:16px;bottom:16px;z-index:30;margin:0;padding:6px 10px;border:1px solid #24435a;border-radius:999px;background:#0c253bcc;color:#9ab8c9;font:11px/1.4 'DM Sans',Arial,sans-serif;pointer-events:none}
 .hs-freshness[hidden]{display:none}

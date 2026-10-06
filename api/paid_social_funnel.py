@@ -23,6 +23,7 @@ for path in (str(API_DIR), str(METRICS_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from dashboard_nav import embed_section_row_css, render_embed_section_row  # noqa: E402
 from growth_command import (  # noqa: E402
     CPL_TARGET,
     DEMO_COST_TARGET,
@@ -138,9 +139,11 @@ def _document(model: dict) -> str:
   <title>Happy Solar — Growth command center</title>
   <style>
     {CSS}
+    {embed_section_row_css()}
   </style>
 </head>
 <body>
+  {render_embed_section_row("paid_social_funnel")}
   <div class="app">
     <input class="sr-input" type="radio" name="screen" id="screen-overview" checked />
     <input class="sr-input" type="radio" name="screen" id="screen-campaigns" />

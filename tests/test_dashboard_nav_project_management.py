@@ -194,6 +194,25 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn('aria-current="true"', _group_button(other, "Other"))
         self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
 
+    def test_embed_section_row_is_available_without_the_operations_rail(self):
+        html = nav.render_embed_section_row("paid_social_funnel")
+        css = nav.embed_section_row_css()
+        self.assertIn('class="oc-embed-bar"', html)
+        self.assertIn('aria-current="true"', _group_button(html, "Lead Gen"))
+        self.assertNotIn('aria-current="true"', _group_button(html, "Company"))
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/paid_social_funnel" aria-current="page"',
+            html,
+        )
+        self.assertIn("ArrowDown", html)
+        self.assertIn("Escape", html)
+        self.assertNotIn('id="sidebar"', html)
+        self.assertIn(".oc-embed-bar { display: none; }", css)
+        self.assertIn("html.oc-embedded .oc-embed-bar {", css)
+        self.assertIn("window.self!==window.top", css)
+        self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
+        self.assertNotRegex(css, r"\b(sit|sits|sat)\b")
+
 
 def _group_button(html: str, label: str) -> str:
     token = f'class="oc-embed-group-label">{label}</span>'

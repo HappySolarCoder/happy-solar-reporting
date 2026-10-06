@@ -258,13 +258,20 @@
     else focusHeading();
   }
 
+  function holdArrival(node, alreadyOpen) {
+    if (!node || !node.style) return;
+    node.style.animation = alreadyOpen ? "none" : "";
+  }
+
   function showLoading() {
     var node = ensureLayer();
     var alreadyOpen = !node.hidden;
     rememberFocus();
     if (!alreadyOpen) setBlocked(true);
+    holdArrival(node, alreadyOpen);
     if (node.classList && node.classList.remove) node.classList.remove("loading-error");
     if (!alreadyOpen) node.className = "dashboard-loading";
+    holdArrival(node, alreadyOpen);
     node.hidden = false;
     node.innerHTML = loadingMarkup();
     if (document.activeElement !== node) node.focus();
@@ -282,9 +289,12 @@
 
   function showError() {
     var node = ensureLayer();
+    var alreadyOpen = !node.hidden;
     rememberFocus();
     if (node.hidden) setBlocked(true);
+    holdArrival(node, alreadyOpen);
     node.className = "dashboard-loading loading-error";
+    holdArrival(node, alreadyOpen);
     node.hidden = false;
     node.innerHTML = errorMarkup();
     var retry = node.querySelector("#loadingRetry");

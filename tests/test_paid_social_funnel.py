@@ -1048,6 +1048,13 @@ class PageTests(unittest.TestCase):
         self.assertIn("container-type:inline-size", html)
         self.assertIn("@container (max-width:1120px)", html)
         self.assertIn("@container (max-width:540px)", html)
+        self.assertLess(
+            html.find("@media (max-width:1199px)"),
+            html.find("@container (max-width:1120px)"),
+        )
+        self.assertIn("minmax(min-content, auto)", html)
+        self.assertNotIn("minmax(136px,168px)", html)
+        self.assertIn("overflow:visible", html)
         self.assertNotIn("min-width:980px", html)
         self.assertIn("--muted:#A3C2D3", html)
         self.assertGreaterEqual(_contrast("#A3C2D3", "#14334A"), 4.5)

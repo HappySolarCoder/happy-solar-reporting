@@ -717,14 +717,6 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 .stage-state { color:var(--muted); font-size:13px; line-height:18px; min-height:18px; }
 .stage-detail { padding:0 12px 12px; color:var(--secondary); }
 .ratio { align-self:center; justify-self:center; color:var(--secondary); font-size:14px; line-height:18px; font-weight:650; white-space:nowrap; }
-@container (max-width:1120px) {
-  .funnel-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px 8px; }
-  .funnel-step { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; }
-  .ratio { align-self:center; padding:2px 0 4px; }
-}
-@container (max-width:540px) {
-  .funnel-row { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-}
 .tabs { display:flex; gap:6px; }
 .tabs label { border:1px solid var(--border); border-radius:8px; padding:6px 10px; color:var(--secondary); cursor:pointer; }
 .cost-panel input[id^="cost-cpl-"]:checked ~ .section-head label[for^="cost-cpl-"],
@@ -765,6 +757,14 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
   .kpis { grid-template-columns:repeat(3, minmax(0,1fr)); }
   .main-row { grid-template-columns:1fr 1fr; min-height:0; }
   .lead-panel { grid-column:1 / -1; min-height:240px; }
+  @container (max-width:1120px) {
+    .funnel-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px 8px; }
+    .funnel-step { display:flex; flex-direction:column; align-items:stretch; gap:4px; min-width:0; }
+    .ratio { align-self:center; padding:2px 0 4px; }
+  }
+  @container (max-width:540px) {
+    .funnel-row { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  }
 }
 @media (max-width:767px) {
   .app { grid-template-columns:minmax(0,1fr); }
@@ -788,11 +788,20 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
 @media (min-width:1200px) and (min-height:960px) {
   .app { height:100vh; }
   .content { height:100vh; overflow:hidden; }
+  html.oc-embedded .app {
+    min-height:calc(100vh - var(--oc-embed-bar));
+    height:calc(100vh - var(--oc-embed-bar));
+  }
+  html.oc-embedded .content,
+  html.oc-embedded .sidebar { height:calc(100vh - var(--oc-embed-bar)); min-height:0; }
   #screen-overview:checked ~ .content .panel-overview {
     height:calc(100vh - 36px);
     display:grid;
-    grid-template-rows:auto auto minmax(200px,1fr) minmax(136px,168px) minmax(292px,1fr);
+    grid-template-rows:auto auto minmax(160px,1fr) minmax(min-content, auto) minmax(160px,1fr);
     overflow:hidden;
+  }
+  html.oc-embedded #screen-overview:checked ~ .content .panel-overview {
+    height:calc(100vh - 36px - var(--oc-embed-bar));
   }
   #screen-overview:checked ~ .content { overflow:hidden; }
   #screen-overview:checked ~ .content .panel-overview .main-row,
@@ -801,10 +810,14 @@ input[type="date"] { background:var(--canvas); color:var(--text); border:1px sol
     height:100%;
   }
   #screen-overview:checked ~ .content .panel-overview .lead-panel,
-  #screen-overview:checked ~ .content .panel-overview .cost-panel,
-  #screen-overview:checked ~ .content .panel-overview .funnel-panel {
+  #screen-overview:checked ~ .content .panel-overview .cost-panel {
     min-height:0;
     overflow:hidden;
+  }
+  #screen-overview:checked ~ .content .panel-overview .funnel-panel {
+    min-height:min-content;
+    height:auto;
+    overflow:visible;
   }
   #screen-overview:checked ~ .content .panel-overview .lead-panel,
   #screen-overview:checked ~ .content .panel-overview .cost-panel {

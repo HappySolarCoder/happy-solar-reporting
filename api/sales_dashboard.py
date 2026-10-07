@@ -416,13 +416,13 @@ __DASHBOARD_NAV_CSS__
     }
     body.oc-root .vval,
     body.oc-root .vlabel { color: #7898b0; }
-    body.oc-root .wrap > .pillbar .pill {
+    body.oc-root .pillbar .pill {
       background: #102d43;
       border-color: #2b4e66;
       color: #d5e3ec;
       box-shadow: none;
     }
-    body.oc-root .wrap > .pillbar .pill.active {
+    body.oc-root .pillbar .pill.active {
       background: #123e52 !important;
       border-color: #28758a !important;
       color: #b6f6ff !important;

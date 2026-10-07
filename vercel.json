@@ -6,6 +6,14 @@
   },
   "rewrites": [
     {
+      "source": "/growth",
+      "destination": "/api?hs=growth_command_center"
+    },
+    {
+      "source": "/growth/",
+      "destination": "/api?hs=growth_command_center"
+    },
+    {
       "source": "/private/fma-payroll",
       "destination": "/api?hs=private/fma_payroll_page"
     },

@@ -111,8 +111,15 @@ class FmaPolishTests(unittest.TestCase):
         self.assertIn("grid-column: 1 / -1", phone)
         self.assertNotIn("grid-column: span 12", phone)
 
-    def test_see_all_control_stays_in_the_card(self):
-        self.assertIn('class="seeAllFoot"', FMA)
+    def test_see_all_control_is_under_the_performer_cards(self):
+        html = FMA.split("<script>", 1)[0]
+        foot = html.index('id="seeAllBtnContainerTop" class="seeAllFoot span-12"')
+        demo = html.index("GHL — Demo Rate by Setter")
+        self.assertLess(foot, demo)
+        self.assertEqual(html.count('id="seeAllFloatingOpen"'), 1)
+        self.assertNotIn('id="seeAllFloatingOpen"', html[demo:])
+        self.assertIn("Top 10 of ${n}", FMA)
+        self.assertIn('class="seeAllFoot span-12"', FMA)
         self.assertIn('id="seeAllFloatingOpen" type="button"', FMA)
         self.assertNotIn('id="seeAllFloatingOpen" style="position:fixed', FMA)
         self.assertIn("position: static", FMA)

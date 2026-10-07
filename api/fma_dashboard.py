@@ -564,7 +564,7 @@ __DASHBOARD_NAV_CSS__
     .seeAllFoot {
       display: flex;
       justify-content: flex-end;
-      margin-top: 12px;
+      margin-top: 0;
     }
     body.oc-root .wrap { padding-bottom: 64px; }
     body.oc-root .setterTable td div[style*="background:#eef2f7"] {
@@ -713,7 +713,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta"></div>
+          <div class="meta" id="topKnocksHint"></div>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -725,7 +725,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Appointments</div>
-          <div class="meta"></div>
+          <div class="meta" id="topApptsHint"></div>
         </div>
         <div class="list" id="topAppts">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -734,7 +734,9 @@ __DASHBOARD_NAV_HTML__
         </div>
       </div>
 
-      <div id="seeAllBtnContainerTop" class="span-12" style="display:none; text-align:right; margin-top:-2px; margin-bottom:4px;"></div>
+      <div id="seeAllBtnContainerTop" class="seeAllFoot span-12">
+        <button id="seeAllFloatingOpen" type="button">See All Table Data</button>
+      </div>
 
       <div class="card span-12">
         <div class="card-header setterHeader">
@@ -823,9 +825,6 @@ __DASHBOARD_NAV_HTML__
               </tr>
             </tfoot>
           </table>
-        </div>
-        <div class="seeAllFoot">
-          <button id="seeAllFloatingOpen" type="button">See All Table Data</button>
         </div>
       </div>
 
@@ -1173,6 +1172,13 @@ __DASHBOARD_NAV_HTML__
     el.innerHTML = html;
   }
 
+  function setTopHint(id, total) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const n = Number(total) || 0;
+    el.textContent = n > 10 ? `Top 10 of ${n}` : '';
+  }
+
   async function load() {
     // For now, only Knocks is backed by Raydar (dispositioned leads).
     // We'll wire the rest after metric schema is confirmed.
@@ -1409,6 +1415,7 @@ __DASHBOARD_NAV_HTML__
         const topKnocks = topKnocksAll.slice(0, 10);
         let topKnocksModalAll = topKnocksAll;
         renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));
+        setTopHint('topKnocksHint', topKnocksAll.length);
 
         // Use same attribution model as Top Performers — Knocks so numbers align
         const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_actor ? rayTable.breakdowns.knocks_by_actor : {};
@@ -1461,6 +1468,7 @@ __DASHBOARD_NAV_HTML__
         const topAppts = topApptsAll.slice(0, 10);
 
         renderTopList('topAppts', topAppts.map(r => ({ name: r.name, value: r.value })));
+        setTopHint('topApptsHint', topApptsAll.length);
 
 
         // Build row list
@@ -1560,6 +1568,7 @@ __DASHBOARD_NAV_HTML__
         // Top performer cards stay global. Team filtering only applies to the bottom table.
         topKnocksModalAll = topKnocksAll;
         renderTopList('topKnocks', topKnocksAll.slice(0, 10).map((r) => ({ name: r.name || r.uid || '—', value: r.value })));
+        setTopHint('topKnocksHint', topKnocksAll.length);
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
@@ -1724,8 +1733,6 @@ __DASHBOARD_NAV_HTML__
 
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         if (seeAllContainer) seeAllContainer.style.display = 'none';
-        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        if (seeAllTop) seeAllTop.style.display = 'none';
 
       }
 
@@ -1782,7 +1789,7 @@ __DASHBOARD_NAV_HTML__
     });
   }
 
-  // One See All control, in the Demo Rate card footer.
+  // One See All control, in flow under the Top Performers cards.
   let openSeeAll = null;
   const seeAllFloatingOpen = document.getElementById('seeAllFloatingOpen');
   if (seeAllFloatingOpen) {

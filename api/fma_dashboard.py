@@ -290,11 +290,10 @@ __DASHBOARD_NAV_CSS__
       border-color: rgba(236,72,153,0.40);
       color: #b80b66;
     }
-    /* White pillbar already meets AA; keep the pink chip instead of the navy active token. */
     body.oc-root .wrap > .pillbar .pill.active {
-      background: #fde9f3 !important;
-      border-color: #9d174d !important;
-      color: #9d174d !important;
+      background: #123e52 !important;
+      border-color: #28758a !important;
+      color: #b6f6ff !important;
     }
 
     .mobileFilterToggle { display:none; background:#fff; color:#1f2937; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px; font-weight:900; }
@@ -497,6 +496,69 @@ __DASHBOARD_NAV_CSS__
     #seeAllModal th, #seeAllModal td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:12px; }
     #seeAllModal th { color:var(--muted); font-weight:900; background:#f8fafc; }
     #seeAllModal td { color:#0f172a; font-weight:800; }
+
+    /* Soften leftover white bars so they sit in the navy shell. */
+    body.oc-root .wrap > .pillbar {
+      background: #0d293f;
+      border-color: #2b4e66;
+      box-shadow: none;
+    }
+    body.oc-root .wrap > .pillbar .pill {
+      background: #102d43;
+      border-color: #2b4e66;
+      color: #d5e3ec;
+    }
+    body.oc-root .scopeNote {
+      background: #102c42;
+      border-color: #2b4e66;
+      color: #d5e3ec;
+    }
+    body.oc-root .scopeNote strong { color: #f1f6ff; }
+    body.oc-root .scopeTag {
+      background: #123e52;
+      color: #b6f6ff;
+      border: 1px solid #28758a;
+    }
+    body.oc-root .list .row {
+      background: #163a52;
+      border-color: #2b4e66;
+    }
+    body.oc-root .list .name,
+    body.oc-root .list .val { color: #f1f6ff; }
+    body.oc-root .list .badge {
+      background: #173d52;
+      color: #b6f6ff;
+      border-color: #28758a;
+    }
+    body.oc-root .list .skeleton {
+      background: linear-gradient(90deg, #163a52, #1e4a66, #163a52);
+      background-size: 200% 100%;
+    }
+    body.oc-root .filters span[style*="#eef2f6"],
+    body.oc-root #clearRange,
+    body.oc-root #setterTableClear,
+    body.oc-root .seeAllOpenBtn,
+    body.oc-root #seeAllFloatingOpen,
+    body.oc-root .mobileFilterToggle {
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border-color: #2b4e66 !important;
+    }
+    body.oc-root .dashboardSwitch select {
+      background: #091e30 !important;
+      color: #bed1df !important;
+      border-color: #29485e !important;
+      box-shadow: none;
+    }
+    body.oc-root .wrap a.navbtn,
+    body.oc-root .wrap .navbtn {
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border-color: #2b4e66 !important;
+    }
+    body.oc-root #setterSummary > div {
+      color: #f1f6ff;
+    }
 </style>
 </head>
 <body data-oc-own-dates="1">

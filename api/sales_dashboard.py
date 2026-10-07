@@ -399,6 +399,51 @@ __DASHBOARD_NAV_CSS__
       .filters .filter { flex-direction: column; align-items: stretch; }
       .filters input, .filters select, .filters button { width: 100%; }
     }
+
+    /* Sales by Pipeline and leftover light chips, matched to the navy chart language. */
+    body.oc-root .vwrap {
+      background: #0b2438;
+      border-color: #29495f;
+    }
+    body.oc-root .vbarArea {
+      background-image: repeating-linear-gradient(
+        to top,
+        transparent 0,
+        transparent calc(25% - 0.7px),
+        #1e3e53 calc(25% - 0.7px),
+        #1e3e53 25%
+      );
+    }
+    body.oc-root .vval,
+    body.oc-root .vlabel { color: #7898b0; }
+    body.oc-root .wrap > .pillbar .pill {
+      background: #102d43;
+      border-color: #2b4e66;
+      color: #d5e3ec;
+      box-shadow: none;
+    }
+    body.oc-root .wrap > .pillbar .pill.active {
+      background: #123e52 !important;
+      border-color: #28758a !important;
+      color: #b6f6ff !important;
+    }
+    body.oc-root #clearRange,
+    body.oc-root .mobileFilterToggle {
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border-color: #2b4e66 !important;
+    }
+    body.oc-root .filters .filter-label {
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border-color: #2b4e66 !important;
+    }
+    body.oc-root .header-actions .navbtn,
+    body.oc-root .wrap a.navbtn {
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border-color: #2b4e66 !important;
+    }
 </style>
 </head>
 <body>
@@ -531,13 +576,7 @@ __DASHBOARD_NAV_HTML__
   const defaultYear = __YEAR__;
   const defaultMonth = __MONTH__;
 
-  const palette = [
-    'var(--green)',
-    'var(--blue)',
-    'var(--purple)',
-    'var(--cyan)',
-    'var(--amber)'
-  ];
+  const palette = ['#26d9eb', '#2ea8fa', '#11c99b', '#ffbe45', '#b59bff'];
 
   function setOptions(sel, options, value) {
     sel.innerHTML = '';

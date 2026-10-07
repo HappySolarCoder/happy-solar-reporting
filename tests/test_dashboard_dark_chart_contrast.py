@@ -91,9 +91,14 @@ class FmaPolishTests(unittest.TestCase):
     def test_goal_tracks_use_a_dark_groove(self):
         self.assertIn('td div[style*="background:#eef2f7"]', FMA)
         self.assertIn("background: #2b4e66 !important", FMA)
+        self.assertIn("box-shadow: inset 0 0 0 1px #5a85a1", FMA)
         track = "#2b4e66"
         for fill in ("#8ef0c8", "#ffbe45", "#ff99a5", "#94a3b8"):
             self.assertGreaterEqual(_ratio(fill, track), 3.0, fill)
+        card = "#0d293f"
+        cell = "#0b2438"
+        self.assertGreaterEqual(_ratio("#5a85a1", card), 3.0)
+        self.assertGreaterEqual(_ratio("#5a85a1", cell), 3.0)
         self.assertIn("progressCell(r.sit, r.demosGoal)", FMA)
 
     def test_tablet_cards_fill_the_explicit_grid(self):
@@ -112,6 +117,26 @@ class FmaPolishTests(unittest.TestCase):
         self.assertNotIn('id="seeAllFloatingOpen" style="position:fixed', FMA)
         self.assertIn("position: static", FMA)
         self.assertIn("padding-bottom: 64px", FMA)
+        self.assertIn("font: inherit", FMA)
+        self.assertIn("border-radius: 10px", FMA)
+        self.assertIn("padding: 7px 14px", FMA)
+        self.assertIn("font-weight: 900", FMA)
+        self.assertNotIn("seeAllContainer.style.display = 'block'", FMA)
+        self.assertNotIn("seeAllTop.style.display = 'block'", FMA)
+
+    def test_see_all_popup_is_dark_with_a_focus_ring(self):
+        self.assertIn("body.oc-root #seeAllModal .modal-inner", FMA)
+        self.assertIn("background: #0d293f !important", FMA)
+        self.assertIn("outline: 2px solid #26d9eb", FMA)
+        pairs = (
+            ("#f1f6ff", "#0d293f"),
+            ("#e7f1f8", "#0d293f"),
+            ("#d5e3ec", "#0d293f"),
+            ("#d5e3ec", "#102d43"),
+            ("#91abc0", "#0a2236"),
+        )
+        for fg, bg in pairs:
+            self.assertGreaterEqual(_ratio(fg, bg), 4.5, f"{fg} on {bg}")
 
 
 if __name__ == "__main__":

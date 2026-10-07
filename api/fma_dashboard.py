@@ -569,11 +569,62 @@ __DASHBOARD_NAV_CSS__
     body.oc-root .wrap { padding-bottom: 64px; }
     body.oc-root .setterTable td div[style*="background:#eef2f7"] {
       background: #2b4e66 !important;
+      box-shadow: inset 0 0 0 1px #5a85a1;
     }
     body.oc-root #seeAllFloatingOpen {
       position: static;
       z-index: auto;
+      appearance: none;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.2;
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border: 1px solid #2b4e66 !important;
+      border-radius: 10px;
+      padding: 7px 14px;
+      cursor: pointer;
       box-shadow: none;
+    }
+    body.oc-root #seeAllModal {
+      background: rgba(4, 16, 28, 0.72) !important;
+      color: #f1f6ff !important;
+    }
+    body.oc-root #seeAllModal .modal-inner {
+      background: #0d293f !important;
+      color: #f1f6ff !important;
+      border: 1px solid #2b4e66;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+    }
+    body.oc-root #seeAllModal .modal-title { color: #f1f6ff !important; }
+    body.oc-root #seeAllModal .modal-section-title { color: #d5e3ec !important; }
+    body.oc-root #seeAllModal .modal-close {
+      appearance: none;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 900;
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border: 1px solid #2b4e66 !important;
+      border-radius: 10px;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    body.oc-root #seeAllModal .modal-close:hover { background: #173d52 !important; }
+    body.oc-root #seeAllModal .modal-close:focus,
+    body.oc-root #seeAllModal .modal-close:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: 3px;
+    }
+    body.oc-root #seeAllModal th {
+      color: #91abc0 !important;
+      background: #0a2236 !important;
+      border-bottom-color: #1b384c !important;
+    }
+    body.oc-root #seeAllModal td {
+      color: #e7f1f8 !important;
+      border-bottom-color: #1b384c !important;
     }
 </style>
 </head>
@@ -1587,16 +1638,10 @@ __DASHBOARD_NAV_HTML__
         ].filter(Boolean));
         const fullCount = unionSetters.size;
 
-        const seeAllContainer = document.getElementById('seeAllBtnContainer');
-        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All Table Data</button>`;
-        if (seeAllContainer) { seeAllContainer.innerHTML = btnHtml; seeAllContainer.style.display = 'block'; }
-        if (seeAllTop) { seeAllTop.innerHTML = btnHtml; seeAllTop.style.display = 'block'; }
         const floatingBtn = document.getElementById('seeAllFloatingOpen');
         if (floatingBtn) floatingBtn.textContent = 'See All Table Data';
 
-        document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
-          openBtn.addEventListener('click', () => {
+        openSeeAll = () => {
             const modal = document.getElementById('seeAllModal');
             const content = document.getElementById('seeAllContent');
             if (!modal || !content) return;
@@ -1657,8 +1702,7 @@ __DASHBOARD_NAV_HTML__
               </div>`;
 
             modal.classList.add('open');
-          });
-        });
+        };
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
@@ -1738,20 +1782,18 @@ __DASHBOARD_NAV_HTML__
     });
   }
 
-  // Floating See All opener (always visible)
+  // One See All control, in the Demo Rate card footer.
+  let openSeeAll = null;
   const seeAllFloatingOpen = document.getElementById('seeAllFloatingOpen');
   if (seeAllFloatingOpen) {
     seeAllFloatingOpen.addEventListener('click', () => {
-      const openBtn = document.querySelector('.seeAllOpenBtn');
-      if (openBtn) {
-        openBtn.click();
+      if (openSeeAll) {
+        openSeeAll();
         return;
       }
-      // If data has not rendered yet, force a load then retry.
       load();
       setTimeout(() => {
-        const b = document.querySelector('.seeAllOpenBtn');
-        if (b) b.click();
+        if (openSeeAll) openSeeAll();
       }, 800);
     });
   }

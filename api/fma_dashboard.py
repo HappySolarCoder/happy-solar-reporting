@@ -979,6 +979,15 @@ __DASHBOARD_NAV_HTML__
     if (start === lastMon && end === lastSun) return 'lastwk';
     if (start === (today.slice(0,8) + '01') && end === today) return 'thismo';
 
+    const ly = parseInt(today.slice(0,4), 10);
+    const lm = parseInt(today.slice(5,7), 10);
+    const ldt = new Date(Date.UTC(ly, lm - 2, 1));
+    const ly2 = ldt.getUTCFullYear();
+    const lm2 = String(ldt.getUTCMonth() + 1).padStart(2, '0');
+    const lfirst = `${ly2}-${lm2}-01`;
+    const lend = ymdAddDays(lfirst, new Date(Date.UTC(ly2, parseInt(lm2, 10), 0)).getUTCDate() - 1);
+    if (start === lfirst && end === lend) return 'lastmo';
+
     return 'custom';
   }
 

@@ -118,7 +118,13 @@ class FmaPolishTests(unittest.TestCase):
         self.assertLess(foot, demo)
         self.assertEqual(html.count('id="seeAllFloatingOpen"'), 1)
         self.assertNotIn('id="seeAllFloatingOpen"', html[demo:])
-        self.assertIn("Top 10 of ${n}", FMA)
+        self.assertIn("See all ${n}", FMA)
+        self.assertIn('data-see="knocks"', html)
+        self.assertIn('data-see="appts"', html)
+        self.assertIn("min-height: 32px", FMA)
+        self.assertIn("#seeAllBtnContainerTop { display: none; }", FMA)
+        self.assertIn("id=\"seeAllKnocks\"", FMA)
+        self.assertIn("id=\"seeAllAppts\"", FMA)
         self.assertIn('class="seeAllFoot span-12"', FMA)
         self.assertIn('id="seeAllFloatingOpen" type="button"', FMA)
         self.assertNotIn('id="seeAllFloatingOpen" style="position:fixed', FMA)
@@ -144,6 +150,10 @@ class FmaPolishTests(unittest.TestCase):
         )
         for fg, bg in pairs:
             self.assertGreaterEqual(_ratio(fg, bg), 4.5, f"{fg} on {bg}")
+        self.assertIn("body.oc-root .seeAllCard:focus-visible", FMA)
+        self.assertGreaterEqual(_ratio("#d5e3ec", "#102d43"), 4.5)
+        self.assertGreaterEqual(_ratio("#26d9eb", "#102d43"), 4.5)
+        self.assertGreaterEqual(_ratio("#26d9eb", "#0d293f"), 4.5)
 
 
 if __name__ == "__main__":

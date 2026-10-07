@@ -626,6 +626,37 @@ __DASHBOARD_NAV_CSS__
       color: #e7f1f8 !important;
       border-bottom-color: #1b384c !important;
     }
+    /* Same header height on both Top Performers cards, with or without See all N. */
+    body.oc-root .performerCard > .card-header {
+      align-items: center;
+      min-height: 32px;
+    }
+    body.oc-root .seeAllCard {
+      appearance: none;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1.2;
+      margin: 0;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border: 1px solid #2b4e66 !important;
+      cursor: pointer;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      box-shadow: none;
+    }
+    body.oc-root .seeAllCard[hidden] { display: none !important; }
+    body.oc-root .seeAllCard:focus,
+    body.oc-root .seeAllCard:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: 2px;
+    }
+    @media (max-width: 959px) {
+      #seeAllBtnContainerTop { display: none; }
+    }
 </style>
 </head>
 <body data-oc-own-dates="1">
@@ -710,10 +741,10 @@ __DASHBOARD_NAV_HTML__
         <div class="kpiSub" id="kpiApptPctSub"></div>
       </div>
 
-      <div class="card span-6">
+      <div class="card span-6 performerCard">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta" id="topKnocksHint"></div>
+          <button type="button" class="seeAllCard" id="topKnocksHint" data-see="knocks" hidden>See all</button>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -722,10 +753,10 @@ __DASHBOARD_NAV_HTML__
         </div>
       </div>
 
-      <div class="card span-6">
+      <div class="card span-6 performerCard">
         <div class="card-header">
           <div class="card-title">Top Performers — Appointments</div>
-          <div class="meta" id="topApptsHint"></div>
+          <button type="button" class="seeAllCard" id="topApptsHint" data-see="appts" hidden>See all</button>
         </div>
         <div class="list" id="topAppts">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -947,6 +978,15 @@ __DASHBOARD_NAV_HTML__
     if (start === thisMon && end === today) return 'thiswk';
     if (start === lastMon && end === lastSun) return 'lastwk';
     if (start === (today.slice(0,8) + '01') && end === today) return 'thismo';
+
+    const ly = parseInt(today.slice(0,4), 10);
+    const lm = parseInt(today.slice(5,7), 10);
+    const ldt = new Date(Date.UTC(ly, lm - 2, 1));
+    const ly2 = ldt.getUTCFullYear();
+    const lm2 = String(ldt.getUTCMonth() + 1).padStart(2, '0');
+    const lfirst = `${ly2}-${lm2}-01`;
+    const lend = ymdAddDays(lfirst, new Date(Date.UTC(ly2, parseInt(lm2, 10), 0)).getUTCDate() - 1);
+    if (start === lfirst && end === lend) return 'lastmo';
 
     return 'custom';
   }
@@ -1176,7 +1216,13 @@ __DASHBOARD_NAV_HTML__
     const el = document.getElementById(id);
     if (!el) return;
     const n = Number(total) || 0;
-    el.textContent = n > 10 ? `Top 10 of ${n}` : '';
+    if (n > 10) {
+      el.hidden = false;
+      el.textContent = `See all ${n}`;
+    } else {
+      el.hidden = true;
+      el.textContent = '';
+    }
   }
 
   async function load() {
@@ -1650,7 +1696,7 @@ __DASHBOARD_NAV_HTML__
         const floatingBtn = document.getElementById('seeAllFloatingOpen');
         if (floatingBtn) floatingBtn.textContent = 'See All Table Data';
 
-        openSeeAll = () => {
+        openSeeAll = (which) => {
             const modal = document.getElementById('seeAllModal');
             const content = document.getElementById('seeAllContent');
             if (!modal || !content) return;
@@ -1691,7 +1737,7 @@ __DASHBOARD_NAV_HTML__
               : `<tr><td colspan="3" style="padding:10px 12px; color:#64748b;">No appointment data</td></tr>`;
 
             content.innerHTML = `
-              <div class="modal-section">
+              <div class="modal-section" id="seeAllKnocks" tabindex="-1">
                 <div class="modal-section-title">Top Performers — Knocks (Full List)</div>
                 <div style="overflow-x:auto;">
                   <table>
@@ -1700,7 +1746,7 @@ __DASHBOARD_NAV_HTML__
                   </table>
                 </div>
               </div>
-              <div class="modal-section">
+              <div class="modal-section" id="seeAllAppts" tabindex="-1">
                 <div class="modal-section-title">Top Performers — Appointments (Full List)</div>
                 <div style="overflow-x:auto;">
                   <table>
@@ -1711,6 +1757,16 @@ __DASHBOARD_NAV_HTML__
               </div>`;
 
             modal.classList.add('open');
+            const scroller = modal.querySelector('.modal-inner');
+            const target = which === 'knocks'
+              ? document.getElementById('seeAllKnocks')
+              : (which === 'appts' ? document.getElementById('seeAllAppts') : null);
+            if (scroller) scroller.scrollTop = 0;
+            if (target && scroller) {
+              const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+              scroller.scrollTop += delta;
+              target.focus({ preventScroll: true });
+            }
         };
 
       } catch (e) {
@@ -1789,20 +1845,25 @@ __DASHBOARD_NAV_HTML__
     });
   }
 
-  // One See All control, in flow under the Top Performers cards.
+  // Shared See All stays under the cards at 960px and wider.
+  // Each card's See all N control opens the same pop-up on that list.
   let openSeeAll = null;
+  function openLoadedSeeAll(which) {
+    if (openSeeAll) {
+      openSeeAll(which);
+      return;
+    }
+    load();
+    setTimeout(() => {
+      if (openSeeAll) openSeeAll(which);
+    }, 800);
+  }
+  document.querySelectorAll('.seeAllCard').forEach((btn) => {
+    btn.addEventListener('click', () => openLoadedSeeAll(btn.getAttribute('data-see')));
+  });
   const seeAllFloatingOpen = document.getElementById('seeAllFloatingOpen');
   if (seeAllFloatingOpen) {
-    seeAllFloatingOpen.addEventListener('click', () => {
-      if (openSeeAll) {
-        openSeeAll();
-        return;
-      }
-      load();
-      setTimeout(() => {
-        if (openSeeAll) openSeeAll();
-      }, 800);
-    });
+    seeAllFloatingOpen.addEventListener('click', () => openLoadedSeeAll());
   }
 
   // See All modal close

@@ -404,15 +404,27 @@ __DASHBOARD_NAV_CSS__
     body.oc-root .vwrap {
       background: #0b2438;
       border-color: #29495f;
+      position: relative;
+    }
+    body.oc-root .vwrap::before {
+      content: "";
+      position: absolute;
+      z-index: 0;
+      pointer-events: none;
+      left: 12px;
+      right: 12px;
+      top: 12px;
+      bottom: 33px;
+      background-image: linear-gradient(to top, #1e3e53 0 1px, transparent 1px);
+      background-size: 100% 25%;
+      background-repeat: repeat-y;
+    }
+    body.oc-root .vcol {
+      position: relative;
+      z-index: 1;
     }
     body.oc-root .vbarArea {
-      background-image: repeating-linear-gradient(
-        to top,
-        transparent 0,
-        transparent calc(25% - 0.7px),
-        #1e3e53 calc(25% - 0.7px),
-        #1e3e53 25%
-      );
+      background-image: none;
     }
     body.oc-root .vval,
     body.oc-root .vlabel { color: #7898b0; }

@@ -460,10 +460,12 @@ __DASHBOARD_NAV_CSS__
     }
 
     @media (max-width: 820px) {
-      .grid { grid-template-columns: repeat(2, 1fr); }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }
+      .grid > .card,
+      .grid > #seeAllBtnContainerTop { min-width: 0; max-width: 100%; }
       .card { min-height: 100px; }
       .kpi { font-size: 34px; }
-      .span-12 { grid-column: span 2; }
+      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: 1 / -1; }
 
       .setterFilters { grid-template-columns: 1fr 1fr !important; }
       #setterSummary { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
@@ -472,8 +474,8 @@ __DASHBOARD_NAV_CSS__
     }
 
     @media (max-width: 520px) {
-      .grid { grid-template-columns: 1fr; }
-      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }
+      .grid { grid-template-columns: minmax(0, 1fr); }
+      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: 1 / -1; }
       .brandCenter { display:none; }
 
       .setterFilters { grid-template-columns: 1fr !important; }
@@ -558,6 +560,71 @@ __DASHBOARD_NAV_CSS__
     }
     body.oc-root #setterSummary > div {
       color: #f1f6ff;
+    }
+    .seeAllFoot {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 0;
+    }
+    body.oc-root .wrap { padding-bottom: 64px; }
+    body.oc-root .setterTable td div[style*="background:#eef2f7"] {
+      background: #2b4e66 !important;
+      box-shadow: inset 0 0 0 1px #5a85a1;
+    }
+    body.oc-root #seeAllFloatingOpen {
+      position: static;
+      z-index: auto;
+      appearance: none;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.2;
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border: 1px solid #2b4e66 !important;
+      border-radius: 10px;
+      padding: 7px 14px;
+      cursor: pointer;
+      box-shadow: none;
+    }
+    body.oc-root #seeAllModal {
+      background: rgba(4, 16, 28, 0.72) !important;
+      color: #f1f6ff !important;
+    }
+    body.oc-root #seeAllModal .modal-inner {
+      background: #0d293f !important;
+      color: #f1f6ff !important;
+      border: 1px solid #2b4e66;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+    }
+    body.oc-root #seeAllModal .modal-title { color: #f1f6ff !important; }
+    body.oc-root #seeAllModal .modal-section-title { color: #d5e3ec !important; }
+    body.oc-root #seeAllModal .modal-close {
+      appearance: none;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 900;
+      background: #102d43 !important;
+      color: #d5e3ec !important;
+      border: 1px solid #2b4e66 !important;
+      border-radius: 10px;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    body.oc-root #seeAllModal .modal-close:hover { background: #173d52 !important; }
+    body.oc-root #seeAllModal .modal-close:focus,
+    body.oc-root #seeAllModal .modal-close:focus-visible {
+      outline: 2px solid #26d9eb;
+      outline-offset: 3px;
+    }
+    body.oc-root #seeAllModal th {
+      color: #91abc0 !important;
+      background: #0a2236 !important;
+      border-bottom-color: #1b384c !important;
+    }
+    body.oc-root #seeAllModal td {
+      color: #e7f1f8 !important;
+      border-bottom-color: #1b384c !important;
     }
 </style>
 </head>
@@ -646,7 +713,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Knocks</div>
-          <div class="meta"></div>
+          <div class="meta" id="topKnocksHint"></div>
         </div>
         <div class="list" id="topKnocks">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -658,7 +725,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-6">
         <div class="card-header">
           <div class="card-title">Top Performers — Appointments</div>
-          <div class="meta"></div>
+          <div class="meta" id="topApptsHint"></div>
         </div>
         <div class="list" id="topAppts">
           <div class="row"><div class="left"><div class="badge">1</div><div class="name"><div class="skeleton" style="width:160px"></div></div></div><div class="val"><div class="skeleton" style="width:40px"></div></div></div>
@@ -667,7 +734,9 @@ __DASHBOARD_NAV_HTML__
         </div>
       </div>
 
-      <div id="seeAllBtnContainerTop" class="span-12" style="display:none; text-align:right; margin-top:-2px; margin-bottom:4px;"></div>
+      <div id="seeAllBtnContainerTop" class="seeAllFoot span-12">
+        <button id="seeAllFloatingOpen" type="button">See All Table Data</button>
+      </div>
 
       <div class="card span-12">
         <div class="card-header setterHeader">
@@ -1103,6 +1172,13 @@ __DASHBOARD_NAV_HTML__
     el.innerHTML = html;
   }
 
+  function setTopHint(id, total) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const n = Number(total) || 0;
+    el.textContent = n > 10 ? `Top 10 of ${n}` : '';
+  }
+
   async function load() {
     // For now, only Knocks is backed by Raydar (dispositioned leads).
     // We'll wire the rest after metric schema is confirmed.
@@ -1339,6 +1415,7 @@ __DASHBOARD_NAV_HTML__
         const topKnocks = topKnocksAll.slice(0, 10);
         let topKnocksModalAll = topKnocksAll;
         renderTopList('topKnocks', topKnocks.map(r => ({ name: r.name || r.uid || '—', value: r.value })));
+        setTopHint('topKnocksHint', topKnocksAll.length);
 
         // Use same attribution model as Top Performers — Knocks so numbers align
         const knocksByClaimed = rayTable && rayTable.breakdowns && rayTable.breakdowns.knocks_by_actor ? rayTable.breakdowns.knocks_by_actor : {};
@@ -1391,6 +1468,7 @@ __DASHBOARD_NAV_HTML__
         const topAppts = topApptsAll.slice(0, 10);
 
         renderTopList('topAppts', topAppts.map(r => ({ name: r.name, value: r.value })));
+        setTopHint('topApptsHint', topApptsAll.length);
 
 
         // Build row list
@@ -1490,6 +1568,7 @@ __DASHBOARD_NAV_HTML__
         // Top performer cards stay global. Team filtering only applies to the bottom table.
         topKnocksModalAll = topKnocksAll;
         renderTopList('topKnocks', topKnocksAll.slice(0, 10).map((r) => ({ name: r.name || r.uid || '—', value: r.value })));
+        setTopHint('topKnocksHint', topKnocksAll.length);
 
         const totalRan = rows.reduce((acc, r) => acc + (Number(r.ran) || 0), 0);
         const totalSit = rows.reduce((acc, r) => acc + (Number(r.sit) || 0), 0);
@@ -1568,16 +1647,10 @@ __DASHBOARD_NAV_HTML__
         ].filter(Boolean));
         const fullCount = unionSetters.size;
 
-        const seeAllContainer = document.getElementById('seeAllBtnContainer');
-        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        const btnHtml = `<button class="seeAllOpenBtn" style="background:#fff; border:1px solid var(--border); border-radius:10px; padding:7px 14px; font-size:12px; font-weight:900; cursor:pointer; color:#334155;">See All Table Data</button>`;
-        if (seeAllContainer) { seeAllContainer.innerHTML = btnHtml; seeAllContainer.style.display = 'block'; }
-        if (seeAllTop) { seeAllTop.innerHTML = btnHtml; seeAllTop.style.display = 'block'; }
         const floatingBtn = document.getElementById('seeAllFloatingOpen');
         if (floatingBtn) floatingBtn.textContent = 'See All Table Data';
 
-        document.querySelectorAll('.seeAllOpenBtn').forEach((openBtn) => {
-          openBtn.addEventListener('click', () => {
+        openSeeAll = () => {
             const modal = document.getElementById('seeAllModal');
             const content = document.getElementById('seeAllContent');
             if (!modal || !content) return;
@@ -1638,8 +1711,7 @@ __DASHBOARD_NAV_HTML__
               </div>`;
 
             modal.classList.add('open');
-          });
-        });
+        };
 
       } catch (e) {
         const tbody = document.getElementById('setterDemoRows');
@@ -1661,8 +1733,6 @@ __DASHBOARD_NAV_HTML__
 
         const seeAllContainer = document.getElementById('seeAllBtnContainer');
         if (seeAllContainer) seeAllContainer.style.display = 'none';
-        const seeAllTop = document.getElementById('seeAllBtnContainerTop');
-        if (seeAllTop) seeAllTop.style.display = 'none';
 
       }
 
@@ -1719,20 +1789,18 @@ __DASHBOARD_NAV_HTML__
     });
   }
 
-  // Floating See All opener (always visible)
+  // One See All control, in flow under the Top Performers cards.
+  let openSeeAll = null;
   const seeAllFloatingOpen = document.getElementById('seeAllFloatingOpen');
   if (seeAllFloatingOpen) {
     seeAllFloatingOpen.addEventListener('click', () => {
-      const openBtn = document.querySelector('.seeAllOpenBtn');
-      if (openBtn) {
-        openBtn.click();
+      if (openSeeAll) {
+        openSeeAll();
         return;
       }
-      // If data has not rendered yet, force a load then retry.
       load();
       setTimeout(() => {
-        const b = document.querySelector('.seeAllOpenBtn');
-        if (b) b.click();
+        if (openSeeAll) openSeeAll();
       }, 800);
     });
   }
@@ -1787,8 +1855,6 @@ __DASHBOARD_NAV_HTML__
       <div id="seeAllContent"></div>
     </div>
   </div>
-
-  <button id="seeAllFloatingOpen" style="position:fixed; right:14px; bottom:56px; z-index:9999; border:1px solid var(--border); background:#fff; color:#1e293b; border-radius:999px; padding:8px 12px; font-size:12px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(15,23,42,.18);">See All Table Data</button>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>

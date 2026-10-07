@@ -460,10 +460,12 @@ __DASHBOARD_NAV_CSS__
     }
 
     @media (max-width: 820px) {
-      .grid { grid-template-columns: repeat(2, 1fr); }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }
+      .grid > .card,
+      .grid > #seeAllBtnContainerTop { min-width: 0; max-width: 100%; }
       .card { min-height: 100px; }
       .kpi { font-size: 34px; }
-      .span-12 { grid-column: span 2; }
+      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: 1 / -1; }
 
       .setterFilters { grid-template-columns: 1fr 1fr !important; }
       #setterSummary { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
@@ -472,8 +474,8 @@ __DASHBOARD_NAV_CSS__
     }
 
     @media (max-width: 520px) {
-      .grid { grid-template-columns: 1fr; }
-      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: span 12; }
+      .grid { grid-template-columns: minmax(0, 1fr); }
+      .span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: 1 / -1; }
       .brandCenter { display:none; }
 
       .setterFilters { grid-template-columns: 1fr !important; }
@@ -558,6 +560,19 @@ __DASHBOARD_NAV_CSS__
     }
     body.oc-root #setterSummary > div {
       color: #f1f6ff;
+    }
+    .seeAllFoot {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
+    body.oc-root .setterTable td div[style*="background:#eef2f7"] {
+      background: #2b4e66 !important;
+    }
+    body.oc-root #seeAllFloatingOpen {
+      position: static;
+      z-index: auto;
+      box-shadow: none;
     }
 </style>
 </head>
@@ -756,6 +771,9 @@ __DASHBOARD_NAV_HTML__
               </tr>
             </tfoot>
           </table>
+        </div>
+        <div class="seeAllFoot">
+          <button id="seeAllFloatingOpen" type="button">See All Table Data</button>
         </div>
       </div>
 
@@ -1787,8 +1805,6 @@ __DASHBOARD_NAV_HTML__
       <div id="seeAllContent"></div>
     </div>
   </div>
-
-  <button id="seeAllFloatingOpen" style="position:fixed; right:14px; bottom:56px; z-index:9999; border:1px solid var(--border); background:#fff; color:#1e293b; border-radius:999px; padding:8px 12px; font-size:12px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(15,23,42,.18);">See All Table Data</button>
 
   <a href="/api/settings#secret-lab" title="Secret Lab" aria-label="Secret Lab" style="position:fixed; right:12px; bottom:10px; z-index:9999; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:999px; border:1px solid #d1d5db; background:rgba(255,255,255,.38); color:#475569; text-decoration:none; font-size:16px; backdrop-filter: blur(2px); opacity:.35;">🧪</a>
 </body>

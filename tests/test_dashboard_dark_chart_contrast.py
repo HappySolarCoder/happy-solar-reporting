@@ -46,6 +46,12 @@ class SalesPipelineDarkChartTests(unittest.TestCase):
         self.assertIn("color: #7898b0", SALES)
         self.assertGreaterEqual(_ratio("#7898b0", CHART_WELL), 4.5)
 
+    def test_pipeline_gridlines_span_the_plot(self):
+        overlay = SALES.split("body.oc-root .vwrap::before", 1)[1].split("body.oc-root .vcol", 1)[0]
+        self.assertIn("#1e3e53", overlay)
+        area = SALES.split("body.oc-root .vbarArea", 1)[1].split("body.oc-root .vval", 1)[0]
+        self.assertIn("background-image: none", area)
+
     def test_pipeline_bar_fills_clear_the_well(self):
         for color in BAR_COLORS:
             self.assertGreaterEqual(_ratio(color, CHART_WELL), 3.0, color)
@@ -79,6 +85,32 @@ class FmaDarkSurfaceTests(unittest.TestCase):
         )
         for fg, bg in pairs:
             self.assertGreaterEqual(_ratio(fg, bg), 4.5, f"{fg} on {bg}")
+
+
+class FmaPolishTests(unittest.TestCase):
+    def test_goal_tracks_use_a_dark_groove(self):
+        self.assertIn('td div[style*="background:#eef2f7"]', FMA)
+        self.assertIn("background: #2b4e66 !important", FMA)
+        track = "#2b4e66"
+        for fill in ("#8ef0c8", "#ffbe45", "#ff99a5", "#94a3b8"):
+            self.assertGreaterEqual(_ratio(fill, track), 3.0, fill)
+        self.assertIn("progressCell(r.sit, r.demosGoal)", FMA)
+
+    def test_tablet_cards_fill_the_explicit_grid(self):
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", FMA)
+        self.assertIn(
+            ".span-3, .span-4, .span-6, .span-8, .span-9, .span-12 { grid-column: 1 / -1; }",
+            FMA,
+        )
+        phone = FMA.split("@media (max-width: 520px)", 1)[1].split("/* See All modal */", 1)[0]
+        self.assertIn("grid-column: 1 / -1", phone)
+        self.assertNotIn("grid-column: span 12", phone)
+
+    def test_see_all_control_stays_in_the_card(self):
+        self.assertIn('class="seeAllFoot"', FMA)
+        self.assertIn('id="seeAllFloatingOpen" type="button"', FMA)
+        self.assertNotIn('id="seeAllFloatingOpen" style="position:fixed', FMA)
+        self.assertIn("position: static", FMA)
 
 
 if __name__ == "__main__":

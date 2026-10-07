@@ -9,6 +9,14 @@ Definition:
   - Opportunity is still in pipeline stage named "New Appointment"
   - The scheduled appointment datetime (contact field) is in the past (<= now)
   - And the scheduled appointment datetime is within the selected window
+  - And the appointment has not already been dispositioned
+
+An appointment is dispositioned when any opportunity for that same appointment
+(same GHL appointment event, or the same contact and start time on a sales,
+Sweeper, or Rehash pipeline) has moved past the appointment-set stage
+(Demo-Negotiating, Sold, Cancelled, No Show, Rescheduled, and the other
+post-appointment stage names) or has an appointment outcome set. A stale
+"New Appointment" duplicate must not stay on the list after that.
 
 Purpose:
 - Identify appointments that have passed but are still sitting in "New Appointment" (missing disposition / stage move).
@@ -46,6 +54,7 @@ if str(API_DIR) not in sys.path:
 from google.cloud import firestore
 from google.oauth2 import service_account
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
+from missing_disposition_rule import appointment_is_missing, appointment_start_minute
 
 
 OWNER_NAME_OVERRIDES = {
@@ -380,7 +389,7 @@ __DASHBOARD_NAV_HTML__
           <div style="color: var(--muted); font-size: 12px; font-weight: 900;">Opportunities</div>
           <div style="font-size: 34px; font-weight: 950;">__COUNT__</div>
         </div>
-        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">Stage = New Appointment, scheduled appointment before today (yesterday and older)</div>
+        <div style="color: var(--muted2); font-size: 12px; font-weight: 900;">New Appointment only, scheduled before today. Drops off after a post-appointment stage (demo negotiating, sold, no show, rescheduled) or a set appointment outcome, including a Sweeper or Rehash duplicate.</div>
       </div>
 
       <div style="margin-top:10px; overflow:auto">
@@ -521,6 +530,33 @@ __DASHBOARD_NAV_HTML__
         .replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css())
         .replace("__DASHBOARD_NAV_HTML__", nav_html)
     )
+
+
+def _related_opportunities(
+    db: firestore.Client,
+    contact_ids: list[str],
+    stage_lookup: dict[str, str],
+    pipeline_lookup: dict[str, str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Every opportunity for these contacts, shaped for the disposition rule."""
+    out: dict[str, list[dict[str, Any]]] = {cid: [] for cid in contact_ids}
+    for cid in contact_ids:
+        for snap in db.collection("ghl_opportunities_v2").where("contactId", "==", cid).stream():
+            opp = snap.to_dict() or {}
+            stage_id = str(opp.get("pipelineStageId") or "")
+            pipeline_id = str(opp.get("pipelineId") or "")
+            out[cid].append({
+                "opportunity_id": str(opp.get("id") or snap.id),
+                "contact_id": cid,
+                "appointment_event_id": str(opp.get("appointmentEventId") or "").strip(),
+                "appointment_start": appointment_start_minute(
+                    opp.get("appointmentStartTime") or opp.get("appointmentScheduledAtCanonical")
+                ),
+                "stage_name": stage_lookup.get(stage_id, ""),
+                "pipeline_name": pipeline_lookup.get(pipeline_id, ""),
+                "disposition_value": opp.get("dispositionValue"),
+            })
+    return out
 
 
 class handler(BaseHTTPRequestHandler):
@@ -679,12 +715,28 @@ class handler(BaseHTTPRequestHandler):
                     'contact_id': cid,
                     'contact_url': contact_url,
                     'pipeline': pname,
+                    'pipeline_name': pname,
                     'stage': stage_name,
+                    'stage_name': stage_name,
                     'appt_utc': appt_utc,
+                    'appointment_start': appointment_start_minute(appt_local),
+                    'appointment_event_id': str(opp.get('appointmentEventId') or '').strip(),
+                    'disposition_value': opp.get('dispositionValue'),
                     'days_since': days_since,
                     'opportunity_id': opp_id,
                     'opportunity_url': opportunity_url,
                 })
+
+            related_by_contact = _related_opportunities(
+                db,
+                sorted({r['contact_id'] for r in rows if r.get('contact_id')}),
+                stage_lookup,
+                pipelines,
+            )
+            rows = [
+                r for r in rows
+                if appointment_is_missing(r, related_by_contact.get(r.get('contact_id') or '', []))
+            ]
 
             rows.sort(key=lambda r: r['appt_utc'])
 
@@ -719,7 +771,7 @@ class handler(BaseHTTPRequestHandler):
             body = render_page(
                 rows_html=rows_html,
                 count=rows_count,
-                subtitle=f"Scheduled appointment passed but still in stage 'New Appointment' (oldest first). {subtitle_window}",
+                subtitle=f"Scheduled appointment passed, still in New Appointment, and not dispositioned yet (oldest first). {subtitle_window}",
             ).encode("utf-8")
 
             self.send_response(200)

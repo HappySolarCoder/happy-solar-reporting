@@ -111,6 +111,7 @@ class FmaPolishTests(unittest.TestCase):
         self.assertIn('id="seeAllFloatingOpen" type="button"', FMA)
         self.assertNotIn('id="seeAllFloatingOpen" style="position:fixed', FMA)
         self.assertIn("position: static", FMA)
+        self.assertIn("padding-bottom: 64px", FMA)
 
 
 if __name__ == "__main__":

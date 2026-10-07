@@ -415,13 +415,9 @@ __DASHBOARD_NAV_CSS__
       right: 12px;
       top: 12px;
       bottom: 33px;
-      background-image: repeating-linear-gradient(
-        to top,
-        transparent 0,
-        transparent calc(25% - 0.7px),
-        #1e3e53 calc(25% - 0.7px),
-        #1e3e53 25%
-      );
+      background-image: linear-gradient(to top, #1e3e53 0 1px, transparent 1px);
+      background-size: 100% 25%;
+      background-repeat: repeat-y;
     }
     body.oc-root .vcol {
       position: relative;

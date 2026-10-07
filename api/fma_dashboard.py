@@ -566,6 +566,7 @@ __DASHBOARD_NAV_CSS__
       justify-content: flex-end;
       margin-top: 12px;
     }
+    body.oc-root .wrap { padding-bottom: 64px; }
     body.oc-root .setterTable td div[style*="background:#eef2f7"] {
       background: #2b4e66 !important;
     }

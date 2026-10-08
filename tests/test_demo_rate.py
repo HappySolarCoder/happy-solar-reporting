@@ -128,8 +128,9 @@ class DemoRateContractTests(unittest.TestCase):
         self.assertNotIn('db.collection("ghl_users_v2").stream()', DEMO_SRC)
         self.assertNotIn('db.collection("roster_people_v1").stream()', DEMO_SRC)
         self.assertIn('public.pop("owner_profiles", None)', DEMO_SRC)
-        self.assertIn('where("ghl_user_id", "in", chunk)', DEMO_SRC)
-        self.assertIn('.where(field, "==", uid).limit(1)', DEMO_SRC)
+        self.assertIn('public.pop("setter_profiles", None)', DEMO_SRC)
+        self.assertIn('where(field, "in", chunk)', DEMO_SRC)
+        self.assertNotIn('.where(field, "==", uid).limit(1)', DEMO_SRC)
 
 
 class _Snap:
@@ -172,20 +173,28 @@ class _Ref:
 class _Collection:
     def __init__(self, docs):
         self._docs = {doc.id: doc for doc in docs}
+        self._queries = None
+        self._name = ""
 
     def document(self, doc_id):
         return _Ref(doc_id, self._docs.get(doc_id))
 
     def where(self, field, op, value):
+        if self._queries is not None:
+            self._queries.append((self._name, field, op, value))
         return _Query(self._docs.values()).where(field, op, value)
 
 
 class _Db:
     def __init__(self, **collections):
         self._collections = collections
+        self.queries = []
 
     def collection(self, name):
-        return self._collections[name]
+        coll = self._collections[name]
+        coll._queries = self.queries
+        coll._name = name
+        return coll
 
     def get_all(self, refs):
         found = []
@@ -316,6 +325,71 @@ class CloserAttributionTests(unittest.TestCase):
         self.assertEqual(payload["sit_count"], 1)
         self.assertEqual(payload["ran_count"], 1)
         self.assertEqual(payload["breakdowns"]["sit_by_owner"], {"Unknown User (erEvan)": 1})
+
+    def test_closer_and_setter_directories_are_batched_and_cached(self):
+        import demo_rate
+
+        demo_rate._closer_cache.clear()
+        demo_rate._setter_cache.clear()
+        users = [
+            _Snap(
+                f"doc-{index}",
+                {"userId": f"user{index}", "name": f"Closer {index}", "email": f"c{index}@happyslr.com"},
+            )
+            for index in range(12)
+        ]
+        users.append(
+            _Snap(
+                "setter-pat",
+                {"id": "setterPat", "name": "Pat Meehan", "lastName": "Meehan", "email": "pat@happyslr.com"},
+            )
+        )
+        db = _Db(
+            roster_people_v1=_Collection(
+                [
+                    _Snap(
+                        "roster-pat",
+                        {
+                            "display_name": "Pat Meehan",
+                            "ghl_setter_last_name": "Meehan",
+                            "ghl_user_id": "setterPat",
+                            "email": "pat@happyslr.com",
+                        },
+                    )
+                ]
+            ),
+            ghl_users_v2=_Collection(users),
+        )
+        ids = [f"user{index}" for index in range(12)]
+        first = demo_rate.load_closer_directory(db, ids)
+        closer_queries = [query for query in db.queries if query[0] == "ghl_users_v2"]
+        self.assertTrue(closer_queries)
+        self.assertTrue(all(query[2] == "in" for query in closer_queries))
+        self.assertLessEqual(len(closer_queries), 4)
+        self.assertEqual(first["user0"]["name"], "Closer 0")
+        self.assertEqual(first["user11"]["email"], "c11@happyslr.com")
+        before = len(db.queries)
+        second = demo_rate.load_closer_directory(db, list(reversed(ids)))
+        self.assertEqual(len(db.queries), before)
+        self.assertEqual(second["user3"]["name"], "Closer 3")
+
+        setters = demo_rate.load_setter_directory(db, ["Meehan", "Meehan", "none"])
+        setter_queries = [query for query in db.queries if query[1] in {"ghl_setter_last_name", "lastName"}]
+        self.assertEqual([query[2] for query in setter_queries], ["in", "in"])
+        self.assertEqual(
+            setters,
+            [
+                {
+                    "full_name": "Pat Meehan",
+                    "last_name": "Meehan",
+                    "ghl_user_id": "setterPat",
+                    "email": "pat@happyslr.com",
+                }
+            ],
+        )
+        before = len(db.queries)
+        self.assertEqual(demo_rate.load_setter_directory(db, ["Meehan"]), setters)
+        self.assertEqual(len(db.queries), before)
 
 
 if __name__ == "__main__":

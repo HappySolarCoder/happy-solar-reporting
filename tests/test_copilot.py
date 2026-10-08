@@ -3579,16 +3579,12 @@ class CopilotTests(unittest.TestCase):
             f"You have 1 demo for {month}, out of 4 appointments that ran. "
             "The demo rate is 25.0%, a bit under the 50% goal."
         )
-        both = (
-            f"Evan Day has 2 demos as the closer for {month}, out of 5 appointments that ran. "
-            "The demo rate is 40.0%, a bit under the 50% goal. "
-            "As a setter, Day has 4 demos, out of 10 appointments that ran. "
+        closer_only = (
+            f"Evan Day has 2 demos for {month}, out of 5 appointments that ran. "
             "The demo rate is 40.0%, a bit under the 50% goal."
         )
-        both_past = (
-            "Evan Day had 2 demos as the closer for Sep 1\u201330, 2026, out of 5 appointments that ran. "
-            "The demo rate is 40.0%, a bit under the 50% goal. "
-            "As a setter, Day had 4 demos, out of 10 appointments that ran. "
+        closer_past = (
+            "Evan Day had 2 demos for Sep 1\u201330, 2026, out of 5 appointments that ran. "
             "The demo rate is 40.0%, a bit under the 50% goal."
         )
 
@@ -3608,12 +3604,13 @@ class CopilotTests(unittest.TestCase):
             self.assertIsNone(re.search(r"\b(?:sit|sits|sat)\b", answer, re.I), answer)
             return result
 
-        named = ask("how many demos does evan day have this month?", "req_closer_both_roles")
-        self.assertEqual(named["body"]["answer"], both)
+        named = ask("how many demos does evan day have this month?", "req_closer_not_merged")
+        self.assertEqual(named["body"]["answer"], closer_only)
+        self.assertNotIn("As a setter", named["body"]["answer"])
         self.assertFalse(named["body"]["uncertain"])
 
-        september = ask("how many demos did evan day have in september?", "req_closer_both_past")
-        self.assertEqual(september["body"]["answer"], both_past)
+        september = ask("how many demos did evan day have in september?", "req_closer_not_merged_past")
+        self.assertEqual(september["body"]["answer"], closer_past)
         self.assertNotIn(" has ", september["body"]["answer"])
         self.assertFalse(september["body"]["uncertain"])
 
@@ -3717,12 +3714,179 @@ class CopilotTests(unittest.TestCase):
             return verify_bloom_token(pack(body) + "." + pack(sig), "test-secret", NOW)
 
         self.assertIsNone(forged({"office": "Buffalo"}))
-        self.assertIsNone(forged({"email": "evan@happyslr.com\nbcc"}))
-        self.assertIsNone(forged({"email": "not-an-email"}))
-        self.assertIsNone(forged({"email": "a" * 110 + "@example.com"}))
-        self.assertIsNone(forged({"ghlUserId": "has space"}))
-        self.assertIsNone(forged({"ghlUserId": "a" * 65}))
+        domain = "@happyslr.com"
+        long_email = "e" * (200 - len(domain)) + domain
+        self.assertEqual(len(long_email), 200)
+        accepted = forged({"email": long_email, "ghlUserId": "u" * 80, "name": "Evan Day"})
+        self.assertEqual(accepted["email"], long_email)
+        self.assertEqual(accepted["ghlUserId"], "u" * 80)
+        dotted = forged({"email": "evan..day@happyslr.com", "name": "Evan Day"})
+        self.assertEqual(dotted["email"], "evan..day@happyslr.com")
+        dropped = forged({"email": "not-an-email", "ghlUserId": "has space", "name": "Pat Smith"})
+        self.assertNotIn("email", dropped)
+        self.assertNotIn("ghlUserId", dropped)
+        self.assertEqual(dropped["name"], "Pat Smith")
+        newline = forged({"email": "evan@happyslr.com\nbcc", "name": "Pat Smith"})
+        self.assertNotIn("email", newline)
+        self.assertEqual(newline["name"], "Pat Smith")
+        self.assertNotIn("ghlUserId", forged({"ghlUserId": "a" * 81, "name": "Pat Smith"}))
+        self.assertNotIn("email", forged({"email": "a" * 250 + "@x.com", "name": "Pat Smith"}))
         self.assertIsNotNone(forged({"email": "evan@happyslr.com", "ghlUserId": "userEvan"}))
+
+    def test_full_name_setter_and_same_last_name_are_not_merged(self):
+        """A full name matches a last-name setter row. A different person is not combined."""
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            allowed_roles=frozenset({"settings_admin", "closer", "manager"}),
+            max_requests_per_minute=40,
+            max_turns_per_day=40,
+            max_turns_per_month=40,
+            max_active_company=40,
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        month = "Oct 1\u20134, 2026"
+        setter_only = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[{"name": "Meehan", "kind": "setter", "sits": 2, "demo_ran": 4, "ran": 4}],
+        )
+        different = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {
+                    "name": "Meehan",
+                    "kind": "setter",
+                    "sits": 2,
+                    "demo_ran": 4,
+                    "ran": 4,
+                    "ghl_user_id": "setterPat",
+                    "aliases": ["Pat Meehan"],
+                },
+                {
+                    "name": "Sam Meehan",
+                    "kind": "closer",
+                    "sits": 3,
+                    "demo_ran": 6,
+                    "ran": 6,
+                    "ghl_user_id": "closerSam",
+                },
+            ],
+        )
+        same = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {
+                    "name": "Day",
+                    "kind": "setter",
+                    "sits": 4,
+                    "demo_ran": 10,
+                    "ran": 10,
+                    "ghl_user_id": "userEvan",
+                },
+                {
+                    "name": "Evan Day",
+                    "kind": "closer",
+                    "sits": 2,
+                    "demo_ran": 5,
+                    "ran": 5,
+                    "ghl_user_id": "userEvan",
+                },
+            ],
+        )
+
+        def ask(message, request_id, metrics, *, headers=None):
+            result = _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=page,
+                headers=headers,
+                request_id=request_id,
+                bloom_token_secret="test-secret",
+            )
+            answer = result["body"]["answer"]
+            self.assertIsNone(re.search(r"\b(?:sit|sits|sat)\b", answer, re.I), answer)
+            return result
+
+        pat = ask(
+            "How many demos does Pat Meehan have this month?",
+            "req_setter_full_name",
+            setter_only,
+        )
+        self.assertEqual(
+            pat["body"]["answer"],
+            f"Pat Meehan has 2 demos for {month}, out of 4 appointments that ran. "
+            "The demo rate is 50.0%, right at the 50% goal.",
+        )
+        self.assertNotIn("couldn't filter", pat["body"]["answer"])
+        self.assertNotIn("11 demos", pat["body"]["answer"])
+        self.assertFalse(pat["body"]["uncertain"])
+
+        other = ask(
+            "How many demos does Pat Meehan have this month?",
+            "req_setter_not_the_closer",
+            different,
+        )
+        self.assertEqual(other["body"]["answer"], pat["body"]["answer"])
+        self.assertNotIn("Sam", other["body"]["answer"])
+        self.assertFalse(other["body"]["uncertain"])
+
+        sam = ask(
+            "How many demos does Sam Meehan have this month?",
+            "req_closer_not_the_setter",
+            different,
+        )
+        self.assertEqual(
+            sam["body"]["answer"],
+            f"Sam Meehan has 3 demos for {month}, out of 6 appointments that ran. "
+            "The demo rate is 50.0%, right at the 50% goal.",
+        )
+        self.assertNotIn("As a setter", sam["body"]["answer"])
+        self.assertFalse(sam["body"]["uncertain"])
+
+        bare = ask("how many demos does meehan have this month?", "req_meehan_ambiguous", different)
+        self.assertIn(
+            f"There were 11 demos for {month}, out of 27 appointments that ran.",
+            bare["body"]["answer"],
+        )
+        self.assertIn(
+            "I'm not sure if you mean Pat Meehan or Sam Meehan. Which rep did you mean?",
+            bare["body"]["answer"],
+        )
+
+        combined = ask("how many demos does evan day have this month?", "req_same_person", same)
+        self.assertEqual(
+            combined["body"]["answer"],
+            f"Evan Day has 2 demos as the closer for {month}, out of 5 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal. "
+            "As a setter, Day has 4 demos, out of 10 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal.",
+        )
+        self.assertFalse(combined["body"]["uncertain"])
+
+        ignored = ask(
+            "how many demos do I have this month?",
+            "req_bad_claim_falls_back_to_name",
+            different,
+            headers=_bloom_auth(role="closer", sub="user_zzz", name="Sam Meehan", ghlUserId="not a valid id"),
+        )
+        self.assertEqual(ignored["status"], 200)
+        self.assertEqual(
+            ignored["body"]["answer"],
+            f"You have 3 demos for {month}, out of 6 appointments that ran. "
+            "The demo rate is 50.0%, right at the 50% goal.",
+        )
+        self.assertFalse(ignored["body"]["uncertain"])
 
 
 if __name__ == "__main__":

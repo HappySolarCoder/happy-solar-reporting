@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 ALLOWED_INTENTS = frozenset(
@@ -88,6 +88,8 @@ class ScopeDecision:
     denial_text: str
     clarification: str
     matched_term: str | None
+    uncertain: bool = False
+    uncertainty_reason: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -96,7 +98,105 @@ class ScopeDecision:
             "denial_text": self.denial_text,
             "clarification": self.clarification,
             "matched_term": self.matched_term,
+            "uncertain": self.uncertain,
+            "uncertainty_reason": self.uncertainty_reason,
         }
+
+
+_FIGURE_INTENTS = frozenset({"company_summary", "compare", "source_performance"})
+_TERRITORIES = {
+    "buffalo": "Buffalo",
+    "rochester": "Rochester",
+    "syracuse": "Syracuse",
+}
+_SOURCE_PATTERNS = (
+    (r"self[\s-]?gen", "self_gen"),
+    (r"\bphones?\b", "phones"),
+    (r"\bvirtual\b", "phones"),
+    (r"\bdoors?\b", "doors"),
+    (r"\b3\s*pl\b", "3pl"),
+    (r"\binbound\b", "inbound"),
+)
+_NOT_A_QUALIFIER = frozenset(
+    {
+        "doors",
+        "door",
+        "self",
+        "gen",
+        "phones",
+        "phone",
+        "virtual",
+        "inbound",
+        "3pl",
+        "pl",
+        "the",
+        "a",
+        "an",
+        "our",
+        "this",
+        "that",
+        "me",
+        "my",
+        "all",
+        "every",
+        "each",
+        "month",
+        "week",
+        "year",
+        "today",
+        "yesterday",
+        "last",
+        "next",
+        "current",
+        "mtd",
+        "now",
+        "far",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sept",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
+        "company",
+        "happy",
+        "solar",
+        "demo",
+        "demos",
+        "rate",
+        "sales",
+        "sale",
+        "ran",
+        "created",
+        "source",
+        "sources",
+        *tuple(_TERRITORIES),
+    }
+)
+_SOURCE_LABELS = {
+    "doors": "Doors",
+    "self_gen": "Self Gen",
+    "phones": "Phones",
+    "inbound": "Inbound",
+    "3pl": "3PL",
+}
 
 
 def _deny_hit(text: str) -> bool:
@@ -133,7 +233,59 @@ def _term_hint(text: str) -> str | None:
     return None
 
 
+def message_source(text: str) -> str | None:
+    """Lead source named in the message. Virtual is the Phones source, not a territory."""
+    earliest = None
+    chosen = None
+    for pattern, source_id in _SOURCE_PATTERNS:
+        match = re.search(pattern, text or "", re.I)
+        if match and (earliest is None or match.start() < earliest):
+            earliest = match.start()
+            chosen = source_id
+    return chosen
+
+
+def _unapplied_name(text: str) -> str | None:
+    """Territory or person the reporting tools cannot filter. Virtual is a lead source."""
+    found: list[str] = []
+    for match in re.finditer(r"\b(buffalo|rochester|syracuse)\b", text or "", re.I):
+        found.append(_TERRITORIES[match.group(1).lower()])
+    for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", text or "", re.I):
+        word = match.group(1)
+        if word.lower() in _NOT_A_QUALIFIER:
+            continue
+        found.append(word[:1].upper() + word[1:])
+    ordered: list[str] = []
+    for name in found:
+        if name not in ordered:
+            ordered.append(name)
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return ordered[0]
+    return " or ".join(ordered)
+
+
+def _with_qualifier(decision: ScopeDecision, message: str) -> ScopeDecision:
+    if decision.intent not in _FIGURE_INTENTS or decision.uncertain:
+        return decision
+    name = _unapplied_name(message)
+    if not name:
+        return decision
+    source_id = message_source(message)
+    if source_id:
+        label = _SOURCE_LABELS.get(source_id, "that lead source")
+        reason = f"I couldn't filter to {name}, so this is {label} only."
+    else:
+        reason = f"I couldn't filter to {name}, so this is company-wide."
+    return replace(decision, uncertain=True, uncertainty_reason=reason)
+
+
 def classify(message: str) -> ScopeDecision:
+    return _with_qualifier(_classify(message), message)
+
+
+def _classify(message: str) -> ScopeDecision:
     text = " ".join((message or "").split())
     if not text:
         return ScopeDecision("clarify", "", "", "Which Happy Solar metric or period should I look at?", None)
@@ -155,6 +307,11 @@ def classify(message: str) -> ScopeDecision:
     if _CHALLENGE.search(text):
         return ScopeDecision("challenge", text, "", "", _term_hint(text))
     if re.search(r"\b(how are we|how did we)\b", text, re.I):
+        term = _term_hint(text)
+        if term == "sit":
+            term = "demo_rate"
+        if term in _VALUE_TERMS:
+            return ScopeDecision("company_summary", text, "", "", term)
         return ScopeDecision(
             "clarify",
             text,

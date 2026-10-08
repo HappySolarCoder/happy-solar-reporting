@@ -11,6 +11,38 @@ from zoneinfo import ZoneInfo
 _TODAY = re.compile(r"\btoday\b", re.I)
 _THIS_WEEK = re.compile(r"\bthis week\b", re.I)
 _MONTH_TO_DATE = re.compile(r"\b(?:this month|mtd|so far|current)\b", re.I)
+_LAST_MONTH = re.compile(r"\blast month\b", re.I)
+_MONTH_NUMBERS = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sept": 9,
+    "sep": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+_NAMED_MONTH = re.compile(
+    r"\b(january|february|march|april|june|july|august|september|october|november|december|"
+    r"jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|may)\b",
+    re.I,
+)
 
 
 class TimezoneUnconfirmed(ValueError):
@@ -62,6 +94,31 @@ def require_timezone(name: str | None) -> ZoneInfo:
         return ZoneInfo(name)
     except Exception as exc:
         raise TimezoneUnconfirmed(f"company timezone is not usable: {name}") from exc
+
+
+def message_names_explicit_month(message: str) -> bool:
+    return bool(_NAMED_MONTH.search(message or ""))
+
+
+def named_calendar_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:
+    """Month named in the message, or last month as the previous full calendar month.
+
+    A month later than today uses the previous year. The current month is
+    month-to-date. Any earlier month is the full calendar month.
+    """
+    text = message or ""
+    today = today_in(timezone_name, now)
+    match = _NAMED_MONTH.search(text)
+    if match:
+        month = _MONTH_NUMBERS[match.group(1).lower()]
+        year = today.year if month <= today.month else today.year - 1
+        start = date(year, month, 1)
+        end = today if (year == today.year and month == today.month) else _month_end(start)
+        return start.isoformat(), end.isoformat()
+    if _LAST_MONTH.search(text):
+        start = _shift_months(date(today.year, today.month, 1), -1)
+        return start.isoformat(), _month_end(start).isoformat()
+    return None
 
 
 def implied_current_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:

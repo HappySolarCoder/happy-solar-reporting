@@ -12,7 +12,7 @@ from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
 from copilot.auth import identity_for_chat, unauthorized_answer
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
-from copilot.formulas import DEMO_RATE_TARGET_PERCENT
+from copilot.formulas import DEMO_RATE_TARGET_PERCENT, SOURCE_LABELS
 from copilot.human_dates import format_day, format_range, format_updated, is_stale
 from copilot.messages import (
     BUDGET_LIMIT,
@@ -31,7 +31,7 @@ from copilot.messages import (
 )
 from copilot.prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from copilot.rates import INPUT_TOKEN_CEILING, max_affordable_calls, reservation_micro
-from copilot.scope import classify
+from copilot.scope import classify, message_source
 from copilot.store import BudgetExceeded, LedgerUnavailable, QuotaExceeded
 from copilot.tools import ToolContext, ToolRejected, execute
 
@@ -164,15 +164,31 @@ def _goal_clause(rate: float) -> str:
     return f"right at the {goal} goal"
 
 
-def _demo_sentence(metric: dict[str, Any], label: str) -> str:
+def _source_names(sources: Any) -> str | None:
+    labels: list[str] = []
+    for source_id in sources or []:
+        label = SOURCE_LABELS.get(str(source_id))
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return None
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + ", and " + labels[-1]
+
+
+def _demo_sentence(metric: dict[str, Any], label: str, source_name: str | None = None) -> str:
     rate = metric.get("value")
     demos = metric.get("numerator")
     ran = metric.get("denominator")
+    subject = f"{source_name} demo rate" if source_name else "demo rate"
     if rate is None:
         if _as_int(ran) == 0:
-            return f"Your demo rate for {label} is N/A, because no appointments ran."
-        return f"Your demo rate for {label} is N/A."
-    head = f"Your demo rate for {label} is {_percent(rate)}."
+            return f"Your {subject} for {label} is N/A, because no appointments ran."
+        return f"Your {subject} for {label} is N/A."
+    head = f"Your {subject} for {label} is {_percent(rate)}."
     if demos is None or ran is None:
         return f"{head} That's {_goal_clause(rate)}."
     demo_word = "demo" if _as_int(demos) == 1 else "demos"
@@ -251,9 +267,10 @@ def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
             "The dashboard is unchanged."
         )
     label = _period_label(payload.get("period"))
+    source_name = _source_names((payload.get("filters") or {}).get("sources"))
     by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
     if "demo_rate" in by_id and (focus == "demo_rate" or set(by_id) == {"demo_rate"}):
-        return _demo_sentence(by_id["demo_rate"], label)
+        return _demo_sentence(by_id["demo_rate"], label, source_name)
     if set(by_id) == {"sales"}:
         return f"For {label}, you had {_count(by_id['sales'].get('value'))} sales."
     if set(by_id) == {"opps_created"}:
@@ -273,7 +290,7 @@ def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
         ),
     ]
     if "demo_rate" in by_id:
-        sentences.append(_demo_sentence(by_id["demo_rate"], label))
+        sentences.append(_demo_sentence(by_id["demo_rate"], label, source_name))
     if "opp2prelim" in by_id:
         sentences.append(_opp_sentence(by_id["opp2prelim"]))
     return " ".join(sentences)
@@ -698,6 +715,48 @@ def handle_chat(
         store.end_turn(identity.actor_id, turn_id)
 
 
+def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, config: CopilotConfig, now: datetime) -> dict[str, Any]:
+    """Named month and lead source in the message win over the page filters.
+
+    "last month" on a comparison keeps the page window, because that comparison
+    already builds the prior period from it. An explicit month name always wins.
+    """
+    from copilot.periods import (
+        TimezoneUnconfirmed,
+        implied_current_range,
+        message_names_explicit_month,
+        named_calendar_range,
+    )
+
+    updated = {
+        "start": filters.get("start") or "",
+        "end": filters.get("end") or "",
+        "sources": list(filters.get("sources") or []),
+        "unrecognized_source": bool(filters.get("unrecognized_source")),
+    }
+    named = None
+    try:
+        named = named_calendar_range(text, config.company_timezone, now)
+    except TimezoneUnconfirmed:
+        named = None
+    use_named = bool(named) and (intent != "compare" or message_names_explicit_month(text))
+    if use_named and named is not None:
+        updated["start"], updated["end"] = named
+    elif not updated["start"] and not updated["end"]:
+        implied = None
+        try:
+            implied = implied_current_range(text, config.company_timezone, now)
+        except TimezoneUnconfirmed:
+            implied = None
+        if implied:
+            updated["start"], updated["end"] = implied
+    source_id = message_source(text)
+    if source_id:
+        updated["sources"] = [source_id]
+        updated["unrecognized_source"] = False
+    return updated
+
+
 def _finish_turn(*, text, filters, conversation_id, request_id, now, config, store, identity, metrics, model, turn_id):
     decision = classify(text)
     if decision.intent not in {
@@ -761,20 +820,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             else:
                 answer = NO_APPROVED_DOCUMENT + " " + WELCOME
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
-            if not filters["start"] and not filters["end"]:
-                try:
-                    from copilot.periods import TimezoneUnconfirmed, implied_current_range
-
-                    implied = implied_current_range(text, config.company_timezone, now)
-                except TimezoneUnconfirmed:
-                    implied = None
-                if implied:
-                    filters = {
-                        "start": implied[0],
-                        "end": implied[1],
-                        "sources": filters["sources"],
-                        "unrecognized_source": filters.get("unrecognized_source"),
-                    }
+            filters = _apply_message_filters(text, filters, decision_intent, config, now)
             if not filters["start"] or not filters["end"]:
                 answer = "Which start and end dates should I use? Set them on the page and I'll use that range."
                 code = "clarify"

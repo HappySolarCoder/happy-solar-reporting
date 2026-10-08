@@ -244,9 +244,10 @@ def render_panel() -> str:
     div.textContent = text;
     (evidence || []).forEach(item => {{
       if (!item.source_link) return;
+      div.appendChild(document.createElement('br'));
       const link = document.createElement('a');
       link.href = item.source_link;
-      link.textContent = item.label ? (' ' + item.label) : ' Source';
+      link.textContent = item.label || 'Source';
       div.appendChild(link);
     }});
     log.appendChild(div);

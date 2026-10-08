@@ -303,7 +303,7 @@ def _nav_state_boot() -> str:
 
 
 def _embed_chrome_css() -> str:
-    """Five section menus when Bloom frames the app, or when `?embed=1` is set.
+    """Six section menus when Bloom frames the app, or when `?embed=1` is set.
 
     The rail and the operations crumb bar are the duplicate chrome. The
     menus keep every section reachable. Standalone pages never match
@@ -584,7 +584,7 @@ def embed_section_row_css() -> str:
 
 
 def render_embed_section_row(current: str) -> str:
-    """Five-menu row only. Hidden until the page is framed or `?embed=1` is set."""
+    """Six-menu row only. Hidden until the page is framed or `?embed=1` is set."""
     bar = _render_embed_nav(current)
     script = """
         <script>
@@ -996,6 +996,12 @@ NAV_GROUPS = (
         ),
     ),
     (
+        "CONTESTS",
+        (
+            ("mystery_trip", "Mystery Trip", "/api/mystery_trip"),
+        ),
+    ),
+    (
         "OTHER",
         (
             ("sale_cancellation_report", "Sale Cancellations", "/api/sale_cancellation_report"),
@@ -1047,6 +1053,13 @@ EMBED_MENUS = (
         (
             "project_management_hub",
             "hold_cancelled",
+        ),
+    ),
+    (
+        "Contests",
+        "contests",
+        (
+            "mystery_trip",
         ),
     ),
     (

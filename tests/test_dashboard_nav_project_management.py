@@ -130,16 +130,16 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
         self.assertNotRegex(css, r"\b(sit|sits|sat)\b")
 
-    def test_embedded_row_uses_five_menus_and_keeps_the_rail(self):
+    def test_embedded_row_uses_six_menus_and_keeps_the_rail(self):
         html = render_dashboard_nav("sales_list")
         css = nav.dashboard_nav_css()
         labels = [label for label, _slug, _keys in nav.EMBED_MENUS]
-        self.assertEqual(labels, ["Company", "Sales", "Lead Gen", "Proj. Man.", "Other"])
+        self.assertEqual(labels, ["Company", "Sales", "Lead Gen", "Proj. Man.", "Contests", "Other"])
         for label in labels:
             self.assertEqual(html.count(f'class="oc-embed-group-label">{label}</span>'), 1)
-        self.assertEqual(html.count('aria-haspopup="menu"'), 5)
-        self.assertEqual(html.count('class="oc-embed-group-btn"'), 5)
-        self.assertEqual(html.count('class="oc-embed-menu"'), 5)
+        self.assertEqual(html.count('aria-haspopup="menu"'), 6)
+        self.assertEqual(html.count('class="oc-embed-group-btn"'), 6)
+        self.assertEqual(html.count('class="oc-embed-menu"'), 6)
         self.assertIn('type="button"', html)
         self.assertIn("ArrowDown", html)
         self.assertIn("ArrowUp", html)
@@ -151,7 +151,7 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         sidebar_labels = [label for label, _items in nav.NAV_GROUPS]
         self.assertEqual(
             sidebar_labels,
-            ["COMPANY", "SALES", "LEAD GENERATION", "PROJECT MANAGEMENT", "INBOUND", "OTHER"],
+            ["COMPANY", "SALES", "LEAD GENERATION", "PROJECT MANAGEMENT", "INBOUND", "CONTESTS", "OTHER"],
         )
         menu_count = html.count('role="menuitem" class="oc-embed-link')
         sidebar_count = sum(len(items) for _label, items in nav.NAV_GROUPS)
@@ -190,6 +190,12 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         )
         project = render_dashboard_nav("hold_cancelled")
         self.assertIn('aria-current="true"', _group_button(project, "Proj. Man."))
+        contests = render_dashboard_nav("mystery_trip")
+        self.assertIn('aria-current="true"', _group_button(contests, "Contests"))
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/mystery_trip" aria-current="page"',
+            contests,
+        )
         other = render_dashboard_nav("settings")
         self.assertIn('aria-current="true"', _group_button(other, "Other"))
         self.assertNotRegex(html, r"\b(sit|sits|sat)\b")

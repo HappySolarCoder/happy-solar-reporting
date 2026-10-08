@@ -11,19 +11,40 @@ from zoneinfo import ZoneInfo
 _TODAY = re.compile(r"\b(?:so far\s+)?today\b", re.I)
 _THIS_WEEK = re.compile(r"\bthis week\b", re.I)
 _MONTH_WORD = r"month|mnth|mth|montn|mnoth"
-_MONTH_TO_DATE = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far|current)\b", re.I)
+_MONTH_TO_DATE = re.compile(
+    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far|current)\b",
+    re.I,
+)
 _LAST_MONTH = re.compile(rf"\blast (?:{_MONTH_WORD})\b", re.I)
-_RELATIVE_BLOCK = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far|this week)\b", re.I)
+_RELATIVE_BLOCK = re.compile(
+    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far|this week)\b",
+    re.I,
+)
 _STRAY_NOW = re.compile(r"\b(?:today|now)\b", re.I)
 _MONTH_ALT = (
     r"january|february|march|april|june|july|august|september|october|november|december|"
     r"jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|may"
 )
+_RANGE_JOIN = r"to|through|thru|until|[-–—]"
+_RANGE_END = r"today|now|date"
 _DAY_RANGE = re.compile(
-    rf"\b(?:from\s+)?({_MONTH_ALT})\s+(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:to|through|thru|[-–—])\s+"
+    rf"\b(?:from\s+)?({_MONTH_ALT})\s+(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:{_RANGE_JOIN})\s+"
     rf"(?:({_MONTH_ALT})\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b",
     re.I,
 )
+_TO_TODAY_NAMED = re.compile(
+    rf"\b(?:from\s+)?({_MONTH_ALT})\s+(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:{_RANGE_JOIN})\s+(?:{_RANGE_END})\b",
+    re.I,
+)
+_TO_TODAY_NUM = re.compile(
+    rf"\b(?:from\s+)?(\d{{1,2}})/(\d{{1,2}})(?:/(\d{{2,4}}))?\s*(?:{_RANGE_JOIN})\s*(?:{_RANGE_END})\b",
+    re.I,
+)
+_SINCE_POINT = re.compile(
+    r"\bsince\s+the\s+(?:start|beginning)\s+of\s+(?:the\s+)?(year|month|week|quarter)\b",
+    re.I,
+)
+_SO_FAR_WEEK = re.compile(r"\bso far\s+this week\b", re.I)
 _SINCE_MONTH = re.compile(rf"\bsince\s+({_MONTH_ALT})\b(?:\s+((?:19|20)\d{{2}}))?", re.I)
 _FIRST_WEEK = re.compile(rf"\bfirst week of\s+({_MONTH_ALT})\b(?:\s+((?:19|20)\d{{2}}))?", re.I)
 _LAST_N_DAYS = re.compile(r"\blast\s+(\d+)\s+days?\b", re.I)
@@ -34,7 +55,7 @@ _LAST_YEAR = re.compile(r"\blast year\b", re.I)
 _QUARTER = re.compile(r"\bq([1-4])\b(?:\s+((?:19|20)\d{2}))?", re.I)
 _THIS_QUARTER = re.compile(r"\bthis quarter\b", re.I)
 _NUM_RANGE = re.compile(
-    r"\b(?:from\s+)?(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\s*(?:[-–—]|to|through|thru)\s*"
+    rf"\b(?:from\s+)?(\d{{1,2}})/(\d{{1,2}})(?:/(\d{{2,4}}))?\s*(?:{_RANGE_JOIN})\s*"
     r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b",
     re.I,
 )
@@ -55,7 +76,10 @@ _PAST_N_MONTHS = re.compile(
 )
 _PAST_MONTH = re.compile(r"\bpast\s+month\b", re.I)
 _YEAR_ONLY = re.compile(r"\b(?:in|for|during)\s+((?:19|20)\d{2})\b", re.I)
-_PAGE_RELATIVE = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far)\b", re.I)
+_PAGE_RELATIVE = re.compile(
+    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far)\b",
+    re.I,
+)
 # "to" / "through" between months is a span. compare / vs / against is two windows.
 _REAL_COMPARE = re.compile(
     r"\b(?:compare|compared|versus|vs\.?|against|changed|change)\b"
@@ -291,8 +315,11 @@ def _relative_period_wins(text: str) -> bool:
 
     "today" is its own day, including "so far today". A month already named
     keeps that month: "in september? I need it today" stays September.
+    "so far this week" is that week, not the page month.
     """
     raw = text or ""
+    if _SO_FAR_WEEK.search(raw):
+        return False
     if _TODAY.search(raw) and _month_token(raw) is None and not _LAST_MONTH.search(raw):
         return False
     if _RELATIVE_BLOCK.search(raw):
@@ -472,6 +499,43 @@ def _numeric_year(token: str | None, month: int, today: date) -> int:
 
 def _special_window(text: str, today: date) -> _NamedWindow | None:
     """Exact windows that are cheaper to apply than to caveat. None if not one of these."""
+    # "<month> <day> to today" is that span, not the whole month and not that one day.
+    to_today = _TO_TODAY_NAMED.search(text)
+    if to_today:
+        month = _MONTH_NUMBERS[to_today.group(1).lower()]
+        year = _year_for(month, today, _year_beside(text, to_today.start(1), to_today.end(1)))
+        start = _safe_date(year, month, int(to_today.group(2)))
+        label = "that date range"
+        if start is None or start > today:
+            return _NamedWindow("", "", False, label, to_today.span())
+        return _window_ending(start, today, today, label, to_today.span())
+    to_today_num = _TO_TODAY_NUM.search(text)
+    if to_today_num:
+        month = int(to_today_num.group(1))
+        day_number = int(to_today_num.group(2))
+        year = _numeric_year(to_today_num.group(3), month, today)
+        start = _safe_date(year, month, day_number)
+        label = "that date range"
+        if start is None or start > today:
+            return _NamedWindow("", "", False, label, to_today_num.span())
+        return _window_ending(start, today, today, label, to_today_num.span())
+    so_far_week = _SO_FAR_WEEK.search(text)
+    if so_far_week:
+        monday = today - timedelta(days=today.weekday())
+        return _window_ending(monday, today, today, "so far this week", so_far_week.span())
+    since_point = _SINCE_POINT.search(text)
+    if since_point:
+        unit = since_point.group(1).lower()
+        if unit == "year":
+            start = date(today.year, 1, 1)
+        elif unit == "week":
+            start = today - timedelta(days=today.weekday())
+        elif unit == "quarter":
+            start_month = ((today.month - 1) // 3) * 3 + 1
+            start = date(today.year, start_month, 1)
+        else:
+            start = date(today.year, today.month, 1)
+        return _window_ending(start, today, today, f"since the start of the {unit}", since_point.span())
     numeric_range = _NUM_RANGE.search(text)
     if numeric_range:
         month = int(numeric_range.group(1))
@@ -894,14 +958,12 @@ def applied_period_covers(
     if matched and window is not None and window.cover is not None:
         spans.append(window.cover)
     elif window is None or not window.served:
-        relative = _PAGE_RELATIVE.search(text)
-        if relative:
+        for relative in _PAGE_RELATIVE.finditer(text):
             spans.append(relative.span())
         if _relative_period_wins(text):
             for token in _all_month_tokens(text):
                 spans.append((token[0], token[1]))
-    week = re.search(r"\bthis week\b", text, re.I)
-    if week:
+    for week in re.finditer(r"\bthis week\b", text, re.I):
         implied = None
         try:
             implied = implied_current_range(text, timezone_name, now)

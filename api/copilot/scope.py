@@ -95,9 +95,14 @@ _CURRENT_PERIOD = re.compile(
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
 _ASKS_TO_COMPARE = re.compile(
     r"\b(?:compare|compared|versus|vs\.?|changed|change)\b"
-    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b"
+    r"|\b(?:go|going|went)\s+up\s+or\s+down\b"
+    r"|\bbetter\s+or\s+worse\b"
+    r"|\bworse\s+or\s+better\b"
+    r"|\btrend\s+(?:vs\.?|versus|against)\b",
     re.I,
 )
+_SLASH_NEGATION = r"(?<!\w)(?:w/out|w/o|wo/)(?!\w)"
 _LOOSE_PERIOD = re.compile(
     r"\b(?:ytd|year to date|this year|last year|last week|yesterday|tomorrow|q[1-4]|"
     r"last\s+\d+\s+days?|since|first week of|fortnight|two months|past week|"
@@ -105,11 +110,15 @@ _LOOSE_PERIOD = re.compile(
     re.I,
 )
 _SOURCE_NEGATION = re.compile(
-    r"\b(?:everything but|but not|excluding|except|without)\b",
+    r"\b(?:everything but|but not|excluding|except|without|sans|minus)\b"
+    r"|\bexcl\.?(?!\w)"
+    r"|" + _SLASH_NEGATION,
     re.I,
 )
 _NEAR_SOURCE_NEGATION = re.compile(
-    r"\b(?:not counting|other than|aside from|apart from|minus|besides|but|not|non)\b",
+    r"\b(?:not counting|other than|aside from|apart from|minus|besides|but|not|non|sans)\b"
+    r"|\bexcl\.?(?!\w)"
+    r"|" + _SLASH_NEGATION,
     re.I,
 )
 _GLUED_NON_SOURCE = re.compile(
@@ -117,7 +126,7 @@ _GLUED_NON_SOURCE = re.compile(
     re.I,
 )
 _DEMO_METRIC = re.compile(
-    r"\b(?:demo\s+rate|demos|demo|demorate|demo[\s-]?rat|"
+    r"\b(?:demo\s+rate|demo\s+percentage|demo\s+pct|demos|demo|demorate|demo[\s-]?rat|"
     r"dmeo(?:\s+rat(?:e)?)?|deom(?:\s+rat(?:e)?)?|demmo(?:\s+rat(?:e)?)?)\b",
     re.I,
 )
@@ -191,6 +200,7 @@ _FILLER_WORDS = frozenset(
         "now",
         "of",
         "on",
+        "only",
         "our",
         "ours",
         "over",
@@ -229,6 +239,10 @@ _FILLER_PHRASES = re.compile(
     r"\b(?:quick question|not sure but|not sure|not great|i bet|i wonder|real quick)\b",
     re.I,
 )
+_GOAL_LANGUAGE = re.compile(
+    r"\b(?:hitting|at)\s+50\s*%|\b50\s*%|\bon track\b|\bhitting\b|\b(?:goal|target)\b",
+    re.I,
+)
 _OPINION = _FILLER_PHRASES
 _WEEKDAYS = frozenset(
     {
@@ -251,7 +265,7 @@ _WEEKDAYS = frozenset(
 _FILLER_RE = re.compile(r"\b(" + "|".join(sorted(_FILLER_WORDS, key=len, reverse=True)) + r")\b", re.I)
 _METRIC_WORDS = re.compile(
     r"\bdemo[\s-]?rat(?:e)?\b|\bdemorate\b|\bdemos\b|\bdemo\b|"
-    r"\b(?:dmeo|deom|demmo)(?:\s+rat(?:e)?)?\b|\brate\b|\bpercent\b|%",
+    r"\b(?:dmeo|deom|demmo)(?:\s+rat(?:e)?)?\b|\brate\b|\bpercentage\b|\bpercent\b|\bpct\b|%",
     re.I,
 )
 _APOSTROPHE_SUFFIX = re.compile(r"['’](?:s|re|m|ll|ve|d)\b|n['’]t\b", re.I)
@@ -290,10 +304,28 @@ _NEGATION_FILLERS = frozenset(
     }
 )
 _UNAPPLIED_PERIOD = re.compile(
-    r"\b(?:last\s+\d+\s+days?|first week of(?:\s+[a-z]+)?|since\s+[a-z]+|year to date|"
+    r"\b(?:last\s+\d+\s+days?|first week of(?:\s+[a-z]+)?|year to date|"
     r"week before last|last week|last year|this year|yesterday|tomorrow|ytd|q[1-4]|"
     r"fortnight|two months|past week|last quarter|next week|next month|previous week)\b",
     re.I,
+)
+_SINCE_STOP = frozenset(
+    {
+        "for",
+        "on",
+        "demo",
+        "rate",
+        "our",
+        "what",
+        "whats",
+        "show",
+        "me",
+        "with",
+        "and",
+        "please",
+        "can",
+        "you",
+    }
 )
 _DAY_LEVEL_PHRASE = re.compile(
     r"\b(on\s+)?(?:january|february|march|april|may|june|july|august|september|"
@@ -415,6 +447,7 @@ _NOT_A_QUALIFIER = frozenset(
         "sources",
         "source",
         "versus",
+        "vs",
         "compare",
         "what",
         "it",
@@ -634,10 +667,14 @@ def _name_stopped(word: str, text: str = "", at: int | None = None) -> bool:
     return False
 
 
+_NAME_JOINERS = frozenset({"vs", "versus", "and", "or"})
+
+
 def _unapplied_name(text: str) -> str | None:
     """Territory or person the reporting tools cannot filter. Virtual is a lead source.
 
     Any capitalized or possessive name counts. There is no list of people.
+    "jeff vs maria" is two names, in the order they were written.
     """
     raw = text or ""
     found: list[str] = []
@@ -649,13 +686,25 @@ def _unapplied_name(text: str) -> str | None:
             continue
         parts = [word]
         cursor = match.end()
+        trailed: list[str] = []
         while len(parts) < 3:
             following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)\b", raw[cursor:])
-            if not following or _name_stopped(following.group(1), raw, cursor + following.start(1)):
+            if not following:
                 break
-            parts.append(following.group(1))
+            next_word = following.group(1)
+            next_at = cursor + following.start(1)
+            if next_word.lower().rstrip(".") in _NAME_JOINERS:
+                after_at = cursor + following.end()
+                extra = re.match(r"\s+([A-Za-z][A-Za-z'-]*)\b", raw[after_at:])
+                if extra and not _name_stopped(extra.group(1), raw, after_at + extra.start(1)):
+                    trailed.append(_title_name(extra.group(1)))
+                break
+            if _name_stopped(next_word, raw, next_at):
+                break
+            parts.append(next_word)
             cursor += following.end()
         found.append(" ".join(_title_name(part) for part in parts))
+        found.extend(trailed)
     for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", raw):
         word = match.group(1)
         if _name_stopped(word, raw, match.start(1)):
@@ -677,37 +726,60 @@ def _unapplied_name(text: str) -> str | None:
             parts.append(following.group(1))
             rest = rest[following.end() :]
         found.append(" ".join(parts))
-    ordered: list[str] = []
-    for name in sorted(set(found), key=len, reverse=True):
-        if any(name != kept and name in kept.split(" or ") or f" {name} " in f" {kept} " or kept.startswith(name + " ") for kept in ordered):
+    unique: list[str] = []
+    for name in found:
+        if name not in unique:
+            unique.append(name)
+    kept: list[str] = []
+    for name in unique:
+        if any(
+            name != other and (f" {name} " in f" {other} " or other.startswith(name + " "))
+            for other in unique
+        ):
             continue
-        ordered.append(name)
-    if not ordered:
+        kept.append(name)
+    if not kept:
         return None
-    if len(ordered) == 1:
-        return ordered[0]
-    return " or ".join(ordered)
+    if len(kept) == 1:
+        return kept[0]
+    return " or ".join(kept)
 
 
 def _negation_phrase(text: str) -> str:
-    match = _SOURCE_NEGATION.search(text or "")
+    raw = text or ""
+    match = _SOURCE_NEGATION.search(raw)
     if not match:
         return "that exclusion"
-    window = (text or "")[match.start() : match.start() + 48]
+    token = match.group(0)
+    # "w/o" and "excl." are not word characters the usual split can keep intact.
+    if "/" in token or token.endswith("."):
+        kept = [token]
+        extras = 0
+        for word in re.findall(r"[A-Za-z0-9']+", raw[match.end() : match.end() + 48]):
+            if word.lower() in _NEGATION_FILLERS:
+                if extras:
+                    break
+                continue
+            kept.append(word)
+            extras += 1
+            if extras >= 3:
+                break
+        return " ".join(kept).lower()
+    window = raw[match.start() : match.start() + 48]
     words = re.findall(r"[A-Za-z0-9']+", window)
-    negation_words = match.group(0).split()
-    kept = list(negation_words)
+    negation_words = token.split()
+    kept_words = list(negation_words)
     extras = 0
     for word in words[len(negation_words) :]:
         if word.lower() in _NEGATION_FILLERS:
             if extras:
                 break
             continue
-        kept.append(word)
+        kept_words.append(word)
         extras += 1
         if extras >= 3:
             break
-    return " ".join(kept).lower()
+    return " ".join(kept_words).lower()
 
 
 def _clean_phrase(raw: str) -> str:
@@ -728,7 +800,28 @@ def _specific_day_phrase(text: str) -> str | None:
     return None
 
 
+def _since_clause(text: str) -> str | None:
+    """The whole 'since …' phrase. Never a chopped 'since the' or 'since labor'."""
+    match = re.search(r"\bsince\b", text or "", re.I)
+    if not match:
+        return None
+    words = re.findall(r"[A-Za-z0-9']+", (text or "")[match.start() :])
+    if len(words) < 2:
+        return None
+    kept = [words[0]]
+    for word in words[1:7]:
+        if word.lower().replace("'", "") in _SINCE_STOP:
+            break
+        kept.append(word)
+    if len(kept) < 2:
+        return None
+    return " ".join(kept).lower()
+
+
 def _period_phrase(text: str) -> str | None:
+    since = _since_clause(text)
+    if since:
+        return since
     match = _UNAPPLIED_PERIOD.search(text or "")
     if match:
         return _clean_phrase(match.group(0))
@@ -843,6 +936,8 @@ def unconsumed_phrase(
         blank(span)
     for match in _FILLER_PHRASES.finditer(text):
         blank(match.span())
+    for match in _GOAL_LANGUAGE.finditer(text):
+        blank(match.span())
     for match in _METRIC_WORDS.finditer(text):
         blank(match.span())
     term_pattern = _TERM_WORDS.get(matched_term or "")
@@ -876,8 +971,11 @@ def unconsumed_phrase(
         pass
     if intent == "compare":
         for match in re.finditer(
-            r"\b(?:compare|compared|versus|vs\.?|against|changed|change|does|do)\b"
-            r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+            r"\b(?:compare|compared|versus|vs\.?|against|changed|change|does|do|than|trend)\b"
+            r"|\bstack(?:s|ed|ing)?\s+up\s+against\b"
+            r"|\b(?:go|going|went)\s+up\s+or\s+down\b"
+            r"|\bbetter\s+or\s+worse\b"
+            r"|\bworse\s+or\s+better\b",
             text,
             re.I,
         ):

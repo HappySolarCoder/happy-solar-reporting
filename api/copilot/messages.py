@@ -78,4 +78,9 @@ UNCERTAINTY = (
 
 
 def uncertainty_sentence(reason: str) -> str:
-    return UNCERTAINTY.format(reason=(reason or "").strip().rstrip("."))
+    cleaned = (reason or "").strip().rstrip(".")
+    # "I couldn't filter to Rochester, so this is company-wide" is already a sentence.
+    # Wrapping it in "since ... so" is the grammar we do not want.
+    if cleaned.lower().startswith("i couldn't"):
+        return f"{cleaned}. If that number looks off, let me know."
+    return UNCERTAINTY.format(reason=cleaned)

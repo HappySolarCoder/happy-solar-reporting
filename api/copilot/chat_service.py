@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -726,6 +727,7 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         implied_current_range,
         message_names_explicit_month,
         named_calendar_range,
+        named_period_unserved,
     )
 
     updated = {
@@ -735,10 +737,16 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         "unrecognized_source": bool(filters.get("unrecognized_source")),
     }
     named = None
+    unserved = None
     try:
         named = named_calendar_range(text, config.company_timezone, now)
+        if named is None:
+            unserved = named_period_unserved(text, config.company_timezone, now)
     except TimezoneUnconfirmed:
         named = None
+        unserved = None
+    # A real comparison keeps the page window unless the message names a month.
+    # "last month" on a figure question is the previous full month, already in named.
     use_named = bool(named) and (intent != "compare" or message_names_explicit_month(text))
     if use_named and named is not None:
         updated["start"], updated["end"] = named
@@ -754,6 +762,8 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
     if source_id:
         updated["sources"] = [source_id]
         updated["unrecognized_source"] = False
+    if unserved and not use_named:
+        updated["unserved_period"] = unserved
     return updated
 
 
@@ -795,6 +805,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
     tool_payload: dict[str, Any] = {}
     answer = ""
     code = decision_intent
+    unserved_period = None
     try:
         if decision_intent == "deny":
             answer = SCOPE_DENIAL
@@ -821,6 +832,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 answer = NO_APPROVED_DOCUMENT + " " + WELCOME
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
             filters = _apply_message_filters(text, filters, decision_intent, config, now)
+            unserved_period = filters.pop("unserved_period", None)
             if not filters["start"] or not filters["end"]:
                 answer = "Which start and end dates should I use? Set them on the page and I'll use that range."
                 code = "clarify"
@@ -893,6 +905,13 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
         if filters.get("unrecognized_source"):
             tool_payload = dict(tool_payload)
             tool_payload["assumed_filter"] = "I assumed every lead source"
+        if unserved_period and not decision.uncertain:
+            used = format_range(filters.get("start"), filters.get("end")) or "the dates on the page"
+            decision = replace(
+                decision,
+                uncertain=True,
+                uncertainty_reason=f"I couldn't use {unserved_period}, so this is {used}",
+            )
         focus = decision.matched_term if decision_intent == "company_summary" else None
         reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)
         if reason:

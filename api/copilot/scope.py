@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
+from copilot.periods import message_names_explicit_month
+
 
 ALLOWED_INTENTS = frozenset(
     {
@@ -79,6 +81,7 @@ _CURRENT_PERIOD = re.compile(
     re.I,
 )
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
+_ASKS_TO_COMPARE = re.compile(r"\b(?:compare|versus|vs\.?|changed|change)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -176,6 +179,11 @@ _NOT_A_QUALIFIER = frozenset(
         "nov",
         "dec",
         "company",
+        "us",
+        "everyone",
+        "everybody",
+        "team",
+        "overall",
         "happy",
         "solar",
         "demo",
@@ -326,8 +334,14 @@ def _classify(message: str) -> ScopeDecision:
         return ScopeDecision("source_performance", text, "", "", term or "phones")
     if re.search(r"\b(how many|what were|show (me )?the numbers|totals?)\b", text, re.I):
         return ScopeDecision("company_summary", text, "", "", term)
-    if term in _VALUE_TERMS and _LAST_MONTH.search(text):
-        return ScopeDecision("compare", text, "", "", term)
+    if (
+        term in _VALUE_TERMS
+        and not _ASKS_TO_COMPARE.search(text)
+        and not _EXPLAIN.search(text)
+        and (_LAST_MONTH.search(text) or message_names_explicit_month(text))
+    ):
+        # "What was our demo rate last month?" and "demo rate in march" ask for that period.
+        return ScopeDecision("company_summary", text, "", "", term)
     if (
         term in _VALUE_TERMS
         and _CURRENT_PERIOD.search(text)

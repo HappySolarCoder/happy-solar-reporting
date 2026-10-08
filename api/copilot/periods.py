@@ -12,6 +12,18 @@ _TODAY = re.compile(r"\btoday\b", re.I)
 _THIS_WEEK = re.compile(r"\bthis week\b", re.I)
 _MONTH_TO_DATE = re.compile(r"\b(?:this month|mtd|so far|current)\b", re.I)
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
+_RELATIVE_PERIOD = re.compile(r"\b(?:this month|mtd|so far|this week|today)\b", re.I)
+_FULL_MONTH = re.compile(
+    r"\b(january|february|march|april|june|july|august|september|october|november|december)\b",
+    re.I,
+)
+# "may" and short abbreviations are ordinary words unless the sentence uses them as a month.
+_SHORT_MONTH_TOKEN = r"jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|may"
+_SHORT_MONTH = re.compile(
+    rf"\b(?:in|for|during)\s+({_SHORT_MONTH_TOKEN})\b"
+    rf"|\b({_SHORT_MONTH_TOKEN})\s+(?:of\s+)?((?:19|20)\d{{2}}|\d{{1,2}})\b",
+    re.I,
+)
 _MONTH_NUMBERS = {
     "january": 1,
     "jan": 1,
@@ -38,11 +50,20 @@ _MONTH_NUMBERS = {
     "december": 12,
     "dec": 12,
 }
-_NAMED_MONTH = re.compile(
-    r"\b(january|february|march|april|june|july|august|september|october|november|december|"
-    r"jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec|may)\b",
-    re.I,
-)
+_MONTH_NAMES = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
+}
 
 
 class TimezoneUnconfirmed(ValueError):
@@ -96,29 +117,106 @@ def require_timezone(name: str | None) -> ZoneInfo:
         raise TimezoneUnconfirmed(f"company timezone is not usable: {name}") from exc
 
 
+def _relative_period_wins(text: str) -> bool:
+    """this month, MTD, so far, this week, and today beat a bare month word."""
+    return bool(_RELATIVE_PERIOD.search(text or ""))
+
+
+def _month_token(text: str) -> tuple[int, int, int] | None:
+    """Earliest month token as (start, end, month number).
+
+    Full names always count. "may" and 3-letter forms count only in a month
+    phrase: "in may", "for may", "during may", "may 2026", or "may 1".
+    """
+    found: list[tuple[int, int, int]] = []
+    for match in _FULL_MONTH.finditer(text):
+        found.append((match.start(1), match.end(1), _MONTH_NUMBERS[match.group(1).lower()]))
+    for match in _SHORT_MONTH.finditer(text):
+        token = (match.group(1) or match.group(2) or "").lower()
+        if not token:
+            continue
+        if match.group(1):
+            found.append((match.start(1), match.end(1), _MONTH_NUMBERS[token]))
+        else:
+            found.append((match.start(2), match.end(2), _MONTH_NUMBERS[token]))
+    if not found:
+        return None
+    found.sort()
+    return found[0]
+
+
+def _year_beside(text: str, start: int, end: int) -> int | None:
+    after = re.match(r"\s+(?:of\s+)?((?:19|20)\d{2})\b", text[end : end + 24])
+    if after:
+        return int(after.group(1))
+    before = re.search(r"\b((?:19|20)\d{2})\s+(?:of\s+)?$", text[max(0, start - 16) : start])
+    if before:
+        return int(before.group(1))
+    return None
+
+
+@dataclass(frozen=True)
+class _NamedWindow:
+    start: str
+    end: str
+    served: bool
+    label: str
+
+
+def _named_window(message: str, timezone_name: str | None, now: datetime) -> _NamedWindow | None:
+    text = message or ""
+    if _relative_period_wins(text):
+        return None
+    today = today_in(timezone_name, now)
+    token = _month_token(text)
+    if token:
+        token_start, token_end, month = token
+        explicit_year = _year_beside(text, token_start, token_end)
+        if explicit_year is None:
+            year = today.year if month <= today.month else today.year - 1
+            label = _MONTH_NAMES[month]
+        else:
+            year = explicit_year
+            label = f"{_MONTH_NAMES[month]} {year}"
+        start = date(year, month, 1)
+        if start > today:
+            return _NamedWindow("", "", False, label)
+        end = today if (year == today.year and month == today.month) else _month_end(start)
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, label)
+    if _LAST_MONTH.search(text):
+        start = _shift_months(date(today.year, today.month, 1), -1)
+        end = _month_end(start)
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last month")
+    return None
+
+
 def message_names_explicit_month(message: str) -> bool:
-    return bool(_NAMED_MONTH.search(message or ""))
+    text = message or ""
+    if _relative_period_wins(text):
+        return False
+    return _month_token(text) is not None
 
 
 def named_calendar_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:
     """Month named in the message, or last month as the previous full calendar month.
 
-    A month later than today uses the previous year. The current month is
-    month-to-date. Any earlier month is the full calendar month.
+    A month later than today, with no year, uses the previous year. The current
+    month is month-to-date. A 4-digit year next to the month is that year.
+    A future window is not returned; named_period_unserved carries its label.
+    this month, MTD, so far, this week, and today win over a month word.
     """
-    text = message or ""
-    today = today_in(timezone_name, now)
-    match = _NAMED_MONTH.search(text)
-    if match:
-        month = _MONTH_NUMBERS[match.group(1).lower()]
-        year = today.year if month <= today.month else today.year - 1
-        start = date(year, month, 1)
-        end = today if (year == today.year and month == today.month) else _month_end(start)
-        return start.isoformat(), end.isoformat()
-    if _LAST_MONTH.search(text):
-        start = _shift_months(date(today.year, today.month, 1), -1)
-        return start.isoformat(), _month_end(start).isoformat()
-    return None
+    window = _named_window(message, timezone_name, now)
+    if window is None or not window.served:
+        return None
+    return window.start, window.end
+
+
+def named_period_unserved(message: str, timezone_name: str | None, now: datetime) -> str | None:
+    """Label of a named period the tools cannot answer, such as a future year."""
+    window = _named_window(message, timezone_name, now)
+    if window is None or window.served:
+        return None
+    return window.label
 
 
 def implied_current_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:

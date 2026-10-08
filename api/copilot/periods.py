@@ -3,9 +3,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+
+_TODAY = re.compile(r"\btoday\b", re.I)
+_THIS_WEEK = re.compile(r"\bthis week\b", re.I)
+_MONTH_TO_DATE = re.compile(r"\b(?:this month|mtd|so far|current)\b", re.I)
 
 
 class TimezoneUnconfirmed(ValueError):
@@ -57,6 +62,26 @@ def require_timezone(name: str | None) -> ZoneInfo:
         return ZoneInfo(name)
     except Exception as exc:
         raise TimezoneUnconfirmed(f"company timezone is not usable: {name}") from exc
+
+
+def implied_current_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:
+    """Fill an empty panel range from the question. America/New_York via timezone_name.
+
+    today is that calendar day. this week starts Monday and ends today.
+    this month, MTD, so far, and current are month-to-date. A named day wins
+    over a week, and a week wins over a month.
+    """
+    text = message or ""
+    today = today_in(timezone_name, now)
+    if _TODAY.search(text):
+        iso = today.isoformat()
+        return iso, iso
+    if _THIS_WEEK.search(text):
+        monday = today - timedelta(days=today.weekday())
+        return monday.isoformat(), today.isoformat()
+    if _MONTH_TO_DATE.search(text):
+        return today.replace(day=1).isoformat(), today.isoformat()
+    return None
 
 
 def today_in(timezone_name: str | None, now: datetime) -> date:

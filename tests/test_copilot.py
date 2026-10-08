@@ -40,7 +40,7 @@ from copilot.messages import (
     SCOPE_DENIAL,
     SESSION_EXPIRED,
 )
-from copilot.periods import equivalent_prior_period, period_from_dates
+from copilot.periods import equivalent_prior_period, implied_current_range, period_from_dates
 from copilot.pii import scrub_row
 from copilot.prompt import SYSTEM_PROMPT
 from copilot.rates import build_rate_card, max_affordable_calls, reservation_micro
@@ -1021,6 +1021,58 @@ class CopilotTests(unittest.TestCase):
         self.assertLess(hidden, closed)
         self.assertEqual(html.count("tellParent('panel-open')"), 1)
         self.assertEqual(html.count("tellParent('panel-closed')"), 1)
+
+    def test_panel_reads_company_overview_date_inputs(self):
+        from copilot.ui import render_panel
+
+        html = render_panel()
+        fn = html.index("function selectedDates()")
+        body = html[fn : html.index("function selectedSources()", fn)]
+        self.assertIn("document.getElementById('ocStart') || document.getElementById('startDate')", body)
+        self.assertIn("document.getElementById('ocEnd') || document.getElementById('endDate')", body)
+        self.assertLess(body.index("'ocStart'"), body.index("'startDate'"))
+        self.assertLess(body.index("'ocEnd'"), body.index("'endDate'"))
+
+    def test_empty_dates_use_month_to_date_for_this_month(self):
+        self.assertEqual(
+            implied_current_range("what is our demo rate this month", "America/New_York", NOW),
+            ("2026-10-01", "2026-10-04"),
+        )
+        self.assertEqual(implied_current_range("demo rate MTD", "America/New_York", NOW), ("2026-10-01", "2026-10-04"))
+        self.assertEqual(implied_current_range("demo rate so far", "America/New_York", NOW), ("2026-10-01", "2026-10-04"))
+        self.assertEqual(implied_current_range("current demo rate", "America/New_York", NOW), ("2026-10-01", "2026-10-04"))
+        self.assertEqual(implied_current_range("demo rate this week", "America/New_York", NOW), ("2026-09-28", "2026-10-04"))
+        self.assertEqual(implied_current_range("demo rate today", "America/New_York", NOW), ("2026-10-04", "2026-10-04"))
+        self.assertIsNone(implied_current_range("What is Demo Rate?", "America/New_York", NOW))
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(ran=32, sits=11, demo_ran=27)
+        result = _chat(
+            "what is our demo rate this month",
+            store=store,
+            metrics=metrics,
+            filters={"start": "", "end": ""},
+            request_id="req_demo_empty_dates",
+        )
+        answer = result["body"]["answer"]
+        self.assertEqual(result["body"]["code"], "company_summary")
+        self.assertEqual(
+            answer,
+            "Demo Rate for Oct 1 – Oct 4, 2026 (America/New_York): 40.7% "
+            "(11 demos / 27 appointments ran). Company target 50%.",
+        )
+        self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+        self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01")
+        self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
+        explicit = _chat(
+            "what is our demo rate this month",
+            store=store,
+            metrics=metrics,
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_demo_explicit_dates",
+        )
+        self.assertIn("Oct 1 – Oct 7, 2026", explicit["body"]["answer"])
 
     def test_demo_rate_this_month_answers_with_value_when_only_that_metric_is_approved(self):
         for question in (

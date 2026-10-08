@@ -3393,8 +3393,18 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("Sep", versus["body"]["answer"])
         self.assertFalse(versus["body"]["uncertain"])
 
+        smith = ask("how many demos does pat smith have this month?", "req_people_smith_closer")
+        self.assertEqual(
+            smith["body"]["answer"],
+            f"Pat Smith has 1 demo for {month}, out of 4 appointments that ran. "
+            "The demo rate is 25.0%, a bit under the 50% goal.",
+        )
+        self.assertEqual(smith["body"]["footnote"]["filters"]["person"], "Pat Smith")
+        self.assertFalse(smith["body"]["uncertain"])
+
         september = ask("how many demos does meehan have in september?", "req_people_meehan_sept")
-        self.assertIn("Meehan has 4 demos for Sep 1\u201330, 2026", september["body"]["answer"])
+        self.assertIn("Meehan had 4 demos for Sep 1\u201330, 2026", september["body"]["answer"])
+        self.assertNotIn("Meehan has", september["body"]["answer"])
         self.assertIn("40.0%", september["body"]["answer"])
         self.assertFalse(september["body"]["uncertain"])
 
@@ -3497,6 +3507,222 @@ class CopilotTests(unittest.TestCase):
         hello = ask("hi", "req_people_hi")
         self.assertIn("What would you like to look at?", hello["body"]["answer"])
         self.assertNotIn("allowed to see", hello["body"]["answer"])
+
+        company_count = ask("how many demos did we have this month?", "req_people_company_count")
+        self.assertEqual(
+            company_count["body"]["answer"],
+            f"There were 11 demos for {month}, out of 27 appointments that ran. "
+            "The demo rate is 40.7%, a bit under the 50% goal.",
+        )
+        self.assertNotIn("have", company_count["body"]["answer"].lower())
+        self.assertNotIn("If that number looks off", company_count["body"]["answer"])
+        self.assertFalse(company_count["body"]["uncertain"])
+
+    def test_closer_is_assigned_user_and_signed_claims_pick_who_is_asking(self):
+        """A closer is the opportunity owner. 'My' follows ghlUserId, then email, then name."""
+        import hashlib
+        import hmac
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            allowed_roles=frozenset({"settings_admin", "closer", "manager"}),
+            max_requests_per_minute=80,
+            max_turns_per_day=80,
+            max_turns_per_month=80,
+            max_active_company=80,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {"name": "Day", "kind": "setter", "sits": 4, "demo_ran": 10, "ran": 10},
+                {
+                    "name": "Evan Day",
+                    "kind": "closer",
+                    "sits": 2,
+                    "demo_ran": 5,
+                    "ran": 5,
+                    "ghl_user_id": "userEvan",
+                    "email": "evan@happyslr.com",
+                },
+                {
+                    "name": "Pat Meehan",
+                    "kind": "closer",
+                    "sits": 3,
+                    "demo_ran": 6,
+                    "ran": 6,
+                    "ghl_user_id": "userMeehan",
+                    "email": "meehan@happyslr.com",
+                },
+                {
+                    "name": "Pat Smith",
+                    "kind": "closer",
+                    "sits": 1,
+                    "demo_ran": 4,
+                    "ran": 4,
+                    "ghl_user_id": "userPat",
+                    "email": "pat@happyslr.com",
+                },
+            ],
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        month = "Oct 1\u20134, 2026"
+        evan_count = (
+            f"You have 2 demos for {month}, out of 5 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal."
+        )
+        pat_count = (
+            f"You have 1 demo for {month}, out of 4 appointments that ran. "
+            "The demo rate is 25.0%, a bit under the 50% goal."
+        )
+        both = (
+            f"Evan Day has 2 demos as the closer for {month}, out of 5 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal. "
+            "As a setter, Day has 4 demos, out of 10 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal."
+        )
+        both_past = (
+            "Evan Day had 2 demos as the closer for Sep 1\u201330, 2026, out of 5 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal. "
+            "As a setter, Day had 4 demos, out of 10 appointments that ran. "
+            "The demo rate is 40.0%, a bit under the 50% goal."
+        )
+
+        def ask(message, request_id, *, headers=None, body_identity=None):
+            result = _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=page,
+                headers=headers,
+                request_id=request_id,
+                bloom_token_secret="test-secret",
+                body_identity=body_identity,
+            )
+            answer = result["body"]["answer"]
+            self.assertIsNone(re.search(r"\b(?:sit|sits|sat)\b", answer, re.I), answer)
+            return result
+
+        named = ask("how many demos does evan day have this month?", "req_closer_both_roles")
+        self.assertEqual(named["body"]["answer"], both)
+        self.assertFalse(named["body"]["uncertain"])
+
+        september = ask("how many demos did evan day have in september?", "req_closer_both_past")
+        self.assertEqual(september["body"]["answer"], both_past)
+        self.assertNotIn(" has ", september["body"]["answer"])
+        self.assertFalse(september["body"]["uncertain"])
+
+        by_id = ask(
+            "how many demos do I have this month?",
+            "req_closer_my_id",
+            headers=_bloom_auth(role="closer", sub="user_other", name="Pat Smith", ghlUserId="userEvan"),
+        )
+        self.assertEqual(by_id["body"]["answer"], evan_count)
+        self.assertNotIn("Pat", by_id["body"]["answer"])
+        self.assertNotIn("as the closer", by_id["body"]["answer"])
+        self.assertFalse(by_id["body"]["uncertain"])
+
+        by_email = ask(
+            "how many demos do I have this month?",
+            "req_closer_my_email",
+            headers=_bloom_auth(role="closer", sub="user_other", name="Pat Smith", email="Evan@HappySLR.com"),
+        )
+        self.assertEqual(by_email["body"]["answer"], evan_count)
+        self.assertNotIn("Pat", by_email["body"]["answer"])
+        self.assertFalse(by_email["body"]["uncertain"])
+
+        by_name = ask(
+            "how many demos do I have this month?",
+            "req_closer_my_name",
+            headers=_bloom_auth(role="closer", sub="user_zzz", name="Pat Smith"),
+        )
+        self.assertEqual(by_name["body"]["answer"], pat_count)
+        self.assertFalse(by_name["body"]["uncertain"])
+
+        missed_id = ask(
+            "how many demos do I have this month?",
+            "req_closer_my_id_miss",
+            headers=_bloom_auth(role="closer", sub="user_zzz", name="Pat Smith", ghlUserId="nobody"),
+        )
+        self.assertEqual(missed_id["body"]["answer"], pat_count)
+
+        ambiguous = ask(
+            "how many demos do I have this month?",
+            "req_closer_my_ambiguous",
+            headers=_bloom_auth(role="closer", sub="user_zzz", name="Pat"),
+        )
+        self.assertIn(
+            f"There were 11 demos for {month}, out of 27 appointments that ran.",
+            ambiguous["body"]["answer"],
+        )
+        self.assertIn(
+            "I'm not sure if you mean Pat Meehan or Pat Smith. Which rep did you mean?",
+            ambiguous["body"]["answer"],
+        )
+
+        overridden = ask(
+            "how many demos do I have this month?",
+            "req_closer_body_ignored",
+            headers=_bloom_auth(role="closer", sub="user_other", ghlUserId="userEvan"),
+            body_identity={
+                "role": "manager",
+                "user_id": "userPat",
+                "email": "pat@happyslr.com",
+                "ghlUserId": "userPat",
+                "name": "Pat Smith",
+            },
+        )
+        self.assertEqual(overridden["body"]["answer"], evan_count)
+        self.assertNotIn("Pat", overridden["body"]["answer"])
+
+        chat_src = (ROOT / "api" / "copilot" / "chat.py").read_text(encoding="utf-8")
+        self.assertIn('body_identity={"user_id": data.get("user_id"), "role": data.get("role")}', chat_src)
+        self.assertNotIn('data.get("email")', chat_src)
+        self.assertNotIn('data.get("ghlUserId")', chat_src)
+
+        signed = identity_from_bloom_bearer(
+            _bloom_auth(role="closer", name="Evan Day", email="evan@happyslr.com", ghlUserId="userEvan"),
+            token_secret="test-secret",
+            now=NOW,
+        )
+        self.assertEqual(signed.display_name, "Evan Day")
+        self.assertEqual(signed.email, "evan@happyslr.com")
+        self.assertEqual(signed.ghl_user_id, "userEvan")
+        self.assertEqual(set(signed.as_dict()), {"actor_id", "role"})
+        mapped = identity_for_chat(
+            _bloom_auth(role="closer", name="Evan Day", email="evan@happyslr.com", ghlUserId="userEvan"),
+            settings_password="secret",
+            allowed_roles=frozenset({"settings_admin"}),
+            token_secret="test-secret",
+            now=NOW,
+        )
+        self.assertEqual(mapped.role, "settings_admin")
+        self.assertEqual(mapped.email, "evan@happyslr.com")
+        self.assertEqual(mapped.ghl_user_id, "userEvan")
+        self.assertEqual(mapped.display_name, "Evan Day")
+
+        def forged(extra):
+            claims = _bloom_claims(role="closer", **extra)
+            body = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            sig = hmac.new(b"test-secret", body, hashlib.sha256).digest()
+
+            def pack(raw):
+                return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+            return verify_bloom_token(pack(body) + "." + pack(sig), "test-secret", NOW)
+
+        self.assertIsNone(forged({"office": "Buffalo"}))
+        self.assertIsNone(forged({"email": "evan@happyslr.com\nbcc"}))
+        self.assertIsNone(forged({"email": "not-an-email"}))
+        self.assertIsNone(forged({"email": "a" * 110 + "@example.com"}))
+        self.assertIsNone(forged({"ghlUserId": "has space"}))
+        self.assertIsNone(forged({"ghlUserId": "a" * 65}))
+        self.assertIsNotNone(forged({"email": "evan@happyslr.com", "ghlUserId": "userEvan"}))
 
 
 if __name__ == "__main__":

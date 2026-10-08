@@ -81,13 +81,23 @@ def _filters(raw: dict | None) -> dict[str, Any]:
 
 
 _RATE_IDS = frozenset({"demo_rate", "opp2prelim"})
-_SPOKEN = {
-    "sales": "sales",
-    "opps_created": "opportunities created",
-    "opps_ran": "appointments that ran",
-    "demo_rate": "demo rate",
+_TITLES = {
+    "sales": "Sales",
+    "opps_created": "Opps Created",
+    "opps_ran": "Ran",
+    "created": "Opps Created",
+    "ran": "Ran",
+    "demo_rate": "Demo Rate",
     "opp2prelim": "Opp2Prelim",
+    "sit": "Demo",
+    "phones": "Phones",
+    "self_gen": "Self Gen",
+    "doors": "Doors",
+    "inbound": "Inbound",
+    "three_pl": "3PL",
+    "3pl": "3PL",
 }
+_NOT_DOUBT = frozenset({"partial_period", "zero_denominator"})
 _SENTENCE_NAME = {
     "sales": "Sales",
     "opps_created": "Opportunities created",
@@ -146,7 +156,9 @@ def _demo_sentence(metric: dict[str, Any], label: str) -> str:
     demos = metric.get("numerator")
     ran = metric.get("denominator")
     if rate is None:
-        return f"Your demo rate for {label} is N/A, because no appointments ran."
+        if _as_int(ran) == 0:
+            return f"Your demo rate for {label} is N/A, because no appointments ran."
+        return f"Your demo rate for {label} is N/A."
     head = f"Your demo rate for {label} is {_percent(rate)}."
     if demos is None or ran is None:
         return f"{head} That's {_goal_clause(rate)}."
@@ -163,7 +175,9 @@ def _opp_sentence(metric: dict[str, Any]) -> str:
     sales = metric.get("numerator")
     ran = metric.get("denominator")
     if value is None:
-        return "Opp2Prelim is N/A, because no appointments ran."
+        if _as_int(ran) == 0:
+            return "Opp2Prelim is N/A, because no appointments ran."
+        return "Opp2Prelim is N/A."
     if sales is None or ran is None:
         return f"Opp2Prelim is {_percent(value)}."
     return (
@@ -172,13 +186,40 @@ def _opp_sentence(metric: dict[str, Any]) -> str:
     )
 
 
+def _title_name(metric_id: str | None, display_name: str | None = None) -> str:
+    if display_name and "_" not in str(display_name):
+        return str(display_name)
+    return _TITLES.get(metric_id or "", "Report")
+
+
+def _source_label(metric_id: str | None, display_name: str | None = None) -> str:
+    name = _title_name(metric_id, display_name)
+    if name == "Report":
+        return "Source"
+    return f"Source: {name} definition"
+
+
+def _label_for_link(link: str) -> str:
+    if "demo_rate" in link:
+        return _source_label("demo_rate")
+    if "opportunities_created" in link:
+        return _source_label("opps_created")
+    if "opportunities_ran" in link:
+        return _source_label("opps_ran")
+    if "company_overview" in link:
+        return _source_label("opp2prelim")
+    if "/metrics/sales" in link or link.startswith("/api/metrics/sales"):
+        return _source_label("sales")
+    return "Source"
+
+
 def _render_definition(payload: dict[str, Any]) -> str:
     if payload.get("reason") == "unknown_term":
         return (
             f"{NO_APPROVED_DEFINITION} "
             "Tell me which term you mean, such as Opp2Prelim, demo rate, or a lead source."
         )
-    name = payload.get("display_name") or payload.get("term_id")
+    name = _title_name(payload.get("term_id"), payload.get("display_name"))
     if not payload.get("official"):
         return (
             f"{NO_APPROVED_DEFINITION} {name} is still a draft, so it is not company policy. "
@@ -308,26 +349,47 @@ def _render_compare(payload: dict[str, Any]) -> str:
     return " ".join(lines)
 
 
-def _uncertainty_reason(payload: dict[str, Any], decision, now: datetime) -> str | None:
-    """One plain reason, or None when the figure is on solid ground."""
+def _metrics_in_play(payload: dict[str, Any], focus: str | None) -> list[dict[str, Any]]:
+    metrics = list(payload.get("metrics") or [])
+    if focus == "demo_rate":
+        focused = [metric for metric in metrics if metric.get("metric_id") == "demo_rate"]
+        return focused or metrics
+    return metrics
+
+
+def _uncertainty_reason(payload: dict[str, Any], decision, now: datetime, focus: str | None = None) -> str | None:
+    """One plain reason, or None when the figure is exact for the dates asked.
+
+    A month still in progress is not doubt. The number is exact for that window.
+    """
     if not payload.get("available"):
         return None
     reasons: list[str] = []
-    period = payload.get("period") or {}
-    prior = payload.get("comparison_period") or {}
-    if period.get("partial") or prior.get("partial"):
-        reasons.append("this period is still in progress")
     if payload.get("unmapped_sales_labels") or payload.get("unmapped_ran_labels"):
         reasons.append("some of the counts didn't line up")
     if is_stale(payload.get("data_as_of"), now):
-        reasons.append("the data is a bit old")
+        reasons.append("the last refresh is more than a day old")
     if payload.get("official") is False:
         reasons.append("that definition is still a draft")
-    assumed = payload.get("assumed_filter")
+    assumed = payload.get("assumed_filter") or payload.get("assumed_source")
     if assumed:
         reasons.append(str(assumed))
     if getattr(decision, "uncertain", False):
         reasons.append(getattr(decision, "uncertainty_reason", "") or "the question could mean more than one thing")
+    for metric in _metrics_in_play(payload, focus):
+        if metric.get("missing"):
+            reasons.append("some of the data is missing")
+        extra = set(metric.get("incomplete") or []) - _NOT_DOUBT
+        if extra:
+            reasons.append("some of the data is missing")
+    for row in payload.get("rows") or []:
+        if "current" in row:
+            current_missing = row.get("current") is None and not row.get("current_zero_denominator")
+            prior_missing = row.get("prior") is None and not row.get("prior_zero_denominator")
+            if current_missing or prior_missing:
+                reasons.append("some of the data is missing")
+        elif "sales" in row and (row.get("sales") is None or row.get("opps_ran") is None):
+            reasons.append("some of the data is missing")
     ordered: list[str] = []
     for reason in reasons:
         if reason and reason not in ordered:
@@ -352,7 +414,7 @@ def _evidence_from(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_link": link,
                 "data_as_of": payload.get("data_as_of"),
                 "kind": "report",
-                "label": "report",
+                "label": _label_for_link(link),
             }
         )
     for link in payload.get("source_links") or []:
@@ -361,7 +423,7 @@ def _evidence_from(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_link": link,
                 "data_as_of": payload.get("data_as_of"),
                 "kind": "report",
-                "label": "report",
+                "label": _label_for_link(link),
             }
         )
     for metric in payload.get("metrics") or []:
@@ -370,7 +432,7 @@ def _evidence_from(payload: dict[str, Any]) -> list[dict[str, Any]]:
             evidence.append(
                 {
                     "metric_id": metric_id,
-                    "label": _SPOKEN.get(metric_id, "report"),
+                    "label": _source_label(metric_id, metric.get("display_name")),
                     "definition_version": metric.get("definition_version"),
                     "source_link": metric.get("source_link"),
                     "data_as_of": metric.get("data_as_of"),
@@ -747,7 +809,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
         model_note = MODEL_UNAVAILABLE
     reason = None
     if code != "budget_limit" and tool_payload.get("available"):
-        reason = _uncertainty_reason(tool_payload, decision, now)
+        focus = decision.matched_term if decision_intent == "company_summary" else None
+        reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)
         if reason:
             answer = answer.rstrip() + " " + uncertainty_sentence(reason)
     answer = _plain_face(_public_labels(answer))

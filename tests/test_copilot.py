@@ -276,7 +276,11 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("demo_rate", answer)
         self.assertNotIn("opp2prelim", answer)
         self.assertNotIn("America/New_York", answer)
-        self.assertIn("I'm not 100% sure on this one", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        labels = [item.get("label") for item in result["body"]["evidence"]]
+        self.assertIn("Source: Demo Rate definition", labels)
+        self.assertIn("Source: Sales definition", labels)
         self.assertTrue(result["body"]["evidence"])
         self.assertTrue(all(item["source_link"].startswith("/api/") for item in result["body"]["evidence"]))
         links = " ".join(item["source_link"] for item in result["body"]["evidence"])
@@ -957,6 +961,8 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("hsOpsReadFilters", html)
         self.assertIn("ocStart", html)
         self.assertIn("updated_label", html)
+        self.assertIn("item.label ? (' ' + item.label) : ' Source'", html)
+        self.assertNotIn("+ ' source'", html)
         self.assertIn('id="gooseForm"', html)
         self.assertIn('id="gooseIssue"', html)
         self.assertIn('id="gooseClose"', html)
@@ -1009,14 +1015,14 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(classify("What is Demo Rate?").intent, "definition")
         self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", answer)
         self.assertIn("That's 11 demos out of 27 appointments that ran, a bit under the 50% goal.", answer)
-        self.assertIn(
-            "I'm not 100% sure on this one, since this period is still in progress. "
-            "If the number looks off, let me know what you meant and I'll recheck.",
-            answer,
-        )
-        self.assertTrue(result["body"]["uncertain"])
-        self.assertEqual(result["body"]["uncertainty_reason"], "this period is still in progress")
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertNotIn("still in progress", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        self.assertIsNone(result["body"]["uncertainty_reason"])
         self.assertEqual(result["body"]["footnote"]["updated_label"], "Updated Oct 7 at 10:29 PM ET")
+        labels = [item.get("label") for item in result["body"]["evidence"]]
+        self.assertIn("Source: Demo Rate definition", labels)
+        self.assertNotIn("demo rate source", " ".join(label or "" for label in labels).lower())
         self.assertNotIn("demo_rate", answer)
         self.assertNotIn("America/New_York", answer)
         self.assertNotIn("2026-10-08T", answer)
@@ -1024,7 +1030,8 @@ class CopilotTests(unittest.TestCase):
         for word in (" sit ", " sits ", " sat "):
             self.assertNotIn(word, f" {answer.lower()} ")
         self.assertIn("I'm not 100% sure on this one", SYSTEM_PROMPT)
-        self.assertLess(answer.index("40.7%"), answer.index("I'm not 100% sure"))
+        self.assertIn("month-to-date", SYSTEM_PROMPT)
+        self.assertIn("is not doubt", SYSTEM_PROMPT)
 
     def test_uncertainty_sentence_is_not_on_a_settled_period(self):
         store = MemoryStore()
@@ -1073,6 +1080,176 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("still in progress", answer)
         self.assertNotIn("demo_rate", answer)
         self.assertTrue(result["body"]["uncertain"])
+
+    def test_stale_or_missing_data_still_adds_the_caveat(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        stale = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(sales=7, ran=27, sits=11, created=34, generated_at="2026-10-01T15:00:00Z"),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_stale_demo_01",
+        )
+        stale_answer = stale["body"]["answer"]
+        self.assertIn("40.7%", stale_answer)
+        self.assertIn("the last refresh is more than a day old", stale_answer)
+        self.assertNotIn("still in progress", stale_answer)
+        self.assertTrue(stale["body"]["uncertain"])
+        fresh_cutoff = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(sales=7, ran=27, sits=11, created=34, generated_at="2026-10-03T15:00:00Z"),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_fresh_cutoff_01",
+        )
+        self.assertNotIn("I'm not 100% sure", fresh_cutoff["body"]["answer"])
+        missing = _chat(
+            "How many sales were there?",
+            store=store,
+            metrics=FakeMetrics(sales=None),
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_missing_sales_01",
+        )
+        self.assertIn("some of the data is missing", missing["body"]["answer"])
+        self.assertIn("I'm not 100% sure on this one", missing["body"]["answer"])
+        self.assertNotIn("still in progress", missing["body"]["answer"])
+        blank_rate = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(ran=0, sits=0),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_zero_demo_01",
+        )
+        self.assertIn("is N/A, because no appointments ran.", blank_rate["body"]["answer"])
+        self.assertNotIn("I'm not 100% sure", blank_rate["body"]["answer"])
+        self.assertFalse(blank_rate["body"]["uncertain"])
+
+    def test_uncertainty_hooks_cover_real_doubt_only(self):
+        from copilot.chat_service import _source_label, _uncertainty_reason
+
+        class Decision:
+            def __init__(self, uncertain=False, reason=""):
+                self.uncertain = uncertain
+                self.uncertainty_reason = reason
+                self.matched_term = "demo_rate"
+
+        base = {
+            "available": True,
+            "official": True,
+            "data_as_of": "2026-10-04T15:00:00Z",
+            "period": {"partial": True, "start": "2026-10-01", "end": "2026-10-07"},
+            "metrics": [
+                {
+                    "metric_id": "demo_rate",
+                    "display_name": "Demo Rate",
+                    "value": 40.7,
+                    "incomplete": ["partial_period"],
+                }
+            ],
+        }
+        self.assertIsNone(_uncertainty_reason(base, Decision(), NOW, focus="demo_rate"))
+        self.assertEqual(_source_label("demo_rate", "Demo Rate"), "Source: Demo Rate definition")
+        self.assertEqual(_source_label("self_gen"), "Source: Self Gen definition")
+        stale = dict(base, data_as_of="2026-10-01T15:00:00Z")
+        self.assertEqual(
+            _uncertainty_reason(stale, Decision(), NOW, focus="demo_rate"),
+            "the last refresh is more than a day old",
+        )
+        missing = {
+            **base,
+            "metrics": [{"metric_id": "demo_rate", "missing": True, "incomplete": ["partial_period"], "value": None}],
+        }
+        self.assertEqual(
+            _uncertainty_reason(missing, Decision(), NOW, focus="demo_rate"),
+            "some of the data is missing",
+        )
+        exact_na = {
+            **base,
+            "metrics": [
+                {
+                    "metric_id": "demo_rate",
+                    "value": None,
+                    "incomplete": ["zero_denominator", "partial_period"],
+                }
+            ],
+        }
+        self.assertIsNone(_uncertainty_reason(exact_na, Decision(), NOW, focus="demo_rate"))
+        assumed = dict(base, assumed_filter="I assumed every lead source")
+        self.assertEqual(
+            _uncertainty_reason(assumed, Decision(), NOW, focus="demo_rate"),
+            "I assumed every lead source",
+        )
+        draft = dict(base, official=False)
+        self.assertEqual(
+            _uncertainty_reason(draft, Decision(), NOW, focus="demo_rate"),
+            "that definition is still a draft",
+        )
+        ambiguous = _uncertainty_reason(base, Decision(True, "the question could mean more than one thing"), NOW)
+        self.assertEqual(ambiguous, "the question could mean more than one thing")
+        unreconciled = dict(base, unmapped_sales_labels=["Mystery"])
+        self.assertEqual(
+            _uncertainty_reason(unreconciled, Decision(), NOW, focus="demo_rate"),
+            "some of the counts didn't line up",
+        )
+
+    def test_refusals_and_errors_stay_plain(self):
+        import re
+        from dataclasses import replace
+
+        import copilot.messages as messages
+
+        snake = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
+        iso = re.compile(r"\d{4}-\d{2}-\d{2}")
+        spoken = []
+        for name, value in vars(messages).items():
+            if name.isupper() and isinstance(value, str):
+                spoken.append((name, value))
+        store = MemoryStore()
+        spoken.append(("paused", _chat("How many sales were there?", config=replace(_enabled_config(), enabled=False), request_id="req_plain_paused")["body"]["answer"]))
+        spoken.append(("deny", _chat("Tell me a joke.", request_id="req_plain_deny")["body"]["answer"]))
+        spoken.append(("draft", _chat("Explain Opp2Prelim", request_id="req_plain_draft")["body"]["answer"]))
+        spoken.append(("clarify", _chat("How are we doing?", request_id="req_plain_clarify")["body"]["answer"]))
+        spoken.append(("narrow", _chat("How many sales were there?", request_id="x", store=store)["body"]["answer"]))
+        spoken.append(("unauthorized", _chat("Explain Opp2Prelim", headers={}, request_id="req_plain_unauth")["body"]["answer"]))
+        coach = replace(_enabled_config(), allowed_roles=frozenset({"coach"}))
+        spoken.append(("role", _chat("Explain Opp2Prelim", config=coach, request_id="req_plain_role")["body"]["answer"]))
+        spoken.append((
+            "no metrics",
+            handle_chat(
+                message="How many sales were there?",
+                filters={"start": "2026-10-01", "end": "2026-10-04"},
+                conversation_id="conv_test",
+                request_id="req_plain_nometrics",
+                headers=_auth(),
+                now=NOW,
+                config=_enabled_config(),
+                store=MemoryStore(),
+                settings_password="secret",
+                metrics=None,
+                model=None,
+            )["body"]["answer"],
+        ))
+        bad_zone = replace(_enabled_config(), company_timezone="Not/AZone")
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        spoken.append((
+            "timezone",
+            _chat("How many sales were there?", config=bad_zone, store=store, request_id="req_plain_tz")["body"]["answer"],
+        ))
+        limited = replace(_enabled_config(), max_requests_per_minute=1)
+        quota_store = MemoryStore()
+        _chat("Hello", config=limited, store=quota_store, request_id="req_plain_quota_a")
+        spoken.append((
+            "quota",
+            _chat("Hello again", config=limited, store=quota_store, request_id="req_plain_quota_b")["body"]["answer"],
+        ))
+        for label, text in spoken:
+            self.assertIsNone(snake.search(text), f"{label}: {text}")
+            self.assertIsNone(iso.search(text), f"{label}: {text}")
+            self.assertNotIn("America/", text, label)
+            self.assertNotRegex(text, r"\b(?:UTC|GMT)\b", label)
 
 
 if __name__ == "__main__":

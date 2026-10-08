@@ -228,7 +228,7 @@ def render_panel() -> str:
       if (!item.source_link) return;
       const link = document.createElement('a');
       link.href = item.source_link;
-      link.textContent = ' ' + (item.label || 'report') + ' source';
+      link.textContent = item.label ? (' ' + item.label) : ' Source';
       div.appendChild(link);
     }});
     log.appendChild(div);

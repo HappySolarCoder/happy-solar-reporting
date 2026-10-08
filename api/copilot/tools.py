@@ -425,6 +425,10 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
     for metric_id in cleaned:
         current = current_values.get(metric_id)
         previous = prior_values.get(metric_id)
+        zero_key = {
+            "demo_rate": "demo_rate_zero_denominator",
+            "opp2prelim": "opp2prelim_zero_denominator",
+        }.get(metric_id)
         row = {
             "metric_id": metric_id,
             "current": current,
@@ -434,6 +438,9 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
             "percentage_points": absolute_change(current, previous) if metric_id in {"demo_rate", "opp2prelim"} else None,
             "partial_period": period.partial or prior.partial,
             "zero_baseline": previous == 0,
+            # N/A from a zero denominator is an exact result, not a missing count.
+            "current_zero_denominator": bool(zero_key and current_values.get(zero_key)),
+            "prior_zero_denominator": bool(zero_key and prior_values.get(zero_key)),
         }
         rows.append(row)
     return {

@@ -37,6 +37,7 @@ from copilot.scope import (
     message_source_negated,
     message_sources,
     message_sources_are_exact,
+    unconsumed_phrase,
     uncovered_request,
 )
 from copilot.store import BudgetExceeded, LedgerUnavailable, QuotaExceeded
@@ -263,6 +264,13 @@ def _render_definition(payload: dict[str, Any]) -> str:
         )
     text = (payload.get("definition") or "").strip()
     if not text:
+        if payload.get("term_id") == "demo_rate":
+            target = float(DEMO_RATE_TARGET_PERCENT)
+            goal = f"{int(target)}%" if target.is_integer() else f"{target:.1f}%"
+            return (
+                "Demo Rate is the percent of appointments that ran whose appointment outcome is a demo. "
+                f"The target is {goal}."
+            )
         return f"{name} is approved, but that record doesn't include a plain-language definition yet."
     return f"{name}: {text}"
 
@@ -945,6 +953,38 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     decision,
                     uncertain=True,
                     uncertainty_reason=f"I couldn't use '{leftover}', so this is {used}",
+                )
+        if (
+            decision_intent in {"company_summary", "compare", "source_performance"}
+            and code == decision_intent
+        ):
+            compared = None
+            comparison = tool_payload.get("comparison_period") or {}
+            if comparison.get("start") and comparison.get("end"):
+                compared = (comparison.get("start"), comparison.get("end"))
+            phrase = unconsumed_phrase(
+                text,
+                filters.get("start") or "",
+                filters.get("end") or "",
+                filters.get("sources") or [],
+                config.company_timezone,
+                now,
+                intent=decision_intent,
+                compared=compared,
+                matched_term=decision.matched_term,
+            )
+            bogus = re.search(
+                r"I couldn't filter to (?!Rochester\b|Buffalo\b|Syracuse\b|Jeff\b)([A-Za-z]+)",
+                decision.uncertainty_reason or "",
+            )
+            if phrase and (not decision.uncertain or bogus):
+                source_label = _source_names(filters.get("sources"))
+                who = source_label if source_label else "all sources"
+                when = format_range(filters.get("start"), filters.get("end")) or "the dates on the page"
+                decision = replace(
+                    decision,
+                    uncertain=True,
+                    uncertainty_reason=f"I couldn't apply '{phrase}', so this is {who} for {when}",
                 )
         focus = decision.matched_term if decision_intent == "company_summary" else None
         reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)

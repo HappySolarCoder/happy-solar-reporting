@@ -1200,7 +1200,8 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(defined["body"]["code"], "definition")
         self.assertEqual(
             defined["body"]["answer"],
-            "Demo Rate is approved, but that record doesn't include a plain-language definition yet.",
+            "Demo Rate is the percent of appointments that ran whose appointment outcome is a demo. "
+            "The target is 50%.",
         )
         self.assertNotIn("40.7", defined["body"]["answer"])
 
@@ -2151,6 +2152,121 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(either_answer.lower().count("if that number looks off"), 1)
         self.assertIn("phones or doors", either_answer)
         self.assertEqual(either["body"]["footnote"]["filters"]["sources"], [])
+
+    def test_round5_leftover_tokens_get_one_caveat(self):
+        """A question is exact only when every token was applied. Anything left is one caveat."""
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=80,
+            max_turns_per_day=80,
+            max_active_company=80,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        exact = {
+            "on 10/3": "Oct 3, 2026",
+            "between september 1 and september 15": "Sep 1\u201315, 2026",
+            "week of sept 8": "Sep 7\u201313, 2026",
+            "past 3 months": "Jul 4 \u2013 Oct 4, 2026",
+            "last 2 weeks": "Sep 14\u201327, 2026",
+            "over the past month": "Sep 4 \u2013 Oct 4, 2026",
+            "9/1-9/15": "Sep 1\u201315, 2026",
+            "in 2025": "Jan 1 \u2013 Dec 31, 2025",
+            "this quarter": "Oct 1\u20134, 2026",
+        }
+        compare = {
+            "compare sep to aug": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare our demo rate in september to august": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+        }
+        caveats = (
+            "not counting doors",
+            "other than phones",
+            "all sources but doors",
+            "how did Maria do",
+            "weekends this month",
+            "everything but doors",
+            "new reps",
+        )
+
+        def ask(message, request_id):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=page,
+                request_id=request_id,
+            )
+
+        for index, question in enumerate((*exact, *compare, *caveats)):
+            with self.subTest(question=question):
+                result = ask(question, f"req_round5_{index:02d}")
+                answer = result["body"]["answer"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotIn("doesn't include", answer.lower())
+                self.assertNotIn("filter to Everything", answer)
+                self.assertNotIn("filter to New", answer)
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1))
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                if question in exact:
+                    self.assertEqual(result["body"]["code"], "company_summary")
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                    self.assertIn(f"Your demo rate for {exact[question]} is 40.7%.", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                elif question in compare:
+                    self.assertEqual(result["body"]["code"], "compare")
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                    self.assertIn(compare[question], answer)
+                    self.assertNotIn("Aug 1 \u2013 Sep 30", answer)
+                    self.assertIn("40.7%", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                else:
+                    self.assertEqual(result["body"]["code"], "company_summary")
+                    self.assertEqual(caveat_count, 1)
+                    self.assertTrue(result["body"]["uncertain"])
+                    self.assertIn("40.7%", answer)
+                    self.assertLess(answer.index("40.7%"), answer.lower().index("if that number looks off"))
+                    self.assertNotIn("25.0%", answer)
+                    self.assertNotIn("80.0%", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    self.assertIn("Oct 1\u20137, 2026", answer)
+                    if question == "how did Maria do":
+                        self.assertIn("maria", answer.lower())
+                    elif question == "weekends this month":
+                        self.assertIn("weekend", answer.lower())
+                    elif question == "new reps":
+                        self.assertIn("new reps", answer.lower())
+                    else:
+                        self.assertIn(question, answer.lower())
+
+        defined = ask("how is demo rate calculated", "req_round5_defined")
+        self.assertEqual(defined["body"]["code"], "definition")
+        self.assertEqual(
+            defined["body"]["answer"],
+            "Demo Rate is the percent of appointments that ran whose appointment outcome is a demo. "
+            "The target is 50%.",
+        )
+        self.assertNotIn("40.7", defined["body"]["answer"])
+        self.assertNotIn("definition isn't", defined["body"]["answer"].lower())
+
+        settled = ask("What is our demo rate this month?", "req_round5_this_month")
+        self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", settled["body"]["answer"])
+        self.assertNotIn("If that number looks off", settled["body"]["answer"])
+        self.assertFalse(settled["body"]["uncertain"])
 
 
 if __name__ == "__main__":

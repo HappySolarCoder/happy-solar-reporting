@@ -9,8 +9,10 @@ from dataclasses import dataclass, replace
 from copilot.periods import (
     TimezoneUnconfirmed,
     _relative_period_wins,
+    applied_period_covers,
     implied_current_range,
     message_names_explicit_month,
+    month_spans_covering,
     named_calendar_range,
     named_period_unserved,
 )
@@ -99,6 +101,122 @@ _SOURCE_NEGATION = re.compile(
     r"\b(?:everything but|but not|excluding|except|without)\b",
     re.I,
 )
+_NEAR_SOURCE_NEGATION = re.compile(
+    r"\b(?:not counting|other than|aside from|apart from|minus|besides|but|not)\b",
+    re.I,
+)
+_DEMO_METRIC = re.compile(r"\b(?:demo\s+rate|demos|demo)\b", re.I)
+_PURE_DEMO_DEFINITION = re.compile(
+    r"^(?:what(?:'s| is)|define|explain)\s+(?:a\s+|the\s+)?demo(?:\s+rate)?\s*\??$"
+    r"|^(?:how|what)\s+(?:is|does)\s+demo(?:\s+rate)?\s+"
+    r"(?:calculated|defined|computed|measured|mean|meaning)\s*\??$",
+    re.I,
+)
+_BARE_DEMO = re.compile(r"^(?:the\s+)?demo(?:\s+rate)?\s*\??$", re.I)
+_FIGURE_FRAGMENT = re.compile(
+    r"\b(?:not counting|other than|aside from|apart from|everything but|but not|"
+    r"week of|weekends?|this quarter|past\s+(?:\d+\s+)?months?|last\s+\d+\s+weeks?|"
+    r"new reps|how did|all sources but)\b"
+    r"|\b(?:in|for|during)\s+(?:19|20)\d{2}\b"
+    r"|\b\d{1,2}/\d{1,2}\b"
+    r"|\bbetween\s+[a-z]+\s+\d",
+    re.I,
+)
+_FILLER_WORDS = frozenset(
+    {
+        "a",
+        "about",
+        "am",
+        "an",
+        "and",
+        "are",
+        "at",
+        "be",
+        "by",
+        "can",
+        "company",
+        "current",
+        "did",
+        "do",
+        "doing",
+        "during",
+        "everybody",
+        "everyone",
+        "far",
+        "for",
+        "from",
+        "get",
+        "give",
+        "goose",
+        "happy",
+        "here",
+        "how",
+        "i",
+        "im",
+        "in",
+        "is",
+        "it",
+        "its",
+        "just",
+        "let",
+        "like",
+        "many",
+        "me",
+        "mtd",
+        "number",
+        "numbers",
+        "my",
+        "need",
+        "now",
+        "of",
+        "on",
+        "our",
+        "over",
+        "please",
+        "really",
+        "right",
+        "see",
+        "show",
+        "so",
+        "solar",
+        "team",
+        "tell",
+        "that",
+        "the",
+        "there",
+        "this",
+        "to",
+        "today",
+        "total",
+        "us",
+        "want",
+        "was",
+        "we",
+        "were",
+        "what",
+        "whats",
+        "with",
+        "you",
+        "your",
+    }
+)
+_FILLER_RE = re.compile(r"\b(" + "|".join(sorted(_FILLER_WORDS, key=len, reverse=True)) + r")\b", re.I)
+_METRIC_WORDS = re.compile(r"\bdemo\s+rate\b|\bdemos\b|\bdemo\b|\brate\b|\bpercent\b|%", re.I)
+_TERM_WORDS = {
+    "sales": re.compile(r"\bsales?\b", re.I),
+    "created": re.compile(r"\b(?:created|opportunities|opportunity)\b", re.I),
+    "ran": re.compile(r"\bran\b", re.I),
+    "demo_rate": _METRIC_WORDS,
+    "opp2prelim": re.compile(r"\bopp\s*2\s*prelim\b|\bopp2prelim\b", re.I),
+    "sit": re.compile(r"\bdemos?\b", re.I),
+}
+_SOURCE_WORD = {
+    "self_gen": re.compile(r"\bself[\s-]?gen\b", re.I),
+    "phones": re.compile(r"\b(?:phones?|virtual)\b", re.I),
+    "doors": re.compile(r"\bdoors?\b", re.I),
+    "3pl": re.compile(r"\b3\s*pl\b", re.I),
+    "inbound": re.compile(r"\binbound\b", re.I),
+}
 _NEGATION_FILLERS = frozenset(
     {
         "this",
@@ -228,6 +346,23 @@ _NOT_A_QUALIFIER = frozenset(
         "nov",
         "dec",
         "company",
+        "everything",
+        "new",
+        "reps",
+        "other",
+        "counting",
+        "except",
+        "excluding",
+        "without",
+        "minus",
+        "besides",
+        "weekend",
+        "weekends",
+        "between",
+        "sources",
+        "source",
+        "versus",
+        "compare",
         "what",
         "it",
         "who",
@@ -300,9 +435,19 @@ def _term_hint(text: str) -> str | None:
     return None
 
 
+def _negation_before_source(text: str) -> bool:
+    """not / but / other than sitting in front of a lead source."""
+    for pattern, _source_id in _SOURCE_PATTERNS:
+        for match in re.finditer(pattern, text or "", re.I):
+            prefix = (text or "")[max(0, match.start() - 48) : match.start()]
+            if _NEAR_SOURCE_NEGATION.search(prefix):
+                return True
+    return False
+
+
 def message_source_negated(text: str) -> bool:
-    """excluding, except, without, but not, or everything but. Do not filter TO that source."""
-    return bool(_SOURCE_NEGATION.search(text or ""))
+    """A source named in order to leave it out. Never filter TO that source."""
+    return bool(_SOURCE_NEGATION.search(text or "")) or _negation_before_source(text or "")
 
 
 def message_sources_are_exact(text: str) -> bool:
@@ -361,6 +506,10 @@ def _unapplied_name(text: str) -> str | None:
     for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", text or "", re.I):
         word = match.group(1)
         if word.lower() in _NOT_A_QUALIFIER:
+            continue
+        following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)", (text or "")[match.end() :])
+        if following and following.group(1).lower() not in _FILLER_WORDS and following.group(1).lower() not in _NOT_A_QUALIFIER:
+            # "for new reps" is a phrase, not a person named New.
             continue
         found.append(word[:1].upper() + word[1:])
     for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", text or ""):
@@ -454,7 +603,7 @@ def uncovered_request(
     One phrase, so the reply gets one line.
     """
     text = message or ""
-    if message_source_negated(text):
+    if _SOURCE_NEGATION.search(text):
         return _negation_phrase(text)
     asked = message_sources(text)
     applied = [str(item) for item in (sources or [])]
@@ -497,6 +646,78 @@ def uncovered_request(
                 return "this week"
         return None
     return _period_phrase(text)
+
+
+def unconsumed_phrase(
+    message: str,
+    start: str,
+    end: str,
+    sources: list[str] | None,
+    timezone_name: str | None,
+    now,
+    intent: str = "company_summary",
+    compared: tuple[str, str] | None = None,
+    matched_term: str | None = None,
+) -> str | None:
+    """Words still in the question after the applied metric, period, and sources are removed.
+
+    None means the question was fully consumed. Anything left is one caveat.
+    """
+    text = message or ""
+    if not text.strip():
+        return None
+    chars = list(text)
+
+    def blank(span: tuple[int, int]) -> None:
+        left, right = span
+        left = max(0, left)
+        right = min(len(chars), right)
+        for index in range(left, right):
+            chars[index] = " "
+
+    for match in _METRIC_WORDS.finditer(text):
+        blank(match.span())
+    term_pattern = _TERM_WORDS.get(matched_term or "")
+    if term_pattern is not None:
+        for match in term_pattern.finditer(text):
+            blank(match.span())
+    for source_id in sources or []:
+        pattern = _SOURCE_WORD.get(str(source_id))
+        if pattern is None:
+            continue
+        for match in pattern.finditer(text):
+            blank(match.span())
+    try:
+        covers = applied_period_covers(text, timezone_name, now, start or "", end or "")
+    except TimezoneUnconfirmed:
+        covers = []
+    for span in covers:
+        blank(span)
+    if compared and compared[0] and compared[1] and (compared[0], compared[1]) != (start or "", end or ""):
+        for span in month_spans_covering(text, compared[0], compared[1]):
+            blank(span)
+    if intent == "compare":
+        for match in re.finditer(r"\b(?:compare|versus|vs\.?|against|changed|change)\b", text, re.I):
+            blank(match.span())
+        if _LAST_MONTH.search(text) and not message_names_explicit_month(text):
+            match = _LAST_MONTH.search(text)
+            if match:
+                blank(match.span())
+    relative = _relative_period_wins(text)
+    for match in re.finditer(r"\bmay\b", text, re.I):
+        modal = bool(re.match(r"\s+i\b", text[match.end() :], re.I))
+        if modal or relative:
+            blank(match.span())
+    # "all" is filler in "for all of us", but it belongs in "all sources but doors".
+    keep_all = message_source_negated(text)
+    for match in _FILLER_RE.finditer(text):
+        if keep_all and match.group(0).lower() == "all":
+            continue
+        blank(match.span())
+    raw = "".join(chars)
+    raw = re.sub(r"[^A-Za-z0-9\s/'’.-]", " ", raw)
+    phrase = " ".join(raw.split()).strip(" -/'.").lower()
+    return phrase or None
 
 
 def _with_qualifier(decision: ScopeDecision, message: str) -> ScopeDecision:
@@ -551,6 +772,20 @@ def _classify(message: str) -> ScopeDecision:
             "Which metric should I summarize, and should I use the dates already selected on the dashboard?",
             None,
         )
+    if _PURE_DEMO_DEFINITION.search(text) or _BARE_DEMO.search(text):
+        return ScopeDecision("definition", text, "", "", "demo_rate")
+    if re.search(r"source performance", text, re.I):
+        return ScopeDecision("source_performance", text, "", "", _term_hint(text) or "phones")
+    asks_compare = bool(_ASKS_TO_COMPARE.search(text)) and not re.search(r"\b(?:changed|change)\b", text, re.I)
+    figureish = bool(
+        _DEMO_METRIC.search(text) or _FIGURE_FRAGMENT.search(text) or message_source_negated(text)
+    )
+    if asks_compare and (figureish or message_names_explicit_month(text)):
+        return ScopeDecision("compare", text, "", "", "demo_rate")
+    if figureish and not _EXPLAIN.search(text) and not _ASKS_TO_COMPARE.search(text):
+        # A demo-rate question, or a fragment that names a period or an exclusion, is a number.
+        # The definition is only the bare "what is demo rate" form.
+        return ScopeDecision("company_summary", text, "", "", "demo_rate")
     if not company:
         return ScopeDecision("deny", "", "denied", "", None)
     term = _term_hint(text)

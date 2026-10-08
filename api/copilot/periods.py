@@ -30,6 +30,27 @@ _LAST_WEEK = re.compile(r"\blast week\b", re.I)
 _THIS_YEAR = re.compile(r"\b(?:ytd|year to date|this year)\b", re.I)
 _LAST_YEAR = re.compile(r"\blast year\b", re.I)
 _QUARTER = re.compile(r"\bq([1-4])\b(?:\s+((?:19|20)\d{2}))?", re.I)
+_THIS_QUARTER = re.compile(r"\bthis quarter\b", re.I)
+_NUM_RANGE = re.compile(
+    r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\s*[-–—]\s*(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b"
+)
+_NUM_DAY = re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")
+_BETWEEN_DAYS = re.compile(
+    rf"\bbetween\s+({_MONTH_ALT})\s+(\d{{1,2}})(?:st|nd|rd|th)?\s+and\s+"
+    rf"(?:({_MONTH_ALT})\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b",
+    re.I,
+)
+_WEEK_OF = re.compile(rf"\bweek of\s+({_MONTH_ALT})\s+(\d{{1,2}})\b", re.I)
+_LAST_N_WEEKS = re.compile(r"\blast\s+(\d+|one|two|three|four)\s+weeks?\b", re.I)
+_PAST_N_MONTHS = re.compile(
+    r"\bpast\s+(\d+|one|two|three|four|six|twelve)\s+months?\b",
+    re.I,
+)
+_PAST_MONTH = re.compile(r"\bpast\s+month\b", re.I)
+_YEAR_ONLY = re.compile(r"\b(?:in|for|during)\s+((?:19|20)\d{2})\b", re.I)
+_PAGE_RELATIVE = re.compile(r"\b(?:this month|mtd|so far)\b", re.I)
+_COMPARE_JOIN = re.compile(r"\b(?:compare|versus|vs\.?|against|changed|change)\b|\bto\b", re.I)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "six": 6, "twelve": 12}
 _FULL_MONTH = re.compile(
     r"\b(january|february|march|april|june|july|august|september|october|november|december)\b",
     re.I,
@@ -164,8 +185,26 @@ def _all_month_tokens(text: str) -> list[tuple[int, int, int]]:
             found.append((match.start(1), match.end(1), _MONTH_NUMBERS[token]))
         else:
             found.append((match.start(2), match.end(2), _MONTH_NUMBERS[token]))
+    for match in re.finditer(
+        rf"\b(?:compare|versus|vs\.?|to|against)\s+({_SHORT_MONTH_TOKEN})\b"
+        rf"|\b({_SHORT_MONTH_TOKEN})\s+(?:to|versus|vs\.?|against)\b",
+        text,
+        re.I,
+    ):
+        token = (match.group(1) or match.group(2) or "").lower()
+        if not token:
+            continue
+        group = 1 if match.group(1) else 2
+        found.append((match.start(group), match.end(group), _MONTH_NUMBERS[token]))
     found.sort()
-    return found
+    deduped: list[tuple[int, int, int]] = []
+    seen_at: set[int] = set()
+    for item in found:
+        if item[0] in seen_at:
+            continue
+        seen_at.add(item[0])
+        deduped.append(item)
+    return deduped
 
 
 def _month_token(text: str) -> tuple[int, int, int] | None:
@@ -197,14 +236,45 @@ def _safe_date(year: int, month: int, day: int) -> date | None:
         return None
 
 
-def _window_ending(start: date, end: date, today: date, label: str) -> _NamedWindow:
+def _window_ending(
+    start: date,
+    end: date,
+    today: date,
+    label: str,
+    cover: tuple[int, int] | None = None,
+) -> _NamedWindow:
     if start > today:
-        return _NamedWindow("", "", False, label)
+        return _NamedWindow("", "", False, label, cover)
     if end > today:
         end = today
     if end < start:
-        return _NamedWindow("", "", False, label)
-    return _NamedWindow(start.isoformat(), end.isoformat(), True, label)
+        return _NamedWindow("", "", False, label, cover)
+    return _NamedWindow(start.isoformat(), end.isoformat(), True, label, cover)
+
+
+def _count_token(token: str | None) -> int | None:
+    if not token:
+        return None
+    if token.isdigit():
+        return int(token)
+    return _NUMBER_WORDS.get(token.lower())
+
+
+def _expand_year(token: str | None) -> int | None:
+    if not token:
+        return None
+    year = int(token)
+    if year < 100:
+        year += 2000
+    return year
+
+
+def _add_months(day: date, months: int) -> date:
+    month_index = day.month - 1 + months
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    last = _month_end(date(year, month, 1)).day
+    return date(year, month, min(day.day, last))
 
 
 def _year_beside(text: str, start: int, end: int) -> int | None:
@@ -223,6 +293,7 @@ class _NamedWindow:
     end: str
     served: bool
     label: str
+    cover: tuple[int, int] | None = None
 
 
 def _day_after(text: str, token_end: int) -> int | None:
@@ -236,8 +307,50 @@ def _on_day(text: str, token_start: int) -> bool:
     return bool(re.search(r"\bon\s+$", text[max(0, token_start - 4) : token_start], re.I))
 
 
+def _numeric_year(token: str | None, month: int, today: date) -> int:
+    explicit = _expand_year(token)
+    return _year_for(month, today, explicit)
+
+
 def _special_window(text: str, today: date) -> _NamedWindow | None:
     """Exact windows that are cheaper to apply than to caveat. None if not one of these."""
+    numeric_range = _NUM_RANGE.search(text)
+    if numeric_range:
+        month = int(numeric_range.group(1))
+        end_month = int(numeric_range.group(4))
+        year = _numeric_year(numeric_range.group(3), month, today)
+        end_explicit = _expand_year(numeric_range.group(6))
+        end_year = end_explicit if end_explicit is not None else (year if end_month >= month else year + 1)
+        start = _safe_date(year, month, int(numeric_range.group(2)))
+        end = _safe_date(end_year, end_month, int(numeric_range.group(5)))
+        label = "that date range"
+        if start is None or end is None:
+            return _NamedWindow("", "", False, label, numeric_range.span())
+        return _window_ending(start, end, today, label, numeric_range.span())
+    between = _BETWEEN_DAYS.search(text)
+    if between:
+        month = _MONTH_NUMBERS[between.group(1).lower()]
+        end_word = between.group(3)
+        end_month = _MONTH_NUMBERS[end_word.lower()] if end_word else month
+        year = _year_for(month, today, _year_beside(text, between.start(1), between.end(1)))
+        end_year = year if end_month >= month else year + 1
+        start = _safe_date(year, month, int(between.group(2)))
+        end = _safe_date(end_year, end_month, int(between.group(4)))
+        label = "that date range"
+        if start is None or end is None:
+            return _NamedWindow("", "", False, label, between.span())
+        return _window_ending(start, end, today, label, between.span())
+    week_of = _WEEK_OF.search(text)
+    if week_of:
+        month = _MONTH_NUMBERS[week_of.group(1).lower()]
+        year = _year_for(month, today, _year_beside(text, week_of.start(1), week_of.end(1)))
+        anchor = _safe_date(year, month, int(week_of.group(2)))
+        label = "that week"
+        if anchor is None:
+            return _NamedWindow("", "", False, label, week_of.span())
+        start = anchor - timedelta(days=anchor.weekday())
+        end = start + timedelta(days=6)
+        return _window_ending(start, end, today, label, week_of.span())
     ranged = _DAY_RANGE.search(text)
     if ranged:
         month = _MONTH_NUMBERS[ranged.group(1).lower()]
@@ -249,15 +362,26 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
         end = _safe_date(end_year, end_month, int(ranged.group(4)))
         label = "that date range"
         if start is None or end is None:
-            return _NamedWindow("", "", False, label)
-        return _window_ending(start, end, today, label)
+            return _NamedWindow("", "", False, label, ranged.span())
+        return _window_ending(start, end, today, label, ranged.span())
+    numeric_day = _NUM_DAY.search(text)
+    if numeric_day:
+        month = int(numeric_day.group(1))
+        day_number = int(numeric_day.group(2))
+        year = _numeric_year(numeric_day.group(3), month, today)
+        concrete = _safe_date(year, month, day_number)
+        label = f"{month}/{day_number}"
+        if concrete is None or concrete > today:
+            return _NamedWindow("", "", False, label, numeric_day.span())
+        iso = concrete.isoformat()
+        return _NamedWindow(iso, iso, True, label, numeric_day.span())
     since = _SINCE_MONTH.search(text)
     if since:
         month = _MONTH_NUMBERS[since.group(1).lower()]
         explicit = int(since.group(2)) if since.group(2) else None
         year = _year_for(month, today, explicit)
         start = date(year, month, 1)
-        return _window_ending(start, today, today, f"since {_MONTH_NAMES[month]}")
+        return _window_ending(start, today, today, f"since {_MONTH_NAMES[month]}", since.span())
     first = _FIRST_WEEK.search(text)
     if first:
         month = _MONTH_NUMBERS[first.group(1).lower()]
@@ -265,28 +389,45 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
         year = _year_for(month, today, explicit)
         start = date(year, month, 1)
         end = _safe_date(year, month, 7) or start
-        return _window_ending(start, end, today, f"the first week of {_MONTH_NAMES[month]}")
+        return _window_ending(start, end, today, f"the first week of {_MONTH_NAMES[month]}", first.span())
     last_n = _LAST_N_DAYS.search(text)
     if last_n:
         count = max(1, int(last_n.group(1)))
         start = today - timedelta(days=count - 1)
-        return _NamedWindow(start.isoformat(), today.isoformat(), True, f"last {count} days")
+        return _NamedWindow(start.isoformat(), today.isoformat(), True, f"last {count} days", last_n.span())
     if _YESTERDAY.search(text):
+        match = _YESTERDAY.search(text)
         day = today - timedelta(days=1)
         iso = day.isoformat()
-        return _NamedWindow(iso, iso, True, "yesterday")
+        return _NamedWindow(iso, iso, True, "yesterday", match.span() if match else None)
+    last_weeks = _LAST_N_WEEKS.search(text)
+    if last_weeks:
+        count = max(1, _count_token(last_weeks.group(1)) or 1)
+        this_monday = today - timedelta(days=today.weekday())
+        end = this_monday - timedelta(days=1)
+        start = this_monday - timedelta(days=7 * count)
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, f"last {count} weeks", last_weeks.span())
     if _LAST_WEEK.search(text):
+        match = _LAST_WEEK.search(text)
         this_monday = today - timedelta(days=today.weekday())
         start = this_monday - timedelta(days=7)
         end = this_monday - timedelta(days=1)
-        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last week")
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last week", match.span() if match else None)
     if _THIS_YEAR.search(text):
+        match = _THIS_YEAR.search(text)
         start = date(today.year, 1, 1)
-        return _window_ending(start, today, today, "this year")
+        return _window_ending(start, today, today, "this year", match.span() if match else None)
     if _LAST_YEAR.search(text):
+        match = _LAST_YEAR.search(text)
         start = date(today.year - 1, 1, 1)
         end = date(today.year - 1, 12, 31)
-        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last year")
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last year", match.span() if match else None)
+    if _THIS_QUARTER.search(text):
+        match = _THIS_QUARTER.search(text)
+        start_month = ((today.month - 1) // 3) * 3 + 1
+        start = date(today.year, start_month, 1)
+        end = _month_end(date(today.year, start_month + 2, 1))
+        return _window_ending(start, end, today, "this quarter", match.span() if match else None)
     quarter = _QUARTER.search(text)
     if quarter:
         number = int(quarter.group(1))
@@ -295,7 +436,26 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
         year = explicit if explicit is not None else _year_for(start_month, today, None)
         start = date(year, start_month, 1)
         end = _month_end(date(year, start_month + 2, 1))
-        return _window_ending(start, end, today, f"Q{number}")
+        return _window_ending(start, end, today, f"Q{number}", quarter.span())
+    past_n = _PAST_N_MONTHS.search(text)
+    if past_n:
+        count = max(1, _count_token(past_n.group(1)) or 1)
+        start = _add_months(today, -count)
+        return _window_ending(start, today, today, f"past {count} months", past_n.span())
+    if _PAST_MONTH.search(text):
+        match = _PAST_MONTH.search(text)
+        start = _add_months(today, -1)
+        return _window_ending(start, today, today, "the past month", match.span() if match else None)
+    if _month_token(text) is None:
+        year_only = _YEAR_ONLY.search(text)
+        if year_only:
+            year = int(year_only.group(1))
+            start = date(year, 1, 1)
+            end = date(year, 12, 31)
+            label = str(year)
+            if start > today:
+                return _NamedWindow("", "", False, label, year_only.span())
+            return _window_ending(start, end, today, label, year_only.span())
     return None
 
 
@@ -308,42 +468,56 @@ def _named_window(message: str, timezone_name: str | None, now: datetime) -> _Na
     if special is not None:
         return special
     distinct = _distinct_months(text)
-    if len(distinct) >= 2:
+    # "compare September to August" is two periods, not one merged span.
+    comparing = bool(_COMPARE_JOIN.search(text)) and not _DAY_RANGE.search(text) and not _BETWEEN_DAYS.search(text)
+    if len(distinct) >= 2 and not comparing:
         months = [token[2] for token in distinct]
         earlier, later = min(months), max(months)
         same_year = _year_for(earlier, today, None) == _year_for(later, today, None)
         day_level = any(_day_after(text, token[1]) for token in distinct)
         label = f"{_MONTH_NAMES[earlier]} and {_MONTH_NAMES[later]}"
+        cover = (distinct[0][0], distinct[-1][1])
         if day_level or not same_year or later - earlier != 1:
-            return _NamedWindow("", "", False, label)
+            return _NamedWindow("", "", False, label, cover)
         year = _year_for(earlier, today, None)
         start = date(year, earlier, 1)
         end = _month_end(date(year, later, 1))
-        return _window_ending(start, end, today, label)
-    token = _month_token(text)
+        return _window_ending(start, end, today, label, cover)
+    if comparing and len(distinct) >= 2:
+        distinct = distinct[:1]
+    token = distinct[0] if distinct else _month_token(text)
     if token:
         token_start, token_end, month = token
         explicit_year = _year_beside(text, token_start, token_end)
         year = _year_for(month, today, explicit_year)
         label = f"{_MONTH_NAMES[month]} {year}" if explicit_year is not None else _MONTH_NAMES[month]
         day = _day_after(text, token_end)
+        cover_end = token_end
+        year_match = re.match(r"\s+(?:of\s+)?((?:19|20)\d{2})\b", text[token_end : token_end + 24])
+        day_match = re.match(r"\s+(\d{1,2})\b", text[token_end : token_end + 8])
+        if year_match:
+            cover_end = token_end + year_match.end()
+        elif day_match:
+            cover_end = token_end + day_match.end()
+        cover = (token_start, cover_end)
         # "may 1" still means the month of May. "sep 15" and "on oct 3" are that day.
         if day is not None and (day > 1 or _on_day(text, token_start)):
             concrete = _safe_date(year, month, day)
             day_label = f"{_MONTH_NAMES[month]} {day}"
             if concrete is None or concrete > today:
-                return _NamedWindow("", "", False, day_label)
+                return _NamedWindow("", "", False, day_label, cover)
             iso = concrete.isoformat()
-            return _NamedWindow(iso, iso, True, day_label)
+            return _NamedWindow(iso, iso, True, day_label, cover)
         start = date(year, month, 1)
         if start > today:
-            return _NamedWindow("", "", False, label)
+            return _NamedWindow("", "", False, label, cover)
         end = today if (year == today.year and month == today.month) else _month_end(start)
-        return _NamedWindow(start.isoformat(), end.isoformat(), True, label)
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, label, cover)
     if _LAST_MONTH.search(text):
+        match = _LAST_MONTH.search(text)
         start = _shift_months(date(today.year, today.month, 1), -1)
         end = _month_end(start)
-        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last month")
+        return _NamedWindow(start.isoformat(), end.isoformat(), True, "last month", match.span() if match else None)
     return None
 
 
@@ -375,6 +549,67 @@ def named_period_unserved(message: str, timezone_name: str | None, now: datetime
     if window is None or window.served:
         return None
     return window.label
+
+
+def applied_period_covers(
+    message: str,
+    timezone_name: str | None,
+    now: datetime,
+    start: str,
+    end: str,
+) -> list[tuple[int, int]]:
+    """Character spans of period words that the applied dates actually used."""
+    text = message or ""
+    spans: list[tuple[int, int]] = []
+    window = None
+    try:
+        window = _named_window(message, timezone_name, now)
+    except TimezoneUnconfirmed:
+        window = None
+    matched = bool(
+        window
+        and window.served
+        and window.cover
+        and window.start == (start or "")
+        and window.end == (end or "")
+    )
+    if matched and window is not None and window.cover is not None:
+        spans.append(window.cover)
+    elif window is None or not window.served:
+        relative = _PAGE_RELATIVE.search(text)
+        if relative:
+            spans.append(relative.span())
+        if _relative_period_wins(text):
+            for token in _all_month_tokens(text):
+                spans.append((token[0], token[1]))
+    week = re.search(r"\bthis week\b", text, re.I)
+    if week:
+        implied = None
+        try:
+            implied = implied_current_range(text, timezone_name, now)
+        except TimezoneUnconfirmed:
+            implied = None
+        if implied == (start or "", end or ""):
+            spans.append(week.span())
+    for match in _STRAY_NOW.finditer(text):
+        spans.append(match.span())
+    return spans
+
+
+def month_spans_covering(message: str, start: str, end: str) -> list[tuple[int, int]]:
+    """Month words whose calendar month is the whole of start–end."""
+    if not start or not end:
+        return []
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError:
+        return []
+    spans: list[tuple[int, int]] = []
+    for token_start, token_end, month in _all_month_tokens(message or ""):
+        if start_d.month == month and end_d.month == month and start_d.year == end_d.year:
+            spans.append((token_start, token_end))
+    return spans
 
 
 def implied_current_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:

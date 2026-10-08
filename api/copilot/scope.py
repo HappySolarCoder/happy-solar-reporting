@@ -11,6 +11,7 @@ from copilot.periods import (
     _relative_period_wins,
     applied_period_covers,
     implied_current_range,
+    asks_current_calendar_month,
     message_names_explicit_month,
     month_spans_covering,
     named_calendar_range,
@@ -1062,7 +1063,9 @@ def _classify(message: str) -> ScopeDecision:
     figureish = bool(
         _DEMO_METRIC.search(text) or _FIGURE_FRAGMENT.search(text) or message_source_negated(text)
     )
-    if asks_compare and (figureish or message_names_explicit_month(text)):
+    if asks_compare and (
+        figureish or message_names_explicit_month(text) or asks_current_calendar_month(text)
+    ):
         return ScopeDecision("compare", text, "", "", "demo_rate")
     if figureish and not _EXPLAIN.search(text) and not _ASKS_TO_COMPARE.search(text):
         # A demo-rate question, or a fragment that names a period or an exclusion, is a number.

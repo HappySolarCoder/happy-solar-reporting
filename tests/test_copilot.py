@@ -2785,7 +2785,7 @@ class CopilotTests(unittest.TestCase):
         )
         clean = {
             "what's our demo rate so far this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
-            "demo rate mtd": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demo rate mtd": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
             "whats demo rate for last month for doors": "Your Doors demo rate for Sep 1\u201330, 2026 is 25.0%.",
             "what was the demo rate for phones last week": "Your Phones demo rate for Sep 21\u201327, 2026 is 80.0%.",
             "demo rate for self gen in august": "Your Self Gen demo rate for Aug 1\u201331, 2026 is 50.0%.",
@@ -2793,7 +2793,7 @@ class CopilotTests(unittest.TestCase):
             "what was our demo rate on friday": "Your demo rate for Oct 2, 2026 is 40.7%.",
             "demo rate for september vs october": "Comparing Sep 1\u201330, 2026 with Oct 1\u20134, 2026.",
             "how does this month compare to last month on demo rate": (
-                "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
+                "Comparing Oct 1\u20134, 2026 with Sep 1\u20134, 2026."
             ),
             "did our demo rate go up or down from last month": (
                 "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
@@ -2820,7 +2820,7 @@ class CopilotTests(unittest.TestCase):
             "demo rate since the beginning of the month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
             "are we at 50% on demo rate?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
             "what's our demo % this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
-            "demo rate month to date": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demo rate month to date": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
             "demo rate so far this week": "Your demo rate for Sep 28 \u2013 Oct 4, 2026 is 40.7%.",
             "what's our demo rate YTD": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
             "demo rate year to date": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
@@ -3193,13 +3193,106 @@ class CopilotTests(unittest.TestCase):
             "req_round10_page_compare",
             page,
         )
-        self.assertIn("Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026.", kept["body"]["answer"])
+        self.assertIn("Comparing Oct 1\u20134, 2026 with Sep 1\u20134, 2026.", kept["body"]["answer"])
+        self.assertNotIn("Oct 1\u20137", kept["body"]["answer"])
         self.assertFalse(kept["body"]["uncertain"])
 
         august = ask("demo rate for the month of august", "req_round10_august", september)
         self.assertIn("Your demo rate for Aug 1\u201331, 2026 is 40.7%.", august["body"]["answer"])
         self.assertNotIn("Oct 1", august["body"]["answer"])
         self.assertFalse(august["body"]["uncertain"])
+
+    def test_mtd_and_this_month_compare_use_calendar_month(self):
+        """MTD is the current month through today. This month vs last month uses those days."""
+        from dataclasses import replace
+
+        from copilot.periods import asks_current_calendar_month
+
+        self.assertTrue(asks_current_calendar_month("demo rate mtd"))
+        self.assertTrue(asks_current_calendar_month("demo rate MTD"))
+        self.assertTrue(asks_current_calendar_month("month to date demo rate"))
+        self.assertFalse(asks_current_calendar_month("demo rate so far"))
+        self.assertFalse(asks_current_calendar_month("current demo rate"))
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=80,
+            max_turns_per_day=80,
+            max_turns_per_month=80,
+            max_active_company=80,
+        )
+        metrics = FakeMetrics(ran=32, sits=11, demo_ran=27)
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        september = {"start": "2026-09-01", "end": "2026-09-30", "sources": []}
+        figure = "Your demo rate for Oct 1\u20134, 2026 is 40.7%."
+        compared = "Comparing Oct 1\u20134, 2026 with Sep 1\u20134, 2026."
+
+        def ask(message, request_id, filters):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=filters,
+                request_id=request_id,
+            )
+
+        figures = (
+            "demo rate mtd",
+            "demo rate MTD",
+            "what's our demo rate MTD?",
+            "month to date demo rate",
+            "demo rate month to date",
+            "demo rate in may MTD",
+        )
+        for index, question in enumerate(figures):
+            for filters, label in ((page, "page"), (september, "september")):
+                with self.subTest(question=question, page=label):
+                    result = ask(question, f"req_mtd_{label}_{index:02d}", filters)
+                    answer = result["body"]["answer"]
+                    self.assertEqual(result["body"]["code"], "company_summary", answer)
+                    self.assertIn(figure, answer)
+                    self.assertNotIn("Oct 1\u20137", answer)
+                    self.assertNotIn("Sep 1\u201330", answer)
+                    self.assertNotIn("May 1", answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertNotIn("If that number looks off", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01")
+                    self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        compares = (
+            "how does this month compare to last month",
+            "how does this month compare to last month on demo rate",
+            "this month vs last month",
+            "demo rate this month vs last month",
+        )
+        for index, question in enumerate(compares):
+            for filters, label in ((page, "page"), (september, "september")):
+                with self.subTest(question=question, page=label):
+                    result = ask(question, f"req_mtd_cmp_{label}_{index:02d}", filters)
+                    answer = result["body"]["answer"]
+                    self.assertEqual(result["body"]["code"], "compare", answer)
+                    self.assertIn(compared, answer)
+                    self.assertNotIn("Oct 1\u20137", answer)
+                    self.assertNotIn("Sep 1\u20137", answer)
+                    self.assertNotIn("Sep 1\u201330", answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertNotIn("If that number looks off", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01")
+                    self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        page_compare = ask(
+            "did our demo rate go up or down from last month",
+            "req_mtd_page_compare",
+            page,
+        )
+        self.assertIn(
+            "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026.",
+            page_compare["body"]["answer"],
+        )
+        self.assertFalse(page_compare["body"]["uncertain"])
 
 
 if __name__ == "__main__":

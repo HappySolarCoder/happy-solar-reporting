@@ -12,10 +12,10 @@ from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
 from copilot.auth import identity_for_chat, unauthorized_answer
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
+from copilot.formulas import DEMO_RATE_TARGET_PERCENT
 from copilot.human_dates import format_day, format_range, format_updated, is_stale
 from copilot.messages import (
     BUDGET_LIMIT,
-    DEMO_RATE_GOAL,
     LEDGER_UNAVAILABLE,
     MODEL_UNAVAILABLE,
     NARROW,
@@ -37,6 +37,13 @@ from copilot.tools import ToolContext, ToolRejected, execute
 
 _DIGIT = re.compile(r"\d")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
+_SUMMARY_METRIC_IDS = {
+    "sales": "sales",
+    "demo_rate": "demo_rate",
+    "opp2prelim": "opp2prelim",
+    "ran": "opps_ran",
+    "created": "opps_created",
+}
 
 
 def _response(status: int, **body: Any) -> dict[str, Any]:
@@ -77,7 +84,12 @@ def _filters(raw: dict | None) -> dict[str, Any]:
     start = str(raw.get("start") or "").strip()
     end = str(raw.get("end") or "").strip()
     sources = raw.get("sources") or []
-    return {"start": start, "end": end, "sources": sources}
+    return {
+        "start": start,
+        "end": end,
+        "sources": sources,
+        "unrecognized_source": bool(raw.get("unrecognized_source")),
+    }
 
 
 _RATE_IDS = frozenset({"demo_rate", "opp2prelim"})
@@ -143,10 +155,11 @@ def _period_label(period: dict | None) -> str:
 
 
 def _goal_clause(rate: float) -> str:
-    goal = f"{int(DEMO_RATE_GOAL)}%" if float(DEMO_RATE_GOAL).is_integer() else f"{DEMO_RATE_GOAL}%"
-    if float(rate) < float(DEMO_RATE_GOAL):
+    target = float(DEMO_RATE_TARGET_PERCENT)
+    goal = f"{int(target)}%" if target.is_integer() else f"{target:.1f}%"
+    if float(rate) < target:
         return f"a bit under the {goal} goal"
-    if float(rate) > float(DEMO_RATE_GOAL):
+    if float(rate) > target:
         return f"a bit over the {goal} goal"
     return f"right at the {goal} goal"
 
@@ -239,8 +252,16 @@ def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
         )
     label = _period_label(payload.get("period"))
     by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
-    if focus == "demo_rate" and "demo_rate" in by_id:
+    if "demo_rate" in by_id and (focus == "demo_rate" or set(by_id) == {"demo_rate"}):
         return _demo_sentence(by_id["demo_rate"], label)
+    if set(by_id) == {"sales"}:
+        return f"For {label}, you had {_count(by_id['sales'].get('value'))} sales."
+    if set(by_id) == {"opps_created"}:
+        return f"For {label}, {_count(by_id['opps_created'].get('value'))} opportunities were created."
+    if set(by_id) == {"opps_ran"}:
+        return f"For {label}, {_count(by_id['opps_ran'].get('value'))} appointments ran."
+    if set(by_id) == {"opp2prelim"}:
+        return _opp_sentence(by_id["opp2prelim"])
     sales = by_id.get("sales") or {}
     created = by_id.get("opps_created") or {}
     ran = by_id.get("opps_ran") or {}
@@ -740,6 +761,20 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             else:
                 answer = NO_APPROVED_DOCUMENT + " " + WELCOME
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
+            if not filters["start"] and not filters["end"]:
+                try:
+                    from copilot.periods import TimezoneUnconfirmed, implied_current_range
+
+                    implied = implied_current_range(text, config.company_timezone, now)
+                except TimezoneUnconfirmed:
+                    implied = None
+                if implied:
+                    filters = {
+                        "start": implied[0],
+                        "end": implied[1],
+                        "sources": filters["sources"],
+                        "unrecognized_source": filters.get("unrecognized_source"),
+                    }
             if not filters["start"] or not filters["end"]:
                 answer = "Which start and end dates should I use? Set them on the page and I'll use that range."
                 code = "clarify"
@@ -750,8 +785,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     "source_performance": "get_source_performance",
                 }[decision_intent]
                 args = {"start": filters["start"], "end": filters["end"], "sources": filters["sources"]}
-                if decision_intent == "compare" and decision.matched_term in {"sales", "demo_rate", "opp2prelim", "ran", "created"}:
-                    mapped = {"ran": "opps_ran", "created": "opps_created"}.get(decision.matched_term, decision.matched_term)
+                mapped = _SUMMARY_METRIC_IDS.get(decision.matched_term or "")
+                if decision_intent in {"company_summary", "compare"} and mapped:
                     args["metric_ids"] = [mapped]
                 if metrics is None:
                     answer = NO_APPROVED_DEFINITION + " I can't reach the reporting numbers for this question."
@@ -809,6 +844,9 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
         model_note = MODEL_UNAVAILABLE
     reason = None
     if code != "budget_limit" and tool_payload.get("available"):
+        if filters.get("unrecognized_source"):
+            tool_payload = dict(tool_payload)
+            tool_payload["assumed_filter"] = "I assumed every lead source"
         focus = decision.matched_term if decision_intent == "company_summary" else None
         reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)
         if reason:

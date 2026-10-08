@@ -171,6 +171,12 @@ def render_panel() -> str:
     releaseWaiters(tokenStillFresh() ? bloomBearer : '');
   }});
 
+  function tellParent(action) {{
+    const origin = parentOrigin();
+    if (!origin) return;
+    window.parent.postMessage({{ type: 'happy-solar-goose', action: action }}, origin);
+  }}
+
   function requestBloomToken() {{
     const origin = parentOrigin();
     if (!origin) return Promise.resolve('');
@@ -193,6 +199,9 @@ def render_panel() -> str:
   }}
   function pageScope() {{
     // Dates and the lead-source filter stay on the page. Goose reads them when you send.
+    // Company overview checks ocStart/ocEnd before startDate/endDate.
+    // Page lead sources: All, Doors, Self gen, Inbound, 3PL, plus Phones and Virtual.
+    // Sweeper is a pipeline filter, not a lead source, so it is not mapped.
     let start = '';
     let end = '';
     let source = '';
@@ -212,13 +221,22 @@ def render_panel() -> str:
       doors: 'doors',
       'self gen': 'self_gen',
       selfgen: 'self_gen',
+      'self-gen': 'self_gen',
       phones: 'phones',
       virtual: 'phones',
       inbound: 'inbound',
-      '3pl': '3pl'
+      '3pl': '3pl',
+      '3 pl': '3pl'
     }};
-    const mapped = known[String(source || '').trim().toLowerCase()];
-    return {{ start: start, end: end, sources: mapped ? [mapped] : [] }};
+    const raw = String(source || '').trim().toLowerCase();
+    if (!raw || raw === 'all') {{
+      return {{ start: start, end: end, sources: [], unrecognizedSource: false }};
+    }}
+    const mapped = known[raw];
+    if (mapped) {{
+      return {{ start: start, end: end, sources: [mapped], unrecognizedSource: false }};
+    }}
+    return {{ start: start, end: end, sources: [], unrecognizedSource: true }};
   }}
   function add(text, evidence) {{
     const div = document.createElement('div');
@@ -245,7 +263,12 @@ def render_panel() -> str:
       headers: headers,
       body: JSON.stringify({{
         message: message,
-        filters: {{start: scope.start, end: scope.end, sources: scope.sources}},
+        filters: {{
+          start: scope.start,
+          end: scope.end,
+          sources: scope.sources,
+          unrecognized_source: scope.unrecognizedSource
+        }},
         request_id: 'ui_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
       }})
     }});
@@ -259,13 +282,17 @@ def render_panel() -> str:
   }}
   document.getElementById('gooseOpen').addEventListener('click', () => {{
     panel.hidden = false;
+    tellParent('panel-open');
     requestBloomToken();
     if (!log.dataset.welcomed) {{
       add('{welcome}', []);
       log.dataset.welcomed = '1';
     }}
   }});
-  document.getElementById('gooseClose').addEventListener('click', () => {{ panel.hidden = true; }});
+  document.getElementById('gooseClose').addEventListener('click', () => {{
+    panel.hidden = true;
+    tellParent('panel-closed');
+  }});
   document.getElementById('gooseForm').addEventListener('submit', (event) => {{
     event.preventDefault();
     const message = input.value.trim();

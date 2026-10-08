@@ -71,9 +71,6 @@ FEEDBACK_SAVED = "Thanks, I saved that for review."
 FEEDBACK_FAILED = "I couldn't save that because the ledger is unavailable."
 REQUEST_UNREADABLE = "I couldn't read that. Try sending it again."
 
-# Company demo-rate target. Same number as COMPANY_DEMO_PCT_TARGET.
-DEMO_RATE_GOAL = 50
-
 UNCERTAINTY = (
     "I'm not 100% sure on this one, since {reason}. "
     "If the number looks off, let me know what you meant and I'll recheck."

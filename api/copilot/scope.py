@@ -73,6 +73,12 @@ _EXPLAIN = re.compile(
     r"\b(define|explain|meaning|mean|what does|what counts|what is a|what is an)\b",
     re.I,
 )
+_VALUE_TERMS = frozenset({"sales", "demo_rate", "opp2prelim", "ran", "created"})
+_CURRENT_PERIOD = re.compile(
+    r"\b(?:our|today|mtd|current|so far|this (?:month|week|year))\b",
+    re.I,
+)
+_LAST_MONTH = re.compile(r"\blast month\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -162,6 +168,15 @@ def classify(message: str) -> ScopeDecision:
     if re.search(r"source performance", text, re.I):
         return ScopeDecision("source_performance", text, "", "", term or "phones")
     if re.search(r"\b(how many|what were|show (me )?the numbers|totals?)\b", text, re.I):
+        return ScopeDecision("company_summary", text, "", "", term)
+    if term in _VALUE_TERMS and _LAST_MONTH.search(text):
+        return ScopeDecision("compare", text, "", "", term)
+    if (
+        term in _VALUE_TERMS
+        and _CURRENT_PERIOD.search(text)
+        and not _COMPARE.search(text)
+        and not _EXPLAIN.search(text)
+    ):
         return ScopeDecision("company_summary", text, "", "", term)
     if _DEFINITION.search(text) or (term and len(text) < 40 and not _COMPARE.search(text)):
         # "What is Demo Rate?" stays a definition. "What is our demo rate this month?" asks for a figure.

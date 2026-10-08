@@ -61,7 +61,7 @@ Set these in the Vercel project. Do not commit them.
 | `COPILOT_COMPANY_TIMEZONE` | Defaults to `America/New_York`. Approved 2026-10-04. |
 | `COPILOT_BILLING_TIMEZONE` | Leave unset. The Google billing period timezone is not verified. |
 | `COPILOT_ALLOWED_ROLES` | When unset or empty, chat allows `settings_admin`, `fma`, `closer`, `coach`, `manager`, and `inbound`. An explicit list replaces that default. `settings_admin` is the password actor. Portal roles Bloom can prove are `fma`, `closer`, `coach`, `manager`, and `inbound`. Chat keeps a portal role only when that role is listed. If it is not listed, an active Bloom employee maps to `settings_admin` when `settings_admin` is listed. That mapping does not open admin. Do not add a role the token did not prove. |
-| `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. Do not put `settings_admin` here, or Bloom employees mapped onto that role would receive rankings. The allowed-role default does not copy `settings_admin` into this list. |
+| `COPILOT_RANKING_ROLES` | Marketing spend only (inbound CAC, Lead Locker spend, cost per lead, and similar spend figures). Leave empty to keep spend closed for every role, including `settings_admin`. Rep, office, and company performance is open to every role in `COPILOT_ALLOWED_ROLES`. Do not put `settings_admin` here unless that password actor should see spend. The allowed-role default does not copy `settings_admin` into this list. |
 | `GOOGLE_CLOUD_PROJECT` | Dedicated inference project. Do not reuse `GCP_PROJECT_ID` for this. |
 | `GOOGLE_CLOUD_LOCATION` | `global`, matching the pinned rate card. |
 | `COPILOT_MODEL_ID` | `gemini-3.1-flash-lite`. Any other id disables paid calls. |

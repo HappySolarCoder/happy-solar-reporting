@@ -29,6 +29,7 @@ BLOOM_TOKEN_MAX_SECONDS = 600
 BLOOM_CLOCK_SKEW_SECONDS = 30
 DEFAULT_BLOOM_ORIGIN = "https://happy-solar-bloom-portal.vercel.app"
 _BLOOM_KEYS = frozenset({"aud", "exp", "iat", "iss", "role", "status", "sub", "v"})
+_OPTIONAL_BLOOM_KEYS = frozenset({"name"})
 _SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 
 
@@ -36,6 +37,7 @@ _SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 class Identity:
     actor_id: str
     role: str
+    display_name: str | None = None
 
     def as_dict(self) -> dict:
         return {"actor_id": self.actor_id, "role": self.role}
@@ -106,8 +108,14 @@ def _b64url_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + pad)
 
 
+def _claim_keys_ok(keys: set) -> bool:
+    if not _BLOOM_KEYS <= keys:
+        return False
+    return keys <= (_BLOOM_KEYS | _OPTIONAL_BLOOM_KEYS)
+
+
 def _canonical_claims(claims: dict) -> bytes:
-    if set(claims) != _BLOOM_KEYS:
+    if not _claim_keys_ok(set(claims)):
         raise ValueError("claims")
     return json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -135,10 +143,16 @@ def verify_bloom_token(token: str, secret: str, now: datetime) -> dict | None:
         data = json.loads(body.decode("utf-8"))
     except Exception:
         return None
-    if not isinstance(data, dict) or set(data) != _BLOOM_KEYS:
+    if not isinstance(data, dict) or not _claim_keys_ok(set(data)):
         return None
     if data.get("v") != 1 or data.get("iss") != BLOOM_ISSUER or data.get("aud") != BLOOM_AUDIENCE:
         return None
+    if "name" in data:
+        signed_name = data.get("name")
+        if not isinstance(signed_name, str) or not signed_name.strip() or len(signed_name) > 80:
+            return None
+        if re.search(r"[\r\n\x00]", signed_name):
+            return None
     if data.get("status") != "active" or data.get("role") not in BLOOM_PORTAL_ROLES:
         return None
     subject = data.get("sub")
@@ -185,7 +199,9 @@ def identity_from_bloom_bearer(
     claims = verify_bloom_token(presented, _bloom_secret(token_secret), moment)
     if claims is None:
         return None
-    return Identity(actor_id="bloom:" + claims["sub"], role=str(claims["role"]))
+    signed_name = claims.get("name")
+    display_name = str(signed_name).strip() if isinstance(signed_name, str) and signed_name.strip() else None
+    return Identity(actor_id="bloom:" + claims["sub"], role=str(claims["role"]), display_name=display_name)
 
 
 def identity_for_chat(

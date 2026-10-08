@@ -600,10 +600,27 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     ran_by_setter: dict[str, int] = {}
     sit_by_setter: dict[str, int] = {}
     setter_labels: dict[str, str] = {}
+    ran_by_owner: dict[str, int] = {}
+    sit_by_owner: dict[str, int] = {}
+    owner_labels: dict[str, str] = {}
     by_pipeline: dict[str, int] = {}
     sit_by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
     sit_by_lead: dict[str, int] = {}
+
+    def closer_name(opp: dict) -> str:
+        """Display name already on the opp. No extra roster read, so the sit total cannot move."""
+        for key in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
+            raw_name = opp.get(key)
+            if not isinstance(raw_name, str):
+                continue
+            text = " ".join(raw_name.split())
+            if not text or len(text) > 80:
+                continue
+            if any(ch.isdigit() for ch in text) and " " not in text:
+                continue
+            return text
+        return ""
 
     for snap in opp_snaps:
         opp = snap.to_dict() or {}
@@ -653,6 +670,11 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter_s = add_casefold_count(ran_by_setter, setter_labels, setter_s, empty="none")
         if dispo == "Sit":
             add_casefold_count(sit_by_setter, setter_labels, setter_s, empty="none")
+        closer = closer_name(opp)
+        if closer:
+            add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
+            if dispo == "Sit":
+                add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_lead[lead] = by_lead.get(lead, 0) + 1
         if dispo == "Sit":
@@ -701,6 +723,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),
             "sit_by_setter_last_name": finalize_casefold_counts(sit_by_setter, setter_labels),
+            "ran_by_owner": finalize_casefold_counts(ran_by_owner, owner_labels),
+            "sit_by_owner": finalize_casefold_counts(sit_by_owner, owner_labels),
             "demo_rate_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),  # legacy: was misnamed; kept for backward-compat
 
             "demo_rate_by_pipeline": by_pipeline,

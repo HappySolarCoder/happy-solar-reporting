@@ -63,7 +63,8 @@ _DENY_PATTERNS = (
 )
 
 _SUBSTANTIVE = re.compile(
-    r"\b(sales|sale|ran|sit|sits|demo|demos|opp2prelim|opp|opps|opportunity|opportunities|"
+    r"\b(sales|sale|ran|sit|sits|demo|demos|appointment|appointments|"
+    r"opp2prelim|opp|opps|opportunity|opportunities|"
     r"lead|source|sources|doors|phones|virtual|self[\s-]?gen|inbound|3pl|funnel|"
     r"trend|dashboard|metric|definition|terminology|pipeline|"
     r"changed|versus|compare|comparison|market|markets|operate|operations|timezone|process)\b",
@@ -193,6 +194,8 @@ _FILLER_WORDS = frozenset(
         "need",
         "now",
         "of",
+        "office",
+        "offices",
         "on",
         "only",
         "our",
@@ -267,7 +270,7 @@ _APOSTROPHE_SUFFIX = re.compile(r"['’](?:s|re|m|ll|ve|d)\b|n['’]t\b", re.I)
 _TERM_WORDS = {
     "sales": re.compile(r"\bsales?\b", re.I),
     "created": re.compile(r"\b(?:created|opportunities|opportunity)\b", re.I),
-    "ran": re.compile(r"\bran\b", re.I),
+    "ran": re.compile(r"\bran\b|\bappointments?\b", re.I),
     "demo_rate": _METRIC_WORDS,
     "opp2prelim": re.compile(r"\bopp\s*2\s*prelim\b|\bopp2prelim\b", re.I),
     "sit": re.compile(r"\bdemos?\b", re.I),
@@ -398,8 +401,14 @@ _NOT_A_QUALIFIER = frozenset(
         "last",
         "next",
         "current",
+        "date",
+        "dates",
+        "demo",
+        "demos",
         "mtd",
         "now",
+        "rate",
+        "trend",
         "far",
         "january",
         "february",
@@ -507,6 +516,8 @@ def _term_hint(text: str) -> str | None:
         return "inbound"
     if re.search(r"\bsales?\b", lowered):
         return "sales"
+    if re.search(r"\bappointments?\b", lowered) and not re.search(r"\bdemos?\b", lowered):
+        return "ran"
     if re.search(r"\bran\b", lowered):
         return "ran"
     if re.search(r"\b(sits|sit|sat|demos)\b", lowered):
@@ -548,6 +559,11 @@ def _source_roles(text: str) -> tuple[list[str], list[str], list[tuple[int, int]
     hits: list[tuple[int, int, str, bool, tuple[int, int] | None]] = []
     for pattern, source_id in _SOURCE_PATTERNS:
         for match in re.finditer(pattern, raw, re.I):
+            # "virtual team" / "virtual office" is an office, not the Phones lead source.
+            if source_id == "phones" and match.group(0).lower() == "virtual":
+                tail = raw[match.end() : match.end() + 12]
+                if re.match(r"\s+(?:team|office)\b", tail, re.I):
+                    continue
             glued = bool(_GLUED_NON_SOURCE.search(raw[max(0, match.start() - 4) : match.end()]))
             anchor = _negation_anchor(raw, match.start())
             hits.append((match.start(), match.end(), source_id, glued or anchor is not None, anchor))
@@ -637,7 +653,10 @@ def _applied_source_ids(text: str) -> list[str]:
 
 
 def _title_name(word: str) -> str:
-    return word[:1].upper() + word[1:]
+    cleaned = re.sub(r"['’]s$", "", word or "")
+    if not cleaned:
+        cleaned = word or ""
+    return cleaned[:1].upper() + cleaned[1:]
 
 
 def _name_stopped(word: str, text: str = "", at: int | None = None) -> bool:
@@ -675,6 +694,31 @@ def _unapplied_name(text: str) -> str | None:
     found: list[str] = []
     for match in re.finditer(r"\b(buffalo|rochester|syracuse)\b", raw, re.I):
         found.append(_TERRITORIES[match.group(1).lower()])
+    if re.search(r"\bvirtual\s+(?:team|office)\b", raw, re.I):
+        found.append("Virtual")
+    for match in re.finditer(
+        r"\b([A-Za-z][A-Za-z'-]{2,})\s+(?:vs\.?|versus)\s+([A-Za-z][A-Za-z'-]{2,})\b",
+        raw,
+        re.I,
+    ):
+        for group in (1, 2):
+            word = match.group(group)
+            if _name_stopped(word, raw, match.start(group)):
+                continue
+            found.append(_title_name(word))
+    for match in re.finditer(r"\b(?:does|did)\s+([A-Za-z][A-Za-z'-]{2,})\s+have\b", raw, re.I):
+        word = match.group(1)
+        if word.lower() == "not" or _name_stopped(word, raw, match.start(1)):
+            continue
+        found.append(_title_name(word))
+    for match in re.finditer(
+        r"\b([a-z][a-z'-]{2,})\s+(?:demos?|sales?|appointments?)\b",
+        raw,
+    ):
+        word = match.group(1)
+        if _name_stopped(word, raw, match.start(1)):
+            continue
+        found.append(_title_name(word))
     for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", raw, re.I):
         word = match.group(1)
         if _name_stopped(word, raw, match.start(1)):
@@ -738,6 +782,30 @@ def _unapplied_name(text: str) -> str | None:
     if len(kept) == 1:
         return kept[0]
     return " or ".join(kept)
+
+
+_OFFICE_NAMES = frozenset({"Buffalo", "Rochester", "Syracuse", "Virtual"})
+
+
+def question_subjects(text: str) -> tuple[list[str], list[str]]:
+    """People and offices named in the question, in the order they were written.
+
+    Bare "virtual" stays the Phones lead source. "virtual team" is the office.
+    """
+    label = _unapplied_name(text)
+    if not label:
+        return [], []
+    people: list[str] = []
+    offices: list[str] = []
+    for part in (piece.strip() for piece in label.split(" or ")):
+        if not part:
+            continue
+        if part in _OFFICE_NAMES:
+            if part not in offices:
+                offices.append(part)
+        elif part not in people:
+            people.append(part)
+    return people, offices
 
 
 def _negation_phrase(text: str) -> str:
@@ -907,6 +975,7 @@ def unconsumed_phrase(
     intent: str = "company_summary",
     compared: tuple[str, str] | None = None,
     matched_term: str | None = None,
+    consumed: list[str] | None = None,
 ) -> str | None:
     """Words still in the question after the applied metric, period, and sources are removed.
 
@@ -927,6 +996,13 @@ def unconsumed_phrase(
     # Drop the suffix of what's / how's / Sarah's before "what" is removed and "'s" is left behind.
     for match in _APOSTROPHE_SUFFIX.finditer(text):
         blank(match.span())
+    if consumed:
+        for name in consumed:
+            for token in re.findall(r"[A-Za-z][A-Za-z'-]*", name):
+                for match in re.finditer(rf"\b{re.escape(token)}\b", text, re.I):
+                    blank(match.span())
+        for match in re.finditer(r"\b(?:have|has)\b", text, re.I):
+            blank(match.span())
     for span in mixed_negation_spans(text):
         blank(span)
     for match in _FILLER_PHRASES.finditer(text):

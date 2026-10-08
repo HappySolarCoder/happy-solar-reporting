@@ -23,15 +23,23 @@ from copilot.auth import (
     identity_from_bloom_bearer,
     identity_from_headers,
     sign_bloom_token,
+    unauthorized_answer,
     verify_bloom_token,
 )
 from copilot.chat_service import handle_chat
-from copilot.config import config_from_env
+from copilot.config import DEFAULT_ALLOWED_ROLES, config_from_env
 from copilot.dictionary import is_official, load_seed
 from copilot.formulas import percent_change, sum_aliases
 from copilot.gemini_client import ModelError
 from copilot.knowledge import load_seed as load_knowledge
-from copilot.messages import BUDGET_LIMIT, PAUSED, SCOPE_DENIAL, SIGN_IN_REQUIRED
+from copilot.messages import (
+    BUDGET_LIMIT,
+    EMPLOYEE_UNCONFIRMED,
+    PAUSED,
+    ROLE_NOT_AUTHORIZED,
+    SCOPE_DENIAL,
+    SESSION_EXPIRED,
+)
 from copilot.periods import equivalent_prior_period, period_from_dates
 from copilot.pii import scrub_row
 from copilot.prompt import SYSTEM_PROMPT
@@ -222,6 +230,7 @@ class CopilotTests(unittest.TestCase):
             body_identity={"role": "settings_admin", "user_id": "evan"},
         )
         self.assertEqual(result["status"], 401)
+        self.assertEqual(result["body"]["answer"], EMPLOYEE_UNCONFIRMED)
         self.assertIsNone(identity_from_headers({}, settings_password="secret"))
 
     def test_cross_user_history_and_username_is_not_identity(self):
@@ -573,7 +582,29 @@ class CopilotTests(unittest.TestCase):
                 feedback_mod.handler.do_POST(Fake())
         body = json.loads(Fake.wfile.getvalue().decode("utf-8"))
         self.assertEqual(sent["status"], 401)
-        self.assertEqual(body["answer"], SIGN_IN_REQUIRED)
+        self.assertEqual(body["answer"], EMPLOYEE_UNCONFIRMED)
+
+        class BadBearer(Fake):
+            headers = {
+                "Content-Length": str(len(raw)),
+                "Authorization": "Bearer not-a-token",
+            }
+            rfile = io.BytesIO(raw)
+            wfile = io.BytesIO()
+
+        sent.clear()
+        env = {
+            "COPILOT_ENABLED": "true",
+            "COPILOT_BLOOM_TOKEN_SECRET": "test-secret",
+            "COPILOT_ALLOWED_ROLES": "coach",
+            "SETTINGS_PASSWORD": "",
+        }
+        with patch.dict(os.environ, env):
+            with patch.object(feedback_mod, "open_store", side_effect=AssertionError("store")):
+                feedback_mod.handler.do_POST(BadBearer())
+        bad_body = json.loads(BadBearer.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(sent["status"], 401)
+        self.assertEqual(bad_body["answer"], SESSION_EXPIRED)
 
     def test_budget_limit_message_and_injection_does_not_raise_cap(self):
         store = MemoryStore()
@@ -629,9 +660,18 @@ class CopilotTests(unittest.TestCase):
         for word in (" sit ", " sits ", " sat "):
             self.assertNotIn(word, f" {answer} ")
 
-    def test_sign_in_copy_no_longer_denies_employee_sign_in(self):
-        self.assertNotIn("does not have per-employee sign-in", SIGN_IN_REQUIRED)
-        self.assertIn("signed-in authorized employee", SIGN_IN_REQUIRED)
+    def test_auth_failure_copy_avoids_the_sign_in_sentence(self):
+        import re
+
+        messages = (ROOT / "api" / "copilot" / "messages.py").read_text(encoding="utf-8")
+        self.assertNotIn("does not have per-employee sign-in", messages)
+        self.assertNotIn("signed-in authorized employee", messages)
+        for sentence in (ROLE_NOT_AUTHORIZED, EMPLOYEE_UNCONFIRMED, SESSION_EXPIRED):
+            self.assertNotIn("signed-in", sentence.lower())
+            self.assertIsNone(re.search(r"\b(sit|sits|sat)\b", sentence, re.IGNORECASE))
+        self.assertIn("session expired", SESSION_EXPIRED.lower())
+        self.assertIn("Refresh", SESSION_EXPIRED)
+        self.assertNotIn(ROLE_NOT_AUTHORIZED, EMPLOYEE_UNCONFIRMED)
 
     def test_bloom_token_vector_and_basic_password_still_authorize(self):
         claims = verify_bloom_token(BLOOM_TOKEN_VECTOR, "test-secret", BLOOM_VECTOR_NOW)
@@ -654,7 +694,9 @@ class CopilotTests(unittest.TestCase):
             bloom_token_secret="test-secret",
         )
         self.assertEqual(result["status"], 200)
-        self.assertNotEqual(result["body"]["answer"], SIGN_IN_REQUIRED)
+        self.assertNotEqual(result["body"]["answer"], EMPLOYEE_UNCONFIRMED)
+        self.assertNotEqual(result["body"]["answer"], ROLE_NOT_AUTHORIZED)
+        self.assertNotEqual(result["body"]["answer"], SESSION_EXPIRED)
         self.assertIn("not company policy", result["body"]["answer"].lower())
         conversation = store.get_conversation("conv_test", "bloom:user_evan")
         self.assertIsNotNone(conversation)
@@ -667,7 +709,8 @@ class CopilotTests(unittest.TestCase):
             body_identity={"role": "settings_admin", "user_id": "user_evan"},
         )
         self.assertEqual(body_only["status"], 401)
-        self.assertEqual(body_only["body"]["answer"], SIGN_IN_REQUIRED)
+        self.assertEqual(body_only["body"]["answer"], SESSION_EXPIRED)
+        self.assertNotIn("signed-in", body_only["body"]["answer"].lower())
 
     def test_bloom_role_maps_onto_allowed_roles_only(self):
         mapped = identity_for_chat(
@@ -776,6 +819,147 @@ class CopilotTests(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(saved["actor"], "bloom:user_evan")
         self.assertNotEqual(saved["actor"], "settings_admin")
+
+    def test_unset_allowed_roles_fall_back_without_ranking_settings_admin(self):
+        enabled = {
+            "COPILOT_ENABLED": "true",
+            "COPILOT_COMPANY_TIMEZONE": "America/New_York",
+            "COPILOT_BILLING_TIMEZONE": "America/Los_Angeles",
+            "GOOGLE_CLOUD_PROJECT": "inference-project",
+            "GOOGLE_CLOUD_LOCATION": "global",
+            "COPILOT_MODEL_ID": "gemini-3.1-flash-lite",
+        }
+        expected = frozenset({"settings_admin", "fma", "closer", "coach", "manager", "inbound"})
+        self.assertEqual(DEFAULT_ALLOWED_ROLES, expected)
+        unset = config_from_env(enabled)
+        self.assertEqual(unset.allowed_roles, expected)
+        self.assertEqual(unset.ranking_roles, frozenset())
+        self.assertNotIn("settings_admin", unset.ranking_roles)
+        blank = config_from_env({**enabled, "COPILOT_ALLOWED_ROLES": " , "})
+        self.assertEqual(blank.allowed_roles, expected)
+        ranked = config_from_env({**enabled, "COPILOT_RANKING_ROLES": "manager,closer"})
+        self.assertEqual(ranked.ranking_roles, frozenset({"manager", "closer"}))
+        self.assertNotIn("settings_admin", ranked.ranking_roles)
+        explicit = config_from_env({**enabled, "COPILOT_ALLOWED_ROLES": "coach"})
+        self.assertEqual(explicit.allowed_roles, frozenset({"coach"}))
+
+        accepted = _chat(
+            "Explain Opp2Prelim",
+            headers=_bloom_auth(role="fma"),
+            config=unset,
+            request_id="req_default_roles_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(accepted["status"], 200)
+        self.assertNotEqual(accepted["body"]["answer"], ROLE_NOT_AUTHORIZED)
+
+        denied = _chat(
+            "Explain Opp2Prelim",
+            headers=_bloom_auth(role="manager"),
+            config=explicit,
+            request_id="req_role_denied_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(denied["status"], 401)
+        self.assertEqual(denied["body"]["code"], "unauthorized")
+        self.assertEqual(denied["body"]["answer"], ROLE_NOT_AUTHORIZED)
+        self.assertNotIn("signed-in", denied["body"]["answer"].lower())
+
+    def test_chat_auth_copy_depends_on_the_credential(self):
+        stamp = int(NOW.timestamp())
+        expired = _chat(
+            "Explain Opp2Prelim",
+            headers=_bloom_auth(iat=stamp - 900, exp=stamp - 300),
+            request_id="req_expired_sig_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(expired["status"], 401)
+        self.assertEqual(expired["body"]["answer"], SESSION_EXPIRED)
+
+        good = sign_bloom_token(_bloom_claims(), "test-secret")
+        flipped = good[:-1] + ("A" if good[-1] != "A" else "B")
+        bad = _chat(
+            "Explain Opp2Prelim",
+            headers={"Authorization": f"Bearer {flipped}"},
+            request_id="req_bad_sig_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(bad["body"]["answer"], SESSION_EXPIRED)
+
+        missing = _chat(
+            "Explain Opp2Prelim",
+            headers={},
+            request_id="req_missing_cred_01",
+        )
+        self.assertEqual(missing["body"]["answer"], EMPLOYEE_UNCONFIRMED)
+        empty_bearer = _chat(
+            "Explain Opp2Prelim",
+            headers={"Authorization": "Bearer "},
+            request_id="req_empty_bearer_01",
+            bloom_token_secret="test-secret",
+        )
+        self.assertEqual(empty_bearer["body"]["answer"], EMPLOYEE_UNCONFIRMED)
+        wrong_password = _chat(
+            "Explain Opp2Prelim",
+            headers=_auth(password="nope"),
+            request_id="req_wrong_password_01",
+        )
+        self.assertEqual(wrong_password["body"]["answer"], EMPLOYEE_UNCONFIRMED)
+
+        coach_only = config_from_env(
+            {
+                "COPILOT_ENABLED": "true",
+                "COPILOT_COMPANY_TIMEZONE": "America/New_York",
+                "COPILOT_BILLING_TIMEZONE": "America/Los_Angeles",
+                "COPILOT_ALLOWED_ROLES": "coach",
+                "GOOGLE_CLOUD_PROJECT": "inference-project",
+                "GOOGLE_CLOUD_LOCATION": "global",
+                "COPILOT_MODEL_ID": "gemini-3.1-flash-lite",
+            }
+        )
+        basic_role = _chat(
+            "Explain Opp2Prelim",
+            headers=_auth(),
+            config=coach_only,
+            request_id="req_basic_role_01",
+        )
+        self.assertEqual(basic_role["body"]["answer"], ROLE_NOT_AUTHORIZED)
+        self.assertEqual(
+            unauthorized_answer(
+                _bloom_auth(role="manager"),
+                settings_password="secret",
+                allowed_roles=coach_only.allowed_roles,
+                token_secret="test-secret",
+                now=NOW,
+            ),
+            ROLE_NOT_AUTHORIZED,
+        )
+
+    def test_goose_panel_shows_reason_without_chat_and_note_under_subtitle(self):
+        from copilot.ui import render_panel
+
+        html = render_panel()
+        subtitle = html.index('class="goose-sub"')
+        note = html.index('id="gooseIdentity"')
+        chips = html.index('id="gooseChips"')
+        self.assertLess(subtitle, note)
+        self.assertLess(note, chips)
+        self.assertIn('id="gooseAuth"', html)
+        self.assertLess(note, html.index('id="gooseAuth"'))
+        listener = html.index("addEventListener('message'")
+        origin = html.index("bloomParents.has(event.origin)", listener)
+        reason = html.index("data.reason", listener)
+        note_read = html.index("data.note", listener)
+        self.assertLess(origin, reason)
+        self.assertLess(origin, note_read)
+        send = html.index("async function send")
+        blocked = html.index("if (bloomBlockReason) return;", send)
+        fetch = html.index("fetch('/api/copilot/chat'", send)
+        self.assertLess(blocked, fetch)
+        self.assertEqual(html.count("if (bloomBlockReason) return;"), 2)
+        self.assertIn("textContent = note.trim()", html)
+        self.assertIn("showGooseAuth(bloomBlockReason)", html)
+        self.assertIn("token-unavailable", html)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ def render_panel() -> str:
     </div>
     <button type="button" id="gooseClose" class="goose-close">Close</button>
   </div>
+  <p id="gooseIdentity" class="goose-note" hidden></p>
+  <p id="gooseAuth" class="goose-auth" role="alert" hidden></p>
   <div class="goose-chips" id="gooseChips"></div>
   <div class="goose-suggest">
     <button type="button" data-goose-q="Explain Opp2Prelim">Explain Opp2Prelim</button>
@@ -45,6 +47,10 @@ def render_panel() -> str:
   .goose-head {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }}
   .goose-title {{ font-weight: 900; color: #1a2b4a; }}
   .goose-sub {{ color: #3d4c63; font-size: 12px; margin-top: 4px; }}
+  .goose-note, .goose-auth {{ margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; color: #1a2b4a; font-size: 13px; font-weight: 700; line-height: 1.35; }}
+  .goose-note {{ border: 1px solid #e4c56a; background: #fff8e1; }}
+  .goose-auth {{ border: 1px solid #c5ced6; background: #fff; }}
+  .goose-note[hidden], .goose-auth[hidden] {{ display: none !important; }}
   .goose-close, .goose-suggest button, .goose-issue {{ border: 1px solid #c5ced6; background: #fff; color: #1a2b4a; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
   .goose-suggest button {{ max-width: 100%; white-space: normal; text-align: left; }}
   .goose-form button {{ border: 1px solid #0a7a34; background: #0a7a34; color: #fff; border-radius: 10px; padding: 8px 14px; font-weight: 800; cursor: pointer; }}
@@ -86,6 +92,7 @@ def render_panel() -> str:
   const bloomParents = new Set({origins_json});
   let bloomBearer = '';
   let bloomBearerExp = 0;
+  let bloomBlockReason = '';
   const bloomWaiters = [];
 
   function parentOrigin() {{
@@ -131,14 +138,49 @@ def render_panel() -> str:
     waiters.forEach((resolve) => resolve(token));
   }}
 
+  function showGooseNote(note) {{
+    const el = document.getElementById('gooseIdentity');
+    if (!el) return;
+    if (typeof note !== 'string' || !note.trim()) {{
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }}
+    el.hidden = false;
+    el.textContent = note.trim();
+  }}
+
+  function showGooseAuth(reason) {{
+    const el = document.getElementById('gooseAuth');
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = reason;
+  }}
+
+  function clearGooseAuth() {{
+    bloomBlockReason = '';
+    const el = document.getElementById('gooseAuth');
+    if (!el) return;
+    el.hidden = true;
+    el.textContent = '';
+  }}
+
   window.addEventListener('message', (event) => {{
     if (!bloomParents.has(event.origin)) return;
     const data = event.data;
     if (data && data.type === 'happy-solar-goose' && data.action === 'token-unavailable') {{
+      const reason = data && typeof data.reason === 'string' ? data.reason.trim() : '';
+      if (reason) {{
+        bloomBlockReason = reason.slice(0, 500);
+        showGooseAuth(bloomBlockReason);
+        showGooseNote('');
+      }}
       releaseWaiters('');
       return;
     }}
     if (!rememberToken(data)) return;
+    clearGooseAuth();
+    showGooseNote(data && data.note);
     releaseWaiters(tokenStillFresh() ? bloomBearer : '');
   }});
 
@@ -202,9 +244,12 @@ def render_panel() -> str:
   async function send(message) {{
     const dates = selectedDates();
     add(message, []);
+    if (bloomBlockReason) return;
+    const headers = await authHeaders();
+    if (bloomBlockReason) return;
     const response = await fetch('/api/copilot/chat', {{
       method: 'POST',
-      headers: await authHeaders(),
+      headers: headers,
       body: JSON.stringify({{
         message: message,
         filters: {{start: dates.start, end: dates.end, sources: selectedSources()}},

@@ -60,8 +60,8 @@ Set these in the Vercel project. Do not commit them.
 | `COPILOT_ENABLED` | Stays false. Do not turn it on from this change. |
 | `COPILOT_COMPANY_TIMEZONE` | Defaults to `America/New_York`. Approved 2026-10-04. |
 | `COPILOT_BILLING_TIMEZONE` | Leave unset. The Google billing period timezone is not verified. |
-| `COPILOT_ALLOWED_ROLES` | `settings_admin` is the password actor. Portal roles Bloom can prove are `fma`, `closer`, `coach`, `manager`, and `inbound`. Chat keeps a portal role only when that role is listed. If it is not listed, an active Bloom employee maps to `settings_admin` when `settings_admin` is listed. That mapping does not open admin. Do not add a role the token did not prove. |
-| `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. Do not put `settings_admin` here, or Bloom employees mapped onto that role would receive rankings. |
+| `COPILOT_ALLOWED_ROLES` | When unset or empty, chat allows `settings_admin`, `fma`, `closer`, `coach`, `manager`, and `inbound`. An explicit list replaces that default. `settings_admin` is the password actor. Portal roles Bloom can prove are `fma`, `closer`, `coach`, `manager`, and `inbound`. Chat keeps a portal role only when that role is listed. If it is not listed, an active Bloom employee maps to `settings_admin` when `settings_admin` is listed. That mapping does not open admin. Do not add a role the token did not prove. |
+| `COPILOT_RANKING_ROLES` | Leave empty. Owner and setter rankings stay out of the model payload. Do not put `settings_admin` here, or Bloom employees mapped onto that role would receive rankings. The allowed-role default does not copy `settings_admin` into this list. |
 | `GOOGLE_CLOUD_PROJECT` | Dedicated inference project. Do not reuse `GCP_PROJECT_ID` for this. |
 | `GOOGLE_CLOUD_LOCATION` | `global`, matching the pinned rate card. |
 | `COPILOT_MODEL_ID` | `gemini-3.1-flash-lite`. Any other id disables paid calls. |
@@ -89,10 +89,20 @@ The parent listens for `postMessage` from the reporting iframe:
 It answers only that iframe, and only when `event.origin` is the reporting origin:
 
 ```json
-{ "type": "happy-solar-goose", "action": "token", "token": "<hmac>", "expiresAt": 0 }
+{ "type": "happy-solar-goose", "action": "token", "token": "<hmac>", "expiresAt": 0, "note": "" }
 ```
 
-`expiresAt` is unix milliseconds. The token itself is `base64url(json).base64url(hmac-sha256)`. The JSON keys, sorted, are `aud`, `exp`, `iat`, `iss`, `role`, `status`, `sub`, and `v`.
+`expiresAt` is unix milliseconds. `note` is optional. When it is non-empty, the panel shows that text under the subtitle. While an admin is viewing someone else, Bloom sends `Goose answers as you (Evan), not as Rueben while viewing.`
+
+When Bloom cannot mint a token, it posts a reason and the panel shows that reason without calling chat:
+
+```json
+{ "type": "happy-solar-goose", "action": "token-unavailable", "reason": "This role is not authorized to use Goose." }
+```
+
+The iframe accepts `token` and `token-unavailable` only when `event.origin` is an allowed Bloom parent. The token itself is `base64url(json).base64url(hmac-sha256)`. The JSON keys, sorted, are `aud`, `exp`, `iat`, `iss`, `role`, `status`, `sub`, and `v`.
+
+Chat answers a missing credential with `Goose could not confirm an authorized employee for this request.` A bearer whose role is outside the allowed list gets `This role is not authorized to use Goose.` A bad or expired signature gets `Your Goose session expired. Refresh the page.`
 
 | Claim | Value |
 | --- | --- |

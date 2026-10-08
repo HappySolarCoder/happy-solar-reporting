@@ -8,7 +8,7 @@ Uses existing metric APIs with date-only window (America/New_York):
 - /api/metrics/sales
 - /api/metrics/opportunities_created
 - /api/metrics/raydar_doors_knocked
-- /api/metrics/kixie_calls_summary
+- /api/powerline_dashboard
 """
 
 from __future__ import annotations
@@ -96,23 +96,19 @@ __DASHBOARD_NAV_CSS__
     .accent-sales { border-top: 4px solid #ef4444; background: linear-gradient(180deg, rgba(239,68,68,0.06), rgba(255,255,255,0)); }
     .accent-opps { border-top: 4px solid #2563eb; background: linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0)); }
     .accent-raydar { border-top: 4px solid #7c3aed; background: linear-gradient(180deg, rgba(124,58,237,0.06), rgba(255,255,255,0)); }
-    .accent-kixie { border-top: 4px solid #0ea5a4; background: linear-gradient(180deg, rgba(14,165,164,0.06), rgba(255,255,255,0)); }
     .accent-powerline { border-top: 4px solid #ec4899; background: linear-gradient(180deg, rgba(236,72,153,0.06), rgba(255,255,255,0)); }
 
     .card-title.sales { color:#b91c1c; }
     .card-title.opps { color:#1d4ed8; }
     .card-title.raydar { color:#6d28d9; }
-    .card-title.kixie { color:#0f766e; }
     .card-title.powerline { color:#be185d; }
     .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
     .span-6 { grid-column: span 6; }
     .span-12 { grid-column: span 12; }
     .activity-grid { align-items:stretch; }
-    .activity-stack { grid-column: span 6; display:grid; grid-template-rows: repeat(2, minmax(0, 1fr)); gap:14px; height:100%; min-height:0; }
-    .activity-stack .card { height:100%; min-height:0; overflow:hidden; }
 
-    @media (max-width: 1200px) { .span-3, .span-4, .span-6, .activity-stack { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 1200px) { .span-3, .span-4, .span-6 { grid-column: span 12; } .grid-5 { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 820px) {
       .wrap { padding: 12px; }
       .topbar { padding: 12px; gap: 10px; }
@@ -203,7 +199,7 @@ __DASHBOARD_NAV_CSS__
     <div class=\"topbar\">
       <div>
         <div class=\"title\">Daily Dashboard <a class=\"sunLink\" href=\"/api/morning_brief\" title=\"Morning Brief\">☀️</a></div>
-        <div class=\"subtitle\">Morning meeting snapshot across GHL, Raydar, and Kixie</div>
+        <div class=\"subtitle\">Morning meeting snapshot across GHL and Raydar</div>
         <div class=\"pinkline\"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -297,15 +293,9 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title raydar">Door Knocks by Raydar User</div>
         <div id="tblKnocks"></div>
       </div>
-      <div class="activity-stack">
-        <div class="card accent-kixie">
-          <div class="card-title kixie">Kixie Calls by User</div>
-          <div id="tblKixie"></div>
-        </div>
-        <div class="card accent-powerline">
-          <div class="card-title powerline">Powerline Calls by User</div>
-          <div id="tblPowerline"></div>
-        </div>
+      <div class="card span-6 accent-powerline">
+        <div class="card-title powerline">Powerline Calls by User</div>
+        <div id="tblPowerline"></div>
       </div>
     </div>
   </div>
@@ -343,13 +333,6 @@ __DASHBOARD_NAV_HTML__
   function numberFmt(v) {
     const n = Number(v || 0);
     return Number.isFinite(n) ? n.toLocaleString() : '0';
-  }
-
-  function percentFmt(v) {
-    if (v == null || v === '') return '—';
-    const n = Number(v);
-    if (!Number.isFinite(n)) return '—';
-    return `${n.toFixed(1)}%`;
   }
 
   let spotlightCard = null;
@@ -399,30 +382,6 @@ __DASHBOARD_NAV_HTML__
         <thead><tr><th>Name</th><th class=\"num\">${valueLabel}</th></tr></thead>
         <tbody>
           ${rows.map(([k,v]) => `<tr><td>${k || '—'}</td><td class=\"num\">${numberFmt(v)}</td></tr>`).join('')}
-        </tbody>
-      </table>
-    `;
-  }
-
-  function renderKixieTable(containerId, rows) {
-    const el = document.getElementById(containerId);
-    const list = Array.isArray(rows) ? rows.slice().sort((a,b)=> (Number(b.calls||0)-Number(a.calls||0)) || String(a.agent||'').localeCompare(String(b.agent||''))) : [];
-    if (!list.length) {
-      el.innerHTML = `<div class=\"muted\" style=\"margin-top:8px\">No rows</div>`;
-      return;
-    }
-    el.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>User</th>
-            <th class=\"num\">Calls</th>
-            <th class=\"num\">Connections</th>
-            <th class=\"num\">Connection %</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${list.map(r => `<tr><td>${r.agent || '—'}</td><td class=\"num\">${numberFmt(r.calls)}</td><td class=\"num\">${numberFmt(r.connections)}</td><td class=\"num\">${percentFmt(r.connection_rate)}</td></tr>`).join('')}
         </tbody>
       </table>
     `;
@@ -499,7 +458,7 @@ __DASHBOARD_NAV_HTML__
       .catch((powerlineErr) => ({ powerlineErr }));
 
     try {
-      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsInbound, oppsVirtual, knocks, kixie] = await Promise.all([
+      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsInbound, oppsVirtual, knocks] = await Promise.all([
         fetchJson(`/api/metrics/sales?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Doors')}`),
@@ -508,7 +467,6 @@ __DASHBOARD_NAV_HTML__
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Inbound')}`),
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
-        fetchJson(`/api/metrics/kixie_calls_summary?${q}`),
       ]);
 
       document.getElementById('kpiSales').textContent = numberFmt(sales.result);
@@ -560,7 +518,6 @@ __DASHBOARD_NAV_HTML__
       }
       renderKVTable('tblKnocks', knocksByName, 'Knocks');
 
-      renderKixieTable('tblKixie', kixie?.by_agent || []);
       const { powerline, powerlineErr } = await powerlinePromise;
       if (powerlineErr) {
         console.error(powerlineErr);

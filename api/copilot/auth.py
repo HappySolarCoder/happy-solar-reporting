@@ -222,3 +222,40 @@ def chat_allowed(identity: Identity | None, allowed_roles: frozenset[str]) -> bo
     if identity is None:
         return False
     return identity.role in allowed_roles
+
+
+def unauthorized_answer(
+    headers,
+    *,
+    settings_password: str | None,
+    allowed_roles: frozenset[str],
+    token_secret: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Employee-facing copy when identity_for_chat refused the request.
+
+    A verified bearer whose role is outside the allowed list is a role refusal.
+    A bearer that was sent but does not verify is a bad or expired signature.
+    Anything else never presented a usable credential.
+    """
+    from copilot.messages import EMPLOYEE_UNCONFIRMED, ROLE_NOT_AUTHORIZED, SESSION_EXPIRED
+
+    moment = now or datetime.now(timezone.utc)
+    auth = _header(headers, "Authorization")
+    if auth.startswith("Bearer "):
+        presented = auth.split(" ", 1)[1]
+        if not presented.strip():
+            return EMPLOYEE_UNCONFIRMED
+        if presented != presented.strip() or " " in presented:
+            return SESSION_EXPIRED
+        claims = verify_bloom_token(presented, _bloom_secret(token_secret), moment)
+        if claims is None:
+            return SESSION_EXPIRED
+        role = str(claims["role"])
+        if role not in allowed_roles and SETTINGS_ADMIN_ROLE not in allowed_roles:
+            return ROLE_NOT_AUTHORIZED
+        return EMPLOYEE_UNCONFIRMED
+    basic = identity_from_headers(headers, settings_password=settings_password)
+    if basic is not None and basic.role not in allowed_roles:
+        return ROLE_NOT_AUTHORIZED
+    return EMPLOYEE_UNCONFIRMED

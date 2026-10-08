@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from copilot.auth import BLOOM_PORTAL_ROLES, SETTINGS_ADMIN_ROLE
 from copilot.prompt import PROMPT_VERSION
 from copilot.rates import (
     MONTHLY_MODEL_CAP_MICRO,
@@ -19,6 +20,10 @@ from copilot.rates import (
 # Approved 2026-10-04. Dashboard dates, filters, and answer periods use this zone.
 # Do not copy it into COPILOT_BILLING_TIMEZONE. That zone is not approved.
 APPROVED_COMPANY_TIMEZONE = "America/New_York"
+
+# Used when COPILOT_ALLOWED_ROLES is unset or empty. An explicit list replaces it.
+# COPILOT_RANKING_ROLES does not inherit this set. settings_admin stays out of rankings.
+DEFAULT_ALLOWED_ROLES = frozenset(BLOOM_PORTAL_ROLES | {SETTINGS_ADMIN_ROLE})
 
 
 def _flag(value: str | None, default: bool = False) -> bool:
@@ -106,7 +111,7 @@ def config_from_env(env: dict[str, str] | None = None) -> CopilotConfig:
         enabled=_flag(source.get("COPILOT_ENABLED"), False),
         company_timezone=company_tz,
         billing_timezone=billing_tz,
-        allowed_roles=_csv(source.get("COPILOT_ALLOWED_ROLES")),
+        allowed_roles=_csv(source.get("COPILOT_ALLOWED_ROLES")) or DEFAULT_ALLOWED_ROLES,
         ranking_roles=_csv(source.get("COPILOT_RANKING_ROLES")),
         monthly_model_micro=monthly,
         turn_micro=turn,

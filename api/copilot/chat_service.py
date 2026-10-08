@@ -10,7 +10,7 @@ from typing import Any
 
 from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
-from copilot.auth import identity_for_chat
+from copilot.auth import identity_for_chat, unauthorized_answer
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
 from copilot.messages import (
     BUDGET_LIMIT,
@@ -22,7 +22,6 @@ from copilot.messages import (
     PAUSED,
     RATES_UNAVAILABLE,
     SCOPE_DENIAL,
-    SIGN_IN_REQUIRED,
     TIMEZONE_UNCONFIRMED,
     WELCOME,
     WHY_UNKNOWN,
@@ -358,7 +357,18 @@ def handle_chat(
         now=now,
     )
     if identity is None:
-        return _response(401, ok=False, code="unauthorized", answer=SIGN_IN_REQUIRED)
+        return _response(
+            401,
+            ok=False,
+            code="unauthorized",
+            answer=unauthorized_answer(
+                headers,
+                settings_password=settings_password,
+                allowed_roles=config.allowed_roles,
+                token_secret=bloom_token_secret,
+                now=now,
+            ),
+        )
     assert identity is not None
     remembered = store.remembered_response(request_id, identity.actor_id)
     if remembered is not None:

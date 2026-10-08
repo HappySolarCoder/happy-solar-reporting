@@ -44,7 +44,11 @@ TIMEZONE_UNCONFIRMED = (
     "dates as a reporting period."
 )
 
-SIGN_IN_REQUIRED = "Goose can only answer for a signed-in authorized employee."
+ROLE_NOT_AUTHORIZED = "This role is not authorized to use Goose."
+
+EMPLOYEE_UNCONFIRMED = "Goose could not confirm an authorized employee for this request."
+
+SESSION_EXPIRED = "Your Goose session expired. Refresh the page."
 
 MODEL_UNAVAILABLE = (
     "The language model is not connected. Figures below, when present, come "

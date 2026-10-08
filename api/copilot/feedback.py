@@ -14,10 +14,10 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from copilot.admin_actions import save_feedback
-from copilot.auth import identity_for_chat, identity_from_headers
+from copilot.auth import identity_for_chat, identity_from_headers, unauthorized_answer
 from copilot.config import config_from_env
 from copilot.firestore_store import open_store
-from copilot.messages import PAUSED, SIGN_IN_REQUIRED
+from copilot.messages import PAUSED
 from copilot.store import LedgerUnavailable
 
 
@@ -61,7 +61,15 @@ class handler(BaseHTTPRequestHandler):
                 now=datetime.now(timezone.utc),
             )
         if identity is None:
-            body = {"ok": False, "answer": SIGN_IN_REQUIRED}
+            body = {
+                "ok": False,
+                "answer": unauthorized_answer(
+                    self.headers,
+                    settings_password=None,
+                    allowed_roles=config_from_env().allowed_roles,
+                    now=datetime.now(timezone.utc),
+                ),
+            }
             status = 401
         else:
             try:

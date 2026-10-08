@@ -17,6 +17,7 @@ from copilot.chat_service import handle_chat
 from copilot.config import config_from_env
 from copilot.firestore_store import open_store
 from copilot.gemini_client import GeminiClient
+from copilot.messages import REQUEST_UNREADABLE
 from copilot.metrics_port import LiveMetrics
 
 
@@ -48,7 +49,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             data = _read_json(self)
         except Exception:
-            _send(self, 400, {"ok": False, "code": "bad_request", "answer": "The request could not be read."})
+            _send(self, 400, {"ok": False, "code": "bad_request", "answer": REQUEST_UNREADABLE})
             return
         result = handle_chat(
             message=str(data.get("message") or ""),

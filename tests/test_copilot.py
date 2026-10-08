@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import threading
 import unittest
@@ -290,9 +291,14 @@ class CopilotTests(unittest.TestCase):
             approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
         result = _chat("How many sales were there?", store=store, config=config, request_id="req_parity_01")
         answer = result["body"]["answer"]
-        self.assertIn("sales: 10", answer)
-        self.assertNotIn("opp2prelim", answer)
+        self.assertIn("10 sales", answer)
         self.assertNotIn("demo_rate", answer)
+        self.assertNotIn("opp2prelim", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        labels = [item.get("label") for item in result["body"]["evidence"]]
+        self.assertIn("Source: Sales definition", labels)
         self.assertTrue(result["body"]["evidence"])
         self.assertTrue(all(item["source_link"].startswith("/api/") for item in result["body"]["evidence"]))
         links = " ".join(item["source_link"] for item in result["body"]["evidence"])
@@ -457,7 +463,7 @@ class CopilotTests(unittest.TestCase):
         self.assertGreater(reservation.amount_micro, 0)
         replay = _chat("How many sales were there?", store=store, model=BoomModel(), request_id="req_boom_0001")
         self.assertEqual(len([key for key in store.reservations if key == "req_boom_0001"]), 1)
-        self.assertIn("sales: 10", replay["body"]["answer"])
+        self.assertIn("10 sales", replay["body"]["answer"])
 
     def test_missing_ledger_blocks_enabled_chat(self):
         from copilot.firestore_store import UnavailableStore
@@ -526,7 +532,8 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("Goose · Happy Solar Data Copilot", html)
         self.assertIn("/api/copilot/chat", html)
         self.assertIn("/api/copilot/feedback", html)
-        self.assertIn("Explain Opp2Prelim", html)
+        self.assertNotIn("data-goose-q", html)
+        self.assertNotIn('id="gooseChips"', html)
         self.assertIn('src="/goose-headset.png"', html)
         self.assertIn('aria-label="Ask about our data"', html)
         self.assertIn("document.documentElement.classList.add('goose-dock')", html)
@@ -537,9 +544,9 @@ class CopilotTests(unittest.TestCase):
         self.assertIn(".goose-panel {", html)
         self.assertIn("background: #fff; color: #1a2b4a;", html)
         self.assertIn(".goose-msg { margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; color: #1a2b4a;", html)
-        self.assertIn(".goose-chips span, .goose-chips label { color: #1a2b4a; background: #fff;", html)
         self.assertIn(".goose-sub { color: #3d4c63;", html)
-        self.assertIn(".goose-suggest button", html)
+        self.assertNotIn(".goose-suggest", html)
+        self.assertNotIn(".goose-chips", html)
         self.assertIn("background: #fff; color: #1a2b4a", html)
         self.assertIn("grid-template-columns:1fr;", html)
         self.assertIn('class="glance-unit">sales</span>', html)
@@ -973,9 +980,26 @@ class CopilotTests(unittest.TestCase):
         html = render_panel()
         subtitle = html.index('class="goose-sub"')
         note = html.index('id="gooseIdentity"')
-        chips = html.index('id="gooseChips"')
         self.assertLess(subtitle, note)
-        self.assertLess(note, chips)
+        self.assertNotIn('id="gooseChips"', html)
+        self.assertNotIn("data-goose-q", html)
+        self.assertNotIn("Explain Opp2Prelim", html)
+        self.assertNotIn("Compare source performance", html)
+        self.assertNotIn(">Doors<", html)
+        self.assertNotIn("Data as of", html)
+        self.assertIn("pageScope", html)
+        self.assertIn("hsOpsReadFilters", html)
+        self.assertIn("ocStart", html)
+        self.assertIn("updated_label", html)
+        add_fn = html.index("function add(text, evidence)")
+        br_at = html.index("document.createElement('br')", add_fn)
+        label_at = html.index("link.textContent = item.label || 'Source'", add_fn)
+        self.assertLess(br_at, label_at)
+        self.assertNotIn("item.label ? (' ' + item.label) : ' Source'", html)
+        self.assertNotIn("+ ' source'", html)
+        self.assertIn('id="gooseForm"', html)
+        self.assertIn('id="gooseIssue"', html)
+        self.assertIn('id="gooseClose"', html)
         self.assertIn('id="gooseAuth"', html)
         self.assertLess(note, html.index('id="gooseAuth"'))
         listener = html.index("addEventListener('message'")
@@ -992,6 +1016,21 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("textContent = note.trim()", html)
         self.assertIn("showGooseAuth(bloomBlockReason)", html)
         self.assertIn("token-unavailable", html)
+
+    def test_human_dates(self):
+        from copilot.human_dates import format_chip, format_day, format_range, format_updated, is_stale
+
+        self.assertEqual(format_range("2026-10-01", "2026-10-07"), "Oct 1\u20137, 2026")
+        self.assertEqual(format_chip("2026-10-01", "2026-10-07"), "Oct 1 \u2013 Oct 7")
+        self.assertEqual(format_day("2026-10-07"), "Oct 7, 2026")
+        self.assertEqual(format_day("2026-10-07", year=False), "Oct 7")
+        self.assertEqual(format_range("2026-10-28", "2026-11-02"), "Oct 28 \u2013 Nov 2, 2026")
+        self.assertEqual(format_range("2025-12-28", "2026-01-03"), "Dec 28, 2025 \u2013 Jan 3, 2026")
+        self.assertEqual(format_updated("2026-10-08T02:29:01.532100Z"), "Updated Oct 7 at 10:29 PM ET")
+        self.assertEqual(format_updated("2026-10-04T15:00:00Z"), "Updated Oct 4 at 11:00 AM ET")
+        self.assertEqual(format_updated("2026-01-15T03:00:00Z"), "Updated Jan 14 at 10:00 PM ET")
+        self.assertFalse(is_stale("2026-10-04T15:00:00Z", NOW))
+        self.assertTrue(is_stale("2026-10-01T15:00:00Z", NOW))
 
     def test_panel_tells_parent_when_it_opens_and_closes(self):
         from copilot.ui import render_panel
@@ -1021,17 +1060,27 @@ class CopilotTests(unittest.TestCase):
         self.assertLess(hidden, closed)
         self.assertEqual(html.count("tellParent('panel-open')"), 1)
         self.assertEqual(html.count("tellParent('panel-closed')"), 1)
+        self.assertNotIn("drawChips", html)
+        self.assertNotIn("data-goose-q", html)
+        self.assertNotIn('id="gooseChips"', html)
 
     def test_panel_reads_company_overview_date_inputs(self):
         from copilot.ui import render_panel
 
         html = render_panel()
-        fn = html.index("function selectedDates()")
-        body = html[fn : html.index("function selectedSources()", fn)]
+        fn = html.index("function pageScope()")
+        body = html[fn : html.index("function add(", fn)]
         self.assertIn("document.getElementById('ocStart') || document.getElementById('startDate')", body)
         self.assertIn("document.getElementById('ocEnd') || document.getElementById('endDate')", body)
         self.assertLess(body.index("'ocStart'"), body.index("'startDate'"))
         self.assertLess(body.index("'ocEnd'"), body.index("'endDate'"))
+        self.assertIn("doors: 'doors'", body)
+        self.assertIn("'self gen': 'self_gen'", body)
+        self.assertIn("inbound: 'inbound'", body)
+        self.assertIn("'3pl': '3pl'", body)
+        self.assertIn("phones: 'phones'", body)
+        self.assertIn("unrecognizedSource: true", body)
+        self.assertIn("raw === 'all'", body)
 
     def test_empty_dates_use_month_to_date_for_this_month(self):
         self.assertEqual(
@@ -1057,11 +1106,12 @@ class CopilotTests(unittest.TestCase):
         )
         answer = result["body"]["answer"]
         self.assertEqual(result["body"]["code"], "company_summary")
-        self.assertEqual(
-            answer,
-            "Demo Rate for Oct 1 – Oct 4, 2026 (America/New_York): 40.7% "
-            "(11 demos / 27 appointments ran). Company target 50%.",
-        )
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+        self.assertIn("That's 11 demos out of 27 appointments that ran, a bit under the 50% goal.", answer)
+        self.assertNotIn("32", answer)
+        self.assertNotIn("34.4", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
         self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
         self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01")
         self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
@@ -1072,7 +1122,11 @@ class CopilotTests(unittest.TestCase):
             filters={"start": "2026-10-01", "end": "2026-10-07"},
             request_id="req_demo_explicit_dates",
         )
-        self.assertIn("Oct 1 – Oct 7, 2026", explicit["body"]["answer"])
+        self.assertIn("Oct 1\u20134, 2026", explicit["body"]["answer"])
+        self.assertNotIn("Oct 1\u20137, 2026", explicit["body"]["answer"])
+        self.assertEqual(explicit["body"]["footnote"]["filters"]["end"], "2026-10-04")
+        self.assertIn("27 appointments", explicit["body"]["answer"])
+        self.assertNotIn("32", explicit["body"]["answer"])
 
     def test_demo_rate_this_month_answers_with_value_when_only_that_metric_is_approved(self):
         for question in (
@@ -1091,8 +1145,9 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(plain.intent, "definition")
         self.assertEqual(plain.matched_term, "demo_rate")
         last_month = classify("What is our demo rate last month?")
-        self.assertEqual(last_month.intent, "compare")
+        self.assertEqual(last_month.intent, "company_summary")
         self.assertEqual(last_month.matched_term, "demo_rate")
+        self.assertEqual(classify("compare our demo rate versus last month").intent, "compare")
 
         store = MemoryStore()
         approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
@@ -1107,13 +1162,16 @@ class CopilotTests(unittest.TestCase):
         )
         answer = result["body"]["answer"]
         self.assertEqual(result["body"]["code"], "company_summary")
-        self.assertEqual(
-            answer,
-            "Demo Rate for Oct 1 – Oct 7, 2026 (America/New_York): 40.7% "
-            "(11 demos / 27 appointments ran). Company target 50%.",
-        )
-        self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+        self.assertIn("That's 11 demos out of 27 appointments that ran, a bit under the 50% goal.", answer)
+        self.assertNotIn("32", answer)
         self.assertNotIn("34.4", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+        self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
+        labels = [item.get("label") for item in result["body"]["evidence"]]
+        self.assertIn("Source: Demo Rate definition", labels)
 
         ctx = _tool_ctx(store, metrics)
         payload = execute(
@@ -1146,7 +1204,8 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(defined["body"]["code"], "definition")
         self.assertEqual(
             defined["body"]["answer"],
-            "Demo Rate is approved, but that record does not include a plain-language definition yet.",
+            "Demo Rate is the percent of appointments that ran whose appointment outcome is a demo. "
+            "The target is 50%.",
         )
         self.assertNotIn("40.7", defined["body"]["answer"])
 
@@ -1164,6 +1223,113 @@ class CopilotTests(unittest.TestCase):
             "The dashboard is unchanged.",
         )
         self.assertNotRegex(refused["body"]["answer"], r"(?i)\b(sit|sits|sat)\b")
+
+    def test_plain_demo_rate_answer_and_uncertainty(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(sales=7, ran=32, sits=11, created=34, demo_ran=27, generated_at="2026-10-08T02:29:01.532100Z")
+        result = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=metrics,
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_demo_plain_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertEqual(classify("What is our demo rate this month?").intent, "company_summary")
+        self.assertEqual(classify("What is Demo Rate?").intent, "definition")
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+        self.assertIn("That's 11 demos out of 27 appointments that ran, a bit under the 50% goal.", answer)
+        self.assertNotIn("32", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertNotIn("still in progress", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        self.assertIsNone(result["body"]["uncertainty_reason"])
+        self.assertEqual(result["body"]["footnote"]["updated_label"], "Updated Oct 7 at 10:29 PM ET")
+        labels = [item.get("label") for item in result["body"]["evidence"]]
+        self.assertIn("Source: Demo Rate definition", labels)
+        self.assertNotIn("demo rate source", " ".join(label or "" for label in labels).lower())
+        self.assertNotIn("demo_rate", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertNotIn("2026-10-08T", answer)
+        self.assertNotIn(" / ", answer)
+        for word in (" sit ", " sits ", " sat "):
+            self.assertNotIn(word, f" {answer.lower()} ")
+        self.assertIn("I'm not 100% sure on this one", SYSTEM_PROMPT)
+        self.assertIn("month-to-date", SYSTEM_PROMPT)
+        self.assertIn("is not doubt", SYSTEM_PROMPT)
+
+    def test_unrecognized_page_source_adds_uncertainty(self):
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        result = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(ran=32, sits=11, demo_ran=27),
+            filters={
+                "start": "2026-10-01",
+                "end": "2026-10-07",
+                "sources": [],
+                "unrecognized_source": True,
+            },
+            request_id="req_unknown_source_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertIn("40.7%", answer)
+        self.assertIn("11 demos out of 27", answer)
+        self.assertIn("I assumed every lead source", answer)
+        self.assertIn("I'm not 100% sure on this one", answer)
+        self.assertTrue(result["body"]["uncertain"])
+        self.assertNotIn("32", answer)
+
+    def test_uncertainty_sentence_is_not_on_a_settled_period(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        result = _chat(
+            "How many sales were there?",
+            store=store,
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_full_month_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertIn("10 sales", answer)
+        self.assertIn("Sep 1\u201330, 2026", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        self.assertIsNone(result["body"]["uncertainty_reason"])
+
+    def test_unreconciled_counts_add_uncertainty_on_a_full_month(self):
+        store = MemoryStore()
+        for term_id in (
+            "sales",
+            "created",
+            "ran",
+            "demo_rate",
+            "opp2prelim",
+            "phones",
+            "self_gen",
+            "doors",
+            "inbound",
+            "three_pl",
+        ):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(sales_by_source={"Doors": 3, "Phones": 4, "Virtual": 1, "Self Gen": 2, "Mystery": 2})
+        result = _chat(
+            "Compare source performance",
+            store=store,
+            metrics=metrics,
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_unmapped_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertIn("Doors had 3 sales", answer)
+        self.assertIn("some of the counts didn't line up", answer)
+        self.assertIn("I'm not 100% sure on this one", answer)
+        self.assertNotIn("still in progress", answer)
+        self.assertNotIn("demo_rate", answer)
+        self.assertTrue(result["body"]["uncertain"])
 
     def test_source_demo_rate_uses_demo_module_ran(self):
         store = MemoryStore()
@@ -1196,6 +1362,1844 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(rows["doors"]["demo_rate"], 40.0)
         self.assertEqual(rows["phones"]["opps_ran"], 10)
         self.assertEqual(rows["phones"]["demo_rate"], 25.0)
+
+    def test_stale_or_missing_data_still_adds_the_caveat(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        stale = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(sales=7, ran=32, sits=11, created=34, demo_ran=27, generated_at="2026-10-01T15:00:00Z"),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_stale_demo_01",
+        )
+        stale_answer = stale["body"]["answer"]
+        self.assertIn("40.7%", stale_answer)
+        self.assertIn("27 appointments", stale_answer)
+        self.assertNotIn("32", stale_answer)
+        self.assertIn("the last refresh is more than a day old", stale_answer)
+        self.assertNotIn("still in progress", stale_answer)
+        self.assertTrue(stale["body"]["uncertain"])
+        fresh_cutoff = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(sales=7, ran=27, sits=11, created=34, generated_at="2026-10-03T15:00:00Z"),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_fresh_cutoff_01",
+        )
+        self.assertNotIn("I'm not 100% sure", fresh_cutoff["body"]["answer"])
+        missing = _chat(
+            "How many sales were there?",
+            store=store,
+            metrics=FakeMetrics(sales=None),
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_missing_sales_01",
+        )
+        self.assertIn("some of the data is missing", missing["body"]["answer"])
+        self.assertIn("I'm not 100% sure on this one", missing["body"]["answer"])
+        self.assertNotIn("still in progress", missing["body"]["answer"])
+        blank_rate = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=FakeMetrics(ran=0, sits=0),
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_zero_demo_01",
+        )
+        self.assertIn("is N/A, because no appointments ran.", blank_rate["body"]["answer"])
+        self.assertNotIn("I'm not 100% sure", blank_rate["body"]["answer"])
+        self.assertFalse(blank_rate["body"]["uncertain"])
+
+    def test_uncertainty_hooks_cover_real_doubt_only(self):
+        from copilot.chat_service import _source_label, _uncertainty_reason
+
+        class Decision:
+            def __init__(self, uncertain=False, reason=""):
+                self.uncertain = uncertain
+                self.uncertainty_reason = reason
+                self.matched_term = "demo_rate"
+
+        base = {
+            "available": True,
+            "official": True,
+            "data_as_of": "2026-10-04T15:00:00Z",
+            "period": {"partial": True, "start": "2026-10-01", "end": "2026-10-07"},
+            "metrics": [
+                {
+                    "metric_id": "demo_rate",
+                    "display_name": "Demo Rate",
+                    "value": 40.7,
+                    "incomplete": ["partial_period"],
+                }
+            ],
+        }
+        self.assertIsNone(_uncertainty_reason(base, Decision(), NOW, focus="demo_rate"))
+        self.assertEqual(_source_label("demo_rate", "Demo Rate"), "Source: Demo Rate definition")
+        self.assertEqual(_source_label("self_gen"), "Source: Self Gen definition")
+        stale = dict(base, data_as_of="2026-10-01T15:00:00Z")
+        self.assertEqual(
+            _uncertainty_reason(stale, Decision(), NOW, focus="demo_rate"),
+            "the last refresh is more than a day old",
+        )
+        missing = {
+            **base,
+            "metrics": [{"metric_id": "demo_rate", "missing": True, "incomplete": ["partial_period"], "value": None}],
+        }
+        self.assertEqual(
+            _uncertainty_reason(missing, Decision(), NOW, focus="demo_rate"),
+            "some of the data is missing",
+        )
+        exact_na = {
+            **base,
+            "metrics": [
+                {
+                    "metric_id": "demo_rate",
+                    "value": None,
+                    "incomplete": ["zero_denominator", "partial_period"],
+                }
+            ],
+        }
+        self.assertIsNone(_uncertainty_reason(exact_na, Decision(), NOW, focus="demo_rate"))
+        assumed = dict(base, assumed_filter="I assumed every lead source")
+        self.assertEqual(
+            _uncertainty_reason(assumed, Decision(), NOW, focus="demo_rate"),
+            "I assumed every lead source",
+        )
+        draft = dict(base, official=False)
+        self.assertEqual(
+            _uncertainty_reason(draft, Decision(), NOW, focus="demo_rate"),
+            "that definition is still a draft",
+        )
+        ambiguous = _uncertainty_reason(base, Decision(True, "the question could mean more than one thing"), NOW)
+        self.assertEqual(ambiguous, "the question could mean more than one thing")
+        unreconciled = dict(base, unmapped_sales_labels=["Mystery"])
+        self.assertEqual(
+            _uncertainty_reason(unreconciled, Decision(), NOW, focus="demo_rate"),
+            "some of the counts didn't line up",
+        )
+
+    def test_refusals_and_errors_stay_plain(self):
+        import re
+        from dataclasses import replace
+
+        import copilot.messages as messages
+
+        snake = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
+        iso = re.compile(r"\d{4}-\d{2}-\d{2}")
+        spoken = []
+        for name, value in vars(messages).items():
+            if name.isupper() and isinstance(value, str):
+                spoken.append((name, value))
+        store = MemoryStore()
+        spoken.append(("paused", _chat("How many sales were there?", config=replace(_enabled_config(), enabled=False), request_id="req_plain_paused")["body"]["answer"]))
+        spoken.append(("deny", _chat("Tell me a joke.", request_id="req_plain_deny")["body"]["answer"]))
+        spoken.append(("draft", _chat("Explain Opp2Prelim", request_id="req_plain_draft")["body"]["answer"]))
+        spoken.append(("clarify", _chat("How are we doing?", request_id="req_plain_clarify")["body"]["answer"]))
+        spoken.append(("narrow", _chat("How many sales were there?", request_id="x", store=store)["body"]["answer"]))
+        spoken.append(("unauthorized", _chat("Explain Opp2Prelim", headers={}, request_id="req_plain_unauth")["body"]["answer"]))
+        coach = replace(_enabled_config(), allowed_roles=frozenset({"coach"}))
+        spoken.append(("role", _chat("Explain Opp2Prelim", config=coach, request_id="req_plain_role")["body"]["answer"]))
+        spoken.append((
+            "no metrics",
+            handle_chat(
+                message="How many sales were there?",
+                filters={"start": "2026-10-01", "end": "2026-10-04"},
+                conversation_id="conv_test",
+                request_id="req_plain_nometrics",
+                headers=_auth(),
+                now=NOW,
+                config=_enabled_config(),
+                store=MemoryStore(),
+                settings_password="secret",
+                metrics=None,
+                model=None,
+            )["body"]["answer"],
+        ))
+        bad_zone = replace(_enabled_config(), company_timezone="Not/AZone")
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        spoken.append((
+            "timezone",
+            _chat("How many sales were there?", config=bad_zone, store=store, request_id="req_plain_tz")["body"]["answer"],
+        ))
+        limited = replace(_enabled_config(), max_requests_per_minute=1)
+        quota_store = MemoryStore()
+        _chat("Hello", config=limited, store=quota_store, request_id="req_plain_quota_a")
+        spoken.append((
+            "quota",
+            _chat("Hello again", config=limited, store=quota_store, request_id="req_plain_quota_b")["body"]["answer"],
+        ))
+        for label, text in spoken:
+            self.assertIsNone(snake.search(text), f"{label}: {text}")
+            self.assertIsNone(iso.search(text), f"{label}: {text}")
+            self.assertNotIn("America/", text, label)
+            self.assertNotRegex(text, r"\b(?:UTC|GMT)\b", label)
+
+    def test_named_month_source_and_unapplied_qualifier(self):
+        from copilot.periods import named_calendar_range
+        from copilot.scope import message_source
+
+        self.assertEqual(
+            named_calendar_range("what was our demo rate in september?", "America/New_York", NOW),
+            ("2026-09-01", "2026-09-30"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate last month", "America/New_York", NOW),
+            ("2026-09-01", "2026-09-30"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate in december", "America/New_York", NOW),
+            ("2025-12-01", "2025-12-31"),
+        )
+        self.assertIsNone(named_calendar_range("what is our demo rate this month", "America/New_York", NOW))
+        self.assertEqual(message_source("demo rate for self gen this month"), "self_gen")
+        self.assertEqual(message_source("demo rate for doors this month"), "doors")
+        self.assertEqual(message_source("demo rate for virtual this month"), "phones")
+        self.assertEqual(message_source("demo rate for phones this month"), "phones")
+        self.assertEqual(message_source("demo rate for inbound this month"), "inbound")
+        self.assertEqual(message_source("demo rate for 3pl this month"), "3pl")
+        self.assertIsNone(message_source("demo rate for rochester this month"))
+
+        plain_scope = classify("What is our demo rate this month?")
+        self.assertEqual(plain_scope.intent, "company_summary")
+        self.assertFalse(plain_scope.uncertain)
+        self.assertEqual(plain_scope.uncertainty_reason, "")
+        for question, name in (
+            ("what's our demo rate for rochester this month?", "Rochester"),
+            ("what's our demo rate for buffalo this month?", "Buffalo"),
+            ("demo rate for syracuse this month", "Syracuse"),
+            ("demo rate for jeff this month", "Jeff"),
+        ):
+            decision = classify(question)
+            self.assertEqual(decision.intent, "company_summary", question)
+            self.assertEqual(decision.matched_term, "demo_rate", question)
+            self.assertTrue(decision.uncertain, question)
+            self.assertIn(name, decision.uncertainty_reason, question)
+        doors_scope = classify("demo rate for doors this month")
+        self.assertFalse(doors_scope.uncertain)
+        self.assertEqual(doors_scope.matched_term, "demo_rate")
+        how = classify("how are we doing on demos for rochester?")
+        self.assertEqual(how.intent, "company_summary")
+        self.assertEqual(how.matched_term, "demo_rate")
+        self.assertTrue(how.uncertain)
+        self.assertIn("Rochester", how.uncertainty_reason)
+        self.assertIn("company-wide", how.uncertainty_reason)
+        bare = classify("How are we doing?")
+        self.assertEqual(bare.intent, "clarify")
+        self.assertIn("Which metric", bare.clarification)
+        self.assertFalse(bare.uncertain)
+        last_month = classify("What is our demo rate last month?")
+        self.assertEqual(last_month.intent, "company_summary")
+        self.assertFalse(last_month.uncertain)
+        self.assertEqual(classify("What was our demo rate last month?").intent, "company_summary")
+        self.assertEqual(classify("demo rate in march").intent, "company_summary")
+        self.assertEqual(classify("demo rate in march").matched_term, "demo_rate")
+
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=40,
+            max_turns_per_day=40,
+            max_active_company=40,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Self Gen": 3, "Phones": 2, "Inbound": 2, "3PL": 1},
+            demo_ran_by_source={"Doors": 4, "Self Gen": 6, "Phones": 8, "Virtual": 0, "Inbound": 5, "3PL": 1},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        ctx = _tool_ctx(store, metrics)
+        company = execute(
+            "get_company_summary",
+            {"start": "2026-10-01", "end": "2026-10-07", "metric_ids": ["demo_rate"]},
+            ctx,
+        )
+        self.assertEqual(company["metrics"][0]["numerator"], 11)
+        self.assertEqual(company["metrics"][0]["denominator"], 27)
+        self.assertEqual(company["metrics"][0]["value"], 40.7)
+        doors_metric = execute(
+            "get_company_summary",
+            {"start": "2026-10-01", "end": "2026-10-07", "metric_ids": ["demo_rate"], "sources": ["doors"]},
+            ctx,
+        )
+        self.assertEqual(doors_metric["metrics"][0]["numerator"], 1)
+        self.assertEqual(doors_metric["metrics"][0]["denominator"], 4)
+        self.assertEqual(doors_metric["metrics"][0]["value"], 25.0)
+
+        def ask(message, request_id, filters=None):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=filters or page,
+                request_id=request_id,
+            )
+
+        september = ask("what was our demo rate in september?", "req_named_sept")
+        september_answer = september["body"]["answer"]
+        self.assertIn("Your demo rate for Sep 1\u201330, 2026 is 40.7%.", september_answer)
+        self.assertIn("11 demos out of 27 appointments", september_answer)
+        self.assertNotIn("Oct", september_answer)
+        self.assertNotIn("I'm not 100% sure", september_answer)
+        self.assertFalse(september["body"]["uncertain"])
+        self.assertEqual(september["body"]["footnote"]["filters"]["start"], "2026-09-01")
+        self.assertEqual(september["body"]["footnote"]["filters"]["end"], "2026-09-30")
+        self.assertEqual(september["body"]["footnote"]["filters"]["sources"], [])
+
+        applied = {
+            "what is our demo rate for self gen this month?": (
+                "Your Self Gen demo rate for Oct 1\u20134, 2026 is 50.0%.",
+                "3 demos out of 6 appointments",
+                ["self_gen"],
+            ),
+            "demo rate for doors this month": (
+                "Your Doors demo rate for Oct 1\u20134, 2026 is 25.0%.",
+                "1 demo out of 4 appointments",
+                ["doors"],
+            ),
+            "demo rate for phones this month": (
+                "Your Phones demo rate for Oct 1\u20134, 2026 is 25.0%.",
+                "2 demos out of 8 appointments",
+                ["phones"],
+            ),
+            "demo rate for virtual this month": (
+                "Your Phones demo rate for Oct 1\u20134, 2026 is 25.0%.",
+                "2 demos out of 8 appointments",
+                ["phones"],
+            ),
+            "demo rate for inbound this month": (
+                "Your Inbound demo rate for Oct 1\u20134, 2026 is 40.0%.",
+                "2 demos out of 5 appointments",
+                ["inbound"],
+            ),
+            "demo rate for 3pl this month": (
+                "Your 3PL demo rate for Oct 1\u20134, 2026 is 100.0%.",
+                "1 demo out of 1 appointment",
+                ["3pl"],
+            ),
+        }
+        for index, (question, (lead, detail, sources)) in enumerate(applied.items()):
+            result = ask(question, f"req_named_source_{index}")
+            answer = result["body"]["answer"]
+            self.assertIn(lead, answer, question)
+            self.assertIn(detail, answer, question)
+            self.assertNotIn("40.7%", answer, question)
+            self.assertNotIn("I'm not 100% sure", answer, question)
+            self.assertFalse(result["body"]["uncertain"], question)
+            self.assertEqual(result["body"]["footnote"]["filters"]["sources"], sources, question)
+            self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01", question)
+            self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04", question)
+
+        def assert_company_caveat(result, name, when="Oct 1\u20137, 2026"):
+            answer = result["body"]["answer"]
+            self.assertIn(f"Your demo rate for {when} is 40.7%.", answer)
+            self.assertIn("11 demos out of 27 appointments", answer)
+            caveat = (
+                f"I couldn't filter to {name}, so this is company-wide for {when}. "
+                "If that number looks off, let me know."
+            )
+            self.assertEqual(answer.count(caveat), 1)
+            self.assertLess(answer.index("40.7%"), answer.index(caveat))
+            self.assertNotIn("I'm not 100% sure", answer)
+            self.assertNotIn("since I couldn't", answer)
+            self.assertNotIn("Which metric", answer)
+            self.assertNotIn("32", answer)
+            self.assertTrue(result["body"]["uncertain"])
+            self.assertIn(name, result["body"]["uncertainty_reason"])
+            self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+
+        this_month = "Oct 1\u20134, 2026"
+        assert_company_caveat(
+            ask("what's our demo rate for rochester this month?", "req_named_rochester"),
+            "Rochester",
+            this_month,
+        )
+        assert_company_caveat(
+            ask("what's our demo rate for buffalo this month?", "req_named_buffalo"),
+            "Buffalo",
+            this_month,
+        )
+        assert_company_caveat(
+            ask("demo rate for syracuse this month", "req_named_syracuse"),
+            "Syracuse",
+            this_month,
+        )
+        assert_company_caveat(ask("demo rate for jeff this month", "req_named_jeff"), "Jeff", this_month)
+        assert_company_caveat(
+            ask("how are we doing on demos for rochester?", "req_named_how_demos"),
+            "Rochester",
+        )
+
+        mixed = ask("demo rate for doors in rochester this month", "req_named_doors_rochester")
+        mixed_answer = mixed["body"]["answer"]
+        self.assertIn("Your Doors demo rate for Oct 1\u20134, 2026 is 25.0%.", mixed_answer)
+        doors_caveat = (
+            "I couldn't filter to Rochester, so this is Doors only for Oct 1\u20134, 2026. "
+            "If that number looks off, let me know."
+        )
+        self.assertEqual(mixed_answer.count(doors_caveat), 1)
+        self.assertLess(mixed_answer.index("25.0%"), mixed_answer.index(doors_caveat))
+        self.assertNotIn("I'm not 100% sure", mixed_answer)
+        self.assertNotIn("since I couldn't", mixed_answer)
+        self.assertTrue(mixed["body"]["uncertain"])
+        self.assertEqual(mixed["body"]["footnote"]["filters"]["sources"], ["doors"])
+
+        plain = ask("What is our demo rate this month?", "req_named_this_month")
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", plain["body"]["answer"])
+        self.assertIn("11 demos out of 27 appointments", plain["body"]["answer"])
+        self.assertNotIn("I'm not 100% sure", plain["body"]["answer"])
+        self.assertFalse(plain["body"]["uncertain"])
+        self.assertIsNone(plain["body"]["uncertainty_reason"])
+        self.assertEqual(plain["body"]["footnote"]["filters"]["start"], "2026-10-01")
+        self.assertEqual(plain["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        compared = ask("What was our demo rate last month?", "req_named_last_month")
+        compared_answer = compared["body"]["answer"]
+        self.assertEqual(compared["body"]["code"], "company_summary")
+        self.assertIn("Your demo rate for Sep 1\u201330, 2026 is 40.7%.", compared_answer)
+        self.assertIn("11 demos out of 27 appointments", compared_answer)
+        self.assertNotIn("Comparing", compared_answer)
+        self.assertNotIn("Sep 1\u20137", compared_answer)
+        self.assertNotIn("I'm not 100% sure", compared_answer)
+        self.assertFalse(compared["body"]["uncertain"])
+        self.assertEqual(compared["body"]["footnote"]["filters"]["start"], "2026-09-01")
+        self.assertEqual(compared["body"]["footnote"]["filters"]["end"], "2026-09-30")
+        doors_last = ask("demo rate for doors last month", "req_named_doors_last")
+        self.assertEqual(doors_last["body"]["code"], "company_summary")
+        self.assertIn("Your Doors demo rate for Sep 1\u201330, 2026 is 25.0%.", doors_last["body"]["answer"])
+        self.assertNotIn("Comparing", doors_last["body"]["answer"])
+        self.assertNotIn("40.7%", doors_last["body"]["answer"])
+        self.assertEqual(doors_last["body"]["footnote"]["filters"]["sources"], ["doors"])
+        self.assertEqual(doors_last["body"]["footnote"]["filters"]["start"], "2026-09-01")
+        self.assertEqual(doors_last["body"]["footnote"]["filters"]["end"], "2026-09-30")
+
+    def test_month_words_years_and_plain_caveat(self):
+        from dataclasses import replace
+
+        from copilot.periods import named_calendar_range, named_period_unserved
+
+        self.assertIsNone(named_calendar_range("May I see our demo rate this month?", "America/New_York", NOW))
+        self.assertIsNone(named_calendar_range("May I see our demo rate?", "America/New_York", NOW))
+        self.assertIsNone(named_calendar_range("demo rate mar", "America/New_York", NOW))
+        self.assertEqual(
+            named_calendar_range("what is our demo rate in may?", "America/New_York", NOW),
+            ("2026-05-01", "2026-05-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate for may", "America/New_York", NOW),
+            ("2026-05-01", "2026-05-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate during may", "America/New_York", NOW),
+            ("2026-05-01", "2026-05-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate may 2026", "America/New_York", NOW),
+            ("2026-05-01", "2026-05-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate may 1", "America/New_York", NOW),
+            ("2026-05-01", "2026-05-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate in mar", "America/New_York", NOW),
+            ("2026-03-01", "2026-03-31"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate in march", "America/New_York", NOW),
+            ("2026-03-01", "2026-03-31"),
+        )
+        self.assertIsNone(named_calendar_range("demo rate in may this month", "America/New_York", NOW))
+        self.assertIsNone(named_calendar_range("demo rate in may MTD", "America/New_York", NOW))
+        self.assertEqual(
+            named_calendar_range("what was our demo rate in september 2025?", "America/New_York", NOW),
+            ("2025-09-01", "2025-09-30"),
+        )
+        self.assertIsNone(named_calendar_range("what was our demo rate in september 2027?", "America/New_York", NOW))
+        self.assertEqual(
+            named_period_unserved("what was our demo rate in september 2027?", "America/New_York", NOW),
+            "September 2027",
+        )
+        for question in (
+            "what is our demo rate for us this month?",
+            "demo rate for everyone this month",
+            "demo rate for everybody this month",
+            "demo rate for the team this month",
+            "demo rate for team this month",
+            "demo rate for overall this month",
+            "demo rate for the company this month",
+            "demo rate for all of us this month",
+        ):
+            decision = classify(question)
+            self.assertFalse(decision.uncertain, question)
+            self.assertNotIn("couldn't filter", decision.uncertainty_reason)
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=40,
+            max_turns_per_day=40,
+            max_active_company=40,
+        )
+        metrics = FakeMetrics(ran=32, sits=11, demo_ran=27)
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+
+        def ask(message, request_id):
+            return _chat(message, store=store, metrics=metrics, config=roomy, filters=page, request_id=request_id)
+
+        polite = ask("May I see our demo rate this month?", "req_may_i")
+        polite_answer = polite["body"]["answer"]
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", polite_answer)
+        self.assertIn("11 demos out of 27 appointments", polite_answer)
+        self.assertNotIn("May 1", polite_answer)
+        self.assertNotIn("I'm not 100% sure", polite_answer)
+        self.assertNotIn("If that number looks off", polite_answer)
+        self.assertFalse(polite["body"]["uncertain"])
+        self.assertEqual(polite["body"]["footnote"]["filters"]["start"], "2026-10-01")
+        self.assertEqual(polite["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        bare_may = ask("May I see our demo rate?", "req_may_bare")
+        self.assertIn("Oct 1\u20137, 2026", bare_may["body"]["answer"])
+        self.assertNotIn("May 1", bare_may["body"]["answer"])
+        self.assertFalse(bare_may["body"]["uncertain"])
+
+        in_may = ask("what is our demo rate in may?", "req_in_may")
+        self.assertIn("Your demo rate for May 1\u201331, 2026 is 40.7%.", in_may["body"]["answer"])
+        self.assertNotIn("I'm not 100% sure", in_may["body"]["answer"])
+        self.assertFalse(in_may["body"]["uncertain"])
+        self.assertEqual(in_may["body"]["footnote"]["filters"]["start"], "2026-05-01")
+        self.assertEqual(in_may["body"]["footnote"]["filters"]["end"], "2026-05-31")
+
+        may_loses = ask("demo rate in may this month", "req_may_this_month")
+        self.assertIn("Oct 1\u20134, 2026", may_loses["body"]["answer"])
+        self.assertNotIn("May 1", may_loses["body"]["answer"])
+        self.assertNotIn("Oct 1\u20137", may_loses["body"]["answer"])
+        self.assertFalse(may_loses["body"]["uncertain"])
+        self.assertEqual(may_loses["body"]["footnote"]["filters"]["start"], "2026-10-01")
+        self.assertEqual(may_loses["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        year_2025 = ask("what was our demo rate in september 2025?", "req_sep_2025")
+        year_answer = year_2025["body"]["answer"]
+        self.assertIn("Your demo rate for Sep 1\u201330, 2025 is 40.7%.", year_answer)
+        self.assertIn("11 demos out of 27 appointments", year_answer)
+        self.assertNotIn("2026", year_answer)
+        self.assertNotIn("I'm not 100% sure", year_answer)
+        self.assertFalse(year_2025["body"]["uncertain"])
+        self.assertEqual(year_2025["body"]["footnote"]["filters"]["start"], "2025-09-01")
+        self.assertEqual(year_2025["body"]["footnote"]["filters"]["end"], "2025-09-30")
+
+        future = ask("what was our demo rate in september 2027?", "req_sep_2027")
+        future_answer = future["body"]["answer"]
+        future_caveat = (
+            "I couldn't use September 2027, so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", future_answer)
+        self.assertEqual(future_answer.count(future_caveat), 1)
+        self.assertLess(future_answer.index("40.7%"), future_answer.index(future_caveat))
+        self.assertNotIn("Sep 1", future_answer)
+        self.assertNotIn("I'm not 100% sure", future_answer)
+        self.assertTrue(future["body"]["uncertain"])
+        self.assertEqual(future["body"]["footnote"]["filters"]["start"], "2026-10-01")
+        self.assertEqual(future["body"]["footnote"]["filters"]["end"], "2026-10-07")
+
+        march = ask("demo rate in march", "req_march")
+        self.assertEqual(march["body"]["code"], "company_summary")
+        self.assertIn("Your demo rate for Mar 1\u201331, 2026 is 40.7%.", march["body"]["answer"])
+        self.assertNotIn("doesn't include", march["body"]["answer"])
+        self.assertNotIn("I'm not 100% sure", march["body"]["answer"])
+        self.assertEqual(march["body"]["footnote"]["filters"]["start"], "2026-03-01")
+        self.assertEqual(march["body"]["footnote"]["filters"]["end"], "2026-03-31")
+
+        for question in ("what is our demo rate for us this month?", "demo rate for everyone this month"):
+            result = ask(question, "req_plain_" + str(abs(hash(question))))
+            answer = result["body"]["answer"]
+            self.assertIn("40.7%", answer, question)
+            self.assertIn("Oct 1\u20134, 2026", answer, question)
+            self.assertNotIn("couldn't filter", answer, question)
+            self.assertFalse(result["body"]["uncertain"], question)
+
+    def test_unapplied_period_source_or_person_gets_one_caveat(self):
+        from dataclasses import replace
+
+        from copilot.periods import named_calendar_range
+        from copilot.scope import classify, message_source, message_sources
+
+        self.assertEqual(named_calendar_range("demo rate may 1", "America/New_York", NOW), ("2026-05-01", "2026-05-31"))
+        self.assertEqual(named_calendar_range("demo rate on may 1", "America/New_York", NOW), ("2026-05-01", "2026-05-01"))
+        self.assertEqual(named_calendar_range("demo rate sep 15", "America/New_York", NOW), ("2026-09-15", "2026-09-15"))
+        self.assertEqual(named_calendar_range("demo rate on oct 3", "America/New_York", NOW), ("2026-10-03", "2026-10-03"))
+        self.assertEqual(
+            named_calendar_range("demo rate from sep 1 to sep 15", "America/New_York", NOW),
+            ("2026-09-01", "2026-09-15"),
+        )
+        self.assertEqual(
+            named_calendar_range("demo rate since september", "America/New_York", NOW),
+            ("2026-09-01", "2026-10-04"),
+        )
+        self.assertEqual(named_calendar_range("demo rate last week", "America/New_York", NOW), ("2026-09-21", "2026-09-27"))
+        self.assertEqual(named_calendar_range("demo rate yesterday", "America/New_York", NOW), ("2026-10-03", "2026-10-03"))
+        self.assertEqual(named_calendar_range("demo rate ytd", "America/New_York", NOW), ("2026-01-01", "2026-10-04"))
+        self.assertEqual(named_calendar_range("demo rate Q3", "America/New_York", NOW), ("2026-07-01", "2026-09-30"))
+        self.assertEqual(
+            named_calendar_range("demo rate last 30 days", "America/New_York", NOW),
+            ("2026-09-05", "2026-10-04"),
+        )
+        self.assertEqual(
+            named_calendar_range("in september? I need it today", "America/New_York", NOW),
+            ("2026-09-01", "2026-09-30"),
+        )
+        self.assertIsNone(named_calendar_range("demo rate sep 15 and oct 3", "America/New_York", NOW))
+        self.assertIsNone(message_source("demo rate excluding doors"))
+        self.assertEqual(message_sources("what is our demo rate for phones and doors?"), ["phones", "doors"])
+        self.assertEqual(classify("What is Demo Rate?").uncertainty_reason, "")
+        self.assertEqual(classify("What is Demo Rate?").intent, "definition")
+        whats = classify("what's our demo rate this month?")
+        self.assertEqual(whats.intent, "company_summary")
+        self.assertFalse(whats.uncertain)
+        jeff = classify("jeff's demo rate")
+        self.assertEqual(jeff.intent, "company_summary")
+        self.assertEqual(jeff.matched_term, "demo_rate")
+        self.assertIn("Jeff", jeff.uncertainty_reason)
+        self.assertIn("company-wide", jeff.uncertainty_reason)
+        for question in (
+            "demo rate in rochester",
+            "how is rochester doing on demo rate?",
+            "demo rate ytd",
+            "demo rate Q3",
+            "demo rate last 30 days",
+            "what is our demo rate for phones and doors?",
+        ):
+            decision = classify(question)
+            self.assertEqual(decision.intent, "company_summary", question)
+            self.assertEqual(decision.matched_term, "demo_rate", question)
+            self.assertNotEqual(decision.intent, "definition", question)
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=80,
+            max_turns_per_day=80,
+            max_active_company=80,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+
+        def ask(message, request_id, filters=None):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=filters or page,
+                request_id=request_id,
+            )
+
+        def assert_exact(message, request_id, period_label, *, sources=None, lead="Your demo rate"):
+            result = ask(message, request_id)
+            answer = result["body"]["answer"]
+            self.assertEqual(result["body"]["code"], "company_summary", message)
+            self.assertIn(f"{lead} for {period_label} is ", answer, message)
+            self.assertNotIn("If that number looks off", answer, message)
+            self.assertNotIn("I'm not 100% sure", answer, message)
+            self.assertNotIn("doesn't include", answer, message)
+            self.assertFalse(result["body"]["uncertain"], message)
+            self.assertEqual(answer.lower().count("if that number looks off"), 0, message)
+            if sources is None:
+                self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [], message)
+            else:
+                self.assertEqual(result["body"]["footnote"]["filters"]["sources"], sources, message)
+            return answer
+
+        def assert_caveat(message, request_id, caveat, *, lead="Your demo rate for Oct 1\u20137, 2026 is 40.7%."):
+            result = ask(message, request_id)
+            answer = result["body"]["answer"]
+            self.assertEqual(result["body"]["code"], "company_summary", message)
+            self.assertIn(lead, answer, message)
+            self.assertEqual(answer.count(caveat), 1, message)
+            self.assertEqual(answer.lower().count("if that number looks off"), 1, message)
+            self.assertNotIn("I'm not 100% sure", answer, message)
+            self.assertNotIn("doesn't include", answer, message)
+            self.assertNotIn("Which metric", answer, message)
+            self.assertLess(answer.index("40.7%" if "40.7%" in lead else "%"), answer.index(caveat), message)
+            self.assertTrue(result["body"]["uncertain"], message)
+            return result
+
+        assert_exact("what was our demo rate last week?", "req_net_last_week", "Sep 21\u201327, 2026")
+        assert_exact("demo rate yesterday", "req_net_yesterday", "Oct 3, 2026")
+        assert_exact("demo rate ytd", "req_net_ytd", "Jan 1 \u2013 Oct 4, 2026")
+        assert_exact("what is our demo rate this year?", "req_net_this_year", "Jan 1 \u2013 Oct 4, 2026")
+        assert_exact("demo rate last year", "req_net_last_year", "Jan 1 \u2013 Dec 31, 2025")
+        assert_exact("demo rate Q3", "req_net_q3", "Jul 1 \u2013 Sep 30, 2026")
+        assert_exact("demo rate last 30 days", "req_net_30", "Sep 5 \u2013 Oct 4, 2026")
+        assert_exact("demo rate since september", "req_net_since", "Sep 1 \u2013 Oct 4, 2026")
+        assert_exact("demo rate from sep 1 to sep 15", "req_net_range", "Sep 1\u201315, 2026")
+        sep15 = assert_exact("demo rate sep 15", "req_net_sep15", "Sep 15, 2026")
+        self.assertNotIn("Sep 1\u201330", sep15)
+        assert_exact("demo rate on oct 3", "req_net_oct3", "Oct 3, 2026")
+        assert_exact("first week of september demo rate", "req_net_first_week", "Sep 1\u20137, 2026")
+        september_today = assert_exact(
+            "what was our demo rate in september? I need it today",
+            "req_net_sep_today",
+            "Sep 1\u201330, 2026",
+        )
+        self.assertNotIn("Oct", september_today)
+        assert_exact("demo rate in september and october", "req_net_sep_oct", "Sep 1 \u2013 Oct 4, 2026")
+
+        week = ask(
+            "what is our demo rate this week?",
+            "req_net_this_week_empty",
+            filters={"start": "", "end": "", "sources": []},
+        )
+        self.assertIn("Sep 28 \u2013 Oct 4, 2026", week["body"]["answer"])
+        self.assertFalse(week["body"]["uncertain"])
+        self.assertNotIn("If that number looks off", week["body"]["answer"])
+
+        today = ask("what is our demo rate today?", "req_net_today_page")
+        self.assertIn("Oct 4, 2026", today["body"]["answer"])
+        self.assertNotIn("Oct 1\u20137, 2026", today["body"]["answer"])
+        self.assertNotIn("If that number looks off", today["body"]["answer"])
+        self.assertFalse(today["body"]["uncertain"])
+
+        summed = assert_exact(
+            "what is our demo rate for phones and doors?",
+            "req_net_two_sources",
+            "Oct 1\u20137, 2026",
+            sources=["phones", "doors"],
+            lead="Your Phones and Doors demo rate",
+        )
+        self.assertIn("55.6%", summed)
+        self.assertIn("5 demos out of 9 appointments", summed)
+        self.assertNotIn("80.0%", summed)
+        self.assertNotIn("40.7%", summed)
+        self.assertNotIn("25.0%", summed)
+
+        person = (
+            "I couldn't filter to Jeff, so this is company-wide for Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        territory = (
+            "I couldn't filter to Rochester, so this is company-wide for Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        assert_caveat("jeff's demo rate", "req_net_jeffs", person)
+        assert_caveat("demo rate in rochester", "req_net_in_rochester", territory)
+        assert_caveat("how is rochester doing on demo rate?", "req_net_how_rochester", territory)
+
+        split_months = (
+            "I couldn't use March and September, so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        assert_caveat("demo rate in september and march", "req_net_two_months", split_months)
+        split_days = (
+            "I couldn't use September and October, so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        assert_caveat("demo rate sep 15 and oct 3", "req_net_two_days", split_days)
+        future_day = (
+            "I couldn't use October 20, so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        october_20 = assert_caveat("demo rate oct 20", "req_net_oct20", future_day)
+        self.assertNotIn("Oct 1\u201331", october_20["body"]["answer"])
+        this_week = (
+            "I couldn't use 'this week', so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        assert_caveat("what is our demo rate this week?", "req_net_this_week", this_week)
+        fortnight = (
+            "I couldn't use 'fortnight', so this is Oct 1\u20137, 2026. "
+            "If that number looks off, let me know."
+        )
+        assert_caveat("demo rate for the past fortnight", "req_net_fortnight", fortnight)
+        assert_exact(
+            "demo rate for the last two months",
+            "req_net_two_months_ago",
+            "Aug 4 \u2013 Oct 4, 2026",
+        )
+
+        for question, phrase, request_id in (
+            ("what is our demo rate excluding doors?", "excluding doors", "req_net_excluding"),
+            ("demo rate except phones", "except phones", "req_net_except"),
+            ("demo rate without doors", "without doors", "req_net_without"),
+            ("demo rate but not doors", "but not doors", "req_net_but_not"),
+            ("everything but doors demo rate", "everything but doors", "req_net_everything_but"),
+        ):
+            caveat = (
+                f"I couldn't use '{phrase}', so this is Oct 1\u20137, 2026. "
+                "If that number looks off, let me know."
+            )
+            result = assert_caveat(question, request_id, caveat)
+            self.assertNotIn("25.0%", result["body"]["answer"], question)
+            self.assertNotIn("80.0%", result["body"]["answer"], question)
+            self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [], question)
+
+        paged_doors = ask(
+            "what is our demo rate excluding doors?",
+            "req_net_excluding_doors_page",
+            filters={"start": "2026-10-01", "end": "2026-10-07", "sources": ["doors"]},
+        )
+        doors_answer = paged_doors["body"]["answer"]
+        self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", doors_answer)
+        self.assertNotIn("25.0%", doors_answer)
+        self.assertEqual(doors_answer.lower().count("if that number looks off"), 1)
+        self.assertEqual(paged_doors["body"]["footnote"]["filters"]["sources"], [])
+
+        either = ask("what is our demo rate for phones or doors?", "req_net_or_sources")
+        either_answer = either["body"]["answer"]
+        self.assertIn("40.7%", either_answer)
+        self.assertNotIn("55.6%", either_answer)
+        self.assertNotIn("80.0%", either_answer)
+        self.assertEqual(either_answer.lower().count("if that number looks off"), 1)
+        self.assertIn("phones or doors", either_answer)
+        self.assertEqual(either["body"]["footnote"]["filters"]["sources"], [])
+
+    def test_round5_leftover_tokens_get_one_caveat(self):
+        """A question is exact only when every token was applied. Anything left is one caveat."""
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=80,
+            max_turns_per_day=80,
+            max_active_company=80,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        exact = {
+            "on 10/3": "Oct 3, 2026",
+            "between september 1 and september 15": "Sep 1\u201315, 2026",
+            "week of sept 8": "Sep 7\u201313, 2026",
+            "past 3 months": "Jul 4 \u2013 Oct 4, 2026",
+            "last 2 weeks": "Sep 14\u201327, 2026",
+            "over the past month": "Sep 4 \u2013 Oct 4, 2026",
+            "9/1-9/15": "Sep 1\u201315, 2026",
+            "in 2025": "Jan 1 \u2013 Dec 31, 2025",
+            "this quarter": "Oct 1\u20134, 2026",
+        }
+        compare = {
+            "compare sep to aug": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare our demo rate in september to august": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+        }
+        caveats = (
+            "not counting doors",
+            "other than phones",
+            "all sources but doors",
+            "how did Maria do",
+            "weekends this month",
+            "everything but doors",
+            "new reps",
+        )
+
+        def ask(message, request_id):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=page,
+                request_id=request_id,
+            )
+
+        for index, question in enumerate((*exact, *compare, *caveats)):
+            with self.subTest(question=question):
+                result = ask(question, f"req_round5_{index:02d}")
+                answer = result["body"]["answer"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotIn("doesn't include", answer.lower())
+                self.assertNotIn("filter to Everything", answer)
+                self.assertNotIn("filter to New", answer)
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1))
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                if question in exact:
+                    self.assertEqual(result["body"]["code"], "company_summary")
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                    self.assertIn(f"Your demo rate for {exact[question]} is 40.7%.", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                elif question in compare:
+                    self.assertEqual(result["body"]["code"], "compare")
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                    self.assertIn(compare[question], answer)
+                    self.assertNotIn("Aug 1 \u2013 Sep 30", answer)
+                    self.assertIn("40.7%", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                else:
+                    self.assertEqual(result["body"]["code"], "company_summary")
+                    self.assertEqual(caveat_count, 1)
+                    self.assertTrue(result["body"]["uncertain"])
+                    self.assertIn("40.7%", answer)
+                    self.assertLess(answer.index("40.7%"), answer.lower().index("if that number looks off"))
+                    self.assertNotIn("25.0%", answer)
+                    self.assertNotIn("80.0%", answer)
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    if question == "weekends this month":
+                        self.assertIn("Oct 1\u20134, 2026", answer)
+                    else:
+                        self.assertIn("Oct 1\u20137, 2026", answer)
+                    if question == "how did Maria do":
+                        self.assertIn("maria", answer.lower())
+                    elif question == "weekends this month":
+                        self.assertIn("weekend", answer.lower())
+                    elif question == "new reps":
+                        self.assertIn("new reps", answer.lower())
+                    else:
+                        self.assertIn(question, answer.lower())
+
+        defined = ask("how is demo rate calculated", "req_round5_defined")
+        self.assertEqual(defined["body"]["code"], "definition")
+        self.assertEqual(
+            defined["body"]["answer"],
+            "Demo Rate is the percent of appointments that ran whose appointment outcome is a demo. "
+            "The target is 50%.",
+        )
+        self.assertNotIn("40.7", defined["body"]["answer"])
+        self.assertNotIn("definition isn't", defined["body"]["answer"].lower())
+
+        settled = ask("What is our demo rate this month?", "req_round5_this_month")
+        self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", settled["body"]["answer"])
+        self.assertNotIn("If that number looks off", settled["body"]["answer"])
+        self.assertFalse(settled["body"]["uncertain"])
+
+    def test_round6_probe_phrasing_is_exact_or_one_clean_caveat(self):
+        """Every prior and fresh probe phrasing is exact, or one caveat quoting the original words."""
+        from dataclasses import replace
+
+        questions = (
+            "what was our demo rate in september?",
+            "demo rate for doors this month",
+            "what is our demo rate for self gen this month?",
+            "demo rate for virtual this month",
+            "what's our demo rate for rochester this month?",
+            "what's our demo rate for buffalo this month?",
+            "demo rate for syracuse this month",
+            "demo rate for jeff this month",
+            "how are we doing on demos for rochester?",
+            "What is our demo rate this month?",
+            "What is Demo Rate?",
+            "demo rate for doors in rochester this month",
+            "May I see our demo rate this month?",
+            "what was our demo rate in september 2025?",
+            "what was our demo rate in september 2027?",
+            "What was our demo rate last month?",
+            "demo rate in march",
+            "how are we doing on demos for us?",
+            "demo rate for everyone this month",
+            "what's our demo rate overall this month?",
+            "demo rate for overall",
+            "what was our demo rate in may?",
+            "demo rate may 2026",
+            "how many sits did we have this month?",
+            "what was our demo rate last week?",
+            "demo rate yesterday",
+            "what's our demo rate this year?",
+            "demo rate ytd",
+            "demo rate for Q3",
+            "demo rate last 30 days",
+            "what was our demo rate last year?",
+            "demo rate from sep 1 to sep 15",
+            "demo rate since september",
+            "demo rate for august and september",
+            "what was our demo rate in september? I need it today",
+            "what's jeff's demo rate this month?",
+            "how is rochester doing on demo rate?",
+            "demo rate in rochester",
+            "demo rate for phones and doors this month",
+            "demo rate excluding doors this month",
+            "demo rate for everything but doors",
+            "demo rate for sweepers this month",
+            "demo rate for Jeff Smith this month",
+            "what is the demo rate for the rochester office?",
+            "demo rate in sept 2025",
+            "demo rate 2025 september",
+            "demo rate for dec",
+            "demo rate in dec 2026",
+            "compare our demo rate in september to august",
+            "how did our demo rate change from last month?",
+            "what was the demo rate on oct 3?",
+            "demo rate the first week of september",
+            "demo rate for september 15",
+            "Can you mar the numbers? what's our demo rate this month",
+            "demo rate for doors last month",
+            "What's our demo rate for may doors?",
+            "what's our demo rate for the team this month?",
+            "what's the demo rate for doors in september?",
+            "what's our demo rate not counting doors this month?",
+            "demo rate other than phones this month",
+            "demo rate for all sources but doors",
+            "demo rate for the last 2 weeks",
+            "demo rate over the past month",
+            "what was our demo rate on 10/3?",
+            "demo rate for 9/1-9/15",
+            "demo rate between september 1 and september 15",
+            "how did Maria do on demo rate this month?",
+            "rochester's demo rate this month",
+            "demo rate in the buffalo market last month",
+            "demo rate in 2025",
+            "demo rate this quarter",
+            "demo rate for the week of sept 8",
+            "demo rate for self gen or doors this month",
+            "demo rate for doors and self gen in september",
+            "what's the demo rate for new reps this month?",
+            "demo rate on weekends this month",
+            "demo rate for the month of august",
+            "what was our demo rate the past 3 months?",
+            "what's our demo rate this month?",
+            "whats our demo rate this month",
+            "how's our demo rate looking this month?",
+            "demo rate this month for everybody except doors",
+            "demo rate but not self gen",
+            "demo rate without inbound this month",
+            "demo rate minus 3pl this month",
+            "demo rate besides phones",
+            "demo rate aside from doors",
+            "demo rate for doors but I need it for this month",
+            "what's Sarah's demo rate in september?",
+            "demo rate for Tony Russo last week",
+            "how is Dave doing on demos this month",
+            "demo rate for sept 1st through sept 10th",
+            "demo rate from 9/15 to 9/30",
+            "demo rate on 9/31",
+            "demo rate for q2 2025",
+            "demo rate in q4",
+            "demo rate on mondays this month",
+            "demo rate tuesday",
+            "dmeo rate this month",
+            "demo rat for septmber",
+            "deom rate this month",
+            "demorate this month",
+            "demo rate sep vs aug",
+            "compare demo rate q2 vs q3",
+            "demo rate for phones, doors and self gen this month",
+            "demo rate for inbound and 3pl",
+            "demo rate for doors this week",
+            "what was the demo rate in 2024?",
+            "demo rate oct 1 to oct 3",
+            "demo rate for the last three months",
+            "demo rate last 7 days for doors",
+            "demo rate for non-doors this month",
+            "demo rate for non doors this month",
+            "demo rate for nondoors this month",
+            "whats the demo % this month",
+            "What is demo rate and what's ours this month?",
+            "how many demos did we get in september?",
+            "demo rate in september for everyone but phones",
+            "demo rate year over year",
+            "demo rate for the past 6 weeks",
+        )
+        clean = {
+            "what's our demo rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "whats our demo rate this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "how's our demo rate looking this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "What is our demo rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "dmeo rate this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "deom rate this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demorate this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rat for septmber": "Your demo rate for Sep 1\u201330, 2026 is 40.7%.",
+            "demo rate 2025 september": "Your demo rate for Sep 1\u201330, 2025 is 40.7%.",
+            "demo rate for the month of august": "Your demo rate for Aug 1\u201331, 2026 is 40.7%.",
+            "demo rate from 9/15 to 9/30": "Your demo rate for Sep 15\u201330, 2026 is 40.7%.",
+            "demo rate for sept 1st through sept 10th": "Your demo rate for Sep 1\u201310, 2026 is 40.7%.",
+            "demo rate sep vs aug": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare our demo rate in september to august": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare demo rate q2 vs q3": "Comparing Apr 1 \u2013 Jun 30, 2026 with Jul 1 \u2013 Sep 30, 2026.",
+            "demo rate for doors but I need it for this month": "Your Doors demo rate for Oct 1\u20134, 2026 is 25.0%.",
+        }
+        quoted = {
+            "demo rate aside from doors": "aside from doors",
+            "demo rate year over year": "year over year",
+            "demo rate for non-doors this month": "non-doors",
+            "demo rate for non doors this month": "non doors",
+            "demo rate for nondoors this month": "nondoors",
+            "what's our demo rate not counting doors this month?": "not counting doors",
+        }
+        named = {
+            "what's Sarah's demo rate in september?": "Sarah",
+            "how did Maria do on demo rate this month?": "Maria",
+            "demo rate for Tony Russo last week": "Tony Russo",
+            "how is Dave doing on demos this month": "Dave",
+            "demo rate for Jeff Smith this month": "Jeff Smith",
+            "what's our demo rate for rochester this month?": "Rochester",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round6_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                self.assertNotIn("gooseChips", answer)
+                self.assertNotIn("data-goose-q", answer)
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1))
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertGreater(len(quote.strip()), 1, question)
+                    self.assertIsNone(re.fullmatch(r"[A-Za-z]", quote.strip()), question)
+                    self.assertIn(quote.lower(), question.lower(), question)
+                if caveat_count == 1:
+                    self.assertIn(code, {"company_summary", "compare"})
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    marker = "%" if "%" in answer else "n/a"
+                    self.assertLess(answer.lower().find(marker), answer.lower().find("if that number looks off"))
+                elif code in {"company_summary", "compare"}:
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in clean:
+                    self.assertIn(clean[question], answer)
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in quoted:
+                    self.assertEqual(caveat_count, 1)
+                    self.assertIn(quoted[question], answer.lower())
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    self.assertNotIn("25.0%", answer)
+                if question in named:
+                    self.assertEqual(caveat_count, 1)
+                    self.assertIn(f"I couldn't filter to {named[question]}", answer)
+                    self.assertNotIn("I couldn't apply", answer)
+
+    def test_round7_probe_phrasing_is_exact_or_one_clean_caveat(self):
+        """Fresh round-7 phrasings are exact, or one caveat quoting the original words."""
+        from dataclasses import replace
+
+        questions = (
+            "What's our Demo Rate this month?",
+            "demo rate for Self Gen this month",
+            "Demo rate for Doors in September",
+            "how did Marco do on demo rate this month?",
+            "what's Marcy's demo rate in september?",
+            "how did April do on demo rate last month?",
+            "demo rate this month, not great I bet",
+            "I'm not sure but what's our demo rate this month?",
+            "demo rate for doors, not phones, in september",
+            "what's our demo rate for doors? not sure it's right",
+            "demo rate for everybody other than inbound in august",
+            "demo rate in Sept",
+            "demo rate for agust",
+            "demo rate octobr so far",
+            "demo rate for novmber 2025",
+            "demo rate jan through mar",
+            "demo rate from july to september",
+            "demo rate q1 vs q2 2025",
+            "compare q3 to q2",
+            "how does september compare to october for demo rate?",
+            "demo rate 10/1 thru 10/4",
+            "demo rate the week of oct 1",
+            "demo rate since aug 15",
+            "demo rate for the past two weeks for phones",
+            "demo rate today",
+            "Hey Goose, what's the demo rate for self-gen this month?",
+            "demo rate for Chris and Pat this month",
+            "How are the Buffalo guys doing on demos?",
+            "demo rate for team Rochester last week",
+            "what was the demo rate on Monday?",
+            "demo rate thru yesterday",
+            "demo rate for 2026",
+            "demo rat this mnth",
+            "what's our demo rate today?",
+            "demo rate so far today",
+            "how did Marco do on demos in september?",
+            "demo rate for Marco this month",
+            "what's Marcy's demo rate this month?",
+            "demo rate q3 2025 vs q2 2025",
+            "demo rate for doors, not phones",
+            "how does october compare to september for demo rate?",
+            "demo rate in April",
+            "demo rate for April",
+            "demo rate jan vs feb 2025",
+            "how does september stack up against october for demo rate?",
+            "what was our demo rate in september? I need it today",
+        )
+        clean = {
+            "What's our Demo Rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate for Self Gen this month": "Your Self Gen demo rate for Oct 1\u20134, 2026 is 50.0%.",
+            "Demo rate for Doors in September": "Your Doors demo rate for Sep 1\u201330, 2026 is 25.0%.",
+            "demo rate this month, not great I bet": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "I'm not sure but what's our demo rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate for doors, not phones, in september": "Your Doors demo rate for Sep 1\u201330, 2026 is 25.0%.",
+            "what's our demo rate for doors? not sure it's right": "Your Doors demo rate for Oct 1\u20137, 2026 is 25.0%.",
+            "demo rate in Sept": "Your demo rate for Sep 1\u201330, 2026 is 40.7%.",
+            "demo rate for agust": "Your demo rate for Aug 1\u201331, 2026 is 40.7%.",
+            "demo rate octobr so far": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demo rate for novmber 2025": "Your demo rate for Nov 1\u201330, 2025 is 40.7%.",
+            "demo rate jan through mar": "Your demo rate for Jan 1 \u2013 Mar 31, 2026 is 40.7%.",
+            "demo rate from july to september": "Your demo rate for Jul 1 \u2013 Sep 30, 2026 is 40.7%.",
+            "demo rate q1 vs q2 2025": "Comparing Jan 1 \u2013 Mar 31, 2025 with Apr 1 \u2013 Jun 30, 2025.",
+            "how does september compare to october for demo rate?": (
+                "Comparing Sep 1\u201330, 2026 with Oct 1\u20134, 2026."
+            ),
+            "demo rate 10/1 thru 10/4": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate the week of oct 1": "Your demo rate for Sep 28 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since aug 15": "Your demo rate for Aug 15 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate for the past two weeks for phones": (
+                "Your Phones demo rate for Sep 14\u201327, 2026 is 80.0%."
+            ),
+            "demo rate today": "Your demo rate for Oct 4, 2026 is 40.7%.",
+            "Hey Goose, what's the demo rate for self-gen this month?": (
+                "Your Self Gen demo rate for Oct 1\u20134, 2026 is 50.0%."
+            ),
+            "what was the demo rate on Monday?": "Your demo rate for Sep 28, 2026 is 40.7%.",
+            "demo rate thru yesterday": "Your demo rate for Oct 3, 2026 is 40.7%.",
+            "demo rate for 2026": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rat this mnth": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "what's our demo rate today?": "Your demo rate for Oct 4, 2026 is 40.7%.",
+            "demo rate so far today": "Your demo rate for Oct 4, 2026 is 40.7%.",
+            "demo rate q3 2025 vs q2 2025": "Comparing Jul 1 \u2013 Sep 30, 2025 with Apr 1 \u2013 Jun 30, 2025.",
+            "demo rate for doors, not phones": "Your Doors demo rate for Oct 1\u20137, 2026 is 25.0%.",
+            "how does october compare to september for demo rate?": (
+                "Comparing Oct 1\u20134, 2026 with Sep 1\u201330, 2026."
+            ),
+            "demo rate in April": "Your demo rate for Apr 1\u201330, 2026 is 40.7%.",
+            "demo rate for April": "Your demo rate for Apr 1\u201330, 2026 is 40.7%.",
+            "demo rate jan vs feb 2025": "Comparing Jan 1\u201331, 2025 with Feb 1\u201328, 2025.",
+            "how does september stack up against october for demo rate?": (
+                "Comparing Sep 1\u201330, 2026 with Oct 1\u20134, 2026."
+            ),
+            "what was our demo rate in september? I need it today": (
+                "Your demo rate for Sep 1\u201330, 2026 is 40.7%."
+            ),
+        }
+        named = {
+            "how did Marco do on demo rate this month?": "Marco",
+            "what's Marcy's demo rate in september?": "Marcy",
+            "how did April do on demo rate last month?": "April",
+            "demo rate for Chris and Pat this month": "Chris or Pat",
+            "How are the Buffalo guys doing on demos?": "Buffalo",
+            "demo rate for team Rochester last week": "Rochester",
+            "how did Marco do on demos in september?": "Marco",
+            "demo rate for Marco this month": "Marco",
+            "what's Marcy's demo rate this month?": "Marcy",
+        }
+        periods = {
+            "what's Marcy's demo rate in september?": "Sep 1\u201330, 2026",
+            "how did April do on demo rate last month?": "Sep 1\u201330, 2026",
+            "how did Marco do on demo rate this month?": "Oct 1\u20134, 2026",
+            "demo rate for team Rochester last week": "Sep 21\u201327, 2026",
+            "how did Marco do on demos in september?": "Sep 1\u201330, 2026",
+            "demo rate for Marco this month": "Oct 1\u20134, 2026",
+            "what's Marcy's demo rate this month?": "Oct 1\u20134, 2026",
+            "How are the Buffalo guys doing on demos?": "Oct 1\u20137, 2026",
+            "demo rate for Chris and Pat this month": "Oct 1\u20134, 2026",
+        }
+        quoted = {
+            "demo rate for everybody other than inbound in august": "other than inbound",
+        }
+        doors_only = {
+            "demo rate for doors, not phones, in september",
+            "demo rate for doors, not phones",
+            "Demo rate for Doors in September",
+            "what's our demo rate for doors? not sure it's right",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0, "Self Gen": 3},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0, "Self Gen": 6},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round7_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                self.assertNotIn("doors and phones", answer.lower())
+                self.assertNotIn("March", answer)
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1), answer)
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertGreater(len(quote.strip()), 1, answer)
+                    self.assertIsNone(re.fullmatch(r"[A-Za-z]", quote.strip()), answer)
+                    self.assertIn(quote.lower(), question.lower(), answer)
+                if question == "compare q3 to q2":
+                    self.assertEqual(code, "clarify")
+                    self.assertIn("Which metric should I compare", answer)
+                    self.assertEqual(caveat_count, 0)
+                    continue
+                if caveat_count == 1:
+                    self.assertIn(code, {"company_summary", "compare"})
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertLess(answer.lower().find("%"), answer.lower().find("if that number looks off"))
+                elif code in {"company_summary", "compare"}:
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in clean:
+                    self.assertIn(clean[question], answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                if question in quoted:
+                    self.assertEqual(caveat_count, 1, answer)
+                    self.assertIn(quoted[question], answer.lower())
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    self.assertIn("Aug 1\u201331, 2026", answer)
+                if question in named:
+                    self.assertEqual(caveat_count, 1, answer)
+                    self.assertIn(f"I couldn't filter to {named[question]}", answer)
+                    self.assertNotIn("I couldn't apply", answer)
+                if question in periods:
+                    self.assertIn(periods[question], answer)
+                if question in doors_only:
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], ["doors"])
+                    self.assertNotIn("40.7%", answer)
+                    self.assertNotIn("phones", answer.lower())
+
+    def test_round8_probe_phrasing_is_exact_or_one_clean_caveat(self):
+        """Fresh round-8 phrasings are exact, or one caveat quoting the original words."""
+        from dataclasses import replace
+
+        questions = (
+            "what's our demo rate so far this month",
+            "demo rate mtd",
+            "whats demo rate for last month for doors",
+            "what was the demo rate for phones last week",
+            "demo rate for self gen in august",
+            "how did we do on demos yesterday",
+            "what was our demo rate on friday",
+            "demo rate this week",
+            "demo rate last weekend",
+            "demo rate for september vs october",
+            "how does this month compare to last month on demo rate",
+            "did our demo rate go up or down from last month",
+            "demo rate for october 2025",
+            "demo rate in the first half of the year",
+            "demo rate for h1",
+            "demo rate 9/1 to today",
+            "demo rate for doors and phones last month",
+            "whats the demo rate w/o doors",
+            "demo rate excl doors",
+            "demo rate for inbound only this month",
+            "what's Kevin's demo rate",
+            "how's Mike doing on demo rate this week",
+            "demo rate for the Rochester team in september",
+            "demo rate for may",
+            "what's the demo rate for june and july",
+            "demo rate last quarter",
+            "demo rate since the start of the year",
+            "demo rate since labor day",
+            "show me the demo rate for oct",
+            "demo rate 3pl september",
+            "are we hitting 50% on demos this month?",
+            "what's our demo percentage for september?",
+            "demo rate for jeff vs maria",
+            "demo rate tdy",
+            "demo rate this month so far",
+            "what's our demo rate so far?",
+            "doors demo rate so far this month",
+            "demo rate w/o phones this month",
+            "demo rate w/out doors",
+            "demo rate excl. phones this month",
+            "demo rate from 9/1 to today",
+            "demo rate from sept 1 to today",
+            "demo rate since jan 1",
+            "demo rate since the beginning of the month",
+            "are we at 50% on demo rate?",
+            "what's our demo % this month",
+            "demo rate month to date",
+            "demo rate so far this week",
+            "what's our demo rate YTD",
+            "demo rate year to date",
+            "demo rate since the start of the week",
+            "demo rate since the beginning of the year",
+            "demo rate since the start of the quarter",
+            "demo rate from sept 1 through today",
+            "demo rate from sept 1 until now",
+            "demo rate from 9/1 to date",
+            "did our demo rate get better or worse than last month",
+            "what's the demo rate trend vs last month",
+            "what's our demo pct this month",
+            "are we at the goal on demo rate this month?",
+            "are we at the target on demo rate this month?",
+            "demo rate wo/ doors",
+            "demo rate sans phones",
+        )
+        clean = {
+            "what's our demo rate so far this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate mtd": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "whats demo rate for last month for doors": "Your Doors demo rate for Sep 1\u201330, 2026 is 25.0%.",
+            "what was the demo rate for phones last week": "Your Phones demo rate for Sep 21\u201327, 2026 is 80.0%.",
+            "demo rate for self gen in august": "Your Self Gen demo rate for Aug 1\u201331, 2026 is 50.0%.",
+            "how did we do on demos yesterday": "Your demo rate for Oct 3, 2026 is 40.7%.",
+            "what was our demo rate on friday": "Your demo rate for Oct 2, 2026 is 40.7%.",
+            "demo rate for september vs october": "Comparing Sep 1\u201330, 2026 with Oct 1\u20134, 2026.",
+            "how does this month compare to last month on demo rate": (
+                "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
+            ),
+            "did our demo rate go up or down from last month": (
+                "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
+            ),
+            "demo rate for october 2025": "Your demo rate for Oct 1\u201331, 2025 is 40.7%.",
+            "demo rate 9/1 to today": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate for doors and phones last month": (
+                "Your Doors and Phones demo rate for Sep 1\u201330, 2026 is 55.6%."
+            ),
+            "demo rate for inbound only this month": "Your Inbound demo rate for Oct 1\u20134, 2026 is 40.0%.",
+            "demo rate for may": "Your demo rate for May 1\u201331, 2026 is 40.7%.",
+            "what's the demo rate for june and july": "Your demo rate for Jun 1 \u2013 Jul 31, 2026 is 40.7%.",
+            "demo rate since the start of the year": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "show me the demo rate for oct": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate 3pl september": "Your 3PL demo rate for Sep 1\u201330, 2026 is 100.0%.",
+            "are we hitting 50% on demos this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "what's our demo percentage for september?": "Your demo rate for Sep 1\u201330, 2026 is 40.7%.",
+            "demo rate this month so far": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "what's our demo rate so far?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "doors demo rate so far this month": "Your Doors demo rate for Oct 1\u20134, 2026 is 25.0%.",
+            "demo rate from 9/1 to today": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate from sept 1 to today": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since jan 1": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since the beginning of the month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "are we at 50% on demo rate?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "what's our demo % this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate month to date": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demo rate so far this week": "Your demo rate for Sep 28 \u2013 Oct 4, 2026 is 40.7%.",
+            "what's our demo rate YTD": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate year to date": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since the start of the week": "Your demo rate for Sep 28 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since the beginning of the year": "Your demo rate for Jan 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate since the start of the quarter": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "demo rate from sept 1 through today": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate from sept 1 until now": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "demo rate from 9/1 to date": "Your demo rate for Sep 1 \u2013 Oct 4, 2026 is 40.7%.",
+            "did our demo rate get better or worse than last month": (
+                "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
+            ),
+            "what's the demo rate trend vs last month": (
+                "Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026."
+            ),
+            "what's our demo pct this month": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "are we at the goal on demo rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+            "are we at the target on demo rate this month?": "Your demo rate for Oct 1\u20134, 2026 is 40.7%.",
+        }
+        quoted = {
+            "demo rate this week": "this week",
+            "demo rate last weekend": "last weekend",
+            "demo rate in the first half of the year": "first half of the year",
+            "demo rate for h1": "h1",
+            "whats the demo rate w/o doors": "w/o doors",
+            "demo rate excl doors": "excl doors",
+            "demo rate last quarter": "last quarter",
+            "demo rate since labor day": "since labor day",
+            "demo rate tdy": "tdy",
+            "demo rate w/o phones this month": "w/o phones",
+            "demo rate w/out doors": "w/out doors",
+            "demo rate excl. phones this month": "excl. phones",
+            "demo rate wo/ doors": "wo/ doors",
+            "demo rate sans phones": "sans phones",
+        }
+        named = {
+            "what's Kevin's demo rate": "Kevin",
+            "how's Mike doing on demo rate this week": "Mike",
+            "demo rate for the Rochester team in september": "Rochester",
+            "demo rate for jeff vs maria": "Jeff or Maria",
+        }
+        periods = {
+            "what's Kevin's demo rate": "Oct 1\u20137, 2026",
+            "how's Mike doing on demo rate this week": "Oct 1\u20137, 2026",
+            "demo rate for the Rochester team in september": "Sep 1\u201330, 2026",
+            "demo rate for jeff vs maria": "Oct 1\u20137, 2026",
+        }
+        company_wide = {
+            "whats the demo rate w/o doors",
+            "demo rate excl doors",
+            "demo rate w/o phones this month",
+            "demo rate w/out doors",
+            "demo rate excl. phones this month",
+            "demo rate wo/ doors",
+            "demo rate sans phones",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={
+                "Doors": 1,
+                "Phones": 4,
+                "Virtual": 0,
+                "Self Gen": 3,
+                "Inbound": 2,
+                "3PL": 1,
+            },
+            demo_ran_by_source={
+                "Doors": 4,
+                "Phones": 5,
+                "Virtual": 0,
+                "Self Gen": 6,
+                "Inbound": 5,
+                "3PL": 1,
+            },
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round8_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1), answer)
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertGreater(len(quote.strip()), 1, answer)
+                    self.assertIsNone(re.fullmatch(r"[A-Za-z]", quote.strip()), answer)
+                    self.assertIn(quote.lower(), question.lower(), answer)
+                if caveat_count == 1:
+                    self.assertIn(code, {"company_summary", "compare"})
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertLess(answer.lower().find("%"), answer.lower().find("if that number looks off"))
+                elif code in {"company_summary", "compare"}:
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in clean:
+                    self.assertIn(clean[question], answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                if question in quoted:
+                    self.assertEqual(caveat_count, 1, answer)
+                    self.assertIn(quoted[question], answer.lower())
+                if question in named:
+                    self.assertEqual(caveat_count, 1, answer)
+                    self.assertIn(f"I couldn't filter to {named[question]}", answer)
+                    self.assertNotIn("I couldn't apply", answer)
+                if question in periods:
+                    self.assertIn(periods[question], answer)
+                if question in company_wide:
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    self.assertIn("40.7%", answer)
+                    self.assertNotIn("25.0%", answer)
+                    self.assertNotIn("80.0%", answer)
+                    self.assertNotIn("100.0%", answer)
+                if question == "demo rate this week":
+                    self.assertIn(
+                        "I couldn't use 'this week', so this is Oct 1\u20137, 2026.",
+                        answer,
+                    )
+                if question == "demo rate since labor day":
+                    self.assertIn("since labor day", answer.lower())
+                    self.assertNotIn("since labor'", answer.lower())
+                    self.assertNotIn("since the'", answer.lower())
+                if question == "demo rate for jeff vs maria":
+                    self.assertIn("Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026.", answer)
+                    self.assertNotIn("Jeff Vs Maria", answer)
+                    self.assertNotIn("Maria or Jeff", answer)
+                if question == "demo rate from sept 1 to today":
+                    self.assertNotIn("Sep 1\u201330", answer)
+                if question == "demo rate 9/1 to today":
+                    self.assertNotIn("Sep 1, 2026", answer)
+                if question == "show me the demo rate for oct":
+                    self.assertNotIn("Oct 1\u20137", answer)
+                if question == "demo rate since the beginning of the month":
+                    self.assertNotIn("Oct 1\u20137", answer)
+
+    def test_round9_source_and_month_compares(self):
+        """Two sources compare side by side. better/beat keeps two months. 'the month' is this month."""
+        from dataclasses import replace
+
+        questions = (
+            "how does doors compare to phones on demo rate?",
+            "doors vs phones demo rate this month",
+            "compare doors and phones demo rate",
+            "is doors doing better than phones on demos?",
+            "was september better or worse than august for demo rate?",
+            "was september better than august on demo rate?",
+            "was our demo rate better in september or august?",
+            "did september beat august on demo rate",
+            "did september outperform august on demo rate",
+            "was september worse than august on demo rate?",
+            "september compared to august demo rate",
+            "what's our demo rate for the month",
+            "demo rate for the month",
+            "what's the demo rate for the whole month",
+            "demo rate this whole month",
+            "what's our demo rate for the month so far",
+            "demo rate for the month of october",
+        )
+        source_compare = {
+            "how does doors compare to phones on demo rate?",
+            "doors vs phones demo rate this month",
+            "compare doors and phones demo rate",
+            "is doors doing better than phones on demos?",
+        }
+        month_compare = "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026."
+        month_questions = {
+            "was september better or worse than august for demo rate?",
+            "was september better than august on demo rate?",
+            "was our demo rate better in september or august?",
+            "did september beat august on demo rate",
+            "did september outperform august on demo rate",
+            "was september worse than august on demo rate?",
+            "september compared to august demo rate",
+        }
+        this_month = {
+            "what's our demo rate for the month",
+            "demo rate for the month",
+            "what's the demo rate for the whole month",
+            "demo rate this whole month",
+            "what's our demo rate for the month so far",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0, "Self Gen": 3},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0, "Self Gen": 6},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round9_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertIn(quote.lower(), question.lower(), answer)
+                if question in source_compare:
+                    self.assertEqual(code, "compare", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertIn("Doors 25.0% (1 of 4)", answer)
+                    self.assertIn("Phones 80.0% (4 of 5)", answer)
+                    if "this month" in question:
+                        self.assertIn("Oct 1\u20134, 2026", answer)
+                        self.assertNotIn("Oct 1\u20137", answer)
+                    else:
+                        self.assertIn("Oct 1\u20137, 2026", answer)
+                    self.assertNotIn("Sep 1\u20137", answer)
+                    self.assertNotIn("Doors and Phones", answer)
+                    self.assertEqual(
+                        result["body"]["footnote"]["filters"]["sources"],
+                        ["doors", "phones"],
+                    )
+                if question in month_questions:
+                    self.assertEqual(code, "compare", answer)
+                    self.assertIn(month_compare, answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertNotIn("Aug 1 \u2013 Sep 30", answer)
+                    self.assertNotIn("Jun 1", answer)
+                if question in this_month:
+                    self.assertEqual(code, "company_summary", answer)
+                    self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+                    self.assertNotIn("Oct 1\u20137", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                if question == "demo rate for the month of october":
+                    self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+                    self.assertNotIn("Oct 1\u20137", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+
+    def test_round10_source_period_and_current_month(self):
+        """Named periods apply to a source compare. 'this month' is the calendar month."""
+        from dataclasses import replace
+
+        source_windows = {
+            "doors vs phones demo rate last month": "Sep 1\u201330, 2026",
+            "doors vs self gen demo rate last month": "Sep 1\u201330, 2026",
+            "how did doors compare to phones on demo rate last month?": "Sep 1\u201330, 2026",
+            "doors vs phones demo rate last week": "Sep 21\u201327, 2026",
+            "doors vs phones demo rate yesterday": "Oct 3, 2026",
+            "doors vs phones demo rate ytd": "Jan 1 \u2013 Oct 4, 2026",
+            "doors vs phones demo rate in q3": "Jul 1 \u2013 Sep 30, 2026",
+            "doors demo rate compared to phones for q3": "Jul 1 \u2013 Sep 30, 2026",
+            "doors vs phones demo rate last 30 days": "Sep 5 \u2013 Oct 4, 2026",
+            "doors vs phones demo rate from 9/1 to 9/15": "Sep 1\u201315, 2026",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0, "Self Gen": 3},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0, "Self Gen": 6},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        september = {"start": "2026-09-01", "end": "2026-09-30", "sources": []}
+
+        def ask(message, request_id, filters):
+            return _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=filters,
+                request_id=request_id,
+            )
+
+        for index, (question, label) in enumerate(source_windows.items()):
+            with self.subTest(question=question):
+                result = ask(question, f"req_round10_src_{index:03d}", page)
+                answer = result["body"]["answer"]
+                self.assertEqual(result["body"]["code"], "compare", answer)
+                self.assertFalse(result["body"]["uncertain"], answer)
+                self.assertNotIn("If that number looks off", answer)
+                self.assertNotIn("I'm not 100% sure", answer)
+                self.assertIn(f"for {label}.", answer)
+                self.assertNotIn("Oct 1\u20137", answer)
+                self.assertIn("Doors 25.0% (1 of 4)", answer)
+                if "self gen" in question:
+                    self.assertIn("Self Gen 50.0% (3 of 6)", answer)
+                    self.assertEqual(
+                        result["body"]["footnote"]["filters"]["sources"],
+                        ["doors", "self_gen"],
+                    )
+                else:
+                    self.assertIn("Phones 80.0% (4 of 5)", answer)
+                    self.assertEqual(
+                        result["body"]["footnote"]["filters"]["sources"],
+                        ["doors", "phones"],
+                    )
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+
+        current = "Your demo rate for Oct 1\u20134, 2026 is 40.7%."
+        for index, (question, filters) in enumerate(
+            (
+                ("what's our demo rate this month?", page),
+                ("what's our demo rate this month?", september),
+                ("what's our demo rate for the month", september),
+                ("what's the demo rate for the whole month", september),
+                ("demo rate this whole month", september),
+                ("what's our demo rate for the month so far", page),
+            )
+        ):
+            with self.subTest(question=question, filters=filters["start"]):
+                result = ask(question, f"req_round10_month_{index:03d}", filters)
+                answer = result["body"]["answer"]
+                self.assertEqual(result["body"]["code"], "company_summary", answer)
+                self.assertIn(current, answer)
+                self.assertNotIn("Sep 1", answer)
+                self.assertNotIn("Oct 1\u20137", answer)
+                self.assertFalse(result["body"]["uncertain"], answer)
+                self.assertNotIn("If that number looks off", answer)
+                self.assertEqual(result["body"]["footnote"]["filters"]["start"], "2026-10-01")
+                self.assertEqual(result["body"]["footnote"]["filters"]["end"], "2026-10-04")
+
+        kept = ask(
+            "how does this month compare to last month on demo rate",
+            "req_round10_page_compare",
+            page,
+        )
+        self.assertIn("Comparing Oct 1\u20137, 2026 with Sep 1\u20137, 2026.", kept["body"]["answer"])
+        self.assertFalse(kept["body"]["uncertain"])
+
+        august = ask("demo rate for the month of august", "req_round10_august", september)
+        self.assertIn("Your demo rate for Aug 1\u201331, 2026 is 40.7%.", august["body"]["answer"])
+        self.assertNotIn("Oct 1", august["body"]["answer"])
+        self.assertFalse(august["body"]["uncertain"])
 
 
 if __name__ == "__main__":

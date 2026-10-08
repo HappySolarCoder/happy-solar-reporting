@@ -331,6 +331,26 @@ def _load_bundle(period: Period, ctx: ToolContext) -> dict[str, Any]:
     return bundle
 
 
+def _bundle_for_sources(bundle: dict[str, Any], sources: tuple[str, ...]) -> dict[str, Any]:
+    """Sum allowlisted lead-source aliases. An empty selection stays company-wide."""
+    if not sources:
+        return bundle
+    scoped = dict(bundle)
+
+    def total(key: str) -> int:
+        amount = 0
+        for source_id in sources:
+            amount += sum_aliases(bundle.get(key), OBSERVED_SOURCE_ALIASES[source_id])
+        return amount
+
+    scoped["sales"] = total("sales_by_source")
+    scoped["ran"] = total("ran_by_source")
+    scoped["created"] = total("created_by_source")
+    scoped["sits"] = total("sit_by_source")
+    scoped["demo_ran"] = total("demo_ran_by_source")
+    return scoped
+
+
 def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
     requested = _clean_metric_ids(args.get("metric_ids"))
     missing = _missing_official(ctx.entries, requested)
@@ -344,8 +364,9 @@ def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
             "period": period.as_dict(),
         }
     bundle = _load_bundle(period, ctx)
-    values = _value_bundle(bundle, ctx.entries)
-    filters = {"sources": list(_sources(args))}
+    selected = _sources(args)
+    values = _value_bundle(_bundle_for_sources(bundle, selected), ctx.entries)
+    filters = {"sources": list(selected)}
     metrics = [
         _metric_result(metric_id, values, period, ctx.entries, filters)
         for metric_id in requested
@@ -419,7 +440,15 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
     cleaned = _clean_metric_ids(args.get("metric_ids"))
     missing = _missing_official(ctx.entries, cleaned)
     period = _require_period(args, ctx.config, ctx.now)
-    prior = equivalent_prior_period(period)
+    explicit_start = str(args.get("comparison_start") or "")
+    explicit_end = str(args.get("comparison_end") or "")
+    if len(explicit_start) == 10 and len(explicit_end) == 10:
+        try:
+            prior = period_from_dates(explicit_start, explicit_end, ctx.config.company_timezone, ctx.now)
+        except (TimezoneUnconfirmed, ValueError) as exc:
+            raise ToolRejected(str(exc)) from exc
+    else:
+        prior = equivalent_prior_period(period)
     if missing:
         return {
             "available": False,
@@ -430,14 +459,19 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
             "comparison_period": prior.as_dict(),
             "comparison_basis": prior.basis,
         }
-    current_bundle = _load_bundle(period, ctx)
-    prior_bundle = _load_bundle(prior, ctx)
+    selected = _sources(args)
+    current_bundle = _bundle_for_sources(_load_bundle(period, ctx), selected)
+    prior_bundle = _bundle_for_sources(_load_bundle(prior, ctx), selected)
     current_values = _value_bundle(current_bundle, ctx.entries)
     prior_values = _value_bundle(prior_bundle, ctx.entries)
     rows = []
     for metric_id in cleaned:
         current = current_values.get(metric_id)
         previous = prior_values.get(metric_id)
+        zero_key = {
+            "demo_rate": "demo_rate_zero_denominator",
+            "opp2prelim": "opp2prelim_zero_denominator",
+        }.get(metric_id)
         row = {
             "metric_id": metric_id,
             "current": current,
@@ -447,6 +481,9 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
             "percentage_points": absolute_change(current, previous) if metric_id in {"demo_rate", "opp2prelim"} else None,
             "partial_period": period.partial or prior.partial,
             "zero_baseline": previous == 0,
+            # N/A from a zero denominator is an exact result, not a missing count.
+            "current_zero_denominator": bool(zero_key and current_values.get(zero_key)),
+            "prior_zero_denominator": bool(zero_key and prior_values.get(zero_key)),
         }
         rows.append(row)
     return {

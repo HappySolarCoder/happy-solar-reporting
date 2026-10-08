@@ -17,7 +17,7 @@ from copilot.admin_actions import save_feedback
 from copilot.auth import identity_for_chat, identity_from_headers, unauthorized_answer
 from copilot.config import config_from_env
 from copilot.firestore_store import open_store
-from copilot.messages import PAUSED
+from copilot.messages import FEEDBACK_FAILED, FEEDBACK_SAVED, PAUSED
 from copilot.store import LedgerUnavailable
 
 
@@ -79,10 +79,10 @@ class handler(BaseHTTPRequestHandler):
                     message=str(data.get("message") or ""),
                     now=datetime.now(timezone.utc),
                 )
-                body = {"ok": True, "answer": "Saved for review.", "feedback_id": item["feedback_id"]}
+                body = {"ok": True, "answer": FEEDBACK_SAVED, "feedback_id": item["feedback_id"]}
                 status = 200
             except LedgerUnavailable:
-                body = {"ok": False, "answer": "Feedback could not be saved because the ledger is unavailable."}
+                body = {"ok": False, "answer": FEEDBACK_FAILED}
                 status = 503
         _write(self, status, body)
 

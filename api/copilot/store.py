@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from copilot.messages import QUOTA_ACTIVE, QUOTA_COMPANY, QUOTA_DAY, QUOTA_MINUTE, QUOTA_MONTH
+
 
 class LedgerUnavailable(RuntimeError):
     pass
@@ -85,19 +87,19 @@ class MemoryStore:
     ) -> None:
         with self._lock:
             if self.active_users.get(actor_id):
-                raise QuotaExceeded("one active turn per user")
+                raise QuotaExceeded(QUOTA_ACTIVE)
             if self.company_active >= limits["max_active_company"]:
-                raise QuotaExceeded("company concurrency limit")
+                raise QuotaExceeded(QUOTA_COMPANY)
             day_key = now.date().isoformat()
             day = self.quota_days.get((actor_id, day_key), 0)
             month = self.quota_months.get((actor_id, month_key), 0)
             if day >= limits["max_turns_per_day"]:
-                raise QuotaExceeded("daily turn limit")
+                raise QuotaExceeded(QUOTA_DAY)
             if month >= limits["max_turns_per_month"]:
-                raise QuotaExceeded("monthly turn limit")
+                raise QuotaExceeded(QUOTA_MONTH)
             hits = [stamp for stamp in self.minute_hits.get(actor_id, []) if (now - stamp).total_seconds() < 60]
             if len(hits) >= limits["max_requests_per_minute"]:
-                raise QuotaExceeded("per-minute limit")
+                raise QuotaExceeded(QUOTA_MINUTE)
             hits.append(now)
             self.minute_hits[actor_id] = hits
             self.quota_days[(actor_id, day_key)] = day + 1

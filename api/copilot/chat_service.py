@@ -752,13 +752,17 @@ def handle_chat(
 
 
 def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, config: CopilotConfig, now: datetime) -> dict[str, Any]:
-    """Named month and lead source in the message win over the page filters.
+    """Named period and lead source in the message win over the page filters.
 
-    "last month" on a comparison keeps the page window, because that comparison
-    already builds the prior period from it. An explicit month name always wins.
+    A source-versus-source question uses that one named window for both sources.
+    A period comparison keeps the page window unless two periods or a month are named.
+    "this month", "for the month", and "the whole month" are the current calendar
+    month through today, even when the page is a different range.
     """
     from copilot.periods import (
         TimezoneUnconfirmed,
+        asks_current_calendar_month,
+        current_calendar_month,
         implied_current_range,
         message_names_explicit_month,
         named_calendar_range,
@@ -781,22 +785,40 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
     except TimezoneUnconfirmed:
         named = None
         unserved = None
-    # A real comparison keeps the page window unless the message names a month.
-    # "last month" on a figure question is the previous full month, already in named.
-    # "q2 vs q3" names both windows, so it does not fall through to the page dates.
+    # A period comparison keeps the page window unless the message names a month
+    # or two periods. "last month" on a figure question is the previous full month.
+    # Source versus source is one shared window, so last month, last week, q3,
+    # and the other named periods apply before the per-source read.
     pair = None
     if intent == "compare":
         try:
             pair = named_compare_pair(text, config.company_timezone, now)
         except TimezoneUnconfirmed:
             pair = None
-    use_named = bool(named) and (intent != "compare" or message_names_explicit_month(text))
+    source_ids = message_sources(text)
+    source_vs_source = (
+        intent == "compare"
+        and pair is None
+        and len(source_ids) >= 2
+        and message_sources_are_exact(text)
+        and not message_source_negated(text)
+    )
+    use_named = bool(named) and (
+        intent != "compare" or message_names_explicit_month(text) or source_vs_source
+    )
+    calendar_month = False
     if pair is not None:
         updated["start"], updated["end"] = pair[0]
         updated["comparison_start"], updated["comparison_end"] = pair[1]
         use_named = True
     elif use_named and named is not None:
         updated["start"], updated["end"] = named
+    elif (intent != "compare" or source_vs_source) and asks_current_calendar_month(text):
+        try:
+            updated["start"], updated["end"] = current_calendar_month(config.company_timezone, now)
+            calendar_month = True
+        except TimezoneUnconfirmed:
+            calendar_month = False
     elif not updated["start"] and not updated["end"]:
         implied = None
         try:
@@ -817,7 +839,7 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         if source_ids:
             updated["sources"] = source_ids
             updated["unrecognized_source"] = False
-    if unserved and not use_named:
+    if unserved and not use_named and not calendar_month:
         updated["unserved_period"] = unserved
     return updated
 

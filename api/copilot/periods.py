@@ -807,6 +807,39 @@ def message_names_explicit_month(message: str) -> bool:
     return _month_token(text) is not None
 
 
+_CURRENT_MONTH = re.compile(
+    rf"\bthis (?:whole\s+)?(?:{_MONTH_WORD})\b",
+    re.I,
+)
+_BARE_MONTH_PHRASE = re.compile(
+    rf"\b(?:the whole|for the) (?:{_MONTH_WORD})\b",
+    re.I,
+)
+_NAMED_MONTH_OF = re.compile(
+    rf"\b(?:the whole|for the) (?:{_MONTH_WORD})\s+of\b",
+    re.I,
+)
+
+
+def asks_current_calendar_month(message: str) -> bool:
+    """'this month', 'for the month', and 'the whole month' mean the current month.
+
+    'for the month of august' names August, so that phrase is not this one.
+    """
+    text = message or ""
+    if _CURRENT_MONTH.search(text):
+        return True
+    if _BARE_MONTH_PHRASE.search(text) and not _NAMED_MONTH_OF.search(text):
+        return True
+    return False
+
+
+def current_calendar_month(timezone_name: str | None, now: datetime) -> tuple[str, str]:
+    """First of the current month through today, in the company timezone."""
+    today = today_in(timezone_name, now)
+    return today.replace(day=1).isoformat(), today.isoformat()
+
+
 def named_calendar_range(message: str, timezone_name: str | None, now: datetime) -> tuple[str, str] | None:
     """Month named in the message, or last month as the previous full calendar month.
 

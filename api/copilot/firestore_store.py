@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from copilot.messages import QUOTA_ACTIVE, QUOTA_COMPANY, QUOTA_DAY, QUOTA_MONTH
 from copilot.store import BudgetExceeded, LedgerUnavailable, MemoryStore, QuotaExceeded
 
 
@@ -214,16 +215,16 @@ class FirestoreStore:
             active = active_ref.get(transaction=transaction).to_dict() or {"users": {}, "count": 0}
             users = dict(active.get("users") or {})
             if users.get(actor_id):
-                raise QuotaExceeded("one active turn per user")
+                raise QuotaExceeded(QUOTA_ACTIVE)
             if int(active.get("count") or 0) >= limits["max_active_company"]:
-                raise QuotaExceeded("company concurrency limit")
+                raise QuotaExceeded(QUOTA_COMPANY)
             day = int(quota.get("day") or 0)
             months = dict(quota.get("months") or {})
             month_count = int(months.get(month_key) or 0)
             if day >= limits["max_turns_per_day"]:
-                raise QuotaExceeded("daily turn limit")
+                raise QuotaExceeded(QUOTA_DAY)
             if month_count >= limits["max_turns_per_month"]:
-                raise QuotaExceeded("monthly turn limit")
+                raise QuotaExceeded(QUOTA_MONTH)
             months[month_key] = month_count + 1
             users[actor_id] = turn_id
             transaction.set(ref, {"day": day + 1, "months": months}, merge=True)

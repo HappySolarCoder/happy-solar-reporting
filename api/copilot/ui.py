@@ -26,12 +26,6 @@ def render_panel() -> str:
   </div>
   <p id="gooseIdentity" class="goose-note" hidden></p>
   <p id="gooseAuth" class="goose-auth" role="alert" hidden></p>
-  <div class="goose-chips" id="gooseChips"></div>
-  <div class="goose-suggest">
-    <button type="button" data-goose-q="Explain Opp2Prelim">Explain Opp2Prelim</button>
-    <button type="button" data-goose-q="Compare source performance">Compare source performance</button>
-    <button type="button" data-goose-q="What changed versus the same period last month?">What changed versus the same period last month?</button>
-  </div>
   <div id="gooseLog" class="goose-log"></div>
   <form id="gooseForm" class="goose-form">
     <textarea id="gooseInput" maxlength="2000" placeholder="Ask about Happy Solar data"></textarea>
@@ -51,12 +45,8 @@ def render_panel() -> str:
   .goose-note {{ border: 1px solid #e4c56a; background: #fff8e1; }}
   .goose-auth {{ border: 1px solid #c5ced6; background: #fff; }}
   .goose-note[hidden], .goose-auth[hidden] {{ display: none !important; }}
-  .goose-close, .goose-suggest button, .goose-issue {{ border: 1px solid #c5ced6; background: #fff; color: #1a2b4a; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
-  .goose-suggest button {{ max-width: 100%; white-space: normal; text-align: left; }}
+  .goose-close, .goose-issue {{ border: 1px solid #c5ced6; background: #fff; color: #1a2b4a; border-radius: 10px; padding: 8px 10px; font-weight: 800; cursor: pointer; }}
   .goose-form button {{ border: 1px solid #0a7a34; background: #0a7a34; color: #fff; border-radius: 10px; padding: 8px 14px; font-weight: 800; cursor: pointer; }}
-  .goose-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; color: #1a2b4a; }}
-  .goose-chips span, .goose-chips label {{ color: #1a2b4a; background: #fff; font-size: 12px; border: 1px solid #c5ced6; border-radius: 999px; padding: 4px 8px; }}
-  .goose-suggest {{ display: flex; flex-wrap: wrap; gap: 6px; }}
   .goose-log {{ flex: 1; overflow: auto; margin: 12px 0; font-size: 14px; color: #1a2b4a; }}
   .goose-msg {{ margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; color: #1a2b4a; white-space: pre-wrap; }}
   .goose-msg a {{ color: #075e28; }}
@@ -85,10 +75,7 @@ def render_panel() -> str:
   document.documentElement.classList.add('goose-dock');
   const panel = document.getElementById('goosePanel');
   const log = document.getElementById('gooseLog');
-  const chips = document.getElementById('gooseChips');
   const input = document.getElementById('gooseInput');
-  const sources = ['doors','self_gen','phones','inbound','3pl'];
-  const labels = {{doors:'Doors', self_gen:'Self Gen', phones:'Phones', inbound:'Inbound', '3pl':'3PL'}};
   const bloomParents = new Set({origins_json});
   let bloomBearer = '';
   let bloomBearerExp = 0;
@@ -204,28 +191,34 @@ def render_panel() -> str:
     if (token) headers.Authorization = 'Bearer ' + token;
     return headers;
   }}
-  function selectedDates() {{
-    const start = document.getElementById('startDate');
-    const end = document.getElementById('endDate');
-    return {{
-      start: start ? start.value : '',
-      end: end ? end.value : ''
+  function pageScope() {{
+    // Dates and the lead-source filter stay on the page. Goose reads them when you send.
+    let start = '';
+    let end = '';
+    let source = '';
+    if (typeof window.hsOpsReadFilters === 'function') {{
+      const filters = window.hsOpsReadFilters() || {{}};
+      start = filters.start || '';
+      end = filters.end || '';
+      source = filters.source || '';
+    }}
+    const startEl = document.getElementById('ocStart') || document.getElementById('startDate');
+    const endEl = document.getElementById('ocEnd') || document.getElementById('endDate');
+    const sourceEl = document.getElementById('ocSource');
+    if (startEl && startEl.value) start = startEl.value;
+    if (endEl && endEl.value) end = endEl.value;
+    if (sourceEl && sourceEl.value) source = sourceEl.value;
+    const known = {{
+      doors: 'doors',
+      'self gen': 'self_gen',
+      selfgen: 'self_gen',
+      phones: 'phones',
+      virtual: 'phones',
+      inbound: 'inbound',
+      '3pl': '3pl'
     }};
-  }}
-  function selectedSources() {{
-    return Array.from(chips.querySelectorAll('input:checked')).map(el => el.value);
-  }}
-  function drawChips() {{
-    const dates = selectedDates();
-    chips.innerHTML = '';
-    const dateChip = document.createElement('span');
-    dateChip.textContent = (dates.start || 'start') + ' → ' + (dates.end || 'end');
-    chips.appendChild(dateChip);
-    sources.forEach(id => {{
-      const label = document.createElement('label');
-      label.innerHTML = '<input type="checkbox" value="' + id + '"> ' + labels[id];
-      chips.appendChild(label);
-    }});
+    const mapped = known[String(source || '').trim().toLowerCase()];
+    return {{ start: start, end: end, sources: mapped ? [mapped] : [] }};
   }}
   function add(text, evidence) {{
     const div = document.createElement('div');
@@ -235,14 +228,14 @@ def render_panel() -> str:
       if (!item.source_link) return;
       const link = document.createElement('a');
       link.href = item.source_link;
-      link.textContent = item.metric_id ? (' ' + item.metric_id + ' source') : ' source';
+      link.textContent = ' ' + (item.label || 'report') + ' source';
       div.appendChild(link);
     }});
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   }}
   async function send(message) {{
-    const dates = selectedDates();
+    const scope = pageScope();
     add(message, []);
     if (bloomBlockReason) return;
     const headers = await authHeaders();
@@ -252,20 +245,20 @@ def render_panel() -> str:
       headers: headers,
       body: JSON.stringify({{
         message: message,
-        filters: {{start: dates.start, end: dates.end, sources: selectedSources()}},
+        filters: {{start: scope.start, end: scope.end, sources: scope.sources}},
         request_id: 'ui_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
       }})
     }});
     const payload = await response.json();
     let text = payload.answer || 'Goose is unavailable.';
     if (payload.interpretation) text += '\\n' + payload.interpretation;
-    if (payload.footnote && payload.footnote.data_as_of) text += '\\nData as of ' + payload.footnote.data_as_of;
-    if (payload.reset_date) text += '\\nNext reset ' + payload.reset_date;
+    // updated_label is a human date from copilot.human_dates, such as "Updated Oct 7 at 10:29 PM ET".
+    if (payload.footnote && payload.footnote.updated_label) text += '\\n' + payload.footnote.updated_label;
+    if (payload.reset_label) text += '\\nThe allowance resets ' + payload.reset_label + '.';
     add(text, payload.evidence || []);
   }}
   document.getElementById('gooseOpen').addEventListener('click', () => {{
     panel.hidden = false;
-    drawChips();
     requestBloomToken();
     if (!log.dataset.welcomed) {{
       add('{welcome}', []);
@@ -273,7 +266,6 @@ def render_panel() -> str:
     }}
   }});
   document.getElementById('gooseClose').addEventListener('click', () => {{ panel.hidden = true; }});
-  document.querySelectorAll('[data-goose-q]').forEach(btn => btn.addEventListener('click', () => send(btn.getAttribute('data-goose-q'))));
   document.getElementById('gooseForm').addEventListener('submit', (event) => {{
     event.preventDefault();
     const message = input.value.trim();

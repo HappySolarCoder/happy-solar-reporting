@@ -270,9 +270,13 @@ class CopilotTests(unittest.TestCase):
             approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
         result = _chat("How many sales were there?", store=store, config=config, request_id="req_parity_01")
         answer = result["body"]["answer"]
-        self.assertIn("sales: 10", answer)
-        self.assertIn("opp2prelim: 250.0", answer)
-        self.assertIn("demo_rate: 50.0", answer)
+        self.assertIn("10 sales", answer)
+        self.assertIn("250.0%", answer)
+        self.assertIn("50.0%", answer)
+        self.assertNotIn("demo_rate", answer)
+        self.assertNotIn("opp2prelim", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertIn("I'm not 100% sure on this one", answer)
         self.assertTrue(result["body"]["evidence"])
         self.assertTrue(all(item["source_link"].startswith("/api/") for item in result["body"]["evidence"]))
         links = " ".join(item["source_link"] for item in result["body"]["evidence"])
@@ -425,7 +429,7 @@ class CopilotTests(unittest.TestCase):
         self.assertGreater(reservation.amount_micro, 0)
         replay = _chat("How many sales were there?", store=store, model=BoomModel(), request_id="req_boom_0001")
         self.assertEqual(len([key for key in store.reservations if key == "req_boom_0001"]), 1)
-        self.assertIn("sales: 10", replay["body"]["answer"])
+        self.assertIn("10 sales", replay["body"]["answer"])
 
     def test_missing_ledger_blocks_enabled_chat(self):
         from copilot.firestore_store import UnavailableStore
@@ -494,7 +498,8 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("Goose · Happy Solar Data Copilot", html)
         self.assertIn("/api/copilot/chat", html)
         self.assertIn("/api/copilot/feedback", html)
-        self.assertIn("Explain Opp2Prelim", html)
+        self.assertNotIn("data-goose-q", html)
+        self.assertNotIn('id="gooseChips"', html)
         self.assertIn('src="/goose-headset.png"', html)
         self.assertIn('aria-label="Ask about our data"', html)
         self.assertIn("document.documentElement.classList.add('goose-dock')", html)
@@ -505,9 +510,9 @@ class CopilotTests(unittest.TestCase):
         self.assertIn(".goose-panel {", html)
         self.assertIn("background: #fff; color: #1a2b4a;", html)
         self.assertIn(".goose-msg { margin: 0 0 10px; padding: 10px; border-radius: 12px; background: #f5f7fa; color: #1a2b4a;", html)
-        self.assertIn(".goose-chips span, .goose-chips label { color: #1a2b4a; background: #fff;", html)
         self.assertIn(".goose-sub { color: #3d4c63;", html)
-        self.assertIn(".goose-suggest button", html)
+        self.assertNotIn(".goose-suggest", html)
+        self.assertNotIn(".goose-chips", html)
         self.assertIn("background: #fff; color: #1a2b4a", html)
         self.assertIn("grid-template-columns:1fr;", html)
         self.assertIn('class="glance-unit">sales</span>', html)
@@ -941,9 +946,20 @@ class CopilotTests(unittest.TestCase):
         html = render_panel()
         subtitle = html.index('class="goose-sub"')
         note = html.index('id="gooseIdentity"')
-        chips = html.index('id="gooseChips"')
         self.assertLess(subtitle, note)
-        self.assertLess(note, chips)
+        self.assertNotIn('id="gooseChips"', html)
+        self.assertNotIn("data-goose-q", html)
+        self.assertNotIn("Explain Opp2Prelim", html)
+        self.assertNotIn("Compare source performance", html)
+        self.assertNotIn(">Doors<", html)
+        self.assertNotIn("Data as of", html)
+        self.assertIn("pageScope", html)
+        self.assertIn("hsOpsReadFilters", html)
+        self.assertIn("ocStart", html)
+        self.assertIn("updated_label", html)
+        self.assertIn('id="gooseForm"', html)
+        self.assertIn('id="gooseIssue"', html)
+        self.assertIn('id="gooseClose"', html)
         self.assertIn('id="gooseAuth"', html)
         self.assertLess(note, html.index('id="gooseAuth"'))
         listener = html.index("addEventListener('message'")
@@ -960,6 +976,103 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("textContent = note.trim()", html)
         self.assertIn("showGooseAuth(bloomBlockReason)", html)
         self.assertIn("token-unavailable", html)
+
+    def test_human_dates(self):
+        from copilot.human_dates import format_chip, format_day, format_range, format_updated, is_stale
+
+        self.assertEqual(format_range("2026-10-01", "2026-10-07"), "Oct 1\u20137, 2026")
+        self.assertEqual(format_chip("2026-10-01", "2026-10-07"), "Oct 1 \u2013 Oct 7")
+        self.assertEqual(format_day("2026-10-07"), "Oct 7, 2026")
+        self.assertEqual(format_day("2026-10-07", year=False), "Oct 7")
+        self.assertEqual(format_range("2026-10-28", "2026-11-02"), "Oct 28 \u2013 Nov 2, 2026")
+        self.assertEqual(format_range("2025-12-28", "2026-01-03"), "Dec 28, 2025 \u2013 Jan 3, 2026")
+        self.assertEqual(format_updated("2026-10-08T02:29:01.532100Z"), "Updated Oct 7 at 10:29 PM ET")
+        self.assertEqual(format_updated("2026-10-04T15:00:00Z"), "Updated Oct 4 at 11:00 AM ET")
+        self.assertEqual(format_updated("2026-01-15T03:00:00Z"), "Updated Jan 14 at 10:00 PM ET")
+        self.assertFalse(is_stale("2026-10-04T15:00:00Z", NOW))
+        self.assertTrue(is_stale("2026-10-01T15:00:00Z", NOW))
+
+    def test_plain_demo_rate_answer_and_uncertainty(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(sales=7, ran=27, sits=11, created=34, generated_at="2026-10-08T02:29:01.532100Z")
+        result = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=metrics,
+            filters={"start": "2026-10-01", "end": "2026-10-07"},
+            request_id="req_demo_plain_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertEqual(classify("What is our demo rate this month?").intent, "company_summary")
+        self.assertEqual(classify("What is Demo Rate?").intent, "definition")
+        self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", answer)
+        self.assertIn("That's 11 demos out of 27 appointments that ran, a bit under the 50% goal.", answer)
+        self.assertIn(
+            "I'm not 100% sure on this one, since this period is still in progress. "
+            "If the number looks off, let me know what you meant and I'll recheck.",
+            answer,
+        )
+        self.assertTrue(result["body"]["uncertain"])
+        self.assertEqual(result["body"]["uncertainty_reason"], "this period is still in progress")
+        self.assertEqual(result["body"]["footnote"]["updated_label"], "Updated Oct 7 at 10:29 PM ET")
+        self.assertNotIn("demo_rate", answer)
+        self.assertNotIn("America/New_York", answer)
+        self.assertNotIn("2026-10-08T", answer)
+        self.assertNotIn(" / ", answer)
+        for word in (" sit ", " sits ", " sat "):
+            self.assertNotIn(word, f" {answer.lower()} ")
+        self.assertIn("I'm not 100% sure on this one", SYSTEM_PROMPT)
+        self.assertLess(answer.index("40.7%"), answer.index("I'm not 100% sure"))
+
+    def test_uncertainty_sentence_is_not_on_a_settled_period(self):
+        store = MemoryStore()
+        for term_id in ("sales", "created", "ran", "demo_rate", "opp2prelim"):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        result = _chat(
+            "How many sales were there?",
+            store=store,
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_full_month_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertIn("10 sales", answer)
+        self.assertIn("Sep 1\u201330, 2026", answer)
+        self.assertNotIn("I'm not 100% sure", answer)
+        self.assertFalse(result["body"]["uncertain"])
+        self.assertIsNone(result["body"]["uncertainty_reason"])
+
+    def test_unreconciled_counts_add_uncertainty_on_a_full_month(self):
+        store = MemoryStore()
+        for term_id in (
+            "sales",
+            "created",
+            "ran",
+            "demo_rate",
+            "opp2prelim",
+            "phones",
+            "self_gen",
+            "doors",
+            "inbound",
+            "three_pl",
+        ):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(sales_by_source={"Doors": 3, "Phones": 4, "Virtual": 1, "Self Gen": 2, "Mystery": 2})
+        result = _chat(
+            "Compare source performance",
+            store=store,
+            metrics=metrics,
+            filters={"start": "2026-09-01", "end": "2026-09-30"},
+            request_id="req_unmapped_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertIn("Doors had 3 sales", answer)
+        self.assertIn("some of the counts didn't line up", answer)
+        self.assertIn("I'm not 100% sure on this one", answer)
+        self.assertNotIn("still in progress", answer)
+        self.assertNotIn("demo_rate", answer)
+        self.assertTrue(result["body"]["uncertain"])
 
 
 if __name__ == "__main__":

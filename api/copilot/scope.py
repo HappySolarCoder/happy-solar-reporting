@@ -64,6 +64,15 @@ _GREETING = re.compile(r"^\s*(hi|hello|hey|good morning|good afternoon|thanks|th
 _HELP = re.compile(r"\b(help|how do i use|what can you do|what can goose do)\b", re.I)
 _CHALLENGE = re.compile(r"\b(wrong|incorrect|that can't|does not match|doesn't match|recheck)\b", re.I)
 _FRUSTRATED = re.compile(r"\b(useless|stupid|this sucks|hate this|idiot)\b", re.I)
+_FIGURE = re.compile(
+    r"\b(how many|how much|what(?:'s| is) our|what(?:'s| is) the|this month|last month|"
+    r"today|yesterday|this week|so far|right now)\b",
+    re.I,
+)
+_EXPLAIN = re.compile(
+    r"\b(define|explain|meaning|mean|what does|what counts|what is a|what is an)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -155,6 +164,9 @@ def classify(message: str) -> ScopeDecision:
     if re.search(r"\b(how many|what were|show (me )?the numbers|totals?)\b", text, re.I):
         return ScopeDecision("company_summary", text, "", "", term)
     if _DEFINITION.search(text) or (term and len(text) < 40 and not _COMPARE.search(text)):
+        # "What is Demo Rate?" stays a definition. "What is our demo rate this month?" asks for a figure.
+        if term and _FIGURE.search(text) and not _EXPLAIN.search(text):
+            return ScopeDecision("company_summary", text, "", "", term)
         if term is None:
             return ScopeDecision(
                 "clarify",

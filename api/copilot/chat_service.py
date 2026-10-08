@@ -12,8 +12,10 @@ from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
 from copilot.auth import identity_for_chat, unauthorized_answer
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
+from copilot.human_dates import format_day, format_range, format_updated, is_stale
 from copilot.messages import (
     BUDGET_LIMIT,
+    DEMO_RATE_GOAL,
     LEDGER_UNAVAILABLE,
     MODEL_UNAVAILABLE,
     NARROW,
@@ -25,6 +27,7 @@ from copilot.messages import (
     TIMEZONE_UNCONFIRMED,
     WELCOME,
     WHY_UNKNOWN,
+    uncertainty_sentence,
 )
 from copilot.prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from copilot.rates import INPUT_TOKEN_CEILING, max_affordable_calls, reservation_micro
@@ -77,49 +80,147 @@ def _filters(raw: dict | None) -> dict[str, Any]:
     return {"start": start, "end": end, "sources": sources}
 
 
+_RATE_IDS = frozenset({"demo_rate", "opp2prelim"})
+_SPOKEN = {
+    "sales": "sales",
+    "opps_created": "opportunities created",
+    "opps_ran": "appointments that ran",
+    "demo_rate": "demo rate",
+    "opp2prelim": "Opp2Prelim",
+}
+_SENTENCE_NAME = {
+    "sales": "Sales",
+    "opps_created": "Opportunities created",
+    "opps_ran": "Appointments that ran",
+    "demo_rate": "Demo rate",
+    "opp2prelim": "Opp2Prelim",
+}
+
+
+def _count(value: Any) -> str:
+    if value is None:
+        return "an unknown number of"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _percent(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    return f"{float(value):.1f}%"
+
+
+def _plain_number(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)
+
+
+def _period_label(period: dict | None) -> str:
+    period = period or {}
+    label = format_range(period.get("start"), period.get("end"))
+    return label or "those dates"
+
+
+def _goal_clause(rate: float) -> str:
+    goal = f"{int(DEMO_RATE_GOAL)}%" if float(DEMO_RATE_GOAL).is_integer() else f"{DEMO_RATE_GOAL}%"
+    if float(rate) < float(DEMO_RATE_GOAL):
+        return f"a bit under the {goal} goal"
+    if float(rate) > float(DEMO_RATE_GOAL):
+        return f"a bit over the {goal} goal"
+    return f"right at the {goal} goal"
+
+
+def _demo_sentence(metric: dict[str, Any], label: str) -> str:
+    rate = metric.get("value")
+    demos = metric.get("numerator")
+    ran = metric.get("denominator")
+    if rate is None:
+        return f"Your demo rate for {label} is N/A, because no appointments ran."
+    head = f"Your demo rate for {label} is {_percent(rate)}."
+    if demos is None or ran is None:
+        return f"{head} That's {_goal_clause(rate)}."
+    demo_word = "demo" if _as_int(demos) == 1 else "demos"
+    appt_word = "appointment" if _as_int(ran) == 1 else "appointments"
+    return (
+        f"{head} That's {_count(demos)} {demo_word} out of {_count(ran)} "
+        f"{appt_word} that ran, {_goal_clause(rate)}."
+    )
+
+
+def _opp_sentence(metric: dict[str, Any]) -> str:
+    value = metric.get("value")
+    sales = metric.get("numerator")
+    ran = metric.get("denominator")
+    if value is None:
+        return "Opp2Prelim is N/A, because no appointments ran."
+    if sales is None or ran is None:
+        return f"Opp2Prelim is {_percent(value)}."
+    return (
+        f"Opp2Prelim is {_percent(value)}, which is {_count(sales)} sales out of "
+        f"{_count(ran)} appointments that ran."
+    )
+
+
 def _render_definition(payload: dict[str, Any]) -> str:
     if payload.get("reason") == "unknown_term":
         return (
-            "I do not have an approved definition for that yet. "
-            "Tell me which term you mean, such as Opp2Prelim, Demo Rate, or a lead source."
+            f"{NO_APPROVED_DEFINITION} "
+            "Tell me which term you mean, such as Opp2Prelim, demo rate, or a lead source."
         )
     name = payload.get("display_name") or payload.get("term_id")
     if not payload.get("official"):
         return (
-            f"{NO_APPROVED_DEFINITION} {name} is still a draft observation, not company policy. "
+            f"{NO_APPROVED_DEFINITION} {name} is still a draft, so it is not company policy. "
             "An owner has to approve it before I treat it as official."
         )
     text = (payload.get("definition") or "").strip()
     if not text:
-        return f"{name} is approved, but that record does not include a plain-language definition yet."
+        return f"{name} is approved, but that record doesn't include a plain-language definition yet."
     return f"{name}: {text}"
 
 
-def _render_summary(payload: dict[str, Any]) -> str:
+def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
     if not payload.get("available"):
         return (
             f"{NO_APPROVED_DEFINITION} I have not reported a figure. "
             "The dashboard is unchanged."
         )
-    lines = []
-    period = payload["period"]
-    lines.append(f"Company totals for {period['start']} to {period['end']} ({period['timezone']}).")
-    for metric in payload["metrics"]:
-        if metric["value"] is None:
-            shown = "N/A" if "zero_denominator" in (metric.get("incomplete") or []) else "unavailable"
-        else:
-            shown = str(metric["value"])
-        unit = metric.get("unit") or ""
-        lines.append(f"{metric['metric_id']}: {shown} {unit}".rstrip())
-    if period.get("partial"):
-        lines.append("This is a partial period.")
-    return " ".join(lines)
+    label = _period_label(payload.get("period"))
+    by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
+    if focus == "demo_rate" and "demo_rate" in by_id:
+        return _demo_sentence(by_id["demo_rate"], label)
+    sales = by_id.get("sales") or {}
+    created = by_id.get("opps_created") or {}
+    ran = by_id.get("opps_ran") or {}
+    sentences = [
+        f"For {label}, you had {_count(sales.get('value'))} sales.",
+        (
+            f"{_count(created.get('value'))} opportunities were created, and "
+            f"{_count(ran.get('value'))} appointments ran."
+        ),
+    ]
+    if "demo_rate" in by_id:
+        sentences.append(_demo_sentence(by_id["demo_rate"], label))
+    if "opp2prelim" in by_id:
+        sentences.append(_opp_sentence(by_id["opp2prelim"]))
+    return " ".join(sentences)
 
 
 def _rate_text(value: Any) -> str:
     if value is None:
         return "N/A"
-    return str(value)
+    return _percent(value)
 
 
 def _public_labels(text: str) -> str:
@@ -140,44 +241,104 @@ def _public_labels(text: str) -> str:
     return re.sub(r"\b(sits|sit|sat)\b", replace, text, flags=re.IGNORECASE)
 
 
+def _plain_face(text: str) -> str:
+    """Hide machine tokens if a template or model line still has them."""
+    if not text:
+        return text
+    for raw, spoken in (
+        ("opps_created", "opportunities created"),
+        ("opps_ran", "appointments that ran"),
+        ("demo_rate", "demo rate"),
+        ("opp2prelim", "Opp2Prelim"),
+    ):
+        text = re.sub(rf"\b{raw}\b", spoken, text)
+    text = re.sub(r"\s*\(America/[A-Za-z_]+\)", "", text)
+    text = text.replace("America/New_York", "ET")
+
+    def _stamp(match: re.Match) -> str:
+        label = format_updated(match.group(0))
+        return label or match.group(0)
+
+    return re.sub(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", _stamp, text)
+
+
+def _change_sentence(row: dict[str, Any]) -> str:
+    metric_id = row.get("metric_id") or ""
+    name = _SENTENCE_NAME.get(metric_id, "That figure")
+    current = _percent(row.get("current")) if metric_id in _RATE_IDS else _count(row.get("current"))
+    prior = _percent(row.get("prior")) if metric_id in _RATE_IDS else _count(row.get("prior"))
+    change = row.get("absolute_change")
+    if row.get("current") is None or row.get("prior") is None or change is None:
+        return f"{name} went from {prior} to {current}."
+    if change == 0:
+        return f"{name} stayed at {current}."
+    direction = "up" if change > 0 else "down"
+    moved = _plain_number(abs(change))
+    if metric_id in _RATE_IDS:
+        return f"{name} went from {prior} to {current}, {direction} {abs(float(change)):.1f} percentage points."
+    pct = row.get("percent_change")
+    if pct is None:
+        return (
+            f"{name} went from {prior} to {current}, {direction} by {moved}. "
+            "I left off the percent change because the earlier number was zero or missing."
+        )
+    return f"{name} went from {prior} to {current}, {direction} by {moved}, a {abs(float(pct)):.1f}% change."
+
+
 def _render_sources(payload: dict[str, Any]) -> str:
     if not payload.get("available"):
         return f"{NO_APPROVED_DEFINITION} Source totals stay unavailable until those drafts are approved."
-    lines = [payload.get("note") or "Source performance."]
-    if payload["period"].get("partial"):
-        lines.append("Partial period.")
+    lines = [f"Here's how each lead source did for {_period_label(payload.get('period'))}."]
     for row in payload["rows"]:
         lines.append(
-            f"{row['label']}: sales {row['sales']}, ran {row['opps_ran']}, "
-            f"demo rate {_rate_text(row['demo_rate'])}, opp2prelim {_rate_text(row['opp2prelim'])}."
+            f"{row['label']} had {_count(row['sales'])} sales and {_count(row['opps_ran'])} appointments that ran. "
+            f"Demo rate was {_rate_text(row['demo_rate'])}, and Opp2Prelim was {_rate_text(row['opp2prelim'])}."
         )
     return " ".join(lines)
 
 
 def _render_compare(payload: dict[str, Any]) -> str:
     if not payload.get("available"):
-        return (
-            f"{NO_APPROVED_DEFINITION} I have not calculated a change. "
-            + str(payload.get("statement") or "")
-        ).strip()
-    lines = [payload.get("statement") or "Comparison."]
-    if payload["period"].get("partial") or payload["comparison_period"].get("partial"):
-        lines.append("Partial-period comparison.")
+        return f"{NO_APPROVED_DEFINITION} I have not calculated a change."
+    current = _period_label(payload.get("period"))
+    prior = _period_label(payload.get("comparison_period"))
+    lines = [f"Comparing {current} with {prior}."]
     for row in payload["rows"]:
-        pp = row.get("percentage_points")
-        pct = row.get("percent_change")
-        extra = ""
-        if pp is not None:
-            extra = f" ({pp} percentage points)"
-        elif pct is None:
-            extra = " (percent change omitted; baseline is zero or missing)"
-        else:
-            extra = f" ({pct}% change)"
-        lines.append(
-            f"{row['metric_id']}: {row['current']} versus {row['prior']}, "
-            f"absolute change {row['absolute_change']}{extra}."
-        )
+        lines.append(_change_sentence(row))
     return " ".join(lines)
+
+
+def _uncertainty_reason(payload: dict[str, Any], decision, now: datetime) -> str | None:
+    """One plain reason, or None when the figure is on solid ground."""
+    if not payload.get("available"):
+        return None
+    reasons: list[str] = []
+    period = payload.get("period") or {}
+    prior = payload.get("comparison_period") or {}
+    if period.get("partial") or prior.get("partial"):
+        reasons.append("this period is still in progress")
+    if payload.get("unmapped_sales_labels") or payload.get("unmapped_ran_labels"):
+        reasons.append("some of the counts didn't line up")
+    if is_stale(payload.get("data_as_of"), now):
+        reasons.append("the data is a bit old")
+    if payload.get("official") is False:
+        reasons.append("that definition is still a draft")
+    assumed = payload.get("assumed_filter")
+    if assumed:
+        reasons.append(str(assumed))
+    if getattr(decision, "uncertain", False):
+        reasons.append(getattr(decision, "uncertainty_reason", "") or "the question could mean more than one thing")
+    ordered: list[str] = []
+    for reason in reasons:
+        if reason and reason not in ordered:
+            ordered.append(reason)
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return ordered[0]
+    if len(ordered) == 2:
+        return f"{ordered[0]} and {ordered[1]}"
+    return ", ".join(ordered[:-1]) + ", and " + ordered[-1]
 
 
 def _evidence_from(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -186,14 +347,30 @@ def _evidence_from(payload: dict[str, Any]) -> list[dict[str, Any]]:
         return evidence
     link = payload.get("source_link")
     if link:
-        evidence.append({"source_link": link, "data_as_of": payload.get("data_as_of"), "kind": "report"})
+        evidence.append(
+            {
+                "source_link": link,
+                "data_as_of": payload.get("data_as_of"),
+                "kind": "report",
+                "label": "report",
+            }
+        )
     for link in payload.get("source_links") or []:
-        evidence.append({"source_link": link, "data_as_of": payload.get("data_as_of"), "kind": "report"})
+        evidence.append(
+            {
+                "source_link": link,
+                "data_as_of": payload.get("data_as_of"),
+                "kind": "report",
+                "label": "report",
+            }
+        )
     for metric in payload.get("metrics") or []:
         if metric.get("source_link"):
+            metric_id = metric.get("metric_id")
             evidence.append(
                 {
-                    "metric_id": metric.get("metric_id"),
+                    "metric_id": metric_id,
+                    "label": _SPOKEN.get(metric_id, "report"),
                     "definition_version": metric.get("definition_version"),
                     "source_link": metric.get("source_link"),
                     "data_as_of": metric.get("data_as_of"),
@@ -281,8 +458,8 @@ def _paid_interpretation(
         result = model.generate(
             system=SYSTEM_PROMPT,
             user=(
-                "Server tool payload follows. Add one short interpretation with no numerals. "
-                "If you cannot, return an empty string.\n"
+                "Server tool payload follows. Add one short plain-English interpretation with no numerals, "
+                "no metric ids, and no timezone names. If you cannot, return an empty string.\n"
                 + str({k: tool_payload.get(k) for k in ("available", "official", "period", "statement")})
             ),
             max_output_tokens=card.max_output_tokens if card.output_cap_enforced else 256,
@@ -376,11 +553,11 @@ def handle_chat(
     lowered = " ".join(text.lower().split())
     if lowered in {"be concise", "answer briefly"}:
         store.set_preference(identity.actor_id, True)
-        answer = "I will keep later answers short. Say forget my preferences to remove that."
+        answer = "I'll keep later answers short. Say forget my preferences when you want the usual length again."
         return _response(200, ok=True, code="preference", answer=answer)
     if lowered == "forget my preferences":
         store.set_preference(identity.actor_id, None)
-        return _response(200, ok=True, code="preference", answer="I removed your display preferences.")
+        return _response(200, ok=True, code="preference", answer="I cleared your display preferences.")
     month_key = "unconfirmed"
     quota_now = now
     if config.company_timezone:
@@ -502,7 +679,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 answer = NO_APPROVED_DOCUMENT + " " + WELCOME
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
             if not filters["start"] or not filters["end"]:
-                answer = "Which start and end dates should I use? The company overview chips can set them."
+                answer = "Which start and end dates should I use? Set them on the page and I'll use that range."
                 code = "clarify"
             else:
                 name = {
@@ -515,12 +692,12 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     mapped = {"ran": "opps_ran", "created": "opps_created"}.get(decision.matched_term, decision.matched_term)
                     args["metric_ids"] = [mapped]
                 if metrics is None:
-                    answer = NO_APPROVED_DEFINITION + " Reporting functions are not available to this turn."
+                    answer = NO_APPROVED_DEFINITION + " I can't reach the reporting numbers for this question."
                     code = "metrics_unavailable"
                 else:
                     tool_payload = execute(name, args, ctx)
                     if decision_intent == "company_summary":
-                        answer = _render_summary(tool_payload)
+                        answer = _render_summary(tool_payload, focus=decision.matched_term)
                     elif decision_intent == "compare":
                         answer = _render_compare(tool_payload)
                     else:
@@ -540,7 +717,6 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             code = "rejected"
     if store.preference(identity.actor_id).get("concise") and len(answer) > 280:
         answer = answer[:277].rstrip() + "..."
-    answer = _public_labels(answer)
     interpretation = None
     model_note = None
     if tool_payload.get("available") and decision_intent in {"company_summary", "compare", "source_performance"}:
@@ -556,7 +732,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 history=[],
             )
             if interpretation:
-                interpretation = _public_labels(interpretation)
+                interpretation = _plain_face(_public_labels(interpretation))
             if interpretation is None and model is not None and getattr(model, "configured", False):
                 model_note = MODEL_UNAVAILABLE
         except BudgetExceeded as exc:
@@ -569,6 +745,13 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 model_note = LEDGER_UNAVAILABLE if configuration_problems(config, now.date()) else RATES_UNAVAILABLE
     elif model is not None and not getattr(model, "configured", True):
         model_note = MODEL_UNAVAILABLE
+    reason = None
+    if code != "budget_limit" and tool_payload.get("available"):
+        reason = _uncertainty_reason(tool_payload, decision, now)
+        if reason:
+            answer = answer.rstrip() + " " + uncertainty_sentence(reason)
+    answer = _plain_face(_public_labels(answer))
+    updated = format_updated(tool_payload.get("data_as_of"))
     evidence = _evidence_from(tool_payload)
     conversation = conversation_id or ("conv_" + uuid.uuid4().hex[:16])
     existing = store.get_conversation(conversation, identity.actor_id)
@@ -601,8 +784,11 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             "model_note": model_note,
             "partial": (tool_payload.get("period") or {}).get("partial"),
             "data_as_of": tool_payload.get("data_as_of"),
+            "updated_label": updated or None,
             "definition_status": "approved" if tool_payload.get("official") else "not_approved",
         },
+        "uncertain": bool(reason),
+        "uncertainty_reason": reason,
         "conversation_id": conversation,
         "request_id": request_id,
         "display_name": "Goose",
@@ -612,7 +798,10 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
     }
     if code == "budget_limit":
         body["reset_date"] = model_note
+        body["reset_label"] = format_day(model_note) or None
         body["ok"] = False
+        body["uncertain"] = False
+        body["uncertainty_reason"] = None
     store.add_audit(
         {
             "type": "chat",

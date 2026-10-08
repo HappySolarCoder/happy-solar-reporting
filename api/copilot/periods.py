@@ -808,7 +808,7 @@ def message_names_explicit_month(message: str) -> bool:
 
 
 _CURRENT_MONTH = re.compile(
-    rf"\bthis (?:whole\s+)?(?:{_MONTH_WORD})\b",
+    rf"\b(?:this (?:whole\s+)?(?:{_MONTH_WORD})|month to date|mtd)\b",
     re.I,
 )
 _BARE_MONTH_PHRASE = re.compile(
@@ -822,9 +822,10 @@ _NAMED_MONTH_OF = re.compile(
 
 
 def asks_current_calendar_month(message: str) -> bool:
-    """'this month', 'for the month', and 'the whole month' mean the current month.
+    """'this month', MTD, 'for the month', and 'the whole month' mean the current month.
 
     'for the month of august' names August, so that phrase is not this one.
+    'so far' and 'current' on their own keep the page range.
     """
     text = message or ""
     if _CURRENT_MONTH.search(text):

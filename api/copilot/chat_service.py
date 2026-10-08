@@ -756,8 +756,10 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
 
     A source-versus-source question uses that one named window for both sources.
     A period comparison keeps the page window unless two periods or a month are named.
-    "this month", "for the month", and "the whole month" are the current calendar
-    month through today, even when the page is a different range.
+    "this month", MTD, "month to date", "for the month", and "the whole month" are
+    the current calendar month through today, even when the page is a different range.
+    A compare that uses one of those phrases uses that window against the same
+    elapsed days of the previous month.
     """
     from copilot.periods import (
         TimezoneUnconfirmed,
@@ -813,7 +815,7 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         use_named = True
     elif use_named and named is not None:
         updated["start"], updated["end"] = named
-    elif (intent != "compare" or source_vs_source) and asks_current_calendar_month(text):
+    elif asks_current_calendar_month(text):
         try:
             updated["start"], updated["end"] = current_calendar_month(config.company_timezone, now)
             calendar_month = True

@@ -17,6 +17,7 @@ from copilot.periods import (
     named_period_unserved,
     quarter_spans_covering,
     _MONTH_TYPOS,
+    _REAL_COMPARE,
     _month_word_is_person,
 )
 
@@ -93,15 +94,7 @@ _CURRENT_PERIOD = re.compile(
     re.I,
 )
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
-_ASKS_TO_COMPARE = re.compile(
-    r"\b(?:compare|compared|versus|vs\.?|changed|change)\b"
-    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b"
-    r"|\b(?:go|going|went)\s+up\s+or\s+down\b"
-    r"|\bbetter\s+or\s+worse\b"
-    r"|\bworse\s+or\s+better\b"
-    r"|\btrend\s+(?:vs\.?|versus|against)\b",
-    re.I,
-)
+_ASKS_TO_COMPARE = _REAL_COMPARE
 _SLASH_NEGATION = r"(?<!\w)(?:w/out|w/o|wo/)(?!\w)"
 _LOOSE_PERIOD = re.compile(
     r"\b(?:ytd|year to date|this year|last year|last week|yesterday|tomorrow|q[1-4]|"
@@ -228,6 +221,7 @@ _FILLER_WORDS = frozenset(
         "we",
         "were",
         "what",
+        "whole",
         "whats",
         "with",
         "yo",
@@ -971,7 +965,8 @@ def unconsumed_phrase(
         pass
     if intent == "compare":
         for match in re.finditer(
-            r"\b(?:compare|compared|versus|vs\.?|against|changed|change|does|do|than|trend)\b"
+            r"\b(?:compare|compared|versus|vs\.?|against|changed|change|does|do|than|trend|"
+            r"better|worse|beat|beats|outperform(?:s|ed|ing)?)\b"
             r"|\bstack(?:s|ed|ing)?\s+up\s+against\b"
             r"|\b(?:go|going|went)\s+up\s+or\s+down\b"
             r"|\bbetter\s+or\s+worse\b"

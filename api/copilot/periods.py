@@ -12,12 +12,13 @@ _TODAY = re.compile(r"\b(?:so far\s+)?today\b", re.I)
 _THIS_WEEK = re.compile(r"\bthis week\b", re.I)
 _MONTH_WORD = r"month|mnth|mth|montn|mnoth"
 _MONTH_TO_DATE = re.compile(
-    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far|current)\b",
+    rf"\b(?:this (?:whole\s+)?(?:{_MONTH_WORD})|the whole (?:{_MONTH_WORD})|"
+    rf"for the (?:{_MONTH_WORD})|month to date|mtd|so far|current)\b",
     re.I,
 )
 _LAST_MONTH = re.compile(rf"\blast (?:{_MONTH_WORD})\b", re.I)
 _RELATIVE_BLOCK = re.compile(
-    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far|this week)\b",
+    rf"\b(?:this (?:whole\s+)?(?:{_MONTH_WORD})|month to date|mtd|so far|this week)\b",
     re.I,
 )
 _STRAY_NOW = re.compile(r"\b(?:today|now)\b", re.I)
@@ -77,13 +78,18 @@ _PAST_N_MONTHS = re.compile(
 _PAST_MONTH = re.compile(r"\bpast\s+month\b", re.I)
 _YEAR_ONLY = re.compile(r"\b(?:in|for|during)\s+((?:19|20)\d{2})\b", re.I)
 _PAGE_RELATIVE = re.compile(
-    rf"\b(?:this (?:{_MONTH_WORD})|month to date|mtd|so far)\b",
+    rf"\b(?:this (?:whole\s+)?(?:{_MONTH_WORD})|the whole (?:{_MONTH_WORD})|"
+    rf"for the (?:{_MONTH_WORD})|month to date|mtd|so far)\b",
     re.I,
 )
-# "to" / "through" between months is a span. compare / vs / against is two windows.
+# "to" / "through" between months is a span. compare / vs / better / beat is two windows.
 _REAL_COMPARE = re.compile(
-    r"\b(?:compare|compared|versus|vs\.?|against|changed|change)\b"
-    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+    r"\b(?:compare|compared|versus|vs\.?|against|changed|change|beat|beats|outperform(?:s|ed|ing)?)\b"
+    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b"
+    r"|\b(?:go|going|went)\s+up\s+or\s+down\b"
+    r"|\bbetter(?:\s+or\s+worse)?(?:\s+than)?\b"
+    r"|\bworse(?:\s+or\s+better)?(?:\s+than)?\b"
+    r"|\btrend\s+(?:vs\.?|versus|against)\b",
     re.I,
 )
 _WEEKDAY = re.compile(

@@ -2962,6 +2962,118 @@ class CopilotTests(unittest.TestCase):
                 if question == "demo rate since the beginning of the month":
                     self.assertNotIn("Oct 1\u20137", answer)
 
+    def test_round9_source_and_month_compares(self):
+        """Two sources compare side by side. better/beat keeps two months. 'the month' is this month."""
+        from dataclasses import replace
+
+        questions = (
+            "how does doors compare to phones on demo rate?",
+            "doors vs phones demo rate this month",
+            "compare doors and phones demo rate",
+            "is doors doing better than phones on demos?",
+            "was september better or worse than august for demo rate?",
+            "was september better than august on demo rate?",
+            "was our demo rate better in september or august?",
+            "did september beat august on demo rate",
+            "did september outperform august on demo rate",
+            "was september worse than august on demo rate?",
+            "september compared to august demo rate",
+            "what's our demo rate for the month",
+            "demo rate for the month",
+            "what's the demo rate for the whole month",
+            "demo rate this whole month",
+            "what's our demo rate for the month so far",
+            "demo rate for the month of october",
+        )
+        source_compare = {
+            "how does doors compare to phones on demo rate?",
+            "doors vs phones demo rate this month",
+            "compare doors and phones demo rate",
+            "is doors doing better than phones on demos?",
+        }
+        month_compare = "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026."
+        month_questions = {
+            "was september better or worse than august for demo rate?",
+            "was september better than august on demo rate?",
+            "was our demo rate better in september or august?",
+            "did september beat august on demo rate",
+            "did september outperform august on demo rate",
+            "was september worse than august on demo rate?",
+            "september compared to august demo rate",
+        }
+        this_month = {
+            "what's our demo rate for the month",
+            "demo rate for the month",
+            "what's the demo rate for the whole month",
+            "demo rate this whole month",
+            "what's our demo rate for the month so far",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0, "Self Gen": 3},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0, "Self Gen": 6},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round9_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertIn(quote.lower(), question.lower(), answer)
+                if question in source_compare:
+                    self.assertEqual(code, "compare", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertIn("Doors 25.0% (1 of 4)", answer)
+                    self.assertIn("Phones 80.0% (4 of 5)", answer)
+                    self.assertIn("Oct 1\u20137, 2026", answer)
+                    self.assertNotIn("Sep 1\u20137", answer)
+                    self.assertNotIn("Doors and Phones", answer)
+                    self.assertEqual(
+                        result["body"]["footnote"]["filters"]["sources"],
+                        ["doors", "phones"],
+                    )
+                if question in month_questions:
+                    self.assertEqual(code, "compare", answer)
+                    self.assertIn(month_compare, answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                    self.assertNotIn("Aug 1 \u2013 Sep 30", answer)
+                    self.assertNotIn("Jun 1", answer)
+                if question in this_month:
+                    self.assertEqual(code, "company_summary", answer)
+                    self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+                if question == "demo rate for the month of october":
+                    self.assertIn("Your demo rate for Oct 1\u20134, 2026 is 40.7%.", answer)
+                    self.assertNotIn("Oct 1\u20137", answer)
+                    self.assertEqual(caveat_count, 0, answer)
+                    self.assertFalse(result["body"]["uncertain"], answer)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -402,6 +402,27 @@ def _render_compare(payload: dict[str, Any]) -> str:
     return " ".join(lines)
 
 
+def _source_rate_bit(source_name: str, metric: dict[str, Any]) -> str:
+    rate = metric.get("value")
+    demos = metric.get("numerator")
+    ran = metric.get("denominator")
+    if rate is None:
+        return f"{source_name} N/A"
+    if demos is None or ran is None:
+        return f"{source_name} {_percent(rate)}"
+    return f"{source_name} {_percent(rate)} ({_count(demos)} of {_count(ran)})"
+
+
+def _render_source_compare(parts: list[tuple[str, dict[str, Any]]], label: str) -> str:
+    """Doors 25.0% (1 of 4) vs Phones 80.0% (4 of 5) for the same period."""
+    bits = []
+    for source_name, payload in parts:
+        by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
+        metric = by_id.get("demo_rate") or (next(iter(by_id.values())) if by_id else {})
+        bits.append(_source_rate_bit(source_name, metric))
+    return f"Comparing {' vs '.join(bits)} for {label}."
+
+
 def _metrics_in_play(payload: dict[str, Any], focus: str | None) -> list[dict[str, Any]]:
     metrics = list(payload.get("metrics") or [])
     if focus == "demo_rate":
@@ -885,9 +906,48 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 mapped = _SUMMARY_METRIC_IDS.get(decision.matched_term or "")
                 if decision_intent in {"company_summary", "compare"} and mapped:
                     args["metric_ids"] = [mapped]
+                source_ids = [str(item) for item in (filters.get("sources") or [])]
+                source_vs_source = (
+                    decision_intent == "compare"
+                    and len(source_ids) >= 2
+                    and not comparison_start
+                    and not comparison_end
+                )
                 if metrics is None:
                     answer = NO_APPROVED_DEFINITION + " I can't reach the reporting numbers for this question."
                     code = "metrics_unavailable"
+                elif source_vs_source:
+                    parts: list[tuple[str, dict[str, Any]]] = []
+                    for source_id in source_ids:
+                        one_args = {
+                            "start": filters["start"],
+                            "end": filters["end"],
+                            "sources": [source_id],
+                        }
+                        if mapped:
+                            one_args["metric_ids"] = [mapped]
+                        one = execute("get_company_summary", one_args, ctx)
+                        if not one.get("available"):
+                            parts = []
+                            tool_payload = one
+                            break
+                        parts.append((SOURCE_LABELS.get(source_id, source_id), one))
+                        tool_payload = one
+                    if len(parts) >= 2:
+                        label = format_range(filters["start"], filters["end"]) or "that period"
+                        answer = _render_source_compare(parts, label)
+                    else:
+                        tool_payload = execute(name, args, ctx)
+                        answer = _render_compare(tool_payload)
+                        names = _source_names(source_ids) or "those sources"
+                        if not decision.uncertain:
+                            decision = replace(
+                                decision,
+                                uncertain=True,
+                                uncertainty_reason=(
+                                    f"I couldn't compare {names} side by side, so this is both together"
+                                ),
+                            )
                 else:
                     tool_payload = execute(name, args, ctx)
                     if decision_intent == "company_summary":
@@ -896,8 +956,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                         answer = _render_compare(tool_payload)
                     else:
                         answer = _render_sources(tool_payload)
-                    if tool_payload.get("reason") == "definition_not_approved":
-                        code = "definition_not_approved"
+                if tool_payload.get("reason") == "definition_not_approved":
+                    code = "definition_not_approved"
         else:
             answer = SCOPE_DENIAL
             code = "deny"

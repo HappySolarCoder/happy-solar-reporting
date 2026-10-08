@@ -16,8 +16,8 @@ from copilot.periods import (
     named_calendar_range,
     named_period_unserved,
     quarter_spans_covering,
-    _FULL_MONTH_NUMBERS,
-    _within_one_edit,
+    _MONTH_TYPOS,
+    _month_word_is_person,
 )
 
 
@@ -93,7 +93,11 @@ _CURRENT_PERIOD = re.compile(
     re.I,
 )
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
-_ASKS_TO_COMPARE = re.compile(r"\b(?:compare|versus|vs\.?|changed|change)\b", re.I)
+_ASKS_TO_COMPARE = re.compile(
+    r"\b(?:compare|compared|versus|vs\.?|changed|change)\b"
+    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+    re.I,
+)
 _LOOSE_PERIOD = re.compile(
     r"\b(?:ytd|year to date|this year|last year|last week|yesterday|tomorrow|q[1-4]|"
     r"last\s+\d+\s+days?|since|first week of|fortnight|two months|past week|"
@@ -149,6 +153,7 @@ _FILLER_WORDS = frozenset(
         "current",
         "did",
         "do",
+        "does",
         "doing",
         "during",
         "everybody",
@@ -160,7 +165,10 @@ _FILLER_WORDS = frozenset(
         "give",
         "goose",
         "happy",
+        "hello",
         "here",
+        "hey",
+        "hi",
         "how",
         "hows",
         "i",
@@ -199,9 +207,10 @@ _FILLER_WORDS = frozenset(
         "that",
         "the",
         "there",
+        "thanks",
+        "thank",
         "this",
         "to",
-        "today",
         "total",
         "us",
         "want",
@@ -211,8 +220,32 @@ _FILLER_WORDS = frozenset(
         "what",
         "whats",
         "with",
+        "yo",
         "you",
         "your",
+    }
+)
+_FILLER_PHRASES = re.compile(
+    r"\b(?:quick question|not sure but|not sure|not great|i bet|i wonder|real quick)\b",
+    re.I,
+)
+_OPINION = _FILLER_PHRASES
+_WEEKDAYS = frozenset(
+    {
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "mondays",
+        "tuesdays",
+        "wednesdays",
+        "thursdays",
+        "fridays",
+        "saturdays",
+        "sundays",
     }
 )
 _FILLER_RE = re.compile(r"\b(" + "|".join(sorted(_FILLER_WORDS, key=len, reverse=True)) + r")\b", re.I)
@@ -455,24 +488,76 @@ def _term_hint(text: str) -> str | None:
     return None
 
 
+def _negation_anchor(text: str, source_start: int) -> tuple[int, int] | None:
+    """Start and end of the negation words in front of a source, if any.
+
+    "not sure" and "I bet" are filler, so they do not exclude the source.
+    """
+    prefix_start = max(0, source_start - 48)
+    prefix = text[prefix_start:source_start]
+    masked = list(prefix)
+    for opinion in _OPINION.finditer(prefix):
+        for index in range(opinion.start(), opinion.end()):
+            masked[index] = " "
+    masked_prefix = "".join(masked)
+    last = None
+    for pattern in (_SOURCE_NEGATION, _NEAR_SOURCE_NEGATION):
+        for neg in pattern.finditer(masked_prefix):
+            if last is None or neg.start() >= last.start():
+                last = neg
+    if last is None:
+        return None
+    return prefix_start + last.start(), prefix_start + last.end()
+
+
+def _source_roles(text: str) -> tuple[list[str], list[str], list[tuple[int, int]]]:
+    """Positive source ids, negated source ids, and spans of the negated phrases.
+
+    "doors, not phones" keeps Doors and drops phones. A source that is only
+    negated is not a positive filter.
+    """
+    raw = text or ""
+    hits: list[tuple[int, int, str, bool, tuple[int, int] | None]] = []
+    for pattern, source_id in _SOURCE_PATTERNS:
+        for match in re.finditer(pattern, raw, re.I):
+            glued = bool(_GLUED_NON_SOURCE.search(raw[max(0, match.start() - 4) : match.end()]))
+            anchor = _negation_anchor(raw, match.start())
+            hits.append((match.start(), match.end(), source_id, glued or anchor is not None, anchor))
+    hits.sort()
+    positive: list[str] = []
+    negated: list[str] = []
+    spans: list[tuple[int, int]] = []
+    seen_pos: set[str] = set()
+    seen_neg: set[str] = set()
+    for start, end, source_id, is_neg, anchor in hits:
+        if is_neg:
+            if source_id not in seen_neg:
+                negated.append(source_id)
+                seen_neg.add(source_id)
+            if anchor is not None:
+                spans.append((anchor[0], end))
+            else:
+                spans.append((start, end))
+        elif source_id not in seen_pos:
+            positive.append(source_id)
+            seen_pos.add(source_id)
+    positive = [source_id for source_id in positive if source_id not in seen_neg]
+    return positive, negated, spans
+
+
 def _negation_before_source(text: str) -> bool:
     """not / but / other than sitting in front of a lead source."""
-    for pattern, _source_id in _SOURCE_PATTERNS:
-        for match in re.finditer(pattern, text or "", re.I):
-            prefix = (text or "")[max(0, match.start() - 48) : match.start()]
-            if _NEAR_SOURCE_NEGATION.search(prefix):
-                return True
-    return False
+    _positive, negated, _spans = _source_roles(text)
+    return bool(negated)
 
 
 def message_source_negated(text: str) -> bool:
-    """A source named in order to leave it out. Never filter TO that source."""
+    """Every named source was excluded. "doors, not phones" still has Doors."""
     raw = text or ""
-    return (
-        bool(_SOURCE_NEGATION.search(raw))
-        or _negation_before_source(raw)
-        or bool(_GLUED_NON_SOURCE.search(raw))
-    )
+    positive, negated, _spans = _source_roles(raw)
+    if positive:
+        return False
+    return bool(negated) or bool(_GLUED_NON_SOURCE.search(raw))
 
 
 def message_sources_are_exact(text: str) -> bool:
@@ -481,17 +566,17 @@ def message_sources_are_exact(text: str) -> bool:
 
 
 def message_sources(text: str) -> list[str]:
-    """Lead sources named in the message, in the order they appear. Virtual is Phones."""
-    hits: list[tuple[int, str]] = []
-    for pattern, source_id in _SOURCE_PATTERNS:
-        for match in re.finditer(pattern, text or "", re.I):
-            hits.append((match.start(), source_id))
-    hits.sort()
-    ordered: list[str] = []
-    for _, source_id in hits:
-        if source_id not in ordered:
-            ordered.append(source_id)
-    return ordered
+    """Lead sources to keep, in the order they appear. A negated source is dropped."""
+    positive, _negated, _spans = _source_roles(text)
+    return positive
+
+
+def mixed_negation_spans(text: str) -> list[tuple[int, int]]:
+    """Spans like 'not phones' once the positive source is being kept."""
+    positive, negated, spans = _source_roles(text)
+    if positive and negated:
+        return spans
+    return []
 
 
 def message_source(text: str) -> str | None:
@@ -527,16 +612,26 @@ def _title_name(word: str) -> str:
     return word[:1].upper() + word[1:]
 
 
-def _name_stopped(word: str) -> bool:
-    """True when the word is a filler, a lead source, a month, or a month typo. Not a person."""
+def _name_stopped(word: str, text: str = "", at: int | None = None) -> bool:
+    """True when the word is a filler, a lead source, a month, or a weekday. Not a person.
+
+    A month word used as a person ("how did April do", "Marcy's") is not stopped.
+    Weekdays are never people.
+    """
     lower = word.lower().replace("’", "'")
+    if lower in _WEEKDAYS:
+        return True
+    if at is not None and _month_word_is_person(text, at, at + len(word)):
+        return False
+    if lower in _MONTH_TYPOS:
+        return True
     if lower in _NOT_A_QUALIFIER or lower in _FILLER_WORDS:
         return True
     if lower.startswith("non"):
         return True
     if re.search(r"doors?|phones?|virtual|inbound|self[\s-]?gen|3\s*pl", lower):
         return True
-    return any(_within_one_edit(lower, name) for name in _FULL_MONTH_NUMBERS)
+    return False
 
 
 def _unapplied_name(text: str) -> str | None:
@@ -550,20 +645,20 @@ def _unapplied_name(text: str) -> str | None:
         found.append(_TERRITORIES[match.group(1).lower()])
     for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", raw, re.I):
         word = match.group(1)
-        if _name_stopped(word):
+        if _name_stopped(word, raw, match.start(1)):
             continue
         parts = [word]
-        rest = raw[match.end() :]
+        cursor = match.end()
         while len(parts) < 3:
-            following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)\b", rest)
-            if not following or _name_stopped(following.group(1)):
+            following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)\b", raw[cursor:])
+            if not following or _name_stopped(following.group(1), raw, cursor + following.start(1)):
                 break
             parts.append(following.group(1))
-            rest = rest[following.end() :]
+            cursor += following.end()
         found.append(" ".join(_title_name(part) for part in parts))
     for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", raw):
         word = match.group(1)
-        if _name_stopped(word):
+        if _name_stopped(word, raw, match.start(1)):
             continue
         found.append(_title_name(word))
     for match in re.finditer(r"\b([A-Z][a-z]+)\b", raw):
@@ -571,7 +666,7 @@ def _unapplied_name(text: str) -> str | None:
         prefix = raw[: match.start()]
         if not prefix.strip() or re.search(r"[.!?][\"')\]]*\s*$", prefix):
             continue
-        if _name_stopped(word):
+        if _name_stopped(word, raw, match.start()):
             continue
         parts = [word]
         rest = raw[match.end() :]
@@ -669,7 +764,7 @@ def uncovered_request(
     One phrase, so the reply gets one line.
     """
     text = message or ""
-    if _SOURCE_NEGATION.search(text):
+    if _SOURCE_NEGATION.search(text) and not message_sources(text):
         return _negation_phrase(text)
     asked = message_sources(text)
     applied = [str(item) for item in (sources or [])]
@@ -744,6 +839,10 @@ def unconsumed_phrase(
     # Drop the suffix of what's / how's / Sarah's before "what" is removed and "'s" is left behind.
     for match in _APOSTROPHE_SUFFIX.finditer(text):
         blank(match.span())
+    for span in mixed_negation_spans(text):
+        blank(span)
+    for match in _FILLER_PHRASES.finditer(text):
+        blank(match.span())
     for match in _METRIC_WORDS.finditer(text):
         blank(match.span())
     term_pattern = _TERM_WORDS.get(matched_term or "")
@@ -776,7 +875,12 @@ def unconsumed_phrase(
     except TimezoneUnconfirmed:
         pass
     if intent == "compare":
-        for match in re.finditer(r"\b(?:compare|versus|vs\.?|against|changed|change)\b", text, re.I):
+        for match in re.finditer(
+            r"\b(?:compare|compared|versus|vs\.?|against|changed|change|does|do)\b"
+            r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+            text,
+            re.I,
+        ):
             blank(match.span())
         if _LAST_MONTH.search(text) and not message_names_explicit_month(text):
             match = _LAST_MONTH.search(text)

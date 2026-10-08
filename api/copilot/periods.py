@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-_TODAY = re.compile(r"\btoday\b", re.I)
+_TODAY = re.compile(r"\b(?:so far\s+)?today\b", re.I)
 _THIS_WEEK = re.compile(r"\bthis week\b", re.I)
-_MONTH_TO_DATE = re.compile(r"\b(?:this month|mtd|so far|current)\b", re.I)
-_LAST_MONTH = re.compile(r"\blast month\b", re.I)
-_RELATIVE_BLOCK = re.compile(r"\b(?:this month|mtd|so far|this week)\b", re.I)
+_MONTH_WORD = r"month|mnth|mth|montn|mnoth"
+_MONTH_TO_DATE = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far|current)\b", re.I)
+_LAST_MONTH = re.compile(rf"\blast (?:{_MONTH_WORD})\b", re.I)
+_RELATIVE_BLOCK = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far|this week)\b", re.I)
 _STRAY_NOW = re.compile(r"\b(?:today|now)\b", re.I)
 _MONTH_ALT = (
     r"january|february|march|april|june|july|august|september|october|november|december|"
@@ -54,8 +55,26 @@ _PAST_N_MONTHS = re.compile(
 )
 _PAST_MONTH = re.compile(r"\bpast\s+month\b", re.I)
 _YEAR_ONLY = re.compile(r"\b(?:in|for|during)\s+((?:19|20)\d{2})\b", re.I)
-_PAGE_RELATIVE = re.compile(r"\b(?:this month|mtd|so far)\b", re.I)
-_COMPARE_JOIN = re.compile(r"\b(?:compare|versus|vs\.?|against|changed|change)\b|\bto\b", re.I)
+_PAGE_RELATIVE = re.compile(rf"\b(?:this (?:{_MONTH_WORD})|mtd|so far)\b", re.I)
+# "to" / "through" between months is a span. compare / vs / against is two windows.
+_REAL_COMPARE = re.compile(
+    r"\b(?:compare|compared|versus|vs\.?|against|changed|change)\b"
+    r"|\bstack(?:s|ed|ing)?\s+up\s+against\b",
+    re.I,
+)
+_WEEKDAY = re.compile(
+    r"\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    re.I,
+)
+_WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "six": 6, "twelve": 12}
 _FULL_MONTH = re.compile(
     r"\b(january|february|march|april|june|july|august|september|october|november|december)\b",
@@ -108,81 +127,35 @@ _MONTH_NAMES = {
     11: "November",
     12: "December",
 }
-_FULL_MONTH_NUMBERS = {name: number for name, number in _MONTH_NUMBERS.items() if len(name) > 3}
-_NOT_A_MONTH_WORD = frozenset(
-    {
-        "about",
-        "after",
-        "before",
-        "company",
-        "created",
-        "current",
-        "demo",
-        "demos",
-        "doors",
-        "during",
-        "every",
-        "everyone",
-        "group",
-        "happy",
-        "inbound",
-        "looking",
-        "market",
-        "number",
-        "numbers",
-        "office",
-        "overall",
-        "phone",
-        "phones",
-        "please",
-        "quarter",
-        "rate",
-        "rates",
-        "sales",
-        "since",
-        "solar",
-        "source",
-        "sources",
-        "there",
-        "these",
-        "those",
-        "three",
-        "total",
-        "under",
-        "virtual",
-        "where",
-        "which",
-        "while",
-        "would",
-    }
-)
-
-
-def _within_one_edit(left: str, right: str) -> bool:
-    """True when the words are the same, one insertion/deletion/substitution, or one adjacent swap."""
-    if left == right:
-        return True
-    if abs(len(left) - len(right)) > 1:
-        return False
-    if len(left) == len(right):
-        diffs = [index for index, (a, b) in enumerate(zip(left, right)) if a != b]
-        if len(diffs) == 1:
-            return True
-        if len(diffs) == 2 and diffs[1] == diffs[0] + 1 and left[diffs[0]] == right[diffs[1]] and left[diffs[1]] == right[diffs[0]]:
-            return True
-        return False
-    if len(left) > len(right):
-        left, right = right, left
-    skipped = False
-    index = 0
-    for char in right:
-        if index < len(left) and left[index] == char:
-            index += 1
-        elif skipped:
-            return False
-        else:
-            skipped = True
-    return index == len(left)
+# Misspellings only. Edit distance also matches names (Marco, Marcy).
+_MONTH_TYPOS = {
+    "septmber": 9,
+    "setember": 9,
+    "septmeber": 9,
+    "sepetember": 9,
+    "septembe": 9,
+    "sepember": 9,
+    "septemer": 9,
+    "ocotber": 10,
+    "octobr": 10,
+    "octber": 10,
+    "octoer": 10,
+    "febuary": 2,
+    "februray": 2,
+    "feburary": 2,
+    "febraury": 2,
+    "agust": 8,
+    "augst": 8,
+    "augus": 8,
+    "novmber": 11,
+    "novembr": 11,
+    "novemeber": 11,
+    "decembr": 12,
+    "decmber": 12,
+    "janurary": 1,
+    "janury": 1,
+    "aprill": 4,
+}
 
 
 class TimezoneUnconfirmed(ValueError):
@@ -236,56 +209,139 @@ def require_timezone(name: str | None) -> ZoneInfo:
         raise TimezoneUnconfirmed(f"company timezone is not usable: {name}") from exc
 
 
+def _at_sentence_start(text: str, start: int) -> bool:
+    prefix = text[:start]
+    return not prefix.strip() or bool(re.search(r"[.!?]\s*$", prefix))
+
+
+def _in_month_slot(text: str, start: int, end: int) -> bool:
+    """in/for/during April, or a month next to a year or a day. Not "how did April do"."""
+    before = text[max(0, start - 24) : start]
+    after = text[end : end + 16]
+    if re.match(r"\s+(?:do|doing)\b", after, re.I):
+        return False
+    if re.search(
+        r"\b(?:in|for|during|since|from|to|through|thru|of|versus|vs\.?|against|and|between)\s+$",
+        before,
+        re.I,
+    ):
+        return True
+    if re.match(r"\s+(?:of\s+)?(?:19|20)\d{2}\b", after):
+        return True
+    if re.match(r"\s+\d{1,2}(?:st|nd|rd|th)?\b", after, re.I):
+        return True
+    if re.search(r"(?:the\s+)?month\s+of\s+$", before, re.I):
+        return True
+    return False
+
+
+def _month_word_is_person(text: str, start: int, end: int) -> bool:
+    """A month word used as a person. "how did April do" is April the rep, not April 1–30.
+
+    "in April" and "for April" stay the month. A capitalized month that is not in a
+    month slot could be either, so it is treated as a person and the answer caveats.
+    """
+    word = text[start:end].lower()
+    if word not in _MONTH_NUMBERS and word not in _MONTH_TYPOS:
+        return False
+    after = text[end : end + 12]
+    if re.match(r"['’]s\b", after):
+        return True
+    before = text[max(0, start - 40) : start]
+    if re.search(r"\b(?:how\s+did|how(?:'s|’s|s)|how\s+is)\s+$", before, re.I):
+        return True
+    if re.search(r"\bdid\s+$", before, re.I) and re.match(r"\s+(?:do|doing)\b", after, re.I):
+        return True
+    if _in_month_slot(text, start, end):
+        return False
+    token = text[start:end]
+    if token[:1].isupper() and not _at_sentence_start(text, start):
+        return True
+    if re.match(r"\s+(?:do|doing)\b", after, re.I):
+        return True
+    return False
+
+
+def _typo_blocked(text: str, start: int, end: int) -> bool:
+    """Known misspellings still count after "for". Names do not.
+
+    Skip a capitalized mid-sentence typo, a possessive, and a word right after
+    "how did" / "how's" / "by". "for agust" stays August.
+    """
+    after = text[end : end + 8]
+    if re.match(r"['’]s\b", after):
+        return True
+    before = text[max(0, start - 32) : start]
+    if re.search(r"\b(?:how\s+did|how(?:'s|’s|s)|how\s+is|by)\s+$", before, re.I):
+        return True
+    token = text[start:end]
+    if token[:1].isupper() and not _at_sentence_start(text, start):
+        return True
+    return False
+
+
+def _remember_month(found: list[tuple[int, int, int]], text: str, start: int, end: int, month: int) -> None:
+    if _month_word_is_person(text, start, end):
+        return
+    found.append((start, end, month))
+
+
 def _relative_period_wins(text: str) -> bool:
     """this month, MTD, so far, and this week beat a month name.
 
-    A stray today or now does not. "in september? I need it today" stays September.
-    today and now still count when the message does not name a month.
+    "today" is its own day, including "so far today". A month already named
+    keeps that month: "in september? I need it today" stays September.
     """
-    if _RELATIVE_BLOCK.search(text or ""):
-        return True
-    if _month_token(text or ""):
+    raw = text or ""
+    if _TODAY.search(raw) and _month_token(raw) is None and not _LAST_MONTH.search(raw):
         return False
-    return bool(_STRAY_NOW.search(text or ""))
+    if _RELATIVE_BLOCK.search(raw):
+        return True
+    return False
 
 
 def _all_month_tokens(text: str) -> list[tuple[int, int, int]]:
     """Month tokens as (start, end, month number), earliest first.
 
-    Full names always count. "may" and 3-letter forms count only in a month
-    phrase: "in may", "for may", "during may", "may 2026", or "may 1".
+    Full names always count, unless the word is a person ("how did April do",
+    "Marcy's", or a capitalized month that is not in a month phrase).
+    "may" and 3-letter forms count only in a month phrase.
+    Typos come from an explicit list, never edit distance.
     """
     found: list[tuple[int, int, int]] = []
     for match in _FULL_MONTH.finditer(text):
-        found.append((match.start(1), match.end(1), _MONTH_NUMBERS[match.group(1).lower()]))
+        _remember_month(found, text, match.start(1), match.end(1), _MONTH_NUMBERS[match.group(1).lower()])
     for match in _SHORT_MONTH.finditer(text):
         token = (match.group(1) or match.group(2) or "").lower()
         if not token:
             continue
         if match.group(1):
-            found.append((match.start(1), match.end(1), _MONTH_NUMBERS[token]))
+            _remember_month(found, text, match.start(1), match.end(1), _MONTH_NUMBERS[token])
         else:
-            found.append((match.start(2), match.end(2), _MONTH_NUMBERS[token]))
-    # Separate searches so "sep vs aug" keeps both months. One alternation would
-    # consume the "vs" and hide the month on the other side.
-    for match in re.finditer(rf"\b({_SHORT_MONTH_TOKEN})\s+(?=to|versus|vs\.?|against)\b", text, re.I):
-        token = match.group(1).lower()
-        found.append((match.start(1), match.end(1), _MONTH_NUMBERS[token]))
+            _remember_month(found, text, match.start(2), match.end(2), _MONTH_NUMBERS[token])
+    # Separate searches so "sep vs aug" and "jan through mar" keep both months.
     for match in re.finditer(
-        rf"\b(?:compare|versus|vs\.?|to|against)\s+({_SHORT_MONTH_TOKEN})\b",
+        rf"\b({_SHORT_MONTH_TOKEN})\s+(?=to|through|thru|versus|vs\.?|against)\b",
         text,
         re.I,
     ):
         token = match.group(1).lower()
-        found.append((match.start(1), match.end(1), _MONTH_NUMBERS[token]))
-    for match in re.finditer(r"\b([A-Za-z]{5,12})\b", text):
+        _remember_month(found, text, match.start(1), match.end(1), _MONTH_NUMBERS[token])
+    for match in re.finditer(
+        rf"\b(?:compare|versus|vs\.?|to|through|thru|against)\s+({_SHORT_MONTH_TOKEN})\b",
+        text,
+        re.I,
+    ):
         token = match.group(1).lower()
-        if token in _MONTH_NUMBERS or token in _NOT_A_MONTH_WORD:
+        _remember_month(found, text, match.start(1), match.end(1), _MONTH_NUMBERS[token])
+    for match in re.finditer(r"\b([A-Za-z]{4,12})\b", text):
+        token = match.group(1)
+        month = _MONTH_TYPOS.get(token.lower())
+        if month is None or token.lower() in _MONTH_NUMBERS:
             continue
-        for name, month in _FULL_MONTH_NUMBERS.items():
-            if _within_one_edit(token, name):
-                found.append((match.start(1), match.end(1), month))
-                break
+        if _typo_blocked(text, match.start(1), match.end(1)):
+            continue
+        _remember_month(found, text, match.start(1), match.end(1), month)
     found.sort()
     deduped: list[tuple[int, int, int]] = []
     seen_at: set[int] = set()
@@ -477,6 +533,23 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
             return _NamedWindow("", "", False, label, numeric_day.span())
         iso = concrete.isoformat()
         return _NamedWindow(iso, iso, True, label, numeric_day.span())
+    since_day = re.search(
+        r"\bsince\s+([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+((?:19|20)\d{2}))?\b",
+        text,
+        re.I,
+    )
+    if since_day:
+        month_word = since_day.group(1).lower()
+        month = _MONTH_NUMBERS.get(month_word) or _MONTH_TYPOS.get(month_word)
+        if month is not None:
+            day_number = int(since_day.group(2))
+            explicit = int(since_day.group(3)) if since_day.group(3) else None
+            year = _year_for(month, today, explicit)
+            start = _safe_date(year, month, day_number)
+            label = f"since {_MONTH_NAMES[month]} {day_number}"
+            if start is None or start > today:
+                return _NamedWindow("", "", False, label, since_day.span())
+            return _window_ending(start, today, today, label, since_day.span())
     since = _SINCE_MONTH.search(text)
     if since:
         month = _MONTH_NUMBERS[since.group(1).lower()]
@@ -497,11 +570,11 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
         count = max(1, int(last_n.group(1)))
         start = today - timedelta(days=count - 1)
         return _NamedWindow(start.isoformat(), today.isoformat(), True, f"last {count} days", last_n.span())
-    if _YESTERDAY.search(text):
-        match = _YESTERDAY.search(text)
+    yesterday = re.search(r"\b(?:(?:thru|through)\s+)?yesterday\b", text, re.I)
+    if yesterday:
         day = today - timedelta(days=1)
         iso = day.isoformat()
-        return _NamedWindow(iso, iso, True, "yesterday", match.span() if match else None)
+        return _NamedWindow(iso, iso, True, "yesterday", yesterday.span())
     last_weeks = _LAST_N_WEEKS.search(text)
     if last_weeks:
         count = max(1, _count_token(last_weeks.group(1)) or 1)
@@ -530,10 +603,13 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
         start = date(today.year, start_month, 1)
         end = _month_end(date(today.year, start_month + 2, 1))
         return _window_ending(start, end, today, "this quarter", match.span() if match else None)
-    quarter = _QUARTER.search(text)
-    if quarter:
+    quarters = list(_QUARTER.finditer(text))
+    if quarters:
+        quarter = quarters[0]
         number = int(quarter.group(1))
-        explicit = int(quarter.group(2)) if quarter.group(2) else None
+        years = [int(item.group(2)) if item.group(2) else None for item in quarters[:2]]
+        shared = _one_sided_year(years) if len(quarters) >= 2 else None
+        explicit = int(quarter.group(2)) if quarter.group(2) else shared
         start_month = (number - 1) * 3 + 1
         year = explicit if explicit is not None else _year_for(start_month, today, None)
         start = date(year, start_month, 1)
@@ -558,6 +634,20 @@ def _special_window(text: str, today: date) -> _NamedWindow | None:
             if start > today:
                 return _NamedWindow("", "", False, label, year_only.span())
             return _window_ending(start, end, today, label, year_only.span())
+    # A lone today, or the most recent Monday–Sunday. A month already named
+    # keeps that month, so a trailing "today" does not replace it.
+    if _month_token(text) is None and not _LAST_MONTH.search(text):
+        weekday = _WEEKDAY.search(text)
+        if weekday and not re.search(rf"\b{re.escape(weekday.group(1))}s\b", text, re.I):
+            name = weekday.group(1).lower()
+            delta = (today.weekday() - _WEEKDAY_INDEX[name]) % 7
+            day = today - timedelta(days=delta)
+            iso = day.isoformat()
+            return _NamedWindow(iso, iso, True, name, weekday.span())
+        today_match = _TODAY.search(text)
+        if today_match:
+            iso = today.isoformat()
+            return _NamedWindow(iso, iso, True, "today", today_match.span())
     return None
 
 
@@ -571,26 +661,43 @@ def _named_window(message: str, timezone_name: str | None, now: datetime) -> _Na
         return special
     distinct = _distinct_months(text)
     # "compare September to August" is two periods, not one merged span.
-    comparing = bool(_COMPARE_JOIN.search(text)) and not _DAY_RANGE.search(text) and not _BETWEEN_DAYS.search(text)
+    # "from July to September" and "Jan through Mar" are one span.
+    comparing = bool(_REAL_COMPARE.search(text)) and not _DAY_RANGE.search(text) and not _BETWEEN_DAYS.search(text)
     if len(distinct) >= 2 and not comparing:
         months = [token[2] for token in distinct]
         earlier, later = min(months), max(months)
-        same_year = _year_for(earlier, today, None) == _year_for(later, today, None)
+        explicit_years = [_year_beside(text, token[0], token[1]) for token in distinct]
+        shared_year = next((year for year in explicit_years if year is not None), None)
+        if shared_year is not None:
+            same_year = True
+        else:
+            same_year = _year_for(earlier, today, None) == _year_for(later, today, None)
         day_level = any(_day_after(text, token[1]) for token in distinct)
         label = f"{_MONTH_NAMES[earlier]} and {_MONTH_NAMES[later]}"
-        cover = (distinct[0][0], distinct[-1][1])
-        if day_level or not same_year or later - earlier != 1:
+        cover_end = distinct[-1][1]
+        year_after = re.match(r"\s+((?:19|20)\d{2})\b", text[cover_end : cover_end + 8])
+        if year_after:
+            cover_end += year_after.end()
+        cover = (distinct[0][0], cover_end)
+        middle = text[distinct[0][1] : distinct[-1][0]]
+        ranged = bool(re.search(r"\b(?:to|through|thru)\b", middle, re.I))
+        if day_level or not same_year or (later - earlier != 1 and not ranged):
             return _NamedWindow("", "", False, label, cover)
-        year = _year_for(earlier, today, None)
+        year = shared_year if shared_year is not None else _year_for(earlier, today, None)
         start = date(year, earlier, 1)
         end = _month_end(date(year, later, 1))
         return _window_ending(start, end, today, label, cover)
+    shared_compare_year = None
     if comparing and len(distinct) >= 2:
+        side_years = [_year_beside(text, token[0], token[1]) for token in distinct[:2]]
+        shared_compare_year = _one_sided_year(side_years)
         distinct = distinct[:1]
     token = distinct[0] if distinct else _month_token(text)
     if token:
         token_start, token_end, month = token
         explicit_year = _year_beside(text, token_start, token_end)
+        if explicit_year is None:
+            explicit_year = shared_compare_year
         year = _year_for(month, today, explicit_year)
         label = f"{_MONTH_NAMES[month]} {year}" if explicit_year is not None else _MONTH_NAMES[month]
         day = _day_after(text, token_end)
@@ -653,9 +760,17 @@ def named_period_unserved(message: str, timezone_name: str | None, now: datetime
     return window.label
 
 
-def _quarter_bounds(match: re.Match, today: date) -> tuple[date, date]:
+def _one_sided_year(years: list[int | None]) -> int | None:
+    """A year named on only one side of a compare applies to both sides."""
+    present = [year for year in years if year is not None]
+    if len(present) == 1 and any(year is None for year in years):
+        return present[0]
+    return None
+
+
+def _quarter_bounds(match: re.Match, today: date, fallback_year: int | None = None) -> tuple[date, date]:
     number = int(match.group(1))
-    explicit = int(match.group(2)) if match.group(2) else None
+    explicit = int(match.group(2)) if match.group(2) else fallback_year
     start_month = (number - 1) * 3 + 1
     year = explicit if explicit is not None else _year_for(start_month, today, None)
     start = date(year, start_month, 1)
@@ -663,33 +778,73 @@ def _quarter_bounds(match: re.Match, today: date) -> tuple[date, date]:
     return start, end
 
 
-def named_compare_pair(
-    message: str,
-    timezone_name: str | None,
-    now: datetime,
-) -> tuple[tuple[str, str], tuple[str, str]] | None:
-    """Two quarters joined by compare/vs, in the order they were named.
-
-    None unless both quarters can be served. The first is the current window
-    and the second is the comparison window.
-    """
-    text = message or ""
-    if not re.search(r"\b(?:compare|versus|vs\.?|against)\b", text, re.I):
-        return None
+def _resolved_quarters(text: str, today: date) -> list[tuple[re.Match, date, date]]:
     matches = list(_QUARTER.finditer(text))
-    if len(matches) < 2:
+    years = [int(match.group(2)) if match.group(2) else None for match in matches]
+    shared = _one_sided_year(years[:2]) if len(matches) >= 2 else None
+    resolved = []
+    for index, match in enumerate(matches):
+        fallback = shared if index < 2 else None
+        start, end = _quarter_bounds(match, today, fallback)
+        resolved.append((match, start, end))
+    return resolved
+
+
+def _month_compare_windows(
+    text: str,
+    today: date,
+) -> list[tuple[str, str]] | None:
+    if _DAY_RANGE.search(text) or _BETWEEN_DAYS.search(text):
         return None
-    today = today_in(timezone_name, now)
+    months = _distinct_months(text)
+    if len(months) < 2:
+        return None
+    years = [_year_beside(text, start, end) for start, end, _month in months[:2]]
+    shared = _one_sided_year(years)
     windows: list[tuple[str, str]] = []
-    for match in matches[:2]:
-        start, end = _quarter_bounds(match, today)
-        window = _window_ending(start, end, today, "", match.span())
+    for (token_start, token_end, month), year in zip(months[:2], years):
+        use_year = year if year is not None else shared
+        year_n = _year_for(month, today, use_year)
+        start = date(year_n, month, 1)
+        end = _month_end(start)
+        window = _window_ending(start, end, today, "", (token_start, token_end))
         if not window.served:
             return None
         windows.append((window.start, window.end))
     if windows[0] == windows[1]:
         return None
-    return windows[0], windows[1]
+    return windows
+
+
+def named_compare_pair(
+    message: str,
+    timezone_name: str | None,
+    now: datetime,
+) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    """Two quarters or months joined by compare/vs, in the order they were named.
+
+    A trailing year applies to both sides: "q1 vs q2 2025" is Q1 2025 vs Q2 2025.
+    None unless both windows can be served. The first is the current window.
+    """
+    text = message or ""
+    if not _REAL_COMPARE.search(text):
+        return None
+    today = today_in(timezone_name, now)
+    quarters = _resolved_quarters(text, today)
+    if len(quarters) >= 2:
+        windows: list[tuple[str, str]] = []
+        for match, start, end in quarters[:2]:
+            window = _window_ending(start, end, today, "", match.span())
+            if not window.served:
+                return None
+            windows.append((window.start, window.end))
+        if windows[0] == windows[1]:
+            return None
+        return windows[0], windows[1]
+    months = _month_compare_windows(text, today)
+    if months is None:
+        return None
+    return months[0], months[1]
 
 
 def quarter_spans_covering(
@@ -707,8 +862,7 @@ def quarter_spans_covering(
     except TimezoneUnconfirmed:
         return []
     spans: list[tuple[int, int]] = []
-    for match in _QUARTER.finditer(message or ""):
-        qstart, qend = _quarter_bounds(match, today)
+    for match, qstart, qend in _resolved_quarters(message or "", today):
         window = _window_ending(qstart, qend, today, "", match.span())
         if window.served and window.start == start and window.end == end:
             spans.append(match.span())
@@ -769,10 +923,20 @@ def month_spans_covering(message: str, start: str, end: str) -> list[tuple[int, 
         end_d = date.fromisoformat(end)
     except ValueError:
         return []
+    text = message or ""
     spans: list[tuple[int, int]] = []
-    for token_start, token_end, month in _all_month_tokens(message or ""):
+    for token_start, token_end, month in _all_month_tokens(text):
         if start_d.month == month and end_d.month == month and start_d.year == end_d.year:
-            spans.append((token_start, token_end))
+            span_start = token_start
+            span_end = token_end
+            year_after = re.match(r"\s+((?:19|20)\d{2})\b", text[token_end : token_end + 8])
+            if year_after and int(year_after.group(1)) == start_d.year:
+                span_end = token_end + year_after.end()
+            before = text[max(0, token_start - 8) : token_start]
+            year_before = re.search(r"\b((?:19|20)\d{2})\s+$", before)
+            if year_before and int(year_before.group(1)) == start_d.year:
+                span_start = token_start - (len(before) - year_before.start())
+            spans.append((span_start, span_end))
     return spans
 
 

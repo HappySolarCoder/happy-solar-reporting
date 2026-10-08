@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from copilot.people import office_rows_from_breakdowns, roster_rows_from_breakdowns
 from copilot.periods import Period
 
 API_DIR = Path(__file__).resolve().parents[1]
@@ -97,6 +98,8 @@ class LiveMetrics:
             "created_by_source": (created.get("breakdowns") or {}).get("created_by_lead_gen_source") or {},
             "sit_by_source": (demo.get("breakdowns") or {}).get("sit_by_lead_gen_source") or {},
             "demo_ran_by_source": (demo.get("breakdowns") or {}).get("ran_by_lead_gen_source") or {},
+            "reps": roster_rows_from_breakdowns(sales=sales, ran=ran, created=created, demo=demo),
+            "offices": office_rows_from_breakdowns(sales=sales, ran=ran, created=created, demo=demo),
             "generated_at": sales.get("generated_at") or ran.get("generated_at"),
             "rows": (ran.get("sample_rows") or [])[:50],
             "timezone": period.timezone,

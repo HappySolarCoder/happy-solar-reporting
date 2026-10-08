@@ -22,7 +22,9 @@ from copilot.rates import (
 APPROVED_COMPANY_TIMEZONE = "America/New_York"
 
 # Used when COPILOT_ALLOWED_ROLES is unset or empty. An explicit list replaces it.
-# COPILOT_RANKING_ROLES does not inherit this set. settings_admin stays out of rankings.
+# COPILOT_RANKING_ROLES does not inherit this set. settings_admin stays out of it.
+# The list is marketing-spend access (inbound CAC, Lead Locker, cost per lead).
+# Rep, office, and company performance is open to every allowed role.
 DEFAULT_ALLOWED_ROLES = frozenset(BLOOM_PORTAL_ROLES | {SETTINGS_ADMIN_ROLE})
 
 

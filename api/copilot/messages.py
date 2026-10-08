@@ -7,7 +7,17 @@ UI_TITLE = "Goose · Happy Solar Data Copilot"
 
 WELCOME = (
     "Ask me about Happy Solar performance, metric definitions, or how the company runs. "
-    "I use the data you're allowed to see. What would you like to look at?"
+    "What would you like to look at?"
+)
+
+SPEND_RESTRICTED = (
+    "Marketing spend, including inbound CAC, Lead Locker spend, and cost per lead, "
+    "is limited to leadership. I can still look at demos, appointments, sales, and lead sources."
+)
+
+SPEND_UNAVAILABLE = (
+    "I don't have marketing spend figures in this chat. "
+    "I can still look at demos, appointments, sales, and lead sources."
 )
 
 SCOPE_DENIAL = (
@@ -83,4 +93,10 @@ def uncertainty_sentence(reason: str) -> str:
     # Wrapping it in "since ... so" is the grammar we do not want.
     if cleaned.lower().startswith("i couldn't"):
         return f"{cleaned}. If that number looks off, let me know."
+    # "I'm not sure if you mean Pat or Sam. Which rep did you mean?" is already the one line.
+    if cleaned.lower().startswith("i'm not sure") or cleaned.lower().startswith("i am not sure"):
+        original = (reason or "").strip()
+        if original.endswith((".", "?")):
+            return original
+        return f"{cleaned}."
     return UNCERTAINTY.format(reason=cleaned)

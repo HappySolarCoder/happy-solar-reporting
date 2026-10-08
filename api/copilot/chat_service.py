@@ -25,11 +25,14 @@ from copilot.messages import (
     PAUSED,
     RATES_UNAVAILABLE,
     SCOPE_DENIAL,
+    SPEND_RESTRICTED,
+    SPEND_UNAVAILABLE,
     TIMEZONE_UNCONFIRMED,
     WELCOME,
     WHY_UNKNOWN,
     uncertainty_sentence,
 )
+from copilot.people import asks_about_self, asks_marketing_spend, count_subject, self_query
 from copilot.prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from copilot.rates import INPUT_TOKEN_CEILING, max_affordable_calls, reservation_micro
 from copilot.scope import (
@@ -37,6 +40,7 @@ from copilot.scope import (
     message_source_negated,
     message_sources,
     message_sources_are_exact,
+    question_subjects,
     unconsumed_phrase,
     uncovered_request,
 )
@@ -187,16 +191,32 @@ def _source_names(sources: Any) -> str | None:
     return ", ".join(labels[:-1]) + ", and " + labels[-1]
 
 
-def _demo_sentence(metric: dict[str, Any], label: str, source_name: str | None = None) -> str:
+def _demo_subject(source_name: str | None, voice: str, who: str | None) -> str:
+    subject = f"{source_name} demo rate" if source_name else "demo rate"
+    if who:
+        return f"{who}'s {subject}"
+    if voice == "your":
+        return f"Your {subject}"
+    return f"The {subject}"
+
+
+def _demo_sentence(
+    metric: dict[str, Any],
+    label: str,
+    source_name: str | None = None,
+    *,
+    voice: str = "the",
+    who: str | None = None,
+) -> str:
     rate = metric.get("value")
     demos = metric.get("numerator")
     ran = metric.get("denominator")
-    subject = f"{source_name} demo rate" if source_name else "demo rate"
+    subject = _demo_subject(source_name, voice, who)
     if rate is None:
         if _as_int(ran) == 0:
-            return f"Your {subject} for {label} is N/A, because no appointments ran."
-        return f"Your {subject} for {label} is N/A."
-    head = f"Your {subject} for {label} is {_percent(rate)}."
+            return f"{subject[0].upper() + subject[1:]} for {label} is N/A, because no appointments ran."
+        return f"{subject[0].upper() + subject[1:]} for {label} is N/A."
+    head = f"{subject[0].upper() + subject[1:]} for {label} is {_percent(rate)}."
     if demos is None or ran is None:
         return f"{head} That's {_goal_clause(rate)}."
     demo_word = "demo" if _as_int(demos) == 1 else "demos"
@@ -275,7 +295,67 @@ def _render_definition(payload: dict[str, Any]) -> str:
     return f"{name}: {text}"
 
 
-def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
+def _named_had(
+    who: str | None,
+    voice: str,
+    number: str,
+    noun: str,
+    label: str,
+    singular: str | None = None,
+) -> str:
+    word = singular if number == "1" and singular else noun
+    if who:
+        return f"{who} had {number} {word} for {label}."
+    if voice == "your":
+        return f"You had {number} {word} for {label}."
+    if number == "1":
+        return f"There was {number} {word} for {label}."
+    return f"There were {number} {word} for {label}."
+
+
+def _demo_count_sentence(
+    metric: dict[str, Any],
+    label: str,
+    *,
+    voice: str,
+    who: str | None,
+    missing: bool,
+) -> str:
+    demos = metric.get("numerator")
+    ran = metric.get("denominator")
+    rate = metric.get("value")
+    if missing or demos is None:
+        owner = who or "that name"
+        if who and metric.get("value") is None:
+            return f"I don't have a demo count for {owner}."
+        return _demo_sentence(metric, label, voice=voice, who=who)
+    demo_word = "demo" if _as_int(demos) == 1 else "demos"
+    if who:
+        lead = f"{who} has {_count(demos)} {demo_word} for {label}"
+    elif voice == "your":
+        lead = f"You have {_count(demos)} {demo_word} for {label}"
+    elif _as_int(demos) == 1:
+        lead = f"There was {_count(demos)} {demo_word} for {label}"
+    else:
+        lead = f"There were {_count(demos)} {demo_word} for {label}"
+    if ran is None:
+        head = f"{lead}."
+    else:
+        appt_word = "appointment" if _as_int(ran) == 1 else "appointments"
+        head = f"{lead}, out of {_count(ran)} {appt_word} that ran."
+    if rate is None:
+        return head
+    return f"{head} The demo rate is {_percent(rate)}, {_goal_clause(rate)}."
+
+
+def _render_summary(
+    payload: dict[str, Any],
+    focus: str | None = None,
+    *,
+    voice: str = "the",
+    who: str | None = None,
+    count_of: str | None = None,
+) -> str:
     if not payload.get("available"):
         return (
             f"{NO_APPROVED_DEFINITION} I have not reported a figure. "
@@ -284,28 +364,90 @@ def _render_summary(payload: dict[str, Any], focus: str | None = None) -> str:
     label = _period_label(payload.get("period"))
     source_name = _source_names((payload.get("filters") or {}).get("sources"))
     by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
+    missing_demos = bool(payload.get("demo_counts_missing"))
+    if count_of == "demos" and "demo_rate" in by_id:
+        sentence = _demo_count_sentence(by_id["demo_rate"], label, voice=voice, who=who, missing=missing_demos)
+        if missing_demos and who:
+            sales = by_id.get("sales")
+            ran = by_id.get("opps_ran")
+            extra = ""
+            if ran is not None and ran.get("value") is not None:
+                extra = " " + _named_had(
+                    who,
+                    voice,
+                    _count(ran.get("value")),
+                    "appointments that ran",
+                    label,
+                    singular="appointment that ran",
+                )
+            elif sales is not None and sales.get("value") is not None:
+                extra = " " + _named_had(who, voice, _count(sales.get("value")), "sales", label, singular="sale")
+            return (sentence + extra).strip()
+        return sentence
+    if count_of == "appointments" and ("opps_ran" in by_id or "demo_rate" in by_id):
+        ran_metric = by_id.get("opps_ran") or {}
+        ran_value = ran_metric.get("value")
+        if ran_value is None and "demo_rate" in by_id:
+            ran_value = by_id["demo_rate"].get("denominator")
+        sentence = _named_had(
+            who,
+            voice,
+            _count(ran_value),
+            "appointments that ran",
+            label,
+            singular="appointment that ran",
+        )
+        if "demo_rate" in by_id and not missing_demos:
+            sentence = sentence + " " + _demo_sentence(by_id["demo_rate"], label, source_name, voice=voice, who=who)
+        return sentence
+    if count_of == "sales" and "sales" in by_id:
+        return _named_had(who, voice, _count(by_id["sales"].get("value")), "sales", label, singular="sale")
+    if missing_demos and who and focus == "demo_rate":
+        sentence = f"I don't have a demo count for {who}."
+        if "sales" in by_id:
+            sentence += " " + _named_had(who, voice, _count(by_id["sales"].get("value")), "sales", label, singular="sale")
+        elif "opps_ran" in by_id:
+            sentence += " " + _named_had(
+                who,
+                voice,
+                _count(by_id["opps_ran"].get("value")),
+                "appointments that ran",
+                label,
+                singular="appointment that ran",
+            )
+        return sentence
     if "demo_rate" in by_id and (focus == "demo_rate" or set(by_id) == {"demo_rate"}):
-        return _demo_sentence(by_id["demo_rate"], label, source_name)
+        return _demo_sentence(by_id["demo_rate"], label, source_name, voice=voice, who=who)
     if set(by_id) == {"sales"}:
-        return f"For {label}, you had {_count(by_id['sales'].get('value'))} sales."
+        return _named_had(who, voice, _count(by_id["sales"].get("value")), "sales", label, singular="sale")
     if set(by_id) == {"opps_created"}:
-        return f"For {label}, {_count(by_id['opps_created'].get('value'))} opportunities were created."
+        created = _count(by_id["opps_created"].get("value"))
+        if who:
+            return f"{who} had {created} opportunities created for {label}."
+        return f"For {label}, {created} opportunities were created."
     if set(by_id) == {"opps_ran"}:
-        return f"For {label}, {_count(by_id['opps_ran'].get('value'))} appointments ran."
+        return _named_had(
+            who,
+            voice,
+            _count(by_id["opps_ran"].get("value")),
+            "appointments that ran",
+            label,
+            singular="appointment that ran",
+        )
     if set(by_id) == {"opp2prelim"}:
         return _opp_sentence(by_id["opp2prelim"])
     sales = by_id.get("sales") or {}
     created = by_id.get("opps_created") or {}
     ran = by_id.get("opps_ran") or {}
     sentences = [
-        f"For {label}, you had {_count(sales.get('value'))} sales.",
+        _named_had(who, voice, _count(sales.get("value")), "sales", label, singular="sale"),
         (
             f"{_count(created.get('value'))} opportunities were created, and "
             f"{_count(ran.get('value'))} appointments ran."
         ),
     ]
     if "demo_rate" in by_id:
-        sentences.append(_demo_sentence(by_id["demo_rate"], label, source_name))
+        sentences.append(_demo_sentence(by_id["demo_rate"], label, source_name, voice=voice, who=who))
     if "opp2prelim" in by_id:
         sentences.append(_opp_sentence(by_id["opp2prelim"]))
     return " ".join(sentences)
@@ -356,9 +498,15 @@ def _plain_face(text: str) -> str:
     return re.sub(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", _stamp, text)
 
 
-def _change_sentence(row: dict[str, Any]) -> str:
+def _change_sentence(row: dict[str, Any], who: str | None = None) -> str:
     metric_id = row.get("metric_id") or ""
     name = _SENTENCE_NAME.get(metric_id, "That figure")
+    if who and metric_id == "demo_rate":
+        name = f"{who}'s demo rate"
+    elif who and metric_id == "sales":
+        name = f"{who}'s sales"
+    elif who and metric_id == "opps_ran":
+        name = f"{who}'s appointments that ran"
     current = _percent(row.get("current")) if metric_id in _RATE_IDS else _count(row.get("current"))
     prior = _percent(row.get("prior")) if metric_id in _RATE_IDS else _count(row.get("prior"))
     change = row.get("absolute_change")
@@ -391,14 +539,17 @@ def _render_sources(payload: dict[str, Any]) -> str:
     return " ".join(lines)
 
 
-def _render_compare(payload: dict[str, Any]) -> str:
+def _render_compare(payload: dict[str, Any], who: str | None = None) -> str:
     if not payload.get("available"):
         return f"{NO_APPROVED_DEFINITION} I have not calculated a change."
     current = _period_label(payload.get("period"))
     prior = _period_label(payload.get("comparison_period"))
-    lines = [f"Comparing {current} with {prior}."]
+    if who:
+        lines = [f"Comparing {who} for {current} with {prior}."]
+    else:
+        lines = [f"Comparing {current} with {prior}."]
     for row in payload["rows"]:
-        lines.append(_change_sentence(row))
+        lines.append(_change_sentence(row, who))
     return " ".join(lines)
 
 
@@ -635,6 +786,33 @@ def _paid_interpretation(
     if not text or _DIGIT.search(text):
         return None
     return text
+
+
+def _roster_voice(note: dict | None, *, self_voice: bool) -> tuple[str, str | None, list[str]]:
+    note = note or {}
+    consumed = [str(item) for item in (note.get("consumed") or []) if item]
+    if note.get("status") == "applied" and self_voice:
+        return "your", None, consumed
+    if note.get("status") == "applied" and note.get("label") and " or " not in str(note.get("label")):
+        return "the", str(note.get("label")), consumed
+    return "the", None, consumed
+
+
+def _apply_roster_decision(decision, note: dict | None, *, asked_as_self: bool):
+    note = note or {}
+    status = note.get("status")
+    reason = decision.uncertainty_reason or ""
+    if status == "applied" and reason.lower().startswith("i couldn't filter"):
+        return replace(decision, uncertain=False, uncertainty_reason="")
+    if status == "ambiguous" and note.get("reason"):
+        return replace(decision, uncertain=True, uncertainty_reason=str(note["reason"]))
+    if asked_as_self and status != "applied" and not reason:
+        return replace(
+            decision,
+            uncertain=True,
+            uncertainty_reason="I'm not sure which rep this sign-in is, so this is company-wide",
+        )
+    return decision
 
 
 def handle_chat(
@@ -885,9 +1063,19 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
     answer = ""
     code = decision_intent
     unserved_period = None
+    consumed_names: list[str] = []
+    self_ask = asks_about_self(text)
+    asked_as_self = False
     try:
         if decision_intent == "deny":
             answer = SCOPE_DENIAL
+        elif asks_marketing_spend(text):
+            if identity.role in config.ranking_roles:
+                answer = SPEND_UNAVAILABLE
+                code = "spend_unavailable"
+            else:
+                answer = SPEND_RESTRICTED
+                code = "spend_restricted"
         elif decision_intent == "greeting":
             answer = WELCOME
         elif decision_intent == "help":
@@ -937,9 +1125,61 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     and not comparison_start
                     and not comparison_end
                 )
+                raw_people, offices = question_subjects(text)
+                asked_as_self = self_ask and not raw_people and not offices
+                people = list(raw_people)
+                if asked_as_self:
+                    hint = self_query(identity)
+                    if hint:
+                        people = [hint]
+                if not source_ids and len(people) == 1:
+                    args["person"] = people[0]
+                elif not source_ids and not people and len(offices) == 1:
+                    args["office"] = offices[0]
+                person_vs = (
+                    decision_intent == "compare"
+                    and len(people) == 2
+                    and not source_ids
+                )
                 if metrics is None:
                     answer = NO_APPROVED_DEFINITION + " I can't reach the reporting numbers for this question."
                     code = "metrics_unavailable"
+                elif person_vs:
+                    pair_args = {
+                        "start": filters["start"],
+                        "end": filters["end"],
+                        "sources": [],
+                    }
+                    if mapped:
+                        pair_args["metric_ids"] = [mapped]
+                    left = execute("get_company_summary", {**pair_args, "person": people[0]}, ctx)
+                    right = execute("get_company_summary", {**pair_args, "person": people[1]}, ctx)
+                    left_note = left.get("roster_filter") or {}
+                    right_note = right.get("roster_filter") or {}
+                    if left_note.get("status") == "applied" and right_note.get("status") == "applied":
+                        label = format_range(filters["start"], filters["end"]) or "that period"
+                        answer = _render_source_compare(
+                            [(str(left_note.get("label") or people[0]), left), (str(right_note.get("label") or people[1]), right)],
+                            label,
+                        )
+                        tool_payload = dict(left)
+                        tool_payload["roster_filter"] = {
+                            "status": "applied",
+                            "label": f"{left_note.get('label')} or {right_note.get('label')}",
+                            "kind": "rep",
+                            "consumed": [
+                                str(left_note.get("label") or ""),
+                                str(right_note.get("label") or ""),
+                                *people,
+                            ],
+                        }
+                    else:
+                        ambiguous = left_note if left_note.get("status") == "ambiguous" else right_note
+                        tool_payload = execute(name, args, ctx)
+                        answer = _render_compare(tool_payload)
+                        if ambiguous.get("status") == "ambiguous":
+                            tool_payload = dict(tool_payload)
+                            tool_payload["roster_filter"] = ambiguous
                 elif source_vs_source:
                     parts: list[tuple[str, dict[str, Any]]] = []
                     for source_id in source_ids:
@@ -974,10 +1214,20 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                             )
                 else:
                     tool_payload = execute(name, args, ctx)
+                    voice, who, _ignored = _roster_voice(
+                        tool_payload.get("roster_filter"),
+                        self_voice=asked_as_self,
+                    )
                     if decision_intent == "company_summary":
-                        answer = _render_summary(tool_payload, focus=decision.matched_term)
+                        answer = _render_summary(
+                            tool_payload,
+                            focus=decision.matched_term,
+                            voice=voice,
+                            who=who,
+                            count_of=count_subject(text),
+                        )
                     elif decision_intent == "compare":
-                        answer = _render_compare(tool_payload)
+                        answer = _render_compare(tool_payload, who=who)
                     else:
                         answer = _render_sources(tool_payload)
                 if tool_payload.get("reason") == "definition_not_approved":
@@ -1023,6 +1273,16 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 model_note = LEDGER_UNAVAILABLE if configuration_problems(config, now.date()) else RATES_UNAVAILABLE
     elif model is not None and not getattr(model, "configured", True):
         model_note = MODEL_UNAVAILABLE
+    roster_note = tool_payload.get("roster_filter") if isinstance(tool_payload, dict) else None
+    if decision_intent in {"company_summary", "compare", "source_performance"} and code == decision_intent:
+        decision = _apply_roster_decision(decision, roster_note if isinstance(roster_note, dict) else {}, asked_as_self=asked_as_self)
+        if isinstance(roster_note, dict) and roster_note.get("status") == "applied":
+            consumed_names = [str(item) for item in (roster_note.get("consumed") or []) if item]
+            label = str(roster_note.get("label") or "")
+            if roster_note.get("kind") == "office" and label:
+                filters["office"] = label
+            elif label and " or " not in label:
+                filters["person"] = label
     reason = None
     if code != "budget_limit" and tool_payload.get("available"):
         if filters.get("unrecognized_source"):
@@ -1073,6 +1333,7 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 intent=decision_intent,
                 compared=compared,
                 matched_term=decision.matched_term,
+                consumed=consumed_names,
             )
             # A name or place caveat already says who could not be filtered. Do not replace it.
             if phrase and not decision.uncertain:

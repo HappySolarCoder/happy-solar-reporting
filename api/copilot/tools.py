@@ -23,6 +23,14 @@ from copilot.formulas import (
     unmapped_labels,
 )
 from copilot.knowledge import search as search_documents
+from copilot.people import (
+    apply_counts,
+    match_office,
+    match_rep,
+    offices_from_bundle,
+    reps_from_bundle,
+    slice_counts,
+)
 from copilot.periods import Period, TimezoneUnconfirmed, equivalent_prior_period, period_from_dates
 from copilot.pii import scrub_rows
 
@@ -319,9 +327,8 @@ def _load_bundle(period: Period, ctx: ToolContext) -> dict[str, Any]:
         if "timezone" in message or "america/new_york" in message:
             raise ToolRejected("company timezone is not confirmed for the reporting modules") from exc
         raise ToolRejected("reporting functions failed") from exc
-    if not ctx.ranking_allowed:
-        for key in ("sales_by_owner", "ran_by_owner", "ran_by_setter", "sales_by_setter"):
-            bundle.pop(key, None)
+    # Rep and office rows stay on the bundle for every signed-in role.
+    # ranking_allowed is marketing-spend access, checked before a spend question is answered.
     rows = scrub_rows(list(bundle.get("rows") or []), limit=ctx.config.max_rows_per_tool)
     evidence_id = "ev_" + uuid.uuid4().hex[:16]
     ctx.issued_evidence[evidence_id] = {"rows": rows, "period": period.as_dict()}
@@ -329,6 +336,46 @@ def _load_bundle(period: Period, ctx: ToolContext) -> dict[str, Any]:
     bundle["rows"] = rows
     bundle["evidence_id"] = evidence_id
     return bundle
+
+
+def _named_slice(bundle: dict[str, Any], args: dict) -> tuple[dict[str, Any], dict | None]:
+    """Scope totals to one rep or office when the bundle has that row.
+
+    A lead-source filter is not crossed with a person. The caller keeps the source.
+    """
+    if _sources(args):
+        return bundle, None
+    person = str(args.get("person") or "").strip()
+    office = str(args.get("office") or "").strip()
+    if person:
+        reps = reps_from_bundle(bundle)
+        if not reps:
+            return bundle, {"status": "missing", "label": person}
+        found = match_rep(person, reps)
+        if found.get("status") != "applied":
+            return bundle, found
+        scoped = apply_counts(bundle, slice_counts(rep=found["rep"]))
+        return scoped, {
+            "status": "applied",
+            "label": found["label"],
+            "kind": found.get("kind") or "",
+            "consumed": [found["label"], person],
+        }
+    if office:
+        offices = offices_from_bundle(bundle)
+        if not offices:
+            return bundle, {"status": "missing", "label": office}
+        found = match_office(office, offices)
+        if found.get("status") != "applied":
+            return bundle, found
+        scoped = apply_counts(bundle, slice_counts(office=found["office"]))
+        return scoped, {
+            "status": "applied",
+            "label": found["label"],
+            "kind": "office",
+            "consumed": [found["label"], office],
+        }
+    return bundle, None
 
 
 def _bundle_for_sources(bundle: dict[str, Any], sources: tuple[str, ...]) -> dict[str, Any]:
@@ -365,8 +412,16 @@ def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
         }
     bundle = _load_bundle(period, ctx)
     selected = _sources(args)
-    values = _value_bundle(_bundle_for_sources(bundle, selected), ctx.entries)
+    scoped, roster_filter = _named_slice(bundle, args)
+    if roster_filter is None:
+        scoped = _bundle_for_sources(bundle, selected)
+    values = _value_bundle(scoped, ctx.entries)
     filters = {"sources": list(selected)}
+    if roster_filter and roster_filter.get("status") == "applied":
+        if roster_filter.get("kind") == "office":
+            filters["office"] = roster_filter.get("label")
+        else:
+            filters["person"] = roster_filter.get("label")
     metrics = [
         _metric_result(metric_id, values, period, ctx.entries, filters)
         for metric_id in requested
@@ -380,6 +435,8 @@ def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
         "evidence_id": bundle.get("evidence_id"),
         "data_as_of": values.get("generated_at"),
         "aggregation": "shared_reporting_functions",
+        "roster_filter": roster_filter,
+        "demo_counts_missing": bool(scoped.get("demo_counts_missing")),
     }
 
 
@@ -460,8 +517,15 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
             "comparison_basis": prior.basis,
         }
     selected = _sources(args)
-    current_bundle = _bundle_for_sources(_load_bundle(period, ctx), selected)
-    prior_bundle = _bundle_for_sources(_load_bundle(prior, ctx), selected)
+    current_raw = _load_bundle(period, ctx)
+    prior_raw = _load_bundle(prior, ctx)
+    current_scoped, roster_filter = _named_slice(current_raw, args)
+    prior_scoped, _prior_note = _named_slice(prior_raw, args)
+    if roster_filter is None:
+        current_scoped = _bundle_for_sources(current_raw, selected)
+        prior_scoped = _bundle_for_sources(prior_raw, selected)
+    current_bundle = current_scoped
+    prior_bundle = prior_scoped
     current_values = _value_bundle(current_bundle, ctx.entries)
     prior_values = _value_bundle(prior_bundle, ctx.entries)
     rows = []
@@ -500,4 +564,5 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
             if prior.basis == "month_to_date_equivalent_elapsed"
             else "The comparison uses the prior window described in comparison_basis."
         ),
+        "roster_filter": roster_filter,
     }

@@ -3888,6 +3888,163 @@ class CopilotTests(unittest.TestCase):
         )
         self.assertFalse(ignored["body"]["uncertain"])
 
+    def test_wrong_first_name_uses_the_roster_name_and_one_caveat(self):
+        """John Meehan is not on the roster. The number stays Pat's, with one caveat."""
+        from dataclasses import replace
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            allowed_roles=frozenset({"settings_admin", "closer", "manager"}),
+            max_requests_per_minute=40,
+            max_turns_per_day=40,
+            max_turns_per_month=40,
+            max_active_company=40,
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        month = "Oct 1\u20134, 2026"
+        number = (
+            f"Pat Meehan has 2 demos for {month}, out of 4 appointments that ran. "
+            "The demo rate is 50.0%, right at the 50% goal."
+        )
+        roster = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {
+                    "name": "Meehan",
+                    "kind": "setter",
+                    "sits": 2,
+                    "demo_ran": 4,
+                    "ran": 4,
+                    "aliases": ["Pat Meehan"],
+                    "roster_names": ["Pat Meehan"],
+                }
+            ],
+        )
+        last_name_only = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {
+                    "name": "Meehan",
+                    "kind": "setter",
+                    "sits": 2,
+                    "demo_ran": 4,
+                    "ran": 4,
+                    "roster_names": ["Meehan"],
+                }
+            ],
+        )
+        two_people = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            reps=[
+                {
+                    "name": "Meehan",
+                    "kind": "setter",
+                    "sits": 2,
+                    "demo_ran": 4,
+                    "ran": 4,
+                    "aliases": ["Pat Meehan", "Sam Meehan"],
+                    "roster_names": ["Pat Meehan", "Sam Meehan"],
+                }
+            ],
+        )
+
+        def ask(message, request_id, metrics):
+            result = _chat(
+                message,
+                store=store,
+                metrics=metrics,
+                config=roomy,
+                filters=page,
+                request_id=request_id,
+                bloom_token_secret="test-secret",
+            )
+            answer = result["body"]["answer"]
+            self.assertIsNone(re.search(r"\b(?:sit|sits|sat)\b", answer, re.I), answer)
+            return result
+
+        john = ask(
+            "How many demos does John Meehan have this month?",
+            "req_john_meehan",
+            roster,
+        )
+        self.assertEqual(
+            john["body"]["answer"],
+            number
+            + " I don't see a John Meehan, so this is Pat Meehan. If you meant someone else, let me know.",
+        )
+        self.assertNotIn("John Meehan has", john["body"]["answer"])
+        self.assertNotIn("If that number looks off", john["body"]["answer"])
+        self.assertTrue(john["body"]["uncertain"])
+        self.assertEqual(john["body"]["answer"].count("If you meant someone else"), 1)
+
+        unnamed = ask(
+            "How many demos does John Meehan have this month?",
+            "req_meehan_no_first_name",
+            last_name_only,
+        )
+        self.assertEqual(
+            unnamed["body"]["answer"],
+            f"Meehan has 2 demos for {month}, out of 4 appointments that ran. "
+            "The demo rate is 50.0%, right at the 50% goal. "
+            "I couldn't confirm John Meehan, so this is Meehan. If that number looks off, let me know.",
+        )
+        self.assertNotIn("John Meehan has", unnamed["body"]["answer"])
+        self.assertTrue(unnamed["body"]["uncertain"])
+        self.assertEqual(unnamed["body"]["answer"].count("If that number looks off"), 1)
+
+        both = ask(
+            "How many demos does John Meehan have this month?",
+            "req_john_two_roster_names",
+            two_people,
+        )
+        self.assertIn(
+            f"There were 11 demos for {month}, out of 27 appointments that ran.",
+            both["body"]["answer"],
+        )
+        self.assertIn(
+            "I'm not sure if you mean Pat Meehan or Sam Meehan. Which rep did you mean?",
+            both["body"]["answer"],
+        )
+        self.assertNotIn("John Meehan has", both["body"]["answer"])
+
+        from copilot.people import match_rep, reps_from_bundle, roster_rows_from_breakdowns
+
+        demo = {
+            "breakdowns": {
+                "sit_by_setter_last_name": {"Meehan": 2},
+                "ran_by_setter_last_name": {"Meehan": 4},
+            }
+        }
+        mapped = roster_rows_from_breakdowns(
+            demo=demo,
+            setter_profiles=[{"full_name": "Pat Meehan", "last_name": "Meehan", "ghl_user_id": "setterPat"}],
+        )
+        self.assertEqual(mapped[0]["roster_names"], ["Pat Meehan"])
+        self.assertEqual(mapped[0]["aliases"], ["Pat Meehan"])
+        found = match_rep("John Meehan", reps_from_bundle({"reps": mapped}))
+        self.assertEqual(found["label"], "Pat Meehan")
+        self.assertEqual(
+            found["reason"],
+            "I don't see a John Meehan, so this is Pat Meehan. If you meant someone else, let me know.",
+        )
+        last_only = roster_rows_from_breakdowns(
+            demo=demo,
+            setter_profiles=[{"full_name": "Meehan", "last_name": "Meehan"}],
+        )
+        self.assertEqual(last_only[0]["roster_names"], ["Meehan"])
+        self.assertNotIn("aliases", last_only[0])
+        found_last = match_rep("John Meehan", reps_from_bundle({"reps": last_only}))
+        self.assertEqual(found_last["label"], "Meehan")
+        self.assertEqual(found_last["reason"], "I couldn't confirm John Meehan, so this is Meehan")
+
 
 if __name__ == "__main__":
     unittest.main()

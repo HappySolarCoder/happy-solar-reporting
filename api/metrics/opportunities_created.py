@@ -42,6 +42,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from ghl_user_names import load_ghl_user_names
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
     attributed_last_name,
@@ -335,8 +336,17 @@ def pipeline_name_lookup(db: firestore.Client, pipeline_ids) -> dict[str, str]:
     return m
 
 
+def _ghl_doc_name(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    return compact_str(data.get("name")) or best_person_name(data) or None
+
+
 def fill_missing_user_names(db: firestore.Client, names: dict[str, str], needed_ids) -> None:
-    """Bounded ghl_users_v2 get_all for assignedTo IDs that missed roster. No full user stream."""
+    """Batched ghl_users_v2 names for assignedTo ids that missed roster.
+
+    `in` queries of 30, cached for 60 seconds. No per-user query and no full user stream.
+    """
     missed: list[str] = []
     seen: set[str] = set()
     for raw in needed_ids:
@@ -349,34 +359,10 @@ def fill_missing_user_names(db: firestore.Client, names: dict[str, str], needed_
         missed.append(uid)
     if not missed:
         return
-    refs = [db.collection("ghl_users_v2").document(uid) for uid in missed]
-    for i in range(0, len(refs), 300):
-        for snap in db.get_all(refs[i : i + 300]):
-            if not snap.exists:
-                continue
-            d = snap.to_dict() or {}
-            name = compact_str(d.get("name")) or best_person_name(d) or None
-            if not name:
-                continue
-            for key in {
-                compact_str(d.get("id")),
-                compact_str(d.get("userId")),
-                compact_str(snap.id),
-            }:
-                if key:
-                    names[key] = name
-    for uid in missed:
-        if uid in names:
-            continue
-        for field in ("id", "userId"):
-            hits = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
-            if not hits:
-                continue
-            data = hits[0].to_dict() or {}
-            name = compact_str(data.get("name")) or best_person_name(data) or None
-            if name:
-                names[uid] = name
-            break
+    found = load_ghl_user_names(db, missed, _ghl_doc_name, namespace="opportunities_created")
+    for key, name in found.items():
+        if key and name:
+            names[key] = name
 
 
 def user_name_lookup(db: firestore.Client, c: MetricContract) -> dict[str, str]:

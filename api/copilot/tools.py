@@ -355,6 +355,8 @@ def _applied_note(found: dict, asked: str) -> dict:
         note["primary_kind"] = found["primary_kind"]
     if found.get("roles"):
         note["roles"] = found["roles"]
+    if found.get("reason"):
+        note["reason"] = found["reason"]
     return note
 
 

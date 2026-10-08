@@ -29,6 +29,7 @@ class Rep:
     ghl_user_id: str | None = None
     email: str | None = None
     aliases: tuple[str, ...] = ()
+    roster_names: tuple[str, ...] = ()
 
 
 def asks_about_self(text: str) -> bool:
@@ -141,6 +142,15 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
             alias = " ".join(str(raw or "").split())
             if alias and alias.casefold() not in {item.casefold() for item in aliases} and alias.casefold() != name.casefold():
                 aliases.append(alias)
+        roster_values = row.get("roster_names") or []
+        if isinstance(roster_values, str):
+            roster_values = [roster_values]
+        roster_names: list[str] = []
+        if isinstance(roster_values, (list, tuple)):
+            for raw in roster_values:
+                label = " ".join(str(raw or "").split())
+                if label and label.casefold() not in {item.casefold() for item in roster_names}:
+                    roster_names.append(label)
         found.append(
             Rep(
                 name=name,
@@ -153,6 +163,7 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
                 ghl_user_id=ghl_user_id,
                 email=email,
                 aliases=tuple(aliases),
+                roster_names=tuple(roster_names),
             )
         )
     return found
@@ -213,22 +224,31 @@ def _fuller_name(reps: list[Rep]) -> str:
     return max((rep.name for rep in reps), key=lambda name: (len(_parts(name)), len(name)))
 
 
-def _applied(rep: Rep, roles: list[Rep] | None = None, label: str | None = None) -> dict[str, Any]:
+def _applied(
+    rep: Rep,
+    roles: list[Rep] | None = None,
+    label: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
     group = roles or [rep]
     if len(group) < 2:
-        return {"status": "applied", "label": label or rep.name, "kind": rep.kind, "rep": rep}
-    primary = next((item for item in group if item.kind == "closer" and item.sits is not None), None)
-    if primary is None:
-        primary = next((item for item in group if item.sits is not None), group[0])
-    kinds = {item.kind for item in group}
-    return {
-        "status": "applied",
-        "label": _fuller_name(group),
-        "kind": "both" if len(kinds) > 1 else primary.kind,
-        "primary_kind": primary.kind,
-        "rep": primary,
-        "roles": [_role_payload(item) for item in group],
-    }
+        result = {"status": "applied", "label": label or rep.name, "kind": rep.kind, "rep": rep}
+    else:
+        primary = next((item for item in group if item.kind == "closer" and item.sits is not None), None)
+        if primary is None:
+            primary = next((item for item in group if item.sits is not None), group[0])
+        kinds = {item.kind for item in group}
+        result = {
+            "status": "applied",
+            "label": _fuller_name(group),
+            "kind": "both" if len(kinds) > 1 else primary.kind,
+            "primary_kind": primary.kind,
+            "rep": primary,
+            "roles": [_role_payload(item) for item in group],
+        }
+    if reason:
+        result["reason"] = reason
+    return result
 
 
 def _same_person(left: Rep, right: Rep) -> bool:
@@ -312,24 +332,111 @@ def _ambiguous(query: str, reps: list[Rep]) -> dict[str, Any]:
     }
 
 
+def _roster_listed(rep: Rep) -> list[str]:
+    """Names the roster listed for this row, including a last-name-only display name."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in (*rep.roster_names, *rep.aliases):
+        label = " ".join(str(raw or "").split())
+        key = label.casefold()
+        if not label or key in seen:
+            continue
+        seen.add(key)
+        names.append(label)
+    return names
+
+
+def _pick_roster_name(options: list[str], last: str) -> str:
+    exact = [name for name in options if len(_parts(name)) == 2 and _last_token(name) == last]
+    if len(exact) == 1:
+        return exact[0]
+    return min(options, key=lambda name: (len(_parts(name)), len(name)))
+
+
+def _ambiguous_names(query: str, options: list[str]) -> dict[str, Any]:
+    unique: list[str] = []
+    for option in options:
+        if option not in unique:
+            unique.append(option)
+    listed = " or ".join(unique) if len(unique) == 2 else ", ".join(unique[:-1]) + ", or " + unique[-1]
+    return {
+        "status": "ambiguous",
+        "label": query,
+        "options": unique,
+        "reason": f"I'm not sure if you mean {listed}. Which rep did you mean?",
+    }
+
+
+def _mismatched_first_name(query: str, rep: Rep) -> tuple[str | None, str | None, list[str] | None]:
+    """Label and caveat when a last-name row's roster name disagrees with the question.
+
+    No roster metadata keeps the asked name and adds no caveat. A roster first
+    name that differs still uses that person's number, under the roster name.
+    Several different roster first names are ambiguous. A roster record with no
+    first name keeps the last-name label and the standard caveat.
+    """
+    shown = _display_query(query)
+    asked = _parts(shown)
+    if len(asked) < 2 or _last_token(shown) != _last_token(rep.name):
+        return None, None, None
+    listed = _roster_listed(rep)
+    if not listed:
+        if len(asked) > len(_parts(rep.name)):
+            return shown, None, None
+        return None, None, None
+    with_first = [name for name in listed if len(_parts(name)) >= 2]
+    if not with_first:
+        return rep.name, f"I couldn't confirm {shown}, so this is {rep.name}", None
+    by_first: dict[str, list[str]] = {}
+    for name in with_first:
+        by_first.setdefault(_parts(name)[0], []).append(name)
+    if asked[0] in by_first:
+        return _pick_roster_name(by_first[asked[0]], asked[-1]), None, None
+    if len(by_first) == 1:
+        chosen = _pick_roster_name(with_first, asked[-1])
+        return (
+            chosen,
+            f"I don't see a {shown}, so this is {chosen}. If you meant someone else, let me know.",
+            None,
+        )
+    options = [_pick_roster_name(names, asked[-1]) for names in by_first.values()]
+    return None, None, options
+
+
 def _resolve(query: str, winners: list[Rep], reps: list[Rep], *, prefer_query: bool = False) -> dict[str, Any]:
     """One person, including both roles when the ids match. Different people stay apart."""
     groups = _group_people(winners)
     if len(groups) > 1:
         return _ambiguous(query, [group[0] for group in groups])
     group = list(groups[0])
+    label = None
+    reason = None
+    if prefer_query:
+        label, reason, options = _mismatched_first_name(query, group[0])
+        if options:
+            return _ambiguous_names(query, options)
     partner = _identity_partner(group[0], reps)
     if partner is not None and partner not in group:
         group.append(partner)
-    label = None
-    if len(group) == 1:
+    if len(group) == 1 and label is None:
         shown = _display_query(query)
         matched_alias = next((alias for alias in group[0].aliases if _parts(alias) == _parts(shown)), "")
-        if prefer_query and shown and _last_token(shown) == _last_token(group[0].name) and len(_parts(shown)) > len(_parts(group[0].name)):
-            label = shown
-        elif matched_alias and len(_parts(matched_alias)) > len(_parts(group[0].name)):
+        if matched_alias and len(_parts(matched_alias)) > len(_parts(group[0].name)):
             label = matched_alias
-    return _applied(group[0], group, label=label)
+    applied = _applied(group[0], group, label=label, reason=reason)
+    if reason and len(group) > 1:
+        spoken = str(applied.get("label") or "")
+        shown = _display_query(query)
+        spoken_first = _parts(spoken)[:1]
+        asked_first = _parts(shown)[:1]
+        if spoken and spoken_first != asked_first:
+            if reason.startswith("I don't see a "):
+                applied["reason"] = (
+                    f"I don't see a {shown}, so this is {spoken}. If you meant someone else, let me know."
+                )
+            elif reason.startswith("I couldn't confirm "):
+                applied["reason"] = f"I couldn't confirm {shown}, so this is {spoken}"
+    return applied
 
 
 def _exact_reps(query: str, reps: list[Rep]) -> list[Rep]:
@@ -536,10 +643,13 @@ def roster_rows_from_breakdowns(
             continue
         hits = by_last.get(str(row["name"]).casefold()) or []
         aliases: list[str] = []
+        roster_names: list[str] = []
         ids: set[str] = set()
         emails: set[str] = set()
         for hit in hits:
             full = " ".join(str(hit.get("full_name") or "").split())
+            if full and full.casefold() not in {item.casefold() for item in roster_names}:
+                roster_names.append(full)
             if full and full.casefold() != str(row["name"]).casefold() and full not in aliases:
                 aliases.append(full)
             user_id = str(hit.get("ghl_user_id") or "").strip()
@@ -548,6 +658,8 @@ def roster_rows_from_breakdowns(
                 ids.add(user_id)
             if email:
                 emails.add(email)
+        if roster_names:
+            row["roster_names"] = roster_names
         if aliases:
             row["aliases"] = aliases
         if len(ids) == 1:

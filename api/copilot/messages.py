@@ -93,6 +93,12 @@ def uncertainty_sentence(reason: str) -> str:
     # Wrapping it in "since ... so" is the grammar we do not want.
     if cleaned.lower().startswith("i couldn't"):
         return f"{cleaned}. If that number looks off, let me know."
+    # "I don't see a John Meehan, so this is Pat Meehan. If you meant someone else, let me know."
+    if cleaned.lower().startswith("i don't see") or cleaned.lower().startswith("i do not see"):
+        original = (reason or "").strip()
+        if original.endswith((".", "?")):
+            return original
+        return f"{cleaned}."
     # "I'm not sure if you mean Pat or Sam. Which rep did you mean?" is already the one line.
     if cleaned.lower().startswith("i'm not sure") or cleaned.lower().startswith("i am not sure"):
         original = (reason or "").strip()

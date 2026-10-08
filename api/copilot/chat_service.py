@@ -873,6 +873,8 @@ def _roster_voice(note: dict | None, *, self_voice: bool) -> tuple[str, str | No
 def _apply_roster_decision(decision, note: dict | None, *, asked_as_self: bool):
     note = note or {}
     status = note.get("status")
+    if status == "applied" and note.get("reason"):
+        return replace(decision, uncertain=True, uncertainty_reason=str(note["reason"]))
     reason = decision.uncertainty_reason or ""
     if status == "applied" and reason.lower().startswith("i couldn't filter"):
         return replace(decision, uncertain=False, uncertainty_reason="")

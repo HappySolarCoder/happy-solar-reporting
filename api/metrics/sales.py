@@ -40,6 +40,7 @@ if str(_METRICS_DIR) not in sys.path:
 from google.oauth2 import service_account
 from google.cloud import firestore
 
+from ghl_user_names import load_ghl_user_names
 from pipeline_scope import pipeline_in_scope, truthy_flag
 
 OWNER_NAME_OVERRIDES = {
@@ -75,6 +76,35 @@ def best_person_name(record: dict[str, Any] | None, *, fallback: str = "") -> st
         if text and not looks_like_identifier(text):
             return text
     return fallback
+
+
+def _ghl_doc_name(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    return compact_str(data.get("name")) or best_person_name(data) or None
+
+
+def fill_missing_ghl_user_names(db, names: dict[str, str | None], needed_ids) -> None:
+    """Batched ghl_users_v2 names for assignedTo ids that missed roster.
+
+    `in` queries of 30, cached for 60 seconds. No per-user query and no full user stream.
+    """
+    missed: list[str] = []
+    seen: set[str] = set()
+    for raw in needed_ids:
+        uid = compact_str(raw)
+        if not uid or uid in seen:
+            continue
+        if uid in names or uid.lower() in OWNER_NAME_OVERRIDES:
+            continue
+        seen.add(uid)
+        missed.append(uid)
+    if not missed:
+        return
+    found = load_ghl_user_names(db, missed, _ghl_doc_name, namespace="sales")
+    for key, name in found.items():
+        if key and name:
+            names[key] = name
 
 
 def normalize_person_display(value: Any, *, empty: str) -> str:
@@ -329,8 +359,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             pipeline_name_cache[compact_str(d.get("id") or pid)] = d.get("name")
 
     # Primary owner labels: roster_people_v1 for these assignedTo IDs only.
-    # get_all by doc id, then where ghl_user_id in chunks of 10. No roster stream.
-    # Then bounded ghl_users_v2 get_all of remaining misses.
+    # get_all by doc id, then where ghl_user_id in chunks of 30. No roster stream.
+    # Then batched ghl_users_v2 reads of remaining misses.
     user_name_cache: dict[str, str | None] = {}
 
     def _remember_roster(snap) -> None:
@@ -352,45 +382,13 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             if snap.exists:
                 _remember_roster(snap)
     still_missing_roster = [uid for uid in needed_owner_ids if uid not in user_name_cache]
-    for i in range(0, len(still_missing_roster), 10):
-        chunk = still_missing_roster[i : i + 10]
+    for i in range(0, len(still_missing_roster), 30):
+        chunk = still_missing_roster[i : i + 30]
         if not chunk:
             continue
         for snap in db.collection("roster_people_v1").where("ghl_user_id", "in", chunk).stream():
             _remember_roster(snap)
-    missed_owner_ids = [
-        uid
-        for uid in needed_owner_ids
-        if uid not in user_name_cache and uid.lower() not in OWNER_NAME_OVERRIDES
-    ]
-    owner_refs = [db.collection("ghl_users_v2").document(uid) for uid in missed_owner_ids]
-    for i in range(0, len(owner_refs), 300):
-        for snap in db.get_all(owner_refs[i : i + 300]):
-            if not snap.exists:
-                continue
-            d = snap.to_dict() or {}
-            name = compact_str(d.get("name")) or best_person_name(d) or None
-            if not name:
-                continue
-            for key in {
-                compact_str(d.get("id")),
-                compact_str(d.get("userId")),
-                compact_str(snap.id),
-            }:
-                if key:
-                    user_name_cache[key] = name
-    for uid in missed_owner_ids:
-        if uid in user_name_cache:
-            continue
-        for field in ("id", "userId"):
-            hits = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
-            if not hits:
-                continue
-            data = hits[0].to_dict() or {}
-            name = compact_str(data.get("name")) or best_person_name(data) or None
-            if name:
-                user_name_cache[uid] = name
-            break
+    fill_missing_ghl_user_names(db, user_name_cache, needed_owner_ids)
 
     def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:

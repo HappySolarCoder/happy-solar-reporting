@@ -64,6 +64,12 @@ _GREETING = re.compile(r"^\s*(hi|hello|hey|good morning|good afternoon|thanks|th
 _HELP = re.compile(r"\b(help|how do i use|what can you do|what can goose do)\b", re.I)
 _CHALLENGE = re.compile(r"\b(wrong|incorrect|that can't|does not match|doesn't match|recheck)\b", re.I)
 _FRUSTRATED = re.compile(r"\b(useless|stupid|this sucks|hate this|idiot)\b", re.I)
+_VALUE_TERMS = frozenset({"sales", "demo_rate", "opp2prelim", "ran", "created"})
+_CURRENT_PERIOD = re.compile(
+    r"\b(?:our|today|mtd|current|so far|this (?:month|week|year))\b",
+    re.I,
+)
+_LAST_MONTH = re.compile(r"\blast month\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,10 @@ def classify(message: str) -> ScopeDecision:
     if re.search(r"source performance", text, re.I):
         return ScopeDecision("source_performance", text, "", "", term or "phones")
     if re.search(r"\b(how many|what were|show (me )?the numbers|totals?)\b", text, re.I):
+        return ScopeDecision("company_summary", text, "", "", term)
+    if term in _VALUE_TERMS and _LAST_MONTH.search(text):
+        return ScopeDecision("compare", text, "", "", term)
+    if term in _VALUE_TERMS and _CURRENT_PERIOD.search(text) and not _COMPARE.search(text):
         return ScopeDecision("company_summary", text, "", "", term)
     if _DEFINITION.search(text) or (term and len(text) < 40 and not _COMPARE.search(text)):
         if term is None:

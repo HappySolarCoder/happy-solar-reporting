@@ -161,21 +161,40 @@ def _missing_official(entries: list[dict[str, Any]], metric_ids: tuple[str, ...]
     return missing
 
 
+def _clean_metric_ids(raw: Any) -> list[str]:
+    metric_ids = raw or list(NUMERIC_METRICS)
+    if isinstance(metric_ids, str):
+        metric_ids = [metric_ids]
+    if not isinstance(metric_ids, list) or len(metric_ids) > len(ALLOWED_METRIC_IDS):
+        raise ToolRejected("metric_ids are not allowlisted")
+    cleaned: list[str] = []
+    for metric_id in metric_ids:
+        token = str(metric_id).strip()
+        if token not in ALLOWED_METRIC_IDS:
+            raise ToolRejected("metric_ids are not allowlisted")
+        cleaned.append(token)
+    return cleaned
+
+
 def _value_bundle(bundle: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any]:
     sales = bundle.get("sales")
     ran = bundle.get("ran")
     sits = bundle.get("sits")
     created = bundle.get("created")
+    demo_ran = bundle.get("demo_ran")
     demo_entry = lookup(entries, "demo_rate")
     opp_entry = lookup(entries, "opp2prelim")
     demo_policy = ((demo_entry or {}).get("calculation") or {}).get("zero_denominator_policy")
     opp_policy = ((opp_entry or {}).get("calculation") or {}).get("zero_denominator_policy")
     if demo_policy == "null_when_denominator_zero":
-        demo = None if not ran else round((sits / ran) * 100, 1)
-        demo_zero = bool(ran == 0)
+        if not demo_ran or sits is None:
+            demo = None
+        else:
+            demo = round((sits / demo_ran) * 100, 1)
+        demo_zero = bool(demo_ran == 0)
     else:
-        demo = demo_rate_percent(sits, ran)
-        demo_zero = bool(ran == 0)
+        demo = demo_rate_percent(sits, demo_ran)
+        demo_zero = bool(demo_ran == 0)
     if opp_policy == "zero_when_denominator_zero":
         opp = 0.0 if ran == 0 else round((sales / ran) * 100, 1)
         opp_zero = bool(ran == 0)
@@ -187,6 +206,7 @@ def _value_bundle(bundle: dict[str, Any], entries: list[dict[str, Any]]) -> dict
         "opps_created": created,
         "opps_ran": ran,
         "sits": sits,
+        "demo_ran": demo_ran,
         "demo_rate": demo,
         "opp2prelim": opp,
         "demo_rate_zero_denominator": demo_zero,
@@ -203,7 +223,7 @@ def _metric_result(metric_id: str, values: dict[str, Any], period: Period, entri
     value = values.get(metric_id)
     if metric_id == "demo_rate":
         numerator = values.get("sits")
-        denominator = values.get("opps_ran")
+        denominator = values.get("demo_ran")
     elif metric_id == "opp2prelim":
         numerator = values.get("sales")
         denominator = values.get("opps_ran")
@@ -216,6 +236,7 @@ def _metric_result(metric_id: str, values: dict[str, Any], period: Period, entri
         incomplete.append("partial_period")
     return {
         "metric_id": metric_id,
+        "display_name": (entry or {}).get("display_name") or metric_id,
         "definition_version": governance.get("version"),
         "official": True,
         "value": value,
@@ -311,7 +332,8 @@ def _load_bundle(period: Period, ctx: ToolContext) -> dict[str, Any]:
 
 
 def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
-    missing = _missing_official(ctx.entries, NUMERIC_METRICS)
+    requested = _clean_metric_ids(args.get("metric_ids"))
+    missing = _missing_official(ctx.entries, requested)
     period = _require_period(args, ctx.config, ctx.now)
     if missing:
         return {
@@ -326,7 +348,7 @@ def _summary(args: dict, ctx: ToolContext) -> dict[str, Any]:
     filters = {"sources": list(_sources(args))}
     metrics = [
         _metric_result(metric_id, values, period, ctx.entries, filters)
-        for metric_id in NUMERIC_METRICS
+        for metric_id in requested
     ]
     return {
         "available": True,
@@ -359,22 +381,23 @@ def _sources_tool(args: dict, ctx: ToolContext) -> dict[str, Any]:
         if selected and source_id not in selected:
             continue
         sales = sum_aliases(bundle.get("sales_by_source"), aliases)
-        ran = sum_aliases(bundle.get("ran_by_source"), aliases)
+        opps_ran = sum_aliases(bundle.get("ran_by_source"), aliases)
         created = sum_aliases(bundle.get("created_by_source"), aliases)
         sits = sum_aliases(bundle.get("sit_by_source"), aliases)
+        demo_ran = sum_aliases(bundle.get("demo_ran_by_source"), aliases)
         rows.append(
             {
                 "source_id": source_id,
                 "label": SOURCE_LABELS[source_id],
                 "aliases_observed": list(aliases),
                 "sales": sales,
-                "opps_ran": ran,
+                "opps_ran": opps_ran,
                 "opps_created": created,
                 "sits": sits,
-                "demo_rate": demo_rate_percent(sits, ran),
-                "opp2prelim": opp2prelim_percent(sales, ran),
-                "demo_rate_zero_denominator": ran == 0,
-                "opp2prelim_zero_denominator": ran == 0,
+                "demo_rate": demo_rate_percent(sits, demo_ran),
+                "opp2prelim": opp2prelim_percent(sales, opps_ran),
+                "demo_rate_zero_denominator": demo_ran == 0,
+                "opp2prelim_zero_denominator": opps_ran == 0,
             }
         )
     return {
@@ -393,17 +416,7 @@ def _sources_tool(args: dict, ctx: ToolContext) -> dict[str, Any]:
 
 
 def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
-    metric_ids = args.get("metric_ids") or list(NUMERIC_METRICS)
-    if isinstance(metric_ids, str):
-        metric_ids = [metric_ids]
-    if not isinstance(metric_ids, list) or len(metric_ids) > len(ALLOWED_METRIC_IDS):
-        raise ToolRejected("metric_ids are not allowlisted")
-    cleaned = []
-    for metric_id in metric_ids:
-        token = str(metric_id).strip()
-        if token not in ALLOWED_METRIC_IDS:
-            raise ToolRejected("metric_ids are not allowlisted")
-        cleaned.append(token)
+    cleaned = _clean_metric_ids(args.get("metric_ids"))
     missing = _missing_official(ctx.entries, cleaned)
     period = _require_period(args, ctx.config, ctx.now)
     prior = equivalent_prior_period(period)

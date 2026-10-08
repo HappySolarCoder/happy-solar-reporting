@@ -12,6 +12,7 @@ from copilot import dictionary as dictionary_mod
 from copilot import knowledge as knowledge_mod
 from copilot.auth import identity_for_chat, unauthorized_answer
 from copilot.config import CopilotConfig, configuration_problems, rate_card_for
+from copilot.formulas import DEMO_RATE_TARGET_PERCENT
 from copilot.messages import (
     BUDGET_LIMIT,
     LEDGER_UNAVAILABLE,
@@ -34,6 +35,14 @@ from copilot.tools import ToolContext, ToolRejected, execute
 
 _DIGIT = re.compile(r"\d")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_SUMMARY_METRIC_IDS = {
+    "sales": "sales",
+    "demo_rate": "demo_rate",
+    "opp2prelim": "opp2prelim",
+    "ran": "opps_ran",
+    "created": "opps_created",
+}
 
 
 def _response(status: int, **body: Any) -> dict[str, Any]:
@@ -95,12 +104,58 @@ def _render_definition(payload: dict[str, Any]) -> str:
     return f"{name}: {text}"
 
 
+def _spoken_day(value: str, *, with_year: bool) -> str:
+    parsed = datetime.strptime(value, "%Y-%m-%d")
+    text = f"{_MONTHS[parsed.month - 1]} {parsed.day}"
+    if with_year:
+        return f"{text}, {parsed.year}"
+    return text
+
+
+def _spoken_range(period: dict[str, Any]) -> str:
+    same_year = str(period["start"])[:4] == str(period["end"])[:4]
+    return f"{_spoken_day(period['start'], with_year=not same_year)} – {_spoken_day(period['end'], with_year=True)}"
+
+
+def _counted(value: Any, singular: str, plural: str) -> str:
+    if value is None:
+        shown = "0"
+    else:
+        number = float(value)
+        shown = str(int(number)) if number.is_integer() else str(value)
+    word = singular if shown == "1" else plural
+    return f"{shown} {word}"
+
+
+def _target_text(value: float) -> str:
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.1f}"
+
+
+def _render_demo_rate(metric: dict[str, Any], period: dict[str, Any]) -> str:
+    label = metric.get("display_name") or "Demo Rate"
+    value = metric.get("value")
+    shown = "N/A" if value is None else f"{float(value):.1f}%"
+    demos = _counted(metric.get("numerator"), "demo", "demos")
+    appointments = _counted(metric.get("denominator"), "appointment", "appointments")
+    target = _target_text(DEMO_RATE_TARGET_PERCENT)
+    return _public_labels(
+        f"{label} for {_spoken_range(period)} ({period['timezone']}): {shown} "
+        f"({demos} / {appointments} ran). Company target {target}%."
+    )
+
+
 def _render_summary(payload: dict[str, Any]) -> str:
     if not payload.get("available"):
         return (
             f"{NO_APPROVED_DEFINITION} I have not reported a figure. "
             "The dashboard is unchanged."
         )
+    metrics = payload.get("metrics") or []
+    if len(metrics) == 1 and metrics[0].get("metric_id") == "demo_rate":
+        return _render_demo_rate(metrics[0], payload["period"])
     lines = []
     period = payload["period"]
     lines.append(f"Company totals for {period['start']} to {period['end']} ({period['timezone']}).")
@@ -511,8 +566,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     "source_performance": "get_source_performance",
                 }[decision_intent]
                 args = {"start": filters["start"], "end": filters["end"], "sources": filters["sources"]}
-                if decision_intent == "compare" and decision.matched_term in {"sales", "demo_rate", "opp2prelim", "ran", "created"}:
-                    mapped = {"ran": "opps_ran", "created": "opps_created"}.get(decision.matched_term, decision.matched_term)
+                mapped = _SUMMARY_METRIC_IDS.get(decision.matched_term or "")
+                if decision_intent in {"company_summary", "compare"} and mapped:
                     args["metric_ids"] = [mapped]
                 if metrics is None:
                     answer = NO_APPROVED_DEFINITION + " Reporting functions are not available to this turn."

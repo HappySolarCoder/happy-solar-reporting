@@ -1,0 +1,385 @@
+/*
+ * Mystery Trip contest rules (ClickUp 86bccr3du).
+ * Pure functions only: no DOM, no fetch. tests/mystery_trip_rules.mjs runs them in Node.
+ *
+ * Feeds (all canonical, already used by other dashboards):
+ * - /api/metrics/demo_rate         per-setter demo counts (the Demo % numerator, Sweeper/Rehash credit applied)
+ * - /api/metrics/sales             sales_by_setter_last_name (FMA) and sales_by_owner (closer)
+ * - /api/metrics/sales_cancellations tables.by_owner (cancelled / sold in the month)
+ * - /api/metrics/bloom_goals       person_goals (monthly demo and sales goals set in Bloom)
+ * - /api/metrics/fma_weekly_review people (the FMA roster and each FMA's setter last name)
+ */
+var MysteryTrip = (function () {
+  var CONTEST = { start: "2026-10-01", end: "2026-12-23", label: "Oct 1 – Dec 23" };
+  var MONTHS = [
+    { id: "2026-10", label: "October", short: "Oct", start: "2026-10-01", end: "2026-10-31", steakBy: "2026-10-24" },
+    { id: "2026-11", label: "November", short: "Nov", start: "2026-11-01", end: "2026-11-30", steakBy: "2026-11-23" },
+    // The contest ends Dec 23, so December counts Dec 1–23. One week before Dec 31 is Dec 24, after the end.
+    { id: "2026-12", label: "December", short: "Dec", start: "2026-12-01", end: "2026-12-23", steakBy: "2026-12-23" },
+  ];
+  // FMA stipend requirement when Bloom has no monthly demo goal for that person (October sheet: 15 stipend demos).
+  var STANDARD_STIPEND_DEMOS = 15;
+  var FMA_PLUS_ONE_SALES = 24;
+  var CANCEL_LIMIT_PCT = 30;
+  var TRIP_MONTHS = 2;
+  var FLIGHT_MONTHS = 3;
+
+  function normName(value) {
+    return String(value == null ? "" : value)
+      .trim()
+      .toLowerCase()
+      .replace(/['’]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function tokens(value) {
+    var n = normName(value);
+    return n ? n.split(" ") : [];
+  }
+
+  function lastKey(value) {
+    var parts = tokens(value);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+
+  /** Zach and Zachary: short form at least 3 letters, long form at least 3 letters longer. Last name exact. */
+  function givenVariant(a, b) {
+    var left = tokens(a);
+    var right = tokens(b);
+    if (left.length < 2 || left.length !== right.length) return false;
+    if (left[left.length - 1] !== right[right.length - 1]) return false;
+    if (left.join(" ") === right.join(" ")) return false;
+    var variant = false;
+    for (var i = 0; i < left.length - 1; i += 1) {
+      var x = left[i];
+      var y = right[i];
+      if (x === y) continue;
+      var shorter = x.length <= y.length ? x : y;
+      var longer = x.length <= y.length ? y : x;
+      if (shorter.length < 3 || longer.length < shorter.length + 3 || longer.indexOf(shorter) !== 0) return false;
+      variant = true;
+    }
+    return variant;
+  }
+
+  function samePerson(a, b) {
+    var x = normName(a);
+    if (!x) return false;
+    return x === normName(b) || givenVariant(a, b);
+  }
+
+  /** Value for one full name from a {name: count} map. Exact name first, then a unique given-name variant. */
+  function countForName(map, name) {
+    var entries = Object.keys(map || {});
+    var exact = entries.filter(function (key) { return normName(key) === normName(name); });
+    if (exact.length) return exact.reduce(function (sum, key) { return sum + (Number(map[key]) || 0); }, 0);
+    var loose = entries.filter(function (key) { return givenVariant(name, key); });
+    if (loose.length === 1) return Number(map[loose[0]]) || 0;
+    return 0;
+  }
+
+  /** Value for a setter last name from a {LastName: count} map, ignoring case and punctuation. */
+  function countForLastName(map, last) {
+    var want = normName(last).replace(/ /g, "");
+    if (!want) return 0;
+    var total = 0;
+    Object.keys(map || {}).forEach(function (key) {
+      if (normName(key).replace(/ /g, "") === want) total += Number(map[key]) || 0;
+    });
+    return total;
+  }
+
+  function rowForName(rows, name) {
+    var list = Array.isArray(rows) ? rows : [];
+    var exact = list.filter(function (row) { return row && normName(row.label) === normName(name); });
+    if (exact.length) return exact[0];
+    var loose = list.filter(function (row) { return row && givenVariant(name, row.label); });
+    return loose.length === 1 ? loose[0] : null;
+  }
+
+  function minDate(a, b) { return a <= b ? a : b; }
+
+  function daysBetween(fromYmd, toYmd) {
+    var a = Date.UTC(+fromYmd.slice(0, 4), +fromYmd.slice(5, 7) - 1, +fromYmd.slice(8, 10));
+    var b = Date.UTC(+toYmd.slice(0, 4), +toYmd.slice(5, 7) - 1, +toYmd.slice(8, 10));
+    return Math.round((b - a) / 86400000);
+  }
+
+  var MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function shortDate(ymd) {
+    return MONTH_SHORT[+ymd.slice(5, 7) - 1] + " " + (+ymd.slice(8, 10));
+  }
+
+  function phase(month, today) {
+    if (today < month.start) return "upcoming";
+    if (today <= month.end) return "live";
+    return "done";
+  }
+
+  function startedMonths(today) {
+    return MONTHS.filter(function (month) { return today >= month.start; });
+  }
+
+  /** Windows each started month needs. End dates never pass today or the contest end. */
+  function windowsFor(today) {
+    return startedMonths(today).map(function (month) {
+      return {
+        id: month.id,
+        start: month.start,
+        end: minDate(month.end, today),
+        steakEnd: minDate(month.steakBy, today),
+      };
+    });
+  }
+
+  function isDemoGoal(goal) {
+    return String((goal && goal.assignee_user_id) || "").indexOf("demo-") === 0;
+  }
+
+  function goalFor(goals, name, roles, metric) {
+    var list = (Array.isArray(goals) ? goals : []).filter(function (goal) {
+      return goal && !isDemoGoal(goal) && goal.metric === metric && roles.indexOf(goal.role) !== -1;
+    });
+    var exact = list.filter(function (goal) { return normName(goal.name) === normName(name); });
+    var pick = exact.length ? exact : list.filter(function (goal) { return givenVariant(name, goal.name); });
+    if (pick.length !== 1 && !exact.length) return null;
+    var target = Number(pick[0].target);
+    return target > 0 ? target : null;
+  }
+
+  function creditsFor(credits, name) {
+    return (Array.isArray(credits) ? credits : []).filter(function (credit) {
+      return credit && samePerson(credit.recruiter, name);
+    });
+  }
+
+  function tier(effective, open, needed, over) {
+    if (effective >= needed) return "earned";
+    if (over) return "missed";
+    if (effective + open >= needed) return "in-reach";
+    return "needs-credit";
+  }
+
+  function summarize(person, months, credits, over) {
+    var hit = months.filter(function (m) { return m.status === "hit"; }).length;
+    var open = months.filter(function (m) { return m.status === "live" || m.status === "upcoming" || m.status === "no-goal-yet"; }).length;
+    var credit = creditsFor(credits, person.name).length;
+    var effective = Math.min(FLIGHT_MONTHS, hit + credit);
+    person.months = months;
+    person.qualifyingMonths = hit;
+    person.credits = credit;
+    person.creditMonthsUsed = Math.max(0, effective - hit);
+    person.effectiveMonths = effective;
+    person.trip = tier(effective, open, TRIP_MONTHS, over);
+    person.flight = tier(effective, open, FLIGHT_MONTHS, over);
+    return person;
+  }
+
+  function closerGoalNames(goals) {
+    var names = [];
+    Object.keys(goals || {}).forEach(function (id) {
+      (goals[id] || []).forEach(function (goal) {
+        if (!goal || isDemoGoal(goal) || goal.metric !== "sales") return;
+        if (goal.role !== "closer" && goal.role !== "manager") return;
+        if (!names.some(function (name) { return samePerson(name, goal.name); })) names.push(goal.name);
+      });
+    });
+    return names;
+  }
+
+  /**
+   * FMA path. Steak Dinner month = demos credited by the deadline reach the stipend requirement.
+   * input: { today, roster: [{name, setterLastName}], feeds: {monthId: {steakDemos, salesBySetter, goals}}, credits }
+   */
+  function buildFma(input) {
+    var today = input.today;
+    var over = today > CONTEST.end;
+    var feeds = input.feeds || {};
+    var closers = closerGoalNames(Object.keys(feeds).reduce(function (acc, id) { acc[id] = (feeds[id] || {}).goals || []; return acc; }, {}));
+    var roster = (input.roster || []).filter(function (row) {
+      if (!row || !row.name) return false;
+      return !closers.some(function (name) { return samePerson(name, row.name); });
+    });
+    var lastCounts = {};
+    roster.forEach(function (row) {
+      var key = normName(row.setterLastName || lastKey(row.name)).replace(/ /g, "");
+      lastCounts[key] = (lastCounts[key] || 0) + 1;
+    });
+    return roster.map(function (row) {
+      var last = row.setterLastName || lastKey(row.name);
+      var shared = lastCounts[normName(last).replace(/ /g, "")] > 1;
+      var totalSales = 0;
+      var months = MONTHS.map(function (month) {
+        var state = phase(month, today);
+        if (state === "upcoming") {
+          return { id: month.id, label: month.label, short: month.short, status: "upcoming", deadline: month.steakBy };
+        }
+        var feed = feeds[month.id] || {};
+        var bloomGoal = goalFor(feed.goals, row.name, ["fma"], "demos");
+        var requirement = bloomGoal || STANDARD_STIPEND_DEMOS;
+        var demos = countForLastName(feed.steakDemos, last);
+        var sales = countForLastName(feed.salesBySetter, last);
+        totalSales += sales;
+        var status;
+        if (demos >= requirement) status = "hit";
+        else if (today > month.steakBy) status = "missed";
+        else status = "live";
+        return {
+          id: month.id,
+          label: month.label,
+          short: month.short,
+          status: status,
+          deadline: month.steakBy,
+          daysLeft: status === "live" ? daysBetween(today, month.steakBy) + 1 : 0,
+          demos: demos,
+          requirement: requirement,
+          requirementSource: bloomGoal ? "bloom" : "standard",
+          sales: sales,
+          loaded: Boolean(feed.loaded),
+        };
+      });
+      var person = summarize({ name: row.name, role: "fma", setterLastName: last, sharedLastName: shared }, months, input.credits, over);
+      person.totalSales = totalSales;
+      person.plusOneSalesLeft = Math.max(0, FMA_PLUS_ONE_SALES - totalSales);
+      if (totalSales >= FMA_PLUS_ONE_SALES) person.plusOne = person.trip === "earned" ? "earned" : over ? "missed" : "needs-trip";
+      else person.plusOne = over ? "missed" : "in-reach";
+      return person;
+    });
+  }
+
+  /**
+   * Closer path. Goal month = sales in the month reach that closer's Bloom monthly sales goal.
+   * Plus one = every month's cancellation rate stays under 30%.
+   * input: { today, feeds: {monthId: {salesByOwner, cancelByOwner, goals}}, credits }
+   */
+  function buildClosers(input) {
+    var today = input.today;
+    var over = today > CONTEST.end;
+    var feeds = input.feeds || {};
+    var names = closerGoalNames(Object.keys(feeds).reduce(function (acc, id) { acc[id] = (feeds[id] || {}).goals || []; return acc; }, {}));
+    Object.keys(feeds).forEach(function (id) {
+      var owners = (feeds[id] || {}).salesByOwner || {};
+      Object.keys(owners).forEach(function (owner) {
+        var clean = String(owner || "").trim();
+        if (!clean || normName(clean) === "none" || !(Number(owners[owner]) > 0)) return;
+        if (!names.some(function (name) { return samePerson(name, clean); })) names.push(clean);
+      });
+    });
+    return names.map(function (name) {
+      var cancelOk = true;
+      var cancelFinalMiss = false;
+      var months = MONTHS.map(function (month) {
+        var state = phase(month, today);
+        if (state === "upcoming") {
+          return { id: month.id, label: month.label, short: month.short, status: "upcoming", deadline: month.end };
+        }
+        var feed = feeds[month.id] || {};
+        var goal = goalFor(feed.goals, name, ["closer", "manager"], "sales");
+        var sales = countForName(feed.salesByOwner, name);
+        var row = rowForName(feed.cancelByOwner, name);
+        var sold = row ? Number(row.sold_date_total) || 0 : 0;
+        var cancelled = row ? Number(row.cancelled) || 0 : 0;
+        var rate = sold > 0 ? Math.round((cancelled / sold) * 1000) / 10 : 0;
+        var under = rate < CANCEL_LIMIT_PCT;
+        if (!under) {
+          cancelOk = false;
+          if (state === "done") cancelFinalMiss = true;
+        }
+        var status;
+        if (goal == null) status = state === "done" ? "missed" : "no-goal-yet";
+        else if (sales >= goal) status = "hit";
+        else if (state === "done") status = "missed";
+        else status = "live";
+        return {
+          id: month.id,
+          label: month.label,
+          short: month.short,
+          status: status,
+          deadline: month.end,
+          daysLeft: state === "live" ? daysBetween(today, month.end) + 1 : 0,
+          sales: sales,
+          goal: goal,
+          sold: sold,
+          cancelled: cancelled,
+          cancelRate: rate,
+          cancelUnder: under,
+          loaded: Boolean(feed.loaded),
+        };
+      });
+      var person = summarize({ name: name, role: "closer" }, months, input.credits, over);
+      if (cancelFinalMiss || (over && !cancelOk)) person.plusOne = "missed";
+      else if (!cancelOk) person.plusOne = "at-risk";
+      else if (over) person.plusOne = person.trip === "earned" ? "earned" : "needs-trip";
+      else person.plusOne = "in-reach";
+      return person;
+    });
+  }
+
+  function currentMonth(person) {
+    var live = person.months.filter(function (m) { return m.status === "live" || m.status === "no-goal-yet"; })[0];
+    return live || null;
+  }
+
+  function progressScore(person) {
+    var live = currentMonth(person);
+    var share = 0;
+    if (live) {
+      if (person.role === "fma" && live.requirement) share = Math.min(1, live.demos / live.requirement);
+      if (person.role === "closer" && live.goal) share = Math.min(1, live.sales / live.goal);
+    }
+    return person.effectiveMonths + share;
+  }
+
+  function sortBoard(people) {
+    return people.slice().sort(function (a, b) {
+      var diff = progressScore(b) - progressScore(a);
+      if (Math.abs(diff) > 1e-9) return diff;
+      return normName(a.name) < normName(b.name) ? -1 : 1;
+    });
+  }
+
+  function findTraveler(people, name) {
+    if (!name) return null;
+    var exact = people.filter(function (p) { return normName(p.name) === normName(name); });
+    if (exact.length === 1) return exact[0];
+    var loose = people.filter(function (p) { return givenVariant(name, p.name); });
+    return loose.length === 1 ? loose[0] : null;
+  }
+
+  function contestProgress(today) {
+    if (today <= CONTEST.start) return 0;
+    if (today >= CONTEST.end) return 1;
+    return daysBetween(CONTEST.start, today) / daysBetween(CONTEST.start, CONTEST.end);
+  }
+
+  function daysLeftInContest(today) {
+    if (today > CONTEST.end) return 0;
+    if (today < CONTEST.start) return daysBetween(CONTEST.start, CONTEST.end) + 1;
+    return daysBetween(today, CONTEST.end) + 1;
+  }
+
+  return {
+    CONTEST: CONTEST,
+    MONTHS: MONTHS,
+    STANDARD_STIPEND_DEMOS: STANDARD_STIPEND_DEMOS,
+    FMA_PLUS_ONE_SALES: FMA_PLUS_ONE_SALES,
+    CANCEL_LIMIT_PCT: CANCEL_LIMIT_PCT,
+    normName: normName,
+    samePerson: samePerson,
+    countForName: countForName,
+    countForLastName: countForLastName,
+    windowsFor: windowsFor,
+    phase: phase,
+    shortDate: shortDate,
+    buildFma: buildFma,
+    buildClosers: buildClosers,
+    sortBoard: sortBoard,
+    findTraveler: findTraveler,
+    currentMonth: currentMonth,
+    contestProgress: contestProgress,
+    daysLeftInContest: daysLeftInContest,
+  };
+})();
+if (typeof module !== "undefined" && module.exports) module.exports = MysteryTrip;

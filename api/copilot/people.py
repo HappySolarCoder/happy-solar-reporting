@@ -28,6 +28,7 @@ class Rep:
     demo_ran: int | None = None
     ghl_user_id: str | None = None
     email: str | None = None
+    aliases: tuple[str, ...] = ()
 
 
 def asks_about_self(text: str) -> bool:
@@ -127,6 +128,19 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
         kind = str(row.get("kind") or "rep").strip().lower() or "rep"
         ghl_user_id = " ".join(str(row.get("ghl_user_id") or "").split()) or None
         email = " ".join(str(row.get("email") or "").split()) or None
+        alias_values = []
+        if isinstance(row.get("full_name"), str):
+            alias_values.append(row.get("full_name"))
+        raw_aliases = row.get("aliases") or []
+        if isinstance(raw_aliases, str):
+            raw_aliases = [raw_aliases]
+        if isinstance(raw_aliases, (list, tuple)):
+            alias_values.extend(raw_aliases)
+        aliases: list[str] = []
+        for raw in alias_values:
+            alias = " ".join(str(raw or "").split())
+            if alias and alias.casefold() not in {item.casefold() for item in aliases} and alias.casefold() != name.casefold():
+                aliases.append(alias)
         found.append(
             Rep(
                 name=name,
@@ -138,6 +152,7 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
                 demo_ran=_as_int(row.get("demo_ran")),
                 ghl_user_id=ghl_user_id,
                 email=email,
+                aliases=tuple(aliases),
             )
         )
     return found
@@ -198,10 +213,10 @@ def _fuller_name(reps: list[Rep]) -> str:
     return max((rep.name for rep in reps), key=lambda name: (len(_parts(name)), len(name)))
 
 
-def _applied(rep: Rep, roles: list[Rep] | None = None) -> dict[str, Any]:
+def _applied(rep: Rep, roles: list[Rep] | None = None, label: str | None = None) -> dict[str, Any]:
     group = roles or [rep]
     if len(group) < 2:
-        return {"status": "applied", "label": rep.name, "kind": rep.kind, "rep": rep}
+        return {"status": "applied", "label": label or rep.name, "kind": rep.kind, "rep": rep}
     primary = next((item for item in group if item.kind == "closer" and item.sits is not None), None)
     if primary is None:
         primary = next((item for item in group if item.sits is not None), group[0])
@@ -216,59 +231,78 @@ def _applied(rep: Rep, roles: list[Rep] | None = None) -> dict[str, Any]:
     }
 
 
-def _unique_partner(rep: Rep, reps: list[Rep]) -> Rep | None:
-    """The other role when one setter last name and one closer are the same person."""
-    if rep.kind == "setter" and len(_parts(rep.name)) == 1:
-        token = _parts(rep.name)[0]
-        closers = [other for other in reps if other.kind == "closer" and _last_token(other.name) == token]
-        if len(closers) == 1:
-            return closers[0]
+def _same_person(left: Rep, right: Rep) -> bool:
+    """Closer identity is assignedTo. Setter identity is the resolved roster user id."""
+    user_id = (left.ghl_user_id or "").strip()
+    other = (right.ghl_user_id or "").strip()
+    return bool(user_id) and user_id == other
+
+
+def _person_key(rep: Rep) -> str:
+    user_id = (rep.ghl_user_id or "").strip()
+    if user_id:
+        return "id:" + user_id
+    return "row:" + rep.kind + ":" + rep.name.casefold()
+
+
+def _group_people(reps: list[Rep]) -> list[list[Rep]]:
+    groups: list[list[Rep]] = []
+    for rep in reps:
+        key = _person_key(rep)
+        for group in groups:
+            if _person_key(group[0]) == key:
+                group.append(rep)
+                break
+        else:
+            groups.append([rep])
+    return groups
+
+
+def _identity_partner(rep: Rep, reps: list[Rep]) -> Rep | None:
+    """The other role only when both rows resolved to the same person."""
+    if rep.kind not in {"setter", "closer"} or not (rep.ghl_user_id or "").strip():
         return None
-    if rep.kind == "closer":
-        last = _last_token(rep.name)
-        setters = [
-            other
-            for other in reps
-            if other.kind == "setter" and _parts(other.name) in ([last], _parts(rep.name))
-        ]
-        if len(setters) == 1:
-            return setters[0]
+    others = [
+        other
+        for other in reps
+        if other is not rep and other.kind in {"setter", "closer"} and other.kind != rep.kind and _same_person(rep, other)
+    ]
+    if len(others) == 1:
+        return others[0]
     return None
 
 
-def _option_label(rep: Rep, group: list[Rep]) -> str:
-    names = [item.name.casefold() for item in group]
-    if names.count(rep.name.casefold()) > 1:
-        role = "setter" if rep.kind == "setter" else "closer" if rep.kind == "closer" else rep.kind
-        return f"{rep.name} the {role}"
+def _speak_name(rep: Rep) -> str:
+    if len(_parts(rep.name)) == 1 and len(rep.aliases) == 1:
+        return rep.aliases[0]
     return rep.name
 
 
-def match_rep(query: str, reps: list[Rep]) -> dict[str, Any]:
-    """One rep, or an ambiguity the reply can name. Missing stays unresolved."""
-    scored = [(_score(query, rep), rep) for rep in reps]
-    scored = [(score, rep) for score, rep in scored if score > 0]
-    if not scored:
-        return {"status": "missing", "label": query}
-    best = max(score for score, _rep in scored)
-    winners = [rep for score, rep in scored if score == best]
-    if len(winners) == 1:
-        winner = winners[0]
-        partner = _unique_partner(winner, reps)
-        if partner is not None and partner is not winner:
-            return _applied(winner, [winner, partner])
-        return _applied(winner)
-    names = {rep.name.casefold() for rep in winners}
-    kinds = {rep.kind for rep in winners}
-    if len(names) == 1 and kinds <= {"setter", "closer"}:
-        return _applied(winners[0], winners)
-    options = [_option_label(rep, winners) for rep in winners]
+def _option_label(rep: Rep, group: list[Rep]) -> str:
+    spoken = _speak_name(rep)
+    names = [_speak_name(item).casefold() for item in group]
+    if names.count(spoken.casefold()) > 1:
+        role = "setter" if rep.kind == "setter" else "closer" if rep.kind == "closer" else rep.kind
+        return f"{spoken} the {role}"
+    return spoken
+
+
+def _display_query(query: str) -> str:
+    parts = [part for part in (query or "").split() if part]
+    shown = []
+    for part in parts:
+        shown.append(part[:1].upper() + part[1:] if part else part)
+    return " ".join(shown)
+
+
+def _ambiguous(query: str, reps: list[Rep]) -> dict[str, Any]:
+    options = [_option_label(rep, reps) for rep in reps]
     unique: list[str] = []
     for option in options:
         if option not in unique:
             unique.append(option)
-    if len(unique) == 1:
-        unique = [f"{unique[0]} ({winners[0].kind})", f"{unique[0]} ({winners[1].kind})"]
+    if len(unique) == 1 and len(reps) > 1:
+        unique = [f"{unique[0]} ({reps[0].kind})", f"{unique[0]} ({reps[1].kind})"]
     listed = " or ".join(unique) if len(unique) == 2 else ", ".join(unique[:-1]) + ", or " + unique[-1]
     return {
         "status": "ambiguous",
@@ -276,6 +310,78 @@ def match_rep(query: str, reps: list[Rep]) -> dict[str, Any]:
         "options": unique,
         "reason": f"I'm not sure if you mean {listed}. Which rep did you mean?",
     }
+
+
+def _resolve(query: str, winners: list[Rep], reps: list[Rep], *, prefer_query: bool = False) -> dict[str, Any]:
+    """One person, including both roles when the ids match. Different people stay apart."""
+    groups = _group_people(winners)
+    if len(groups) > 1:
+        return _ambiguous(query, [group[0] for group in groups])
+    group = list(groups[0])
+    partner = _identity_partner(group[0], reps)
+    if partner is not None and partner not in group:
+        group.append(partner)
+    label = None
+    if len(group) == 1:
+        shown = _display_query(query)
+        matched_alias = next((alias for alias in group[0].aliases if _parts(alias) == _parts(shown)), "")
+        if prefer_query and shown and _last_token(shown) == _last_token(group[0].name) and len(_parts(shown)) > len(_parts(group[0].name)):
+            label = shown
+        elif matched_alias and len(_parts(matched_alias)) > len(_parts(group[0].name)):
+            label = matched_alias
+    return _applied(group[0], group, label=label)
+
+
+def _exact_reps(query: str, reps: list[Rep]) -> list[Rep]:
+    asked = _parts(query)
+    found = []
+    for rep in reps:
+        names = [rep.name, *rep.aliases]
+        if any(_parts(name) == asked for name in names):
+            found.append(rep)
+    return found
+
+
+def _last_name_rows(query: str, reps: list[Rep]) -> list[Rep]:
+    """Setter rows store a last name. A full-name query can match that one row."""
+    asked = _parts(query)
+    if len(asked) < 2:
+        return []
+    last = asked[-1]
+    return [
+        rep
+        for rep in reps
+        if _last_token(rep.name) == last and (len(_parts(rep.name)) == 1 or _parts(rep.name) == asked)
+    ]
+
+
+def match_rep(query: str, reps: list[Rep]) -> dict[str, Any]:
+    """One rep, or an ambiguity the reply can name. Missing stays unresolved.
+
+    A full name resolves to a setter's last-name row when that last name is unique.
+    A shared last name is one person only when the closer user id and the setter
+    identity are the same. Otherwise the reply names the options.
+    """
+    asked = _parts(query)
+    if not asked:
+        return {"status": "missing", "label": query}
+    if len(asked) == 1:
+        last_hits = [rep for rep in reps if _last_token(rep.name) == asked[0]]
+        if len(_group_people(last_hits)) > 1:
+            return _ambiguous(query, [group[0] for group in _group_people(last_hits)])
+    exact = _exact_reps(query, reps)
+    if exact:
+        return _resolve(query, exact, reps)
+    last_rows = _last_name_rows(query, reps)
+    if last_rows:
+        return _resolve(query, last_rows, reps, prefer_query=True)
+    scored = [(_score(query, rep), rep) for rep in reps]
+    scored = [(score, rep) for score, rep in scored if score > 0]
+    if not scored:
+        return {"status": "missing", "label": query}
+    best = max(score for score, _rep in scored)
+    winners = [rep for score, rep in scored if score == best]
+    return _resolve(query, winners, reps)
 
 
 def match_signed_in(claims: dict | None, reps: list[Rep]) -> dict[str, Any]:
@@ -351,6 +457,7 @@ def roster_rows_from_breakdowns(
     created: dict | None = None,
     demo: dict | None = None,
     owner_profiles: list[dict[str, Any]] | None = None,
+    setter_profiles: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Closer rows from owner maps, setter rows from last-name maps. Totals are untouched."""
     index: dict[tuple[str, str], dict[str, Any]] = {}
@@ -412,6 +519,37 @@ def roster_rows_from_breakdowns(
         hits = profiles.get(str(row["name"]).casefold()) or []
         ids = {str(hit.get("ghl_user_id") or "").strip() for hit in hits if str(hit.get("ghl_user_id") or "").strip()}
         emails = {str(hit.get("email") or "").strip() for hit in hits if str(hit.get("email") or "").strip()}
+        if len(ids) == 1:
+            row["ghl_user_id"] = next(iter(ids))
+        if len(emails) == 1:
+            row["email"] = next(iter(emails))
+    by_last: dict[str, list[dict[str, Any]]] = {}
+    for profile in setter_profiles or []:
+        if not isinstance(profile, dict):
+            continue
+        last = " ".join(str(profile.get("last_name") or "").split())
+        if not last:
+            continue
+        by_last.setdefault(last.casefold(), []).append(profile)
+    for row in rows:
+        if row["kind"] != "setter":
+            continue
+        hits = by_last.get(str(row["name"]).casefold()) or []
+        aliases: list[str] = []
+        ids: set[str] = set()
+        emails: set[str] = set()
+        for hit in hits:
+            full = " ".join(str(hit.get("full_name") or "").split())
+            if full and full.casefold() != str(row["name"]).casefold() and full not in aliases:
+                aliases.append(full)
+            user_id = str(hit.get("ghl_user_id") or "").strip()
+            email = str(hit.get("email") or "").strip()
+            if user_id:
+                ids.add(user_id)
+            if email:
+                emails.add(email)
+        if aliases:
+            row["aliases"] = aliases
         if len(ids) == 1:
             row["ghl_user_id"] = next(iter(ids))
         if len(emails) == 1:

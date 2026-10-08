@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
@@ -343,7 +344,7 @@ def _user_email(row: dict | None) -> str:
         return ""
     for key in ("email", "emailAddress", "userEmail"):
         text = compact_str(row.get(key)).lower()
-        if "@" in text and " " not in text and len(text) <= 120:
+        if "@" in text and " " not in text and len(text) <= 254:
             return text
     return ""
 
@@ -358,25 +359,45 @@ def _remember_user(directory: dict[str, dict[str, str]], key: str, name: str, em
         row["email"] = email
 
 
-def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str, str]]:
-    """assignedTo -> name and email.
+_IN_CHUNK = 30
+_CACHE_TTL_SECONDS = 60.0
+_CACHE_MAX = 16
+_closer_cache: dict[tuple[str, ...], tuple[float, dict[str, dict[str, str]]]] = {}
+_setter_cache: dict[tuple[str, ...], tuple[float, list[dict[str, str]]]] = {}
 
-    Roster display names win, matching sales and appointments. Email and a
-    missed name come from ghl_users_v2, the synced GHL user directory.
-    Bounded get_all, then id / userId lookups. No opportunity stream and no
-    full user stream.
-    """
-    needed: list[str] = []
-    seen: set[str] = set()
-    for raw in user_ids:
-        uid = compact_str(raw)
-        if not uid or uid in seen:
+
+def _cache_get(cache: dict, key: tuple):
+    hit = cache.get(key)
+    if hit is None:
+        return None
+    stored, value = hit
+    if time.monotonic() - stored > _CACHE_TTL_SECONDS:
+        cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(cache: dict, key: tuple, value) -> None:
+    cache[key] = (time.monotonic(), value)
+    if len(cache) <= _CACHE_MAX:
+        return
+    oldest = min(cache, key=lambda item: cache[item][0])
+    cache.pop(oldest, None)
+
+
+def _query_in(db: firestore.Client, collection: str, field: str, values: list[str]):
+    """One bounded `in` read per chunk. Firestore allows 30 values per query."""
+    found = []
+    for start in range(0, len(values), _IN_CHUNK):
+        chunk = values[start : start + _IN_CHUNK]
+        if not chunk:
             continue
-        seen.add(uid)
-        needed.append(uid)
+        found.extend(db.collection(collection).where(field, "in", chunk).stream())
+    return found
+
+
+def _read_closer_directory(db: firestore.Client, needed: list[str]) -> dict[str, dict[str, str]]:
     directory: dict[str, dict[str, str]] = {}
-    if not needed:
-        return directory
 
     def take_roster(snap) -> None:
         data = snap.to_dict() or {}
@@ -395,14 +416,10 @@ def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str,
             if getattr(snap, "exists", False):
                 take_roster(snap)
     still_roster = [uid for uid in needed if not directory.get(uid, {}).get("name")]
-    for i in range(0, len(still_roster), 10):
-        chunk = still_roster[i : i + 10]
-        if not chunk:
-            continue
-        for snap in db.collection("roster_people_v1").where("ghl_user_id", "in", chunk).stream():
-            take_roster(snap)
+    for snap in _query_in(db, "roster_people_v1", "ghl_user_id", still_roster):
+        take_roster(snap)
 
-    def take_ghl(snap, fallback_id: str = "") -> None:
+    def take_ghl(snap) -> None:
         data = snap.to_dict() or {}
         name = compact_str(data.get("name")) or best_person_name(data)
         email = _user_email(data)
@@ -410,7 +427,6 @@ def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str,
             compact_str(data.get("id")),
             compact_str(data.get("userId")),
             compact_str(getattr(snap, "id", "")),
-            compact_str(fallback_id),
         }
         for key in keys:
             _remember_user(directory, key, name, email, prefer_name=False)
@@ -420,16 +436,117 @@ def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str,
         for snap in db.get_all(user_refs[i : i + 300]):
             if getattr(snap, "exists", False):
                 take_ghl(snap)
-    for uid in needed:
-        profile = directory.get(uid) or {}
-        if profile.get("name") and profile.get("email"):
-            continue
-        for field in ("id", "userId"):
-            misses = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
-            if misses:
-                take_ghl(misses[0], uid)
-                break
+
+    def incomplete() -> list[str]:
+        pending = []
+        for uid in needed:
+            profile = directory.get(uid) or {}
+            if profile.get("name") and profile.get("email"):
+                continue
+            pending.append(uid)
+        return pending
+
+    for field in ("id", "userId"):
+        pending = incomplete()
+        if not pending:
+            break
+        for snap in _query_in(db, "ghl_users_v2", field, pending):
+            take_ghl(snap)
     return directory
+
+
+def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str, str]]:
+    """assignedTo -> name and email.
+
+    Roster display names win, matching sales and appointments. Email and a
+    missed name come from ghl_users_v2, the synced GHL user directory.
+    One bounded get_all plus one batched `in` read per collection. No per-user
+    query, no opportunity stream, and no full user stream. Repeated asks for
+    the same ids reuse a short in-memory cache.
+    """
+    needed: list[str] = []
+    seen: set[str] = set()
+    for raw in user_ids:
+        uid = compact_str(raw)
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        needed.append(uid)
+    if not needed:
+        return {}
+    key = tuple(sorted(needed))
+    cached = _cache_get(_closer_cache, key)
+    if cached is not None:
+        return {uid: dict(row) for uid, row in cached.items()}
+    directory = _read_closer_directory(db, needed)
+    _cache_put(_closer_cache, key, directory)
+    return {uid: dict(row) for uid, row in directory.items()}
+
+
+def load_setter_directory(db: firestore.Client, last_names) -> list[dict[str, str]]:
+    """Full name and identity for the last names stored on setter rows.
+
+    roster_people_v1.ghl_setter_last_name is the setter row key. ghl_users_v2
+    lastName fills a roster miss. One batched `in` read per collection, then a
+    short cache. No full collection stream.
+    """
+    needed: list[str] = []
+    seen: set[str] = set()
+    for raw in last_names:
+        label = compact_str(raw)
+        if not label or label.casefold() in {"none", "unassigned", "unknown"}:
+            continue
+        if label.casefold() in seen:
+            continue
+        seen.add(label.casefold())
+        needed.append(label)
+    if not needed:
+        return []
+    key = tuple(sorted(name.casefold() for name in needed))
+    cached = _cache_get(_setter_cache, key)
+    if cached is not None:
+        return [dict(row) for row in cached]
+    wanted = {name.casefold() for name in needed}
+    found: list[dict[str, str]] = []
+    seen_people: set[tuple[str, str]] = set()
+
+    def add(full_name: str, last_name: str, user_id: str, email: str) -> None:
+        full_name = compact_str(full_name)
+        last_name = compact_str(last_name)
+        user_id = compact_str(user_id)
+        if not full_name or not last_name or last_name.casefold() not in wanted:
+            return
+        ident = (user_id or full_name.casefold(), last_name.casefold())
+        if ident in seen_people:
+            return
+        seen_people.add(ident)
+        found.append(
+            {
+                "full_name": full_name,
+                "last_name": last_name,
+                "ghl_user_id": user_id,
+                "email": email,
+            }
+        )
+
+    for snap in _query_in(db, "roster_people_v1", "ghl_setter_last_name", needed):
+        data = snap.to_dict() or {}
+        add(
+            compact_str(data.get("display_name")) or best_person_name(data),
+            compact_str(data.get("ghl_setter_last_name")),
+            compact_str(data.get("ghl_user_id") or data.get("ghlUserId")),
+            _user_email(data),
+        )
+    for snap in _query_in(db, "ghl_users_v2", "lastName", needed):
+        data = snap.to_dict() or {}
+        add(
+            compact_str(data.get("name")) or best_person_name(data),
+            compact_str(data.get("lastName")),
+            compact_str(data.get("id") or data.get("userId") or getattr(snap, "id", "")),
+            _user_email(data),
+        )
+    _cache_put(_setter_cache, key, found)
+    return [dict(row) for row in found]
 
 
 def resolve_closer(opp: dict, directory: dict[str, dict[str, str]]) -> tuple[str, str, str]:
@@ -888,6 +1005,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
     pct = round((sit / ran) * 100, 1) if ran else 0.0
 
+    try:
+        setter_names = list(setter_labels.values())
+        setter_profiles = load_setter_directory(db, setter_names) if setter_names else []
+    except Exception:
+        setter_profiles = []
+
     return {
         "metric_name": c.metric_name,
         "unit": c.unit,
@@ -922,6 +1045,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         },
         "rows": matching,
         "owner_profiles": list(owner_profiles.values()),
+        "setter_profiles": setter_profiles,
     }
 
 
@@ -950,6 +1074,7 @@ class handler(BaseHTTPRequestHandler):
             # Emails stay on the copilot path. The public QA payload does not include them.
             public = dict(payload)
             public.pop("owner_profiles", None)
+            public.pop("setter_profiles", None)
 
             if fmt == "json":
                 body = json.dumps(public, indent=2).encode("utf-8")

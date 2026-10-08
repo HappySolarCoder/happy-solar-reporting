@@ -104,6 +104,7 @@ class LiveMetrics:
                 created=created,
                 demo=demo,
                 owner_profiles=demo.get("owner_profiles") or [],
+                setter_profiles=demo.get("setter_profiles") or [],
             ),
             "offices": office_rows_from_breakdowns(sales=sales, ran=ran, created=created, demo=demo),
             "generated_at": sales.get("generated_at") or ran.get("generated_at"),

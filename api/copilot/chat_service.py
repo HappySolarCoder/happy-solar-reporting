@@ -556,6 +556,15 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
             else:
                 answer = NO_APPROVED_DOCUMENT + " " + WELCOME
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
+            if not filters["start"] and not filters["end"]:
+                try:
+                    from copilot.periods import TimezoneUnconfirmed, implied_current_range
+
+                    implied = implied_current_range(text, config.company_timezone, now)
+                except TimezoneUnconfirmed:
+                    implied = None
+                if implied:
+                    filters = {"start": implied[0], "end": implied[1], "sources": filters["sources"]}
             if not filters["start"] or not filters["end"]:
                 answer = "Which start and end dates should I use? The company overview chips can set them."
                 code = "clarify"

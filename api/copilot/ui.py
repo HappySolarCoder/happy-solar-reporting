@@ -211,8 +211,8 @@ def render_panel() -> str:
     return headers;
   }}
   function selectedDates() {{
-    const start = document.getElementById('startDate');
-    const end = document.getElementById('endDate');
+    const start = document.getElementById('ocStart') || document.getElementById('startDate');
+    const end = document.getElementById('ocEnd') || document.getElementById('endDate');
     return {{
       start: start ? start.value : '',
       end: end ? end.value : ''

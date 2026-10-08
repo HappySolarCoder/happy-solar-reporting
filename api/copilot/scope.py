@@ -221,6 +221,9 @@ _FILLER_WORDS = frozenset(
         "total",
         "us",
         "want",
+        "had",
+        "has",
+        "have",
         "was",
         "we",
         "were",
@@ -706,11 +709,25 @@ def _unapplied_name(text: str) -> str | None:
             if _name_stopped(word, raw, match.start(group)):
                 continue
             found.append(_title_name(word))
-    for match in re.finditer(r"\b(?:does|did)\s+([A-Za-z][A-Za-z'-]{2,})\s+have\b", raw, re.I):
-        word = match.group(1)
-        if word.lower() == "not" or _name_stopped(word, raw, match.start(1)):
+    for match in re.finditer(
+        r"\b(?:does|did)\s+([A-Za-z][A-Za-z'-]{2,}(?:\s+[A-Za-z][A-Za-z'-]{2,})?)\s+have\b",
+        raw,
+        re.I,
+    ):
+        span = match.group(1)
+        cursor = match.start(1)
+        titled: list[str] = []
+        stopped = False
+        for part in span.split():
+            at = raw.find(part, cursor)
+            if part.lower() == "not" or _name_stopped(part, raw, at):
+                stopped = True
+                break
+            titled.append(_title_name(part))
+            cursor = at + len(part)
+        if stopped or not titled:
             continue
-        found.append(_title_name(word))
+        found.append(" ".join(titled))
     for match in re.finditer(
         r"\b([a-z][a-z'-]{2,})\s+(?:demos?|sales?|appointments?)\b",
         raw,

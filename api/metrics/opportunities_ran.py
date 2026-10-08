@@ -377,6 +377,18 @@ def fill_missing_user_names(db: firestore.Client, names: dict[str, str], needed_
             }:
                 if key:
                     names[key] = name
+    for uid in missed:
+        if uid in names:
+            continue
+        for field in ("id", "userId"):
+            hits = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
+            if not hits:
+                continue
+            data = hits[0].to_dict() or {}
+            name = compact_str(data.get("name")) or best_person_name(data) or None
+            if name:
+                names[uid] = name
+            break
 
 
 def user_name_lookup(db: firestore.Client) -> dict[str, str]:

@@ -124,6 +124,199 @@ class DemoRateContractTests(unittest.TestCase):
         self.assertIn("Joanne Miechowski", DEMO_SRC)
         self.assertNotIn(NOT_THE_TARGET_2025_OPP_ID, DEMO_SRC)
 
+    def test_closer_directory_is_bounded_and_emails_stay_off_the_public_payload(self):
+        self.assertNotIn('db.collection("ghl_users_v2").stream()', DEMO_SRC)
+        self.assertNotIn('db.collection("roster_people_v1").stream()', DEMO_SRC)
+        self.assertIn('public.pop("owner_profiles", None)', DEMO_SRC)
+        self.assertIn('where("ghl_user_id", "in", chunk)', DEMO_SRC)
+        self.assertIn('.where(field, "==", uid).limit(1)', DEMO_SRC)
+
+
+class _Snap:
+    def __init__(self, doc_id, data, exists=True):
+        self.id = doc_id
+        self._data = data
+        self.exists = exists
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _Query:
+    def __init__(self, docs):
+        self._docs = list(docs)
+
+    def where(self, field, op, value):
+        picked = []
+        for doc in self._docs:
+            current = (doc.to_dict() or {}).get(field)
+            if op == "==" and current == value:
+                picked.append(doc)
+            elif op == "in" and current in list(value):
+                picked.append(doc)
+        return _Query(picked)
+
+    def limit(self, count):
+        return _Query(self._docs[:count])
+
+    def stream(self):
+        return iter(self._docs)
+
+
+class _Ref:
+    def __init__(self, doc_id, snap):
+        self.id = doc_id
+        self._snap = snap
+
+
+class _Collection:
+    def __init__(self, docs):
+        self._docs = {doc.id: doc for doc in docs}
+
+    def document(self, doc_id):
+        return _Ref(doc_id, self._docs.get(doc_id))
+
+    def where(self, field, op, value):
+        return _Query(self._docs.values()).where(field, op, value)
+
+
+class _Db:
+    def __init__(self, **collections):
+        self._collections = collections
+
+    def collection(self, name):
+        return self._collections[name]
+
+    def get_all(self, refs):
+        found = []
+        for ref in refs:
+            if ref._snap is None:
+                found.append(_Snap(ref.id, {}, exists=False))
+            else:
+                found.append(ref._snap)
+        return found
+
+
+class CloserAttributionTests(unittest.TestCase):
+    """assignedTo is the closer. Names come from roster, then the synced GHL user directory."""
+
+    def _opp(self, doc_id, *, assigned=None, name=None, dispo="Sit", setter="Hill"):
+        occurred = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        opp = {
+            "id": doc_id,
+            "pipelineId": "pipe-buffalo",
+            "contactId": "contact-" + doc_id,
+            "dispositionValue": dispo,
+            "appointmentOccurredAt": occurred,
+            "dispositionDate": occurred,
+            "customFields": [{"id": "Eq4NLTSkJ56KTxbxypuE", "value": setter}],
+        }
+        if assigned is not None:
+            opp["assignedTo"] = assigned
+        if name is not None:
+            opp["assignedToName"] = name
+        return _Snap(doc_id, opp)
+
+    def _directory(self):
+        return _Db(
+            roster_people_v1=_Collection(
+                [
+                    _Snap(
+                        "roster-evan",
+                        {"display_name": "Evan R Day", "ghl_user_id": "userEvan"},
+                    )
+                ]
+            ),
+            ghl_users_v2=_Collection(
+                [
+                    _Snap(
+                        "ghl-doc-evan",
+                        {"userId": "userEvan", "name": "Evan Day", "email": "Evan@HappySLR.com"},
+                    ),
+                    _Snap(
+                        "userPat",
+                        {"id": "userPat", "name": "Pat Smith", "emailAddress": "pat@happyslr.com"},
+                    ),
+                    _Snap(
+                        "0fhsjcmlntce0cpjyfhj",
+                        {"id": "0fhsjcmlntce0cpjyfhj", "name": "Wrong Name", "email": "william@happyslr.com"},
+                    ),
+                ]
+            ),
+        )
+
+    def _payload(self, snaps, db):
+        from unittest.mock import patch
+
+        import demo_rate
+
+        filters = {"pipeline": None, "setter": None, "lead_source": None, "sweeper": None}
+        with (
+            patch.object(demo_rate, "load_demo_rate_snaps", return_value=snaps),
+            patch.object(demo_rate, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
+            patch.object(demo_rate, "load_contacts_by_ids", return_value={}),
+        ):
+            return demo_rate.build_payload(db, 2026, 10, filters, "2026-10-01", "2026-10-07")
+
+    def test_assigned_to_resolves_to_the_closer_name(self):
+        snaps = [
+            self._opp("sit-evan", assigned="userEvan", dispo="Sit", setter="Day"),
+            self._opp("nosit-evan", assigned="userEvan", dispo="No Sit", setter="Day"),
+            self._opp("sit-pat", assigned="userPat", dispo="Sit"),
+            self._opp("nosit-missing", assigned="unknownABCDEF", dispo="No Sit"),
+            self._opp("sit-casey", name="Casey Lane", dispo="Sit"),
+            self._opp("nosit-dict", assigned={"id": "dictUser123456", "name": "Dict Closer"}, dispo="No Sit"),
+            self._opp("sit-breen", assigned="0fhsjcmlntce0cpjyfhj", dispo="Sit"),
+            self._opp("ignored", assigned="userEvan", dispo="Cancelled", setter="Day"),
+        ]
+        payload = self._payload(snaps, self._directory())
+        breakdowns = payload["breakdowns"]
+        self.assertEqual(payload["ran_count"], 7)
+        self.assertEqual(payload["sit_count"], 4)
+        self.assertEqual(payload["result"], 57.1)
+        self.assertEqual(
+            breakdowns["ran_by_owner"],
+            {
+                "Evan R Day": 2,
+                "Casey Lane": 1,
+                "Dict Closer": 1,
+                "Pat Smith": 1,
+                "Unknown User (ABCDEF)": 1,
+                "William Breen": 1,
+            },
+        )
+        self.assertEqual(
+            breakdowns["sit_by_owner"],
+            {"Casey Lane": 1, "Evan R Day": 1, "Pat Smith": 1, "William Breen": 1},
+        )
+        self.assertEqual(breakdowns["sit_by_setter_last_name"], {"Day": 1, "Hill": 3})
+        profiles = {row["name"]: row for row in payload["owner_profiles"]}
+        self.assertEqual(profiles["Evan R Day"]["ghl_user_id"], "userEvan")
+        self.assertEqual(profiles["Evan R Day"]["email"], "evan@happyslr.com")
+        self.assertEqual(profiles["Pat Smith"]["ghl_user_id"], "userPat")
+        self.assertEqual(profiles["Pat Smith"]["email"], "pat@happyslr.com")
+        self.assertEqual(profiles["William Breen"]["email"], "william@happyslr.com")
+        self.assertEqual(profiles["Casey Lane"]["ghl_user_id"], "")
+        self.assertNotIn("evan@happyslr.com", str(payload["rows"]))
+
+    def test_directory_failure_does_not_change_the_demo_total(self):
+        from unittest.mock import patch
+
+        import demo_rate
+
+        snaps = [self._opp("sit-evan", assigned="userEvan", dispo="Sit")]
+        filters = {"pipeline": None, "setter": None, "lead_source": None, "sweeper": None}
+        with (
+            patch.object(demo_rate, "load_demo_rate_snaps", return_value=snaps),
+            patch.object(demo_rate, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
+            patch.object(demo_rate, "load_contacts_by_ids", return_value={}),
+            patch.object(demo_rate, "load_closer_directory", side_effect=RuntimeError("directory down")),
+        ):
+            payload = demo_rate.build_payload(object(), 2026, 10, filters, "2026-10-01", "2026-10-07")
+        self.assertEqual(payload["sit_count"], 1)
+        self.assertEqual(payload["ran_count"], 1)
+        self.assertEqual(payload["breakdowns"]["sit_by_owner"], {"Unknown User (erEvan)": 1})
+
 
 if __name__ == "__main__":
     unittest.main()

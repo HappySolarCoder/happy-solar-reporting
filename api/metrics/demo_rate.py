@@ -291,6 +291,182 @@ def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
 
 
+# Same overrides the sales and appointments dashboards use for assignedTo.
+OWNER_NAME_OVERRIDES = {
+    "0fhsjcmlntce0cpjyfhj": "William Breen",
+}
+
+
+def looks_like_identifier(value: Any) -> bool:
+    text = compact_str(value)
+    if not text or " " in text or len(text) < 12:
+        return False
+    return all(ch.isalnum() or ch in {"-", "_"} for ch in text)
+
+
+def best_person_name(record: dict[str, Any] | None, *, fallback: str = "") -> str:
+    if not isinstance(record, dict):
+        return fallback
+    joined = " ".join(
+        part
+        for part in (compact_str(record.get("firstName")), compact_str(record.get("lastName")))
+        if part
+    )
+    for candidate in (
+        record.get("name"),
+        record.get("displayName"),
+        record.get("fullName"),
+        record.get("display_name"),
+        record.get("ghl_user_name"),
+        joined,
+        record.get("firstName"),
+        record.get("lastName"),
+    ):
+        text = compact_str(candidate)
+        if text and not looks_like_identifier(text):
+            return text
+    return fallback
+
+
+def assigned_user_id(opp: dict | None) -> str:
+    """GHL opportunity owner. assignedTo is the user id, or a user object with one."""
+    if not isinstance(opp, dict):
+        return ""
+    raw = opp.get("assignedTo")
+    if isinstance(raw, dict):
+        return compact_str(raw.get("id") or raw.get("userId"))
+    return compact_str(raw)
+
+
+def _user_email(row: dict | None) -> str:
+    if not isinstance(row, dict):
+        return ""
+    for key in ("email", "emailAddress", "userEmail"):
+        text = compact_str(row.get(key)).lower()
+        if "@" in text and " " not in text and len(text) <= 120:
+            return text
+    return ""
+
+
+def _remember_user(directory: dict[str, dict[str, str]], key: str, name: str, email: str, *, prefer_name: bool) -> None:
+    if not key:
+        return
+    row = directory.setdefault(key, {"name": "", "email": "", "ghl_user_id": key})
+    if name and (prefer_name or not row["name"]):
+        row["name"] = name
+    if email and not row["email"]:
+        row["email"] = email
+
+
+def load_closer_directory(db: firestore.Client, user_ids) -> dict[str, dict[str, str]]:
+    """assignedTo -> name and email.
+
+    Roster display names win, matching sales and appointments. Email and a
+    missed name come from ghl_users_v2, the synced GHL user directory.
+    Bounded get_all, then id / userId lookups. No opportunity stream and no
+    full user stream.
+    """
+    needed: list[str] = []
+    seen: set[str] = set()
+    for raw in user_ids:
+        uid = compact_str(raw)
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        needed.append(uid)
+    directory: dict[str, dict[str, str]] = {}
+    if not needed:
+        return directory
+
+    def take_roster(snap) -> None:
+        data = snap.to_dict() or {}
+        name = compact_str(data.get("display_name")) or best_person_name(data)
+        email = _user_email(data)
+        for key in {
+            compact_str(data.get("ghl_user_id")),
+            compact_str(data.get("ghlUserId")),
+            compact_str(snap.id),
+        }:
+            _remember_user(directory, key, name, email, prefer_name=True)
+
+    roster_refs = [db.collection("roster_people_v1").document(uid) for uid in needed]
+    for i in range(0, len(roster_refs), 300):
+        for snap in db.get_all(roster_refs[i : i + 300]):
+            if getattr(snap, "exists", False):
+                take_roster(snap)
+    still_roster = [uid for uid in needed if not directory.get(uid, {}).get("name")]
+    for i in range(0, len(still_roster), 10):
+        chunk = still_roster[i : i + 10]
+        if not chunk:
+            continue
+        for snap in db.collection("roster_people_v1").where("ghl_user_id", "in", chunk).stream():
+            take_roster(snap)
+
+    def take_ghl(snap, fallback_id: str = "") -> None:
+        data = snap.to_dict() or {}
+        name = compact_str(data.get("name")) or best_person_name(data)
+        email = _user_email(data)
+        keys = {
+            compact_str(data.get("id")),
+            compact_str(data.get("userId")),
+            compact_str(getattr(snap, "id", "")),
+            compact_str(fallback_id),
+        }
+        for key in keys:
+            _remember_user(directory, key, name, email, prefer_name=False)
+
+    user_refs = [db.collection("ghl_users_v2").document(uid) for uid in needed]
+    for i in range(0, len(user_refs), 300):
+        for snap in db.get_all(user_refs[i : i + 300]):
+            if getattr(snap, "exists", False):
+                take_ghl(snap)
+    for uid in needed:
+        profile = directory.get(uid) or {}
+        if profile.get("name") and profile.get("email"):
+            continue
+        for field in ("id", "userId"):
+            misses = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
+            if misses:
+                take_ghl(misses[0], uid)
+                break
+    return directory
+
+
+def resolve_closer(opp: dict, directory: dict[str, dict[str, str]]) -> tuple[str, str, str]:
+    """Display name, GHL user id, and email for the opportunity owner.
+
+    Empty name means this opp is not a closer row. The sit total does not use this.
+    """
+    uid = assigned_user_id(opp)
+    profile = directory.get(uid) or {}
+    email = profile.get("email") or ""
+    override = OWNER_NAME_OVERRIDES.get(uid.lower()) if uid else None
+    if override:
+        return override, uid, email
+    if profile.get("name"):
+        return profile["name"], uid, email
+    for key in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
+        raw_name = opp.get(key)
+        if not isinstance(raw_name, str):
+            continue
+        text = " ".join(raw_name.split())
+        if not text or len(text) > 80 or looks_like_identifier(text):
+            continue
+        return text, uid, email
+    assigned_user = opp.get("assignedToUser")
+    if isinstance(assigned_user, dict):
+        text = best_person_name(assigned_user)
+        if text:
+            return text, uid, email
+    if isinstance(opp.get("assignedTo"), dict):
+        text = best_person_name(opp.get("assignedTo"))
+        if text:
+            return text, uid, email
+    if uid:
+        return f"Unknown User ({uid[-6:]})", uid, email
+    return "", "", ""
+
+
 def pipeline_id_keys(raw: Any) -> list[str]:
     """Lookup keys for a pipelineId. compact_str and raw str() can differ (whitespace)."""
     keys: list[str] = []
@@ -603,24 +779,33 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     ran_by_owner: dict[str, int] = {}
     sit_by_owner: dict[str, int] = {}
     owner_labels: dict[str, str] = {}
+    owner_profiles: dict[str, dict[str, str]] = {}
     by_pipeline: dict[str, int] = {}
     sit_by_pipeline: dict[str, int] = {}
     by_lead: dict[str, int] = {}
     sit_by_lead: dict[str, int] = {}
 
-    def closer_name(opp: dict) -> str:
-        """Display name already on the opp. No extra roster read, so the sit total cannot move."""
-        for key in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName"):
-            raw_name = opp.get(key)
-            if not isinstance(raw_name, str):
-                continue
-            text = " ".join(raw_name.split())
-            if not text or len(text) > 80:
-                continue
-            if any(ch.isdigit() for ch in text) and " " not in text:
-                continue
-            return text
-        return ""
+    # Closer is the opportunity's assigned user. A directory miss cannot change
+    # who counts as a demo; it only leaves that closer row unnamed.
+    owner_ids = [assigned_user_id(snap.to_dict() or {}) for snap in opp_snaps]
+    try:
+        closer_directory = load_closer_directory(db, owner_ids) if any(owner_ids) else {}
+    except Exception:
+        closer_directory = {}
+
+    def remember_closer(label: str, uid: str, email: str) -> None:
+        key = label.casefold()
+        profile = owner_profiles.get(key)
+        if profile is None:
+            owner_profiles[key] = {"name": label, "ghl_user_id": uid, "email": email}
+            return
+        if uid and profile.get("ghl_user_id") not in ("", uid):
+            profile["ghl_user_id"] = ""
+            profile["email"] = ""
+        elif email and not profile.get("email"):
+            profile["email"] = email
+        if label and len(label) >= len(profile.get("name") or ""):
+            profile["name"] = label
 
     for snap in opp_snaps:
         opp = snap.to_dict() or {}
@@ -670,9 +855,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter_s = add_casefold_count(ran_by_setter, setter_labels, setter_s, empty="none")
         if dispo == "Sit":
             add_casefold_count(sit_by_setter, setter_labels, setter_s, empty="none")
-        closer = closer_name(opp)
-        if closer:
-            add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
+        closer, closer_id, closer_email = resolve_closer(opp, closer_directory)
+        if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
+            closer_label = add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
+            remember_closer(closer_label, closer_id, closer_email)
             if dispo == "Sit":
                 add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
@@ -735,6 +921,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "demo_rate_by_lead_gen_source": {k: (round((sit_by_lead.get(k,0)/v)*100,1) if v else 0.0) for k,v in by_lead.items()},
         },
         "rows": matching,
+        "owner_profiles": list(owner_profiles.values()),
     }
 
 
@@ -760,9 +947,12 @@ class handler(BaseHTTPRequestHandler):
         try:
             db = get_db()
             payload = build_payload(db, year, month, filters, start, end)
+            # Emails stay on the copilot path. The public QA payload does not include them.
+            public = dict(payload)
+            public.pop("owner_profiles", None)
 
             if fmt == "json":
-                body = json.dumps(payload, indent=2).encode("utf-8")
+                body = json.dumps(public, indent=2).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")
@@ -770,7 +960,7 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
-            body = html_page(payload).encode("utf-8")
+            body = html_page(public).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")

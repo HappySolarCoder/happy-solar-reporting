@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from copilot import dictionary as dictionary_mod
@@ -313,6 +313,25 @@ def _named_had(
     return f"There were {number} {word} for {label}."
 
 
+def _period_is_past(period: dict | None, now: datetime | None) -> bool:
+    """A window that ended before today is spoken in the past tense."""
+    if now is None:
+        return False
+    raw = str((period or {}).get("end") or "")[:10]
+    try:
+        end = date.fromisoformat(raw)
+    except ValueError:
+        return False
+    tz_name = (period or {}).get("timezone") or "America/New_York"
+    try:
+        from copilot.periods import today_in
+
+        today = today_in(tz_name, now)
+    except Exception:
+        today = now.date()
+    return end < today
+
+
 def _demo_count_sentence(
     metric: dict[str, Any],
     label: str,
@@ -320,6 +339,8 @@ def _demo_count_sentence(
     voice: str,
     who: str | None,
     missing: bool,
+    past: bool = False,
+    role: str | None = None,
 ) -> str:
     demos = metric.get("numerator")
     ran = metric.get("denominator")
@@ -330,10 +351,13 @@ def _demo_count_sentence(
             return f"I don't have a demo count for {owner}."
         return _demo_sentence(metric, label, voice=voice, who=who)
     demo_word = "demo" if _as_int(demos) == 1 else "demos"
+    role_bit = f" as the {role}" if role in {"closer", "setter"} else ""
+    has = "had" if past else "has"
+    have = "had" if past else "have"
     if who:
-        lead = f"{who} has {_count(demos)} {demo_word} for {label}"
+        lead = f"{who} {has} {_count(demos)} {demo_word}{role_bit} for {label}"
     elif voice == "your":
-        lead = f"You have {_count(demos)} {demo_word} for {label}"
+        lead = f"You {have} {_count(demos)} {demo_word}{role_bit} for {label}"
     elif _as_int(demos) == 1:
         lead = f"There was {_count(demos)} {demo_word} for {label}"
     else:
@@ -348,6 +372,40 @@ def _demo_count_sentence(
     return f"{head} The demo rate is {_percent(rate)}, {_goal_clause(rate)}."
 
 
+def _other_role_clause(payload: dict[str, Any], *, past: bool, voice: str) -> str:
+    """The other role when one person is both the closer and the setter."""
+    note = payload.get("roster_filter") or {}
+    roles = [role for role in (note.get("roles") or []) if isinstance(role, dict)]
+    if len(roles) < 2:
+        return ""
+    primary = str(note.get("primary_kind") or "")
+    other = next((role for role in roles if role.get("kind") != primary), None)
+    if other is None:
+        return ""
+    kind = "closer" if other.get("kind") == "closer" else "setter"
+    sits = other.get("sits")
+    ran = other.get("demo_ran")
+    if ran is None:
+        ran = other.get("ran")
+    if sits is None:
+        return ""
+    if voice == "your":
+        verb = "had" if past else "have"
+        who = "you"
+    else:
+        verb = "had" if past else "has"
+        who = str(other.get("name") or "that name")
+    demo_word = "demo" if _as_int(sits) == 1 else "demos"
+    if ran is None:
+        return f"As a {kind}, {who} {verb} {_count(sits)} {demo_word}."
+    appt_word = "appointment" if _as_int(ran) == 1 else "appointments"
+    head = f"As a {kind}, {who} {verb} {_count(sits)} {demo_word}, out of {_count(ran)} {appt_word} that ran."
+    if not ran:
+        return head
+    rate = round((float(sits) / float(ran)) * 100, 1)
+    return f"{head} The demo rate is {_percent(rate)}, {_goal_clause(rate)}."
+
+
 def _render_summary(
     payload: dict[str, Any],
     focus: str | None = None,
@@ -355,6 +413,7 @@ def _render_summary(
     voice: str = "the",
     who: str | None = None,
     count_of: str | None = None,
+    now: datetime | None = None,
 ) -> str:
     if not payload.get("available"):
         return (
@@ -365,8 +424,21 @@ def _render_summary(
     source_name = _source_names((payload.get("filters") or {}).get("sources"))
     by_id = {metric["metric_id"]: metric for metric in payload.get("metrics") or []}
     missing_demos = bool(payload.get("demo_counts_missing"))
+    past = _period_is_past(payload.get("period"), now)
+    note = payload.get("roster_filter") or {}
+    primary_role = None
+    if len(note.get("roles") or []) >= 2 and note.get("primary_kind") in {"closer", "setter"}:
+        primary_role = str(note.get("primary_kind"))
     if count_of == "demos" and "demo_rate" in by_id:
-        sentence = _demo_count_sentence(by_id["demo_rate"], label, voice=voice, who=who, missing=missing_demos)
+        sentence = _demo_count_sentence(
+            by_id["demo_rate"],
+            label,
+            voice=voice,
+            who=who,
+            missing=missing_demos,
+            past=past,
+            role=primary_role,
+        )
         if missing_demos and who:
             sales = by_id.get("sales")
             ran = by_id.get("opps_ran")
@@ -1129,10 +1201,12 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 asked_as_self = self_ask and not raw_people and not offices
                 people = list(raw_people)
                 if asked_as_self:
-                    hint = self_query(identity)
-                    if hint:
-                        people = [hint]
-                if not source_ids and len(people) == 1:
+                    args["self_match"] = {
+                        "ghl_user_id": getattr(identity, "ghl_user_id", None) or "",
+                        "email": getattr(identity, "email", None) or "",
+                        "name": self_query(identity) or "",
+                    }
+                elif not source_ids and len(people) == 1:
                     args["person"] = people[0]
                 elif not source_ids and not people and len(offices) == 1:
                     args["office"] = offices[0]
@@ -1225,7 +1299,15 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                             voice=voice,
                             who=who,
                             count_of=count_subject(text),
+                            now=now,
                         )
+                        other_role = _other_role_clause(
+                            tool_payload,
+                            past=_period_is_past(tool_payload.get("period"), now),
+                            voice=voice,
+                        )
+                        if other_role and "As a setter" not in answer and "As a closer" not in answer:
+                            answer = answer.rstrip() + " " + other_role
                     elif decision_intent == "compare":
                         answer = _render_compare(tool_payload, who=who)
                     else:

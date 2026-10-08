@@ -29,8 +29,9 @@ BLOOM_TOKEN_MAX_SECONDS = 600
 BLOOM_CLOCK_SKEW_SECONDS = 30
 DEFAULT_BLOOM_ORIGIN = "https://happy-solar-bloom-portal.vercel.app"
 _BLOOM_KEYS = frozenset({"aud", "exp", "iat", "iss", "role", "status", "sub", "v"})
-_OPTIONAL_BLOOM_KEYS = frozenset({"name"})
+_OPTIONAL_BLOOM_KEYS = frozenset({"name", "email", "ghlUserId"})
 _SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class Identity:
     actor_id: str
     role: str
     display_name: str | None = None
+    email: str | None = None
+    ghl_user_id: str | None = None
 
     def as_dict(self) -> dict:
         return {"actor_id": self.actor_id, "role": self.role}
@@ -114,6 +117,15 @@ def _claim_keys_ok(keys: set) -> bool:
     return keys <= (_BLOOM_KEYS | _OPTIONAL_BLOOM_KEYS)
 
 
+def _signed_text(value: object, *, limit: int) -> str | None:
+    """Optional claim text. Blank, too long, or any control character rejects the token."""
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        return None
+    if _CONTROL.search(value):
+        return None
+    return value.strip()
+
+
 def _canonical_claims(claims: dict) -> bytes:
     if not _claim_keys_ok(set(claims)):
         raise ValueError("claims")
@@ -147,11 +159,18 @@ def verify_bloom_token(token: str, secret: str, now: datetime) -> dict | None:
         return None
     if data.get("v") != 1 or data.get("iss") != BLOOM_ISSUER or data.get("aud") != BLOOM_AUDIENCE:
         return None
-    if "name" in data:
-        signed_name = data.get("name")
-        if not isinstance(signed_name, str) or not signed_name.strip() or len(signed_name) > 80:
+    if "name" in data and _signed_text(data.get("name"), limit=80) is None:
+        return None
+    if "email" in data:
+        email = _signed_text(data.get("email"), limit=120)
+        if email is None or " " in email or email.count("@") != 1:
             return None
-        if re.search(r"[\r\n\x00]", signed_name):
+        local, _, domain = email.partition("@")
+        if not local or "." not in domain or ".." in email:
+            return None
+    if "ghlUserId" in data:
+        ghl_user_id = _signed_text(data.get("ghlUserId"), limit=64)
+        if ghl_user_id is None or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ghl_user_id) is None:
             return None
     if data.get("status") != "active" or data.get("role") not in BLOOM_PORTAL_ROLES:
         return None
@@ -199,9 +218,16 @@ def identity_from_bloom_bearer(
     claims = verify_bloom_token(presented, _bloom_secret(token_secret), moment)
     if claims is None:
         return None
-    signed_name = claims.get("name")
-    display_name = str(signed_name).strip() if isinstance(signed_name, str) and signed_name.strip() else None
-    return Identity(actor_id="bloom:" + claims["sub"], role=str(claims["role"]), display_name=display_name)
+    display_name = _signed_text(claims.get("name"), limit=80) if "name" in claims else None
+    email = _signed_text(claims.get("email"), limit=120) if "email" in claims else None
+    ghl_user_id = _signed_text(claims.get("ghlUserId"), limit=64) if "ghlUserId" in claims else None
+    return Identity(
+        actor_id="bloom:" + claims["sub"],
+        role=str(claims["role"]),
+        display_name=display_name,
+        email=email,
+        ghl_user_id=ghl_user_id,
+    )
 
 
 def identity_for_chat(
@@ -230,7 +256,13 @@ def identity_for_chat(
     if bloom.role in allowed_roles:
         return bloom
     if SETTINGS_ADMIN_ROLE in allowed_roles:
-        return Identity(actor_id=bloom.actor_id, role=SETTINGS_ADMIN_ROLE)
+        return Identity(
+            actor_id=bloom.actor_id,
+            role=SETTINGS_ADMIN_ROLE,
+            display_name=bloom.display_name,
+            email=bloom.email,
+            ghl_user_id=bloom.ghl_user_id,
+        )
     return None
 
 

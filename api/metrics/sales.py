@@ -379,6 +379,18 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             }:
                 if key:
                     user_name_cache[key] = name
+    for uid in missed_owner_ids:
+        if uid in user_name_cache:
+            continue
+        for field in ("id", "userId"):
+            hits = list(db.collection("ghl_users_v2").where(field, "==", uid).limit(1).stream())
+            if not hits:
+                continue
+            data = hits[0].to_dict() or {}
+            name = compact_str(data.get("name")) or best_person_name(data) or None
+            if name:
+                user_name_cache[uid] = name
+            break
 
     def user_name_from_id(user_id: str | None, opp: dict | None = None) -> str | None:
         if not user_id:

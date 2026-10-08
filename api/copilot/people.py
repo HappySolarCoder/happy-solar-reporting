@@ -26,6 +26,8 @@ class Rep:
     ran: int | None = None
     sits: int | None = None
     demo_ran: int | None = None
+    ghl_user_id: str | None = None
+    email: str | None = None
 
 
 def asks_about_self(text: str) -> bool:
@@ -71,7 +73,7 @@ def count_subject(text: str) -> str | None:
 
 
 def self_query(identity) -> str | None:
-    """Name to match when the asker says 'my'.
+    """Name to match when the asker says 'my' and no user id or email matched.
 
     Bloom's token may carry an optional signed name. Otherwise the subject slug
     is the only identity this app receives (user_evan → evan).
@@ -123,6 +125,8 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
         if not name or name.casefold() in _SKIP:
             continue
         kind = str(row.get("kind") or "rep").strip().lower() or "rep"
+        ghl_user_id = " ".join(str(row.get("ghl_user_id") or "").split()) or None
+        email = " ".join(str(row.get("email") or "").split()) or None
         found.append(
             Rep(
                 name=name,
@@ -132,6 +136,8 @@ def reps_from_bundle(bundle: dict | None) -> list[Rep]:
                 ran=_as_int(row.get("ran")),
                 sits=_as_int(row.get("sits")),
                 demo_ran=_as_int(row.get("demo_ran")),
+                ghl_user_id=ghl_user_id,
+                email=email,
             )
         )
     return found
@@ -171,6 +177,65 @@ def _score(query: str, rep: Rep) -> int:
     return 0
 
 
+def _last_token(name: str) -> str:
+    parts = _parts(name)
+    return parts[-1] if parts else ""
+
+
+def _role_payload(rep: Rep) -> dict[str, Any]:
+    return {
+        "kind": rep.kind,
+        "name": rep.name,
+        "sales": rep.sales,
+        "created": rep.created,
+        "ran": rep.ran,
+        "sits": rep.sits,
+        "demo_ran": rep.demo_ran,
+    }
+
+
+def _fuller_name(reps: list[Rep]) -> str:
+    return max((rep.name for rep in reps), key=lambda name: (len(_parts(name)), len(name)))
+
+
+def _applied(rep: Rep, roles: list[Rep] | None = None) -> dict[str, Any]:
+    group = roles or [rep]
+    if len(group) < 2:
+        return {"status": "applied", "label": rep.name, "kind": rep.kind, "rep": rep}
+    primary = next((item for item in group if item.kind == "closer" and item.sits is not None), None)
+    if primary is None:
+        primary = next((item for item in group if item.sits is not None), group[0])
+    kinds = {item.kind for item in group}
+    return {
+        "status": "applied",
+        "label": _fuller_name(group),
+        "kind": "both" if len(kinds) > 1 else primary.kind,
+        "primary_kind": primary.kind,
+        "rep": primary,
+        "roles": [_role_payload(item) for item in group],
+    }
+
+
+def _unique_partner(rep: Rep, reps: list[Rep]) -> Rep | None:
+    """The other role when one setter last name and one closer are the same person."""
+    if rep.kind == "setter" and len(_parts(rep.name)) == 1:
+        token = _parts(rep.name)[0]
+        closers = [other for other in reps if other.kind == "closer" and _last_token(other.name) == token]
+        if len(closers) == 1:
+            return closers[0]
+        return None
+    if rep.kind == "closer":
+        last = _last_token(rep.name)
+        setters = [
+            other
+            for other in reps
+            if other.kind == "setter" and _parts(other.name) in ([last], _parts(rep.name))
+        ]
+        if len(setters) == 1:
+            return setters[0]
+    return None
+
+
 def _option_label(rep: Rep, group: list[Rep]) -> str:
     names = [item.name.casefold() for item in group]
     if names.count(rep.name.casefold()) > 1:
@@ -189,7 +254,14 @@ def match_rep(query: str, reps: list[Rep]) -> dict[str, Any]:
     winners = [rep for score, rep in scored if score == best]
     if len(winners) == 1:
         winner = winners[0]
-        return {"status": "applied", "label": winner.name, "kind": winner.kind, "rep": winner}
+        partner = _unique_partner(winner, reps)
+        if partner is not None and partner is not winner:
+            return _applied(winner, [winner, partner])
+        return _applied(winner)
+    names = {rep.name.casefold() for rep in winners}
+    kinds = {rep.kind for rep in winners}
+    if len(names) == 1 and kinds <= {"setter", "closer"}:
+        return _applied(winners[0], winners)
     options = [_option_label(rep, winners) for rep in winners]
     unique: list[str] = []
     for option in options:
@@ -204,6 +276,33 @@ def match_rep(query: str, reps: list[Rep]) -> dict[str, Any]:
         "options": unique,
         "reason": f"I'm not sure if you mean {listed}. Which rep did you mean?",
     }
+
+
+def match_signed_in(claims: dict | None, reps: list[Rep]) -> dict[str, Any]:
+    """Who is asking. GHL user id, then email, then the signed name.
+
+    The user id matches the closer on the opportunity (assignedTo). Email matches
+    the GHL user email. The name matches closers and setters.
+    """
+    claims = claims or {}
+    user_id = str(claims.get("ghl_user_id") or "").strip()
+    if user_id:
+        hits = [rep for rep in reps if rep.kind == "closer" and rep.ghl_user_id == user_id]
+        if len(hits) == 1:
+            return _applied(hits[0])
+        if len(hits) > 1:
+            return match_rep(hits[0].name, hits)
+    email = str(claims.get("email") or "").strip().casefold()
+    if email and "@" in email:
+        hits = [rep for rep in reps if rep.kind == "closer" and (rep.email or "").casefold() == email]
+        if len(hits) == 1:
+            return _applied(hits[0])
+        if len(hits) > 1:
+            return match_rep(hits[0].name, hits)
+    name = str(claims.get("name") or "").strip()
+    if name:
+        return match_rep(name, reps)
+    return {"status": "missing", "label": name or "you"}
 
 
 def match_office(query: str, offices: dict[str, dict[str, int | None]]) -> dict[str, Any]:
@@ -251,6 +350,7 @@ def roster_rows_from_breakdowns(
     ran: dict | None = None,
     created: dict | None = None,
     demo: dict | None = None,
+    owner_profiles: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Closer rows from owner maps, setter rows from last-name maps. Totals are untouched."""
     index: dict[tuple[str, str], dict[str, Any]] = {}
@@ -295,7 +395,28 @@ def roster_rows_from_breakdowns(
         add(name, "setter", "sits", value)
     for name, value in (demo_b.get("ran_by_setter_last_name") or {}).items():
         add(name, "setter", "demo_ran", value)
-    return list(index.values())
+    profiles: dict[str, list[dict[str, Any]]] = {}
+    for profile in owner_profiles or []:
+        if not isinstance(profile, dict):
+            continue
+        label = " ".join(str(profile.get("name") or "").split())
+        if not label:
+            continue
+        profiles.setdefault(label.casefold(), []).append(profile)
+    rows = list(index.values())
+    for row in rows:
+        if row["kind"] == "closer" and row.get("demo_ran") is not None and row.get("sits") is None:
+            row["sits"] = 0
+        if row["kind"] != "closer":
+            continue
+        hits = profiles.get(str(row["name"]).casefold()) or []
+        ids = {str(hit.get("ghl_user_id") or "").strip() for hit in hits if str(hit.get("ghl_user_id") or "").strip()}
+        emails = {str(hit.get("email") or "").strip() for hit in hits if str(hit.get("email") or "").strip()}
+        if len(ids) == 1:
+            row["ghl_user_id"] = next(iter(ids))
+        if len(emails) == 1:
+            row["email"] = next(iter(emails))
+    return rows
 
 
 def office_rows_from_breakdowns(

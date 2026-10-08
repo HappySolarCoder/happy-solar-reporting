@@ -100,7 +100,7 @@ When Bloom cannot mint a token, it posts a reason and the panel shows that reaso
 { "type": "happy-solar-goose", "action": "token-unavailable", "reason": "This role is not authorized to use Goose." }
 ```
 
-The iframe accepts `token` and `token-unavailable` only when `event.origin` is an allowed Bloom parent. The token itself is `base64url(json).base64url(hmac-sha256)`. The JSON keys, sorted, are `aud`, `exp`, `iat`, `iss`, `role`, `status`, `sub`, and `v`.
+The iframe accepts `token` and `token-unavailable` only when `event.origin` is an allowed Bloom parent. The token itself is `base64url(json).base64url(hmac-sha256)`. The JSON keys, sorted, are `aud`, `exp`, `iat`, `iss`, `role`, `status`, `sub`, and `v`. Optional signed claims are `name`, `email`, and `ghlUserId`. A body or query field cannot set those.
 
 Chat answers a missing credential with `Goose could not confirm an authorized employee for this request.` A bearer whose role is outside the allowed list gets `This role is not authorized to use Goose.` A bad or expired signature gets `Your Goose session expired. Refresh the page.`
 
@@ -113,6 +113,9 @@ Chat answers a missing credential with `Goose could not confirm an authorized em
 | `role` | `fma`, `closer`, `coach`, `manager`, or `inbound`. Not `settings_admin`. |
 | `status` | `active` |
 | `iat`, `exp` | Unix seconds. Lifetime at most 10 minutes. Bloom mints 5 minutes. |
+| `name` | Optional display name, at most 80 characters, no control characters. |
+| `email` | Optional GHL user email, at most 120 characters, no control characters. |
+| `ghlUserId` | Optional GHL user id, at most 64 letters, digits, `_`, or `-`, no control characters. |
 
 The sibling change in `HappySolarCoder/happy-solar-bloom-portal` is `lib/goose-token.ts`, `lib/goose-token.test.ts`, `app/api/goose-token/route.ts`, `components/data-center.tsx`, and `components/frame-stage.tsx`. Bloom's env var is the same `COPILOT_BLOOM_TOKEN_SECRET`. Optional `NEXT_PUBLIC_GOOSE_REPORTING_ORIGINS` adds preview reporting origins next to `https://database-migration-chi.vercel.app`. Both pull requests have to be deployed, and the shared secret has to be set, before a signed-in Bloom employee can chat. Rollback of this path is reverting those pull requests or unsetting the secret.
 

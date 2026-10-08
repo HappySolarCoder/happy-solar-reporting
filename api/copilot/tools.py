@@ -27,6 +27,7 @@ from copilot.people import (
     apply_counts,
     match_office,
     match_rep,
+    match_signed_in,
     offices_from_bundle,
     reps_from_bundle,
     slice_counts,
@@ -338,15 +339,46 @@ def _load_bundle(period: Period, ctx: ToolContext) -> dict[str, Any]:
     return bundle
 
 
+def _applied_note(found: dict, asked: str) -> dict:
+    consumed = [str(found.get("label") or ""), asked]
+    for role in found.get("roles") or []:
+        name = str((role or {}).get("name") or "")
+        if name:
+            consumed.append(name)
+    note = {
+        "status": "applied",
+        "label": found.get("label") or asked,
+        "kind": found.get("kind") or "",
+        "consumed": [item for item in consumed if item],
+    }
+    if found.get("primary_kind"):
+        note["primary_kind"] = found["primary_kind"]
+    if found.get("roles"):
+        note["roles"] = found["roles"]
+    return note
+
+
 def _named_slice(bundle: dict[str, Any], args: dict) -> tuple[dict[str, Any], dict | None]:
     """Scope totals to one rep or office when the bundle has that row.
 
     A lead-source filter is not crossed with a person. The caller keeps the source.
+    self_match is the signed-in person. It is not read from the question body.
     """
     if _sources(args):
         return bundle, None
-    person = str(args.get("person") or "").strip()
-    office = str(args.get("office") or "").strip()
+    self_match = args.get("self_match") if isinstance(args.get("self_match"), dict) else None
+    person = "" if self_match is not None else str(args.get("person") or "").strip()
+    office = "" if self_match is not None else str(args.get("office") or "").strip()
+    if self_match is not None:
+        reps = reps_from_bundle(bundle)
+        asked = str(self_match.get("name") or "you")
+        if not reps:
+            return bundle, {"status": "missing", "label": asked}
+        found = match_signed_in(self_match, reps)
+        if found.get("status") != "applied":
+            return bundle, found
+        scoped = apply_counts(bundle, slice_counts(rep=found["rep"]))
+        return scoped, _applied_note(found, asked)
     if person:
         reps = reps_from_bundle(bundle)
         if not reps:
@@ -355,12 +387,7 @@ def _named_slice(bundle: dict[str, Any], args: dict) -> tuple[dict[str, Any], di
         if found.get("status") != "applied":
             return bundle, found
         scoped = apply_counts(bundle, slice_counts(rep=found["rep"]))
-        return scoped, {
-            "status": "applied",
-            "label": found["label"],
-            "kind": found.get("kind") or "",
-            "consumed": [found["label"], person],
-        }
+        return scoped, _applied_note(found, person)
     if office:
         offices = offices_from_bundle(bundle)
         if not offices:

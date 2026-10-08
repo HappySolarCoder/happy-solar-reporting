@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import threading
 import unittest
@@ -1696,7 +1697,7 @@ class CopilotTests(unittest.TestCase):
             self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", answer)
             self.assertIn("11 demos out of 27 appointments", answer)
             caveat = (
-                f"I couldn't filter to {name}, so this is company-wide. "
+                f"I couldn't filter to {name}, so this is company-wide for Oct 1\u20137, 2026. "
                 "If that number looks off, let me know."
             )
             self.assertEqual(answer.count(caveat), 1)
@@ -1728,7 +1729,7 @@ class CopilotTests(unittest.TestCase):
         mixed_answer = mixed["body"]["answer"]
         self.assertIn("Your Doors demo rate for Oct 1\u20137, 2026 is 25.0%.", mixed_answer)
         doors_caveat = (
-            "I couldn't filter to Rochester, so this is Doors only. "
+            "I couldn't filter to Rochester, so this is Doors only for Oct 1\u20137, 2026. "
             "If that number looks off, let me know."
         )
         self.assertEqual(mixed_answer.count(doors_caveat), 1)
@@ -2074,11 +2075,11 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("25.0%", summed)
 
         person = (
-            "I couldn't filter to Jeff, so this is company-wide. "
+            "I couldn't filter to Jeff, so this is company-wide for Oct 1\u20137, 2026. "
             "If that number looks off, let me know."
         )
         territory = (
-            "I couldn't filter to Rochester, so this is company-wide. "
+            "I couldn't filter to Rochester, so this is company-wide for Oct 1\u20137, 2026. "
             "If that number looks off, let me know."
         )
         assert_caveat("jeff's demo rate", "req_net_jeffs", person)
@@ -2111,11 +2112,11 @@ class CopilotTests(unittest.TestCase):
             "If that number looks off, let me know."
         )
         assert_caveat("demo rate for the past fortnight", "req_net_fortnight", fortnight)
-        two_months = (
-            "I couldn't use 'two months', so this is Oct 1\u20137, 2026. "
-            "If that number looks off, let me know."
+        assert_exact(
+            "demo rate for the last two months",
+            "req_net_two_months_ago",
+            "Aug 4 \u2013 Oct 4, 2026",
         )
-        assert_caveat("demo rate for the last two months", "req_net_two_months_ago", two_months)
 
         for question, phrase, request_id in (
             ("what is our demo rate excluding doors?", "excluding doors", "req_net_excluding"),
@@ -2267,6 +2268,229 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("Your demo rate for Oct 1\u20137, 2026 is 40.7%.", settled["body"]["answer"])
         self.assertNotIn("If that number looks off", settled["body"]["answer"])
         self.assertFalse(settled["body"]["uncertain"])
+
+    def test_round6_probe_phrasing_is_exact_or_one_clean_caveat(self):
+        """Every prior and fresh probe phrasing is exact, or one caveat quoting the original words."""
+        from dataclasses import replace
+
+        questions = (
+            "what was our demo rate in september?",
+            "demo rate for doors this month",
+            "what is our demo rate for self gen this month?",
+            "demo rate for virtual this month",
+            "what's our demo rate for rochester this month?",
+            "what's our demo rate for buffalo this month?",
+            "demo rate for syracuse this month",
+            "demo rate for jeff this month",
+            "how are we doing on demos for rochester?",
+            "What is our demo rate this month?",
+            "What is Demo Rate?",
+            "demo rate for doors in rochester this month",
+            "May I see our demo rate this month?",
+            "what was our demo rate in september 2025?",
+            "what was our demo rate in september 2027?",
+            "What was our demo rate last month?",
+            "demo rate in march",
+            "how are we doing on demos for us?",
+            "demo rate for everyone this month",
+            "what's our demo rate overall this month?",
+            "demo rate for overall",
+            "what was our demo rate in may?",
+            "demo rate may 2026",
+            "how many sits did we have this month?",
+            "what was our demo rate last week?",
+            "demo rate yesterday",
+            "what's our demo rate this year?",
+            "demo rate ytd",
+            "demo rate for Q3",
+            "demo rate last 30 days",
+            "what was our demo rate last year?",
+            "demo rate from sep 1 to sep 15",
+            "demo rate since september",
+            "demo rate for august and september",
+            "what was our demo rate in september? I need it today",
+            "what's jeff's demo rate this month?",
+            "how is rochester doing on demo rate?",
+            "demo rate in rochester",
+            "demo rate for phones and doors this month",
+            "demo rate excluding doors this month",
+            "demo rate for everything but doors",
+            "demo rate for sweepers this month",
+            "demo rate for Jeff Smith this month",
+            "what is the demo rate for the rochester office?",
+            "demo rate in sept 2025",
+            "demo rate 2025 september",
+            "demo rate for dec",
+            "demo rate in dec 2026",
+            "compare our demo rate in september to august",
+            "how did our demo rate change from last month?",
+            "what was the demo rate on oct 3?",
+            "demo rate the first week of september",
+            "demo rate for september 15",
+            "Can you mar the numbers? what's our demo rate this month",
+            "demo rate for doors last month",
+            "What's our demo rate for may doors?",
+            "what's our demo rate for the team this month?",
+            "what's the demo rate for doors in september?",
+            "what's our demo rate not counting doors this month?",
+            "demo rate other than phones this month",
+            "demo rate for all sources but doors",
+            "demo rate for the last 2 weeks",
+            "demo rate over the past month",
+            "what was our demo rate on 10/3?",
+            "demo rate for 9/1-9/15",
+            "demo rate between september 1 and september 15",
+            "how did Maria do on demo rate this month?",
+            "rochester's demo rate this month",
+            "demo rate in the buffalo market last month",
+            "demo rate in 2025",
+            "demo rate this quarter",
+            "demo rate for the week of sept 8",
+            "demo rate for self gen or doors this month",
+            "demo rate for doors and self gen in september",
+            "what's the demo rate for new reps this month?",
+            "demo rate on weekends this month",
+            "demo rate for the month of august",
+            "what was our demo rate the past 3 months?",
+            "what's our demo rate this month?",
+            "whats our demo rate this month",
+            "how's our demo rate looking this month?",
+            "demo rate this month for everybody except doors",
+            "demo rate but not self gen",
+            "demo rate without inbound this month",
+            "demo rate minus 3pl this month",
+            "demo rate besides phones",
+            "demo rate aside from doors",
+            "demo rate for doors but I need it for this month",
+            "what's Sarah's demo rate in september?",
+            "demo rate for Tony Russo last week",
+            "how is Dave doing on demos this month",
+            "demo rate for sept 1st through sept 10th",
+            "demo rate from 9/15 to 9/30",
+            "demo rate on 9/31",
+            "demo rate for q2 2025",
+            "demo rate in q4",
+            "demo rate on mondays this month",
+            "demo rate tuesday",
+            "dmeo rate this month",
+            "demo rat for septmber",
+            "deom rate this month",
+            "demorate this month",
+            "demo rate sep vs aug",
+            "compare demo rate q2 vs q3",
+            "demo rate for phones, doors and self gen this month",
+            "demo rate for inbound and 3pl",
+            "demo rate for doors this week",
+            "what was the demo rate in 2024?",
+            "demo rate oct 1 to oct 3",
+            "demo rate for the last three months",
+            "demo rate last 7 days for doors",
+            "demo rate for non-doors this month",
+            "demo rate for non doors this month",
+            "demo rate for nondoors this month",
+            "whats the demo % this month",
+            "What is demo rate and what's ours this month?",
+            "how many demos did we get in september?",
+            "demo rate in september for everyone but phones",
+            "demo rate year over year",
+            "demo rate for the past 6 weeks",
+        )
+        clean = {
+            "what's our demo rate this month?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "whats our demo rate this month": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "how's our demo rate looking this month?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "What is our demo rate this month?": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "dmeo rate this month": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "deom rate this month": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demorate this month": "Your demo rate for Oct 1\u20137, 2026 is 40.7%.",
+            "demo rat for septmber": "Your demo rate for Sep 1\u201330, 2026 is 40.7%.",
+            "demo rate 2025 september": "Your demo rate for Sep 1\u201330, 2025 is 40.7%.",
+            "demo rate for the month of august": "Your demo rate for Aug 1\u201331, 2026 is 40.7%.",
+            "demo rate from 9/15 to 9/30": "Your demo rate for Sep 15\u201330, 2026 is 40.7%.",
+            "demo rate for sept 1st through sept 10th": "Your demo rate for Sep 1\u201310, 2026 is 40.7%.",
+            "demo rate sep vs aug": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare our demo rate in september to august": "Comparing Sep 1\u201330, 2026 with Aug 1\u201331, 2026.",
+            "compare demo rate q2 vs q3": "Comparing Apr 1 \u2013 Jun 30, 2026 with Jul 1 \u2013 Sep 30, 2026.",
+            "demo rate for doors but I need it for this month": "Your Doors demo rate for Oct 1\u20137, 2026 is 25.0%.",
+        }
+        quoted = {
+            "demo rate aside from doors": "aside from doors",
+            "demo rate year over year": "year over year",
+            "demo rate for non-doors this month": "non-doors",
+            "demo rate for non doors this month": "non doors",
+            "demo rate for nondoors this month": "nondoors",
+            "what's our demo rate not counting doors this month?": "not counting doors",
+        }
+        named = {
+            "what's Sarah's demo rate in september?": "Sarah",
+            "how did Maria do on demo rate this month?": "Maria",
+            "demo rate for Tony Russo last week": "Tony Russo",
+            "how is Dave doing on demos this month": "Dave",
+            "demo rate for Jeff Smith this month": "Jeff Smith",
+            "what's our demo rate for rochester this month?": "Rochester",
+        }
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        roomy = replace(
+            _enabled_config(),
+            max_requests_per_minute=400,
+            max_turns_per_day=400,
+            max_turns_per_month=400,
+            max_active_company=400,
+        )
+        metrics = FakeMetrics(
+            ran=32,
+            sits=11,
+            demo_ran=27,
+            sit_by_source={"Doors": 1, "Phones": 4, "Virtual": 0},
+            demo_ran_by_source={"Doors": 4, "Phones": 5, "Virtual": 0},
+        )
+        page = {"start": "2026-10-01", "end": "2026-10-07", "sources": []}
+        for index, question in enumerate(questions):
+            with self.subTest(question=question):
+                result = _chat(
+                    question,
+                    store=store,
+                    metrics=metrics,
+                    config=roomy,
+                    filters=page,
+                    request_id=f"req_round6_{index:03d}",
+                )
+                answer = result["body"]["answer"]
+                code = result["body"]["code"]
+                self.assertNotIn("definition isn't", answer.lower())
+                self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+                self.assertNotRegex(answer, r"\d{4}-\d{2}-\d{2}T")
+                self.assertNotIn("gooseChips", answer)
+                self.assertNotIn("data-goose-q", answer)
+                caveat_count = answer.lower().count("if that number looks off")
+                self.assertIn(caveat_count, (0, 1))
+                self.assertLessEqual(answer.lower().count("i'm not 100% sure"), 1)
+                for quote in re.findall(r"I couldn't (?:apply|use) '([^']*)'", answer):
+                    self.assertGreater(len(quote.strip()), 1, question)
+                    self.assertIsNone(re.fullmatch(r"[A-Za-z]", quote.strip()), question)
+                    self.assertIn(quote.lower(), question.lower(), question)
+                if caveat_count == 1:
+                    self.assertIn(code, {"company_summary", "compare"})
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    marker = "%" if "%" in answer else "n/a"
+                    self.assertLess(answer.lower().find(marker), answer.lower().find("if that number looks off"))
+                elif code in {"company_summary", "compare"}:
+                    self.assertTrue("%" in answer or "N/A" in answer)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in clean:
+                    self.assertIn(clean[question], answer)
+                    self.assertEqual(caveat_count, 0)
+                    self.assertFalse(result["body"]["uncertain"])
+                if question in quoted:
+                    self.assertEqual(caveat_count, 1)
+                    self.assertIn(quoted[question], answer.lower())
+                    self.assertEqual(result["body"]["footnote"]["filters"]["sources"], [])
+                    self.assertNotIn("25.0%", answer)
+                if question in named:
+                    self.assertEqual(caveat_count, 1)
+                    self.assertIn(f"I couldn't filter to {named[question]}", answer)
+                    self.assertNotIn("I couldn't apply", answer)
 
 
 if __name__ == "__main__":

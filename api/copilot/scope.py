@@ -15,6 +15,9 @@ from copilot.periods import (
     month_spans_covering,
     named_calendar_range,
     named_period_unserved,
+    quarter_spans_covering,
+    _FULL_MONTH_NUMBERS,
+    _within_one_edit,
 )
 
 
@@ -102,10 +105,18 @@ _SOURCE_NEGATION = re.compile(
     re.I,
 )
 _NEAR_SOURCE_NEGATION = re.compile(
-    r"\b(?:not counting|other than|aside from|apart from|minus|besides|but|not)\b",
+    r"\b(?:not counting|other than|aside from|apart from|minus|besides|but|not|non)\b",
     re.I,
 )
-_DEMO_METRIC = re.compile(r"\b(?:demo\s+rate|demos|demo)\b", re.I)
+_GLUED_NON_SOURCE = re.compile(
+    r"\bnon[-\s]?(?:doors?|phones?|virtual|self[\s-]?gen|inbound|3\s*pl|nondoors)\b",
+    re.I,
+)
+_DEMO_METRIC = re.compile(
+    r"\b(?:demo\s+rate|demos|demo|demorate|demo[\s-]?rat|"
+    r"dmeo(?:\s+rat(?:e)?)?|deom(?:\s+rat(?:e)?)?|demmo(?:\s+rat(?:e)?)?)\b",
+    re.I,
+)
 _PURE_DEMO_DEFINITION = re.compile(
     r"^(?:what(?:'s| is)|define|explain)\s+(?:a\s+|the\s+)?demo(?:\s+rate)?\s*\??$"
     r"|^(?:how|what)\s+(?:is|does)\s+demo(?:\s+rate)?\s+"
@@ -151,6 +162,7 @@ _FILLER_WORDS = frozenset(
         "happy",
         "here",
         "how",
+        "hows",
         "i",
         "im",
         "in",
@@ -160,6 +172,7 @@ _FILLER_WORDS = frozenset(
         "just",
         "let",
         "like",
+        "looking",
         "many",
         "me",
         "mtd",
@@ -171,7 +184,9 @@ _FILLER_WORDS = frozenset(
         "of",
         "on",
         "our",
+        "ours",
         "over",
+        "overall",
         "please",
         "really",
         "right",
@@ -201,7 +216,12 @@ _FILLER_WORDS = frozenset(
     }
 )
 _FILLER_RE = re.compile(r"\b(" + "|".join(sorted(_FILLER_WORDS, key=len, reverse=True)) + r")\b", re.I)
-_METRIC_WORDS = re.compile(r"\bdemo\s+rate\b|\bdemos\b|\bdemo\b|\brate\b|\bpercent\b|%", re.I)
+_METRIC_WORDS = re.compile(
+    r"\bdemo[\s-]?rat(?:e)?\b|\bdemorate\b|\bdemos\b|\bdemo\b|"
+    r"\b(?:dmeo|deom|demmo)(?:\s+rat(?:e)?)?\b|\brate\b|\bpercent\b|%",
+    re.I,
+)
+_APOSTROPHE_SUFFIX = re.compile(r"['’](?:s|re|m|ll|ve|d)\b|n['’]t\b", re.I)
 _TERM_WORDS = {
     "sales": re.compile(r"\bsales?\b", re.I),
     "created": re.compile(r"\b(?:created|opportunities|opportunity)\b", re.I),
@@ -447,7 +467,12 @@ def _negation_before_source(text: str) -> bool:
 
 def message_source_negated(text: str) -> bool:
     """A source named in order to leave it out. Never filter TO that source."""
-    return bool(_SOURCE_NEGATION.search(text or "")) or _negation_before_source(text or "")
+    raw = text or ""
+    return (
+        bool(_SOURCE_NEGATION.search(raw))
+        or _negation_before_source(raw)
+        or bool(_GLUED_NON_SOURCE.search(raw))
+    )
 
 
 def message_sources_are_exact(text: str) -> bool:
@@ -498,29 +523,70 @@ def _applied_source_ids(text: str) -> list[str]:
     return message_sources(text)
 
 
+def _title_name(word: str) -> str:
+    return word[:1].upper() + word[1:]
+
+
+def _name_stopped(word: str) -> bool:
+    """True when the word is a filler, a lead source, a month, or a month typo. Not a person."""
+    lower = word.lower().replace("’", "'")
+    if lower in _NOT_A_QUALIFIER or lower in _FILLER_WORDS:
+        return True
+    if lower.startswith("non"):
+        return True
+    if re.search(r"doors?|phones?|virtual|inbound|self[\s-]?gen|3\s*pl", lower):
+        return True
+    return any(_within_one_edit(lower, name) for name in _FULL_MONTH_NUMBERS)
+
+
 def _unapplied_name(text: str) -> str | None:
-    """Territory or person the reporting tools cannot filter. Virtual is a lead source."""
+    """Territory or person the reporting tools cannot filter. Virtual is a lead source.
+
+    Any capitalized or possessive name counts. There is no list of people.
+    """
+    raw = text or ""
     found: list[str] = []
-    for match in re.finditer(r"\b(buffalo|rochester|syracuse)\b", text or "", re.I):
+    for match in re.finditer(r"\b(buffalo|rochester|syracuse)\b", raw, re.I):
         found.append(_TERRITORIES[match.group(1).lower()])
-    for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", text or "", re.I):
+    for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", raw, re.I):
         word = match.group(1)
-        if word.lower() in _NOT_A_QUALIFIER:
+        if _name_stopped(word):
             continue
-        following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)", (text or "")[match.end() :])
-        if following and following.group(1).lower() not in _FILLER_WORDS and following.group(1).lower() not in _NOT_A_QUALIFIER:
-            # "for new reps" is a phrase, not a person named New.
-            continue
-        found.append(word[:1].upper() + word[1:])
-    for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", text or ""):
+        parts = [word]
+        rest = raw[match.end() :]
+        while len(parts) < 3:
+            following = re.match(r"\s+([A-Za-z][A-Za-z'-]*)\b", rest)
+            if not following or _name_stopped(following.group(1)):
+                break
+            parts.append(following.group(1))
+            rest = rest[following.end() :]
+        found.append(" ".join(_title_name(part) for part in parts))
+    for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", raw):
         word = match.group(1)
-        if word.lower() in _NOT_A_QUALIFIER:
+        if _name_stopped(word):
             continue
-        found.append(word[:1].upper() + word[1:])
+        found.append(_title_name(word))
+    for match in re.finditer(r"\b([A-Z][a-z]+)\b", raw):
+        word = match.group(1)
+        prefix = raw[: match.start()]
+        if not prefix.strip() or re.search(r"[.!?][\"')\]]*\s*$", prefix):
+            continue
+        if _name_stopped(word):
+            continue
+        parts = [word]
+        rest = raw[match.end() :]
+        while len(parts) < 3:
+            following = re.match(r"\s+([A-Z][a-z]+)\b", rest)
+            if not following or _name_stopped(following.group(1)):
+                break
+            parts.append(following.group(1))
+            rest = rest[following.end() :]
+        found.append(" ".join(parts))
     ordered: list[str] = []
-    for name in found:
-        if name not in ordered:
-            ordered.append(name)
+    for name in sorted(set(found), key=len, reverse=True):
+        if any(name != kept and name in kept.split(" or ") or f" {name} " in f" {kept} " or kept.startswith(name + " ") for kept in ordered):
+            continue
+        ordered.append(name)
     if not ordered:
         return None
     if len(ordered) == 1:
@@ -675,6 +741,9 @@ def unconsumed_phrase(
         for index in range(left, right):
             chars[index] = " "
 
+    # Drop the suffix of what's / how's / Sarah's before "what" is removed and "'s" is left behind.
+    for match in _APOSTROPHE_SUFFIX.finditer(text):
+        blank(match.span())
     for match in _METRIC_WORDS.finditer(text):
         blank(match.span())
     term_pattern = _TERM_WORDS.get(matched_term or "")
@@ -696,6 +765,16 @@ def unconsumed_phrase(
     if compared and compared[0] and compared[1] and (compared[0], compared[1]) != (start or "", end or ""):
         for span in month_spans_covering(text, compared[0], compared[1]):
             blank(span)
+        try:
+            for span in quarter_spans_covering(text, timezone_name, now, compared[0], compared[1]):
+                blank(span)
+        except TimezoneUnconfirmed:
+            pass
+    try:
+        for span in quarter_spans_covering(text, timezone_name, now, start or "", end or ""):
+            blank(span)
+    except TimezoneUnconfirmed:
+        pass
     if intent == "compare":
         for match in re.finditer(r"\b(?:compare|versus|vs\.?|against|changed|change)\b", text, re.I):
             blank(match.span())
@@ -714,10 +793,16 @@ def unconsumed_phrase(
         if keep_all and match.group(0).lower() == "all":
             continue
         blank(match.span())
-    raw = "".join(chars)
-    raw = re.sub(r"[^A-Za-z0-9\s/'’.-]", " ", raw)
-    phrase = " ".join(raw.split()).strip(" -/'.").lower()
-    return phrase or None
+    for match in re.finditer(r"\b([A-Za-z])\b", text):
+        blank(match.span())
+    indexes = [index for index, char in enumerate(chars) if char != " " and char.isalnum()]
+    if not indexes:
+        return None
+    phrase = " ".join(text[indexes[0] : indexes[-1] + 1].split())
+    phrase = phrase.strip(" .,!?:;\"'").lower()
+    if not phrase or re.fullmatch(r"[a-z]", phrase) or phrase in {"but", "and", "or"}:
+        return None
+    return phrase
 
 
 def _with_qualifier(decision: ScopeDecision, message: str) -> ScopeDecision:

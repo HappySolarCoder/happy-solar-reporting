@@ -440,7 +440,15 @@ def _compare(args: dict, ctx: ToolContext) -> dict[str, Any]:
     cleaned = _clean_metric_ids(args.get("metric_ids"))
     missing = _missing_official(ctx.entries, cleaned)
     period = _require_period(args, ctx.config, ctx.now)
-    prior = equivalent_prior_period(period)
+    explicit_start = str(args.get("comparison_start") or "")
+    explicit_end = str(args.get("comparison_end") or "")
+    if len(explicit_start) == 10 and len(explicit_end) == 10:
+        try:
+            prior = period_from_dates(explicit_start, explicit_end, ctx.config.company_timezone, ctx.now)
+        except (TimezoneUnconfirmed, ValueError) as exc:
+            raise ToolRejected(str(exc)) from exc
+    else:
+        prior = equivalent_prior_period(period)
     if missing:
         return {
             "available": False,

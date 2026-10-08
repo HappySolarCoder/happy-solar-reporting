@@ -741,6 +741,7 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         implied_current_range,
         message_names_explicit_month,
         named_calendar_range,
+        named_compare_pair,
         named_period_unserved,
     )
 
@@ -761,8 +762,19 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
         unserved = None
     # A real comparison keeps the page window unless the message names a month.
     # "last month" on a figure question is the previous full month, already in named.
+    # "q2 vs q3" names both windows, so it does not fall through to the page dates.
+    pair = None
+    if intent == "compare":
+        try:
+            pair = named_compare_pair(text, config.company_timezone, now)
+        except TimezoneUnconfirmed:
+            pair = None
     use_named = bool(named) and (intent != "compare" or message_names_explicit_month(text))
-    if use_named and named is not None:
+    if pair is not None:
+        updated["start"], updated["end"] = pair[0]
+        updated["comparison_start"], updated["comparison_end"] = pair[1]
+        use_named = True
+    elif use_named and named is not None:
         updated["start"], updated["end"] = named
     elif not updated["start"] and not updated["end"]:
         implied = None
@@ -855,6 +867,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
         elif decision_intent in {"company_summary", "compare", "source_performance"}:
             filters = _apply_message_filters(text, filters, decision_intent, config, now)
             unserved_period = filters.pop("unserved_period", None)
+            comparison_start = filters.pop("comparison_start", None)
+            comparison_end = filters.pop("comparison_end", None)
             if not filters["start"] or not filters["end"]:
                 answer = "Which start and end dates should I use? Set them on the page and I'll use that range."
                 code = "clarify"
@@ -865,6 +879,9 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     "source_performance": "get_source_performance",
                 }[decision_intent]
                 args = {"start": filters["start"], "end": filters["end"], "sources": filters["sources"]}
+                if decision_intent == "compare" and comparison_start and comparison_end:
+                    args["comparison_start"] = comparison_start
+                    args["comparison_end"] = comparison_end
                 mapped = _SUMMARY_METRIC_IDS.get(decision.matched_term or "")
                 if decision_intent in {"company_summary", "compare"} and mapped:
                     args["metric_ids"] = [mapped]
@@ -973,11 +990,8 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 compared=compared,
                 matched_term=decision.matched_term,
             )
-            bogus = re.search(
-                r"I couldn't filter to (?!Rochester\b|Buffalo\b|Syracuse\b|Jeff\b)([A-Za-z]+)",
-                decision.uncertainty_reason or "",
-            )
-            if phrase and (not decision.uncertain or bogus):
+            # A name or place caveat already says who could not be filtered. Do not replace it.
+            if phrase and not decision.uncertain:
                 source_label = _source_names(filters.get("sources"))
                 who = source_label if source_label else "all sources"
                 when = format_range(filters.get("start"), filters.get("end")) or "the dates on the page"
@@ -986,6 +1000,13 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                     uncertain=True,
                     uncertainty_reason=f"I couldn't apply '{phrase}', so this is {who} for {when}",
                 )
+        raw_reason = decision.uncertainty_reason or ""
+        if raw_reason.lower().startswith("i couldn't filter to "):
+            when = format_range(filters.get("start"), filters.get("end")) or "the dates on the page"
+            base = raw_reason.strip().rstrip(".")
+            suffix = f" for {when}"
+            if not base.endswith(suffix):
+                decision = replace(decision, uncertain=True, uncertainty_reason=base + suffix)
         focus = decision.matched_term if decision_intent == "company_summary" else None
         reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)
         if reason:

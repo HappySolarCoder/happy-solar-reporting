@@ -6,7 +6,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from copilot.periods import message_names_explicit_month
+from copilot.periods import (
+    TimezoneUnconfirmed,
+    _relative_period_wins,
+    implied_current_range,
+    message_names_explicit_month,
+    named_calendar_range,
+    named_period_unserved,
+)
 
 
 ALLOWED_INTENTS = frozenset(
@@ -82,6 +89,48 @@ _CURRENT_PERIOD = re.compile(
 )
 _LAST_MONTH = re.compile(r"\blast month\b", re.I)
 _ASKS_TO_COMPARE = re.compile(r"\b(?:compare|versus|vs\.?|changed|change)\b", re.I)
+_LOOSE_PERIOD = re.compile(
+    r"\b(?:ytd|year to date|this year|last year|last week|yesterday|tomorrow|q[1-4]|"
+    r"last\s+\d+\s+days?|since|first week of|fortnight|two months|past week|"
+    r"week before last|last quarter|next week|next month|previous week)\b",
+    re.I,
+)
+_SOURCE_NEGATION = re.compile(
+    r"\b(?:everything but|but not|excluding|except|without)\b",
+    re.I,
+)
+_NEGATION_FILLERS = frozenset(
+    {
+        "this",
+        "last",
+        "our",
+        "the",
+        "a",
+        "an",
+        "demo",
+        "rate",
+        "what",
+        "please",
+        "in",
+        "on",
+        "during",
+        "month",
+        "for",
+    }
+)
+_UNAPPLIED_PERIOD = re.compile(
+    r"\b(?:last\s+\d+\s+days?|first week of(?:\s+[a-z]+)?|since\s+[a-z]+|year to date|"
+    r"week before last|last week|last year|this year|yesterday|tomorrow|ytd|q[1-4]|"
+    r"fortnight|two months|past week|last quarter|next week|next month|previous week)\b",
+    re.I,
+)
+_DAY_LEVEL_PHRASE = re.compile(
+    r"\b(on\s+)?(?:january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\s+"
+    r"(\d{1,2})\b",
+    re.I,
+)
+_THIS_WEEK = re.compile(r"\bthis week\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -179,6 +228,16 @@ _NOT_A_QUALIFIER = frozenset(
         "nov",
         "dec",
         "company",
+        "what",
+        "it",
+        "who",
+        "how",
+        "where",
+        "when",
+        "let",
+        "here",
+        "there",
+        "goose",
         "us",
         "everyone",
         "everybody",
@@ -241,16 +300,57 @@ def _term_hint(text: str) -> str | None:
     return None
 
 
-def message_source(text: str) -> str | None:
-    """Lead source named in the message. Virtual is the Phones source, not a territory."""
-    earliest = None
-    chosen = None
+def message_source_negated(text: str) -> bool:
+    """excluding, except, without, but not, or everything but. Do not filter TO that source."""
+    return bool(_SOURCE_NEGATION.search(text or ""))
+
+
+def message_sources_are_exact(text: str) -> bool:
+    """'phones and doors' can be summed. 'phones or doors' cannot."""
+    return not re.search(r"\bor\b", text or "", re.I)
+
+
+def message_sources(text: str) -> list[str]:
+    """Lead sources named in the message, in the order they appear. Virtual is Phones."""
+    hits: list[tuple[int, str]] = []
     for pattern, source_id in _SOURCE_PATTERNS:
-        match = re.search(pattern, text or "", re.I)
-        if match and (earliest is None or match.start() < earliest):
-            earliest = match.start()
-            chosen = source_id
-    return chosen
+        for match in re.finditer(pattern, text or "", re.I):
+            hits.append((match.start(), source_id))
+    hits.sort()
+    ordered: list[str] = []
+    for _, source_id in hits:
+        if source_id not in ordered:
+            ordered.append(source_id)
+    return ordered
+
+
+def message_source(text: str) -> str | None:
+    """First lead source named in the message. None when the source is excluded or ambiguous."""
+    if message_source_negated(text) or not message_sources_are_exact(text):
+        return None
+    found = message_sources(text)
+    return found[0] if found else None
+
+
+def _source_list_label(source_ids: list[str]) -> str | None:
+    labels: list[str] = []
+    for source_id in source_ids:
+        label = _SOURCE_LABELS.get(source_id)
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return None
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + ", and " + labels[-1]
+
+
+def _applied_source_ids(text: str) -> list[str]:
+    if message_source_negated(text) or not message_sources_are_exact(text):
+        return []
+    return message_sources(text)
 
 
 def _unapplied_name(text: str) -> str | None:
@@ -259,6 +359,11 @@ def _unapplied_name(text: str) -> str | None:
     for match in re.finditer(r"\b(buffalo|rochester|syracuse)\b", text or "", re.I):
         found.append(_TERRITORIES[match.group(1).lower()])
     for match in re.finditer(r"\bfor\s+([A-Za-z][A-Za-z'-]*)\b", text or "", re.I):
+        word = match.group(1)
+        if word.lower() in _NOT_A_QUALIFIER:
+            continue
+        found.append(word[:1].upper() + word[1:])
+    for match in re.finditer(r"\b([A-Za-z]+)['’]s\b", text or ""):
         word = match.group(1)
         if word.lower() in _NOT_A_QUALIFIER:
             continue
@@ -274,15 +379,134 @@ def _unapplied_name(text: str) -> str | None:
     return " or ".join(ordered)
 
 
+def _negation_phrase(text: str) -> str:
+    match = _SOURCE_NEGATION.search(text or "")
+    if not match:
+        return "that exclusion"
+    window = (text or "")[match.start() : match.start() + 48]
+    words = re.findall(r"[A-Za-z0-9']+", window)
+    negation_words = match.group(0).split()
+    kept = list(negation_words)
+    extras = 0
+    for word in words[len(negation_words) :]:
+        if word.lower() in _NEGATION_FILLERS:
+            if extras:
+                break
+            continue
+        kept.append(word)
+        extras += 1
+        if extras >= 3:
+            break
+    return " ".join(kept).lower()
+
+
+def _clean_phrase(raw: str) -> str:
+    phrase = " ".join((raw or "").split())
+    if re.fullmatch(r"q[1-4]", phrase, re.I):
+        return phrase.upper()
+    return phrase.lower()
+
+
+def _specific_day_phrase(text: str) -> str | None:
+    """A calendar day the month-long reading would hide. 'may 1' is not one."""
+    match = _DAY_LEVEL_PHRASE.search(text or "")
+    if not match:
+        return None
+    day = int(match.group(2))
+    if day > 1 or match.group(1):
+        return _clean_phrase(match.group(0))
+    return None
+
+
+def _period_phrase(text: str) -> str | None:
+    match = _UNAPPLIED_PERIOD.search(text or "")
+    if match:
+        return _clean_phrase(match.group(0))
+    return _specific_day_phrase(text)
+
+
+def _source_phrase(text: str, source_ids: list[str]) -> str:
+    labels: list[str] = []
+    for source_id in source_ids:
+        label = _SOURCE_LABELS.get(source_id, source_id)
+        if label not in labels:
+            labels.append(label)
+    joiner = " or " if re.search(r"\bor\b", text or "", re.I) else " and "
+    if len(labels) == 2:
+        return (labels[0] + joiner + labels[1]).lower()
+    if len(labels) > 2:
+        return (", ".join(labels[:-1]) + ", and " + labels[-1]).lower()
+    return labels[0].lower() if labels else "those sources"
+
+
+def uncovered_request(
+    message: str,
+    start: str,
+    end: str,
+    sources: list[str] | None,
+    timezone_name: str | None,
+    now,
+) -> str | None:
+    """Period, source, or negation the applied filters did not fully honor.
+
+    None when the filters match the question. Person and territory names are a
+    separate caveat, so this stays quiet when that sentence will already be used.
+    One phrase, so the reply gets one line.
+    """
+    text = message or ""
+    if message_source_negated(text):
+        return _negation_phrase(text)
+    asked = message_sources(text)
+    applied = [str(item) for item in (sources or [])]
+    if len(asked) >= 2 and set(asked) != set(applied):
+        return _source_phrase(text, asked)
+    served = None
+    unserved = None
+    try:
+        served = named_calendar_range(text, timezone_name, now)
+        if served is None:
+            unserved = named_period_unserved(text, timezone_name, now)
+    except TimezoneUnconfirmed:
+        served = None
+        unserved = None
+    if unserved:
+        return None
+    if served and served == (start or "", end or ""):
+        return None
+    if (
+        served
+        and _ASKS_TO_COMPARE.search(text)
+        and _LAST_MONTH.search(text)
+        and not message_names_explicit_month(text)
+    ):
+        # A comparison already builds the prior month from the page window.
+        return None
+    if served:
+        return _period_phrase(text) or "that period"
+    if _relative_period_wins(text):
+        day_phrase = _specific_day_phrase(text)
+        if day_phrase:
+            return day_phrase
+        if _THIS_WEEK.search(text):
+            implied = None
+            try:
+                implied = implied_current_range(text, timezone_name, now)
+            except TimezoneUnconfirmed:
+                implied = None
+            if implied != (start or "", end or ""):
+                return "this week"
+        return None
+    return _period_phrase(text)
+
+
 def _with_qualifier(decision: ScopeDecision, message: str) -> ScopeDecision:
     if decision.intent not in _FIGURE_INTENTS or decision.uncertain:
         return decision
     name = _unapplied_name(message)
     if not name:
         return decision
-    source_id = message_source(message)
-    if source_id:
-        label = _SOURCE_LABELS.get(source_id, "that lead source")
+    label = _source_list_label(_applied_source_ids(message))
+    if label:
         reason = f"I couldn't filter to {name}, so this is {label} only."
     else:
         reason = f"I couldn't filter to {name}, so this is company-wide."
@@ -338,7 +562,13 @@ def _classify(message: str) -> ScopeDecision:
         term in _VALUE_TERMS
         and not _ASKS_TO_COMPARE.search(text)
         and not _EXPLAIN.search(text)
-        and (_LAST_MONTH.search(text) or message_names_explicit_month(text))
+        and (
+            _LAST_MONTH.search(text)
+            or message_names_explicit_month(text)
+            or _unapplied_name(text)
+            or _LOOSE_PERIOD.search(text)
+            or message_sources(text)
+        )
     ):
         # "What was our demo rate last month?" and "demo rate in march" ask for that period.
         return ScopeDecision("company_summary", text, "", "", term)

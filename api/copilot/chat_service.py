@@ -32,7 +32,13 @@ from copilot.messages import (
 )
 from copilot.prompt import PROMPT_VERSION, SYSTEM_PROMPT
 from copilot.rates import INPUT_TOKEN_CEILING, max_affordable_calls, reservation_micro
-from copilot.scope import classify, message_source
+from copilot.scope import (
+    classify,
+    message_source_negated,
+    message_sources,
+    message_sources_are_exact,
+    uncovered_request,
+)
 from copilot.store import BudgetExceeded, LedgerUnavailable, QuotaExceeded
 from copilot.tools import ToolContext, ToolRejected, execute
 
@@ -758,10 +764,18 @@ def _apply_message_filters(text: str, filters: dict[str, Any], intent: str, conf
             implied = None
         if implied:
             updated["start"], updated["end"] = implied
-    source_id = message_source(text)
-    if source_id:
-        updated["sources"] = [source_id]
+    # An exclusion is never applied as a filter TO that source. An "or" between
+    # sources is not an exact sum, so the company-wide number is the honest one.
+    if message_source_negated(text) or (
+        len(message_sources(text)) >= 2 and not message_sources_are_exact(text)
+    ):
+        updated["sources"] = []
         updated["unrecognized_source"] = False
+    else:
+        source_ids = message_sources(text)
+        if source_ids:
+            updated["sources"] = source_ids
+            updated["unrecognized_source"] = False
     if unserved and not use_named:
         updated["unserved_period"] = unserved
     return updated
@@ -912,6 +926,26 @@ def _finish_turn(*, text, filters, conversation_id, request_id, now, config, sto
                 uncertain=True,
                 uncertainty_reason=f"I couldn't use {unserved_period}, so this is {used}",
             )
+        elif (
+            not decision.uncertain
+            and decision_intent in {"company_summary", "compare", "source_performance"}
+            and code == decision_intent
+        ):
+            leftover = uncovered_request(
+                text,
+                filters.get("start") or "",
+                filters.get("end") or "",
+                filters.get("sources") or [],
+                config.company_timezone,
+                now,
+            )
+            if leftover:
+                used = format_range(filters.get("start"), filters.get("end")) or "the dates on the page"
+                decision = replace(
+                    decision,
+                    uncertain=True,
+                    uncertainty_reason=f"I couldn't use '{leftover}', so this is {used}",
+                )
         focus = decision.matched_term if decision_intent == "company_summary" else None
         reason = _uncertainty_reason(tool_payload, decision, now, focus=focus)
         if reason:

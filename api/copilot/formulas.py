@@ -64,6 +64,11 @@ def opp2prelim_percent(sales: int | None, ran: int | None) -> float | None:
     return round((sales / ran) * 100, 1)
 
 
+# Company target for Demo Rate. Approval replaces the whole terminology entry,
+# so this does not live on the seed.
+DEMO_RATE_TARGET_PERCENT = 50.0
+
+
 def demo_rate_percent(demos: int | None, ran: int | None) -> float | None:
     """N/A when Ran is 0. A real zero rate requires a positive denominator."""
     if demos is None or ran is None:

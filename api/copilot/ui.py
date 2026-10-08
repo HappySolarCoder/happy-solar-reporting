@@ -184,6 +184,12 @@ def render_panel() -> str:
     releaseWaiters(tokenStillFresh() ? bloomBearer : '');
   }});
 
+  function tellParent(action) {{
+    const origin = parentOrigin();
+    if (!origin) return;
+    window.parent.postMessage({{ type: 'happy-solar-goose', action: action }}, origin);
+  }}
+
   function requestBloomToken() {{
     const origin = parentOrigin();
     if (!origin) return Promise.resolve('');
@@ -266,13 +272,17 @@ def render_panel() -> str:
   document.getElementById('gooseOpen').addEventListener('click', () => {{
     panel.hidden = false;
     drawChips();
+    tellParent('panel-open');
     requestBloomToken();
     if (!log.dataset.welcomed) {{
       add('{welcome}', []);
       log.dataset.welcomed = '1';
     }}
   }});
-  document.getElementById('gooseClose').addEventListener('click', () => {{ panel.hidden = true; }});
+  document.getElementById('gooseClose').addEventListener('click', () => {{
+    panel.hidden = true;
+    tellParent('panel-closed');
+  }});
   document.querySelectorAll('[data-goose-q]').forEach(btn => btn.addEventListener('click', () => send(btn.getAttribute('data-goose-q'))));
   document.getElementById('gooseForm').addEventListener('submit', (event) => {{
     event.preventDefault();

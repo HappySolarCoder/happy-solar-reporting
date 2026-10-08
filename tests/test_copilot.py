@@ -28,7 +28,7 @@ from copilot.auth import (
 )
 from copilot.chat_service import handle_chat
 from copilot.config import DEFAULT_ALLOWED_ROLES, config_from_env
-from copilot.dictionary import is_official, load_seed
+from copilot.dictionary import apply_revisions, effective_entries, is_official, load_seed
 from copilot.formulas import percent_change, sum_aliases
 from copilot.gemini_client import ModelError
 from copilot.knowledge import load_seed as load_knowledge
@@ -79,10 +79,30 @@ class FakeMetrics:
             "generated_at": "2026-10-04T15:00:00Z",
             "rows": [{"opportunityId": "opp1", "pipeline": "Buffalo", "contactLastName": "Secret", "email": "a@b.com"}],
         }
+        explicit_demo_ran = "demo_ran" in values
+        explicit_demo_ran_by_source = "demo_ran_by_source" in values
         self.values.update(values)
+        if not explicit_demo_ran:
+            self.values["demo_ran"] = self.values.get("ran")
+        if not explicit_demo_ran_by_source:
+            self.values["demo_ran_by_source"] = dict(self.values.get("ran_by_source") or {})
 
     def bundle(self, period):
         return dict(self.values)
+
+
+def _tool_ctx(store, metrics=None):
+    entries = effective_entries(apply_revisions(load_seed(), store.list_revisions("term")))
+    return ToolContext(
+        actor_id="settings_admin",
+        role="settings_admin",
+        config=_enabled_config(),
+        entries=entries,
+        documents=[],
+        metrics=metrics if metrics is not None else FakeMetrics(),
+        now=NOW,
+        ranking_allowed=False,
+    )
 
 
 class BoomModel:
@@ -271,12 +291,24 @@ class CopilotTests(unittest.TestCase):
         result = _chat("How many sales were there?", store=store, config=config, request_id="req_parity_01")
         answer = result["body"]["answer"]
         self.assertIn("sales: 10", answer)
-        self.assertIn("opp2prelim: 250.0", answer)
-        self.assertIn("demo_rate: 50.0", answer)
+        self.assertNotIn("opp2prelim", answer)
+        self.assertNotIn("demo_rate", answer)
         self.assertTrue(result["body"]["evidence"])
         self.assertTrue(all(item["source_link"].startswith("/api/") for item in result["body"]["evidence"]))
         links = " ".join(item["source_link"] for item in result["body"]["evidence"])
         self.assertNotIn("http://evil", links)
+        payload = execute(
+            "get_company_summary",
+            {"start": "2026-10-01", "end": "2026-10-04"},
+            _tool_ctx(store),
+        )
+        by_id = {metric["metric_id"]: metric for metric in payload["metrics"]}
+        self.assertEqual(by_id["sales"]["value"], 10)
+        self.assertEqual(by_id["opp2prelim"]["value"], 250.0)
+        self.assertEqual(by_id["opp2prelim"]["denominator"], 4)
+        self.assertEqual(by_id["demo_rate"]["value"], 50.0)
+        self.assertEqual(by_id["demo_rate"]["numerator"], 2)
+        self.assertEqual(by_id["demo_rate"]["denominator"], 4)
 
     def test_zero_denominator_is_not_reported_as_zero_opp2(self):
         store = MemoryStore()
@@ -960,6 +992,158 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("textContent = note.trim()", html)
         self.assertIn("showGooseAuth(bloomBlockReason)", html)
         self.assertIn("token-unavailable", html)
+
+    def test_panel_tells_parent_when_it_opens_and_closes(self):
+        from copilot.ui import render_panel
+
+        html = render_panel()
+        helper = html.index("function tellParent(action)")
+        origin = html.index("const origin = parentOrigin();", helper)
+        posted = html.index(
+            "window.parent.postMessage({ type: 'happy-solar-goose', action: action }, origin)",
+            helper,
+        )
+        self.assertLess(origin, posted)
+        helper_body = html[helper:posted]
+        self.assertNotIn("'*'", helper_body)
+        self.assertNotIn('"*"', helper_body)
+        self.assertNotIn(", '*')", html)
+        self.assertNotIn(', "*")', html)
+        opener = html.index("document.getElementById('gooseOpen')")
+        shown = html.index("panel.hidden = false", opener)
+        opened = html.index("tellParent('panel-open')", opener)
+        token = html.index("requestBloomToken()", opener)
+        self.assertLess(shown, opened)
+        self.assertLess(opened, token)
+        closer = html.index("document.getElementById('gooseClose')")
+        hidden = html.index("panel.hidden = true", closer)
+        closed = html.index("tellParent('panel-closed')", closer)
+        self.assertLess(hidden, closed)
+        self.assertEqual(html.count("tellParent('panel-open')"), 1)
+        self.assertEqual(html.count("tellParent('panel-closed')"), 1)
+
+    def test_demo_rate_this_month_answers_with_value_when_only_that_metric_is_approved(self):
+        for question in (
+            "What is our demo rate this month?",
+            "What is demo rate this week?",
+            "What is our demo rate today?",
+            "demo rate so far",
+            "What is demo rate MTD?",
+            "What is the current demo rate?",
+            "What is our demo rate this year?",
+        ):
+            decision = classify(question)
+            self.assertEqual(decision.intent, "company_summary", question)
+            self.assertEqual(decision.matched_term, "demo_rate", question)
+        plain = classify("What is Demo Rate?")
+        self.assertEqual(plain.intent, "definition")
+        self.assertEqual(plain.matched_term, "demo_rate")
+        last_month = classify("What is our demo rate last month?")
+        self.assertEqual(last_month.intent, "compare")
+        self.assertEqual(last_month.matched_term, "demo_rate")
+
+        store = MemoryStore()
+        approve_term(store, term_id="demo_rate", actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(ran=32, sits=11, demo_ran=27)
+        filters = {"start": "2026-10-01", "end": "2026-10-07"}
+        result = _chat(
+            "What is our demo rate this month?",
+            store=store,
+            metrics=metrics,
+            filters=filters,
+            request_id="req_demo_month_01",
+        )
+        answer = result["body"]["answer"]
+        self.assertEqual(result["body"]["code"], "company_summary")
+        self.assertEqual(
+            answer,
+            "Demo Rate for Oct 1 – Oct 7, 2026 (America/New_York): 40.7% "
+            "(11 demos / 27 appointments ran). Company target 50%.",
+        )
+        self.assertNotRegex(answer, r"(?i)\b(sit|sits|sat)\b")
+        self.assertNotIn("34.4", answer)
+
+        ctx = _tool_ctx(store, metrics)
+        payload = execute(
+            "get_company_summary",
+            {"start": "2026-10-01", "end": "2026-10-07", "metric_ids": ["demo_rate"]},
+            ctx,
+        )
+        self.assertEqual([metric["metric_id"] for metric in payload["metrics"]], ["demo_rate"])
+        metric = payload["metrics"][0]
+        self.assertEqual(metric["numerator"], 11)
+        self.assertEqual(metric["denominator"], 27)
+        self.assertEqual(metric["value"], 40.7)
+        refused_bundle = execute(
+            "get_company_summary",
+            {"start": "2026-10-01", "end": "2026-10-07"},
+            ctx,
+        )
+        self.assertFalse(refused_bundle["available"])
+        self.assertEqual(refused_bundle["reason"], "definition_not_approved")
+        self.assertIn("sales", refused_bundle["missing_metric_ids"])
+        self.assertNotIn("demo_rate", refused_bundle["missing_metric_ids"])
+
+        defined = _chat(
+            "What is Demo Rate?",
+            store=store,
+            metrics=metrics,
+            filters=filters,
+            request_id="req_demo_define_01",
+        )
+        self.assertEqual(defined["body"]["code"], "definition")
+        self.assertEqual(
+            defined["body"]["answer"],
+            "Demo Rate is approved, but that record does not include a plain-language definition yet.",
+        )
+        self.assertNotIn("40.7", defined["body"]["answer"])
+
+        refused = _chat(
+            "what is our opp2prelim this month",
+            store=store,
+            metrics=metrics,
+            filters=filters,
+            request_id="req_opp_month_01",
+        )
+        self.assertEqual(refused["body"]["code"], "definition_not_approved")
+        self.assertEqual(
+            refused["body"]["answer"],
+            "I do not have an approved definition for that yet. I have not reported a figure. "
+            "The dashboard is unchanged.",
+        )
+        self.assertNotRegex(refused["body"]["answer"], r"(?i)\b(sit|sits|sat)\b")
+
+    def test_source_demo_rate_uses_demo_module_ran(self):
+        store = MemoryStore()
+        for term_id in (
+            "sales",
+            "created",
+            "ran",
+            "demo_rate",
+            "opp2prelim",
+            "phones",
+            "self_gen",
+            "doors",
+            "inbound",
+            "three_pl",
+        ):
+            approve_term(store, term_id=term_id, actor="settings_admin", now=NOW)
+        metrics = FakeMetrics(
+            ran_by_source={"Doors": 10, "Phones": 8, "Virtual": 2},
+            demo_ran_by_source={"Doors": 5, "Phones": 3, "Virtual": 1},
+            sit_by_source={"Doors": 2, "Phones": 1},
+        )
+        payload = execute(
+            "get_source_performance",
+            {"start": "2026-10-01", "end": "2026-10-07"},
+            _tool_ctx(store, metrics),
+        )
+        self.assertTrue(payload["available"])
+        rows = {row["source_id"]: row for row in payload["rows"]}
+        self.assertEqual(rows["doors"]["opps_ran"], 10)
+        self.assertEqual(rows["doors"]["demo_rate"], 40.0)
+        self.assertEqual(rows["phones"]["opps_ran"], 10)
+        self.assertEqual(rows["phones"]["demo_rate"], 25.0)
 
 
 if __name__ == "__main__":

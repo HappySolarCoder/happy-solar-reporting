@@ -14,15 +14,20 @@ then re-reads. Prefer hitting rollup first at 8am; this is the
 safety net. auto_rollup / auto_rollup_reason / auto_rollup_wrote
 report whether this request wrote.
 
-Lead = estimate_submit only. Monthly Website Funnel still counts
-/contact-me wix_form_submit.
+Lead = estimate_submit, counted from the server-side lead record
+(web_funnel_named_fills_v1, written by the site on every live calculator
+submit) on the America/Phoenix day, one per person (updates do not add).
+Not GA4, not the inbox. GA4 still supplies sessions / starts.
+Default date is yesterday in America/Phoenix. No auto-rollup for a NY day
+that has not ended (auto_rollup_reason=day_not_over).
+Monthly Website Funnel still counts /contact-me wix_form_submit.
 
 If the daily doc is still missing or ga4 is not_configured/failed
 after that attempt: HTTP 200, ready=false, all metrics null.
 Counts are never invented.
 
 Params:
-- date=YYYY-MM-DD or date=yesterday (optional; default yesterday NY)
+- date=YYYY-MM-DD or date=yesterday (optional; default yesterday America/Phoenix)
 """
 
 from __future__ import annotations

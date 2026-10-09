@@ -280,9 +280,66 @@ def install(module):
             "named_fills": len(fills),
             "ingest": ingest_info,
         }
+    orig_compute_day_snapshot = module.compute_day_snapshot
+
+    def compute_day_snapshot(db, date_ymd=None):
+        """Yesterday snapshot: submits from the server-side lead store on the
+        America/Phoenix day; sessions/starts stay GA4 (web_funnel_daily_v1)."""
+        import importlib.util
+        import sys
+
+        sub_mod = sys.modules.get("hs_estimate_submits")
+        if sub_mod is None:
+            sub_path = Path(__file__).resolve().parent / "estimate_submits.py"
+            sspec = importlib.util.spec_from_file_location("hs_estimate_submits", sub_path)
+            sub_mod = importlib.util.module_from_spec(sspec)
+            sys.modules["hs_estimate_submits"] = sub_mod
+            sspec.loader.exec_module(sub_mod)
+        date_key = sub_mod.resolve_phoenix_date(date_ymd)
+        if date_key >= module.ny_now().date().isoformat():
+            # The NY day is not over. A rollup now would freeze a partial day
+            # as ga4=ok and later reads would never refresh it. Read-only.
+            doc = module.read_daily_doc(db, date_key)
+            payload = module.build_day_snapshot(doc, date_key)
+            payload["auto_rollup"] = False
+            payload["auto_rollup_reason"] = (
+                "day_not_over" if module.autorollup_reason_for_doc(doc) else None
+            )
+            payload["auto_rollup_wrote"] = False
+        else:
+            payload = orig_compute_day_snapshot(db, date_key)
+        submits = sub_mod.count_estimate_submits(db, date_key, fill_is_test)
+        count = submits.get("count")
+        payload["ga4_estimate_submit"] = payload.get("estimate_submit")
+        payload["ga4_window"] = payload.get("window")
+        payload["estimate_submit"] = count
+        payload["lead"] = count
+        payload["lead_source"] = sub_mod.SUBMITS_SOURCE if submits.get("ok") else "unavailable"
+        payload["timezone"] = sub_mod.SUBMITS_TIMEZONE
+        payload["window"] = submits.get("window")
+        payload["submits"] = submits
+        payload["session_to_submit"] = module.ratio(count, payload.get("sessions"))
+        payload["start_to_submit"] = module.ratio(count, payload.get("estimate_start"))
+        payload["session→submit"] = payload["session_to_submit"]
+        payload["start→submit"] = payload["start_to_submit"]
+        contract = dict(payload.get("contract") or {})
+        contract["lead_definition"] = (
+            "Calculator submits from the server-side lead record "
+            "(web_funnel_named_fills_v1, written by the site when it sends the leads@ email), "
+            "one per person per America/Phoenix day. Tests excluded. Not GA4, not the inbox."
+        )
+        contract["window"] = (
+            "Submits: America/Phoenix 00:00-23:59 calendar day on received_at. "
+            "Sessions/starts: GA4 daily doc for the same calendar date (America/New_York)."
+        )
+        payload["contract"] = contract
+        return payload
+
     module.exclusion_reason = exclusion_reason
     module.summarize_ga4_event_rows = summarize_ga4_event_rows
     module.rollup_day = rollup_day
+    module.compute_day_snapshot = compute_day_snapshot
+    module._orig_compute_day_snapshot = orig_compute_day_snapshot
     module.is_test_address = is_test_address
     module.fill_is_test = fill_is_test
     module.live_named_fills = live_named_fills

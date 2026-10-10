@@ -261,6 +261,14 @@
   function pack(created, ran, demos, sales) {
     return { created: clean(created), ran: clean(ran), demos: clean(demos), sales: clean(sales) };
   }
+  // Self Gen = Lead Gen Source Self Gen, or blank source with setter last name = owner last name.
+  // Served by channel_goals for the company-wide view; filtered views keep the lead-source bucket.
+  function selfGenPack() {
+    const sg = channelGoals && channelGoals.self_gen;
+    const f = pageFilters || filters();
+    if (!sg || f.territory !== "All" || f.source !== "All") return null;
+    return pack(sg.appointments, sg.ran, sg.demos, sg.sales);
+  }
   function channelsFrom(data) {
     const sales = data.sales || {};
     const created = data.created || {};
@@ -287,7 +295,7 @@
     return {
       Company: company,
       Doors: leadPack(DOOR_KEYS),
-      "Self gen": leadPack(SELF_KEYS),
+      "Self gen": data === snapshot ? (selfGenPack() || leadPack(SELF_KEYS)) : leadPack(SELF_KEYS),
       Sweeper: sweeper,
       Inbound: leadPack(INBOUND_KEYS),
       "3PL": leadPack(THREE_PL_KEYS),
@@ -547,7 +555,7 @@
     const rows = channelGoalRows();
     if (!rows) { host.innerHTML = '<p class="chart-note">Channel goals could not be read.</p>'; return; }
     host.innerHTML = '<div class="table-wrap cg-wrap"><table class="cg-table"><thead><tr><th>Channel</th><th class="num">Sales</th><th class="num">Opp2Prelim</th><th class="num">Appointments</th><th class="num">Leads</th><th class="num">Demo rate</th><th class="num">Demos</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form.</p>';
+      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form. Self Gen is Lead Gen Source Self Gen, or a blank lead source where the setter last name matches the opportunity owner.</p>';
   }
   async function load() {
     const token = ++requestToken;
@@ -598,6 +606,7 @@
     channelTask.then(function (cg) {
       if (token !== requestToken) return;
       channelGoals = cg;
+      if (cg && cg.self_gen && snapshot && selfGenPack()) fillStage("lgSelfGen", channelsFrom(snapshot)["Self gen"]);
       paintChannelGoals();
     });
     bloomTask.then(function (bloom) {

@@ -52,6 +52,71 @@ CHANNEL_GOALS: dict[str, dict[str, Any]] = {
 }
 LEADS_CHANNELS = ("3PL", "Inbound")
 INBOUND_LEAD_SOURCES = frozenset({"inbound", "facebook quick form"})
+SELF_GEN_LEAD_SOURCES = frozenset({"self gen", "selfgen", "self-gen", "self generated", "self-generated"})
+BLANK_LEAD_SOURCES = frozenset({"", "none", "null", "n/a", "crm ui", "hand", "manual"})
+
+
+def _fold(value: Any) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def owner_last_name(owner: Any) -> str:
+    parts = _fold(owner).split(" ")
+    return parts[-1] if parts and parts[-1] not in ("", "unassigned", "none", "unknown") else ""
+
+
+def self_gen_reason(lead_source: Any, setter_last: Any, owner: Any) -> str | None:
+    """'lead_source', 'fallback' or None (Evan, 2026-10-09).
+
+    Lead Gen Source decides. Only when it is blank does a setter last name
+    equal to the opportunity owner's last name (case-insensitive) count.
+    """
+    lead = _fold(lead_source)
+    if lead in SELF_GEN_LEAD_SOURCES:
+        return "lead_source"
+    if lead not in BLANK_LEAD_SOURCES:
+        return None
+    setter = _fold(setter_last)
+    if setter and setter == owner_last_name(owner):
+        return "fallback"
+    return None
+
+
+def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, Any], sales_reasons: dict[str, str]) -> dict[str, Any]:
+    out = {"appointments": 0, "ran": 0, "demos": 0, "sales": 0}
+    split = {"lead_source": dict(out), "fallback": dict(out)}
+
+    def bump(reason, key):
+        out[key] += 1
+        split[reason][key] += 1
+
+    seen: set[str] = set()
+    for row in created_payload.get("sample_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        oid = str(row.get("opportunityId") or "")
+        if not oid or oid in seen:
+            continue
+        seen.add(oid)
+        reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"))
+        if reason:
+            bump(reason, "appointments")
+    seen = set()
+    for row in demo_payload.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        oid = str(row.get("opportunityId") or "")
+        if oid in seen:
+            continue
+        seen.add(oid)
+        reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"))
+        if reason:
+            bump(reason, "ran")
+            if row.get("disposition") == "Sit":
+                bump(reason, "demos")
+    for reason in sales_reasons.values():
+        bump(reason, "sales")
+    return {**out, "from_lead_source": split["lead_source"], "from_fallback": split["fallback"]}
 
 
 def filled(value: Any) -> bool:
@@ -128,11 +193,35 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
     from sales import SalesMetricContract, compute_sales
 
     start_local, end_local, _, _ = month_window(year, month, "America/New_York")
+    import sales as sales_mod
+
     sold: set[str] = set()
+    self_sold: dict[str, str] = {}
+    sc = SalesMetricContract()
+
+    def contact_cf(contact, field_id):
+        for cf in (contact or {}).get("customFields") or []:
+            if isinstance(cf, dict) and cf.get("id") == field_id:
+                val = cf.get("value")
+                return cf.get("fieldValueString") if val in (None, "") else val
+        return None
 
     def on_sale(*, opp, contact, contact_id, sold_date, salesperson):
         if contact_id and filled(sweeper_rehash_last_name(contact, opp)):
             sold.add(str(contact_id))
+        lead = contact_cf(contact, sc.lead_gen_source_custom_field_id)
+        if not lead:
+            attr = (contact or {}).get("attributionSource") or {}
+            if isinstance(attr, dict):
+                lead = attr.get("sessionSource") or attr.get("medium")
+        primary = str(contact_cf(contact, sc.setter_last_name_custom_field_id) or "").strip()
+        fallback = str(contact_cf(contact, sc.setter_last_name_fallback_custom_field_id) or "").strip()
+        setter = primary
+        if not setter or (setter.casefold() in sales_mod.INVALID_PRIMARY_SETTERS and fallback):
+            setter = fallback or setter
+        reason = self_gen_reason(lead, setter, salesperson)
+        if contact_id and reason:
+            self_sold[str(contact_id)] = reason
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all")
@@ -140,7 +229,8 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         f_sales = ex.submit(compute_sales, db, SalesMetricContract(), year=year, month=month, tz="America/New_York", on_sale=on_sale)
         f_leads = ex.submit(compute_leads, db, start_local, end_local)
         created = f_created.result()
-        ran, demos = sweeper_ran(f_demo.result())
+        demo_payload = f_demo.result()
+        ran, demos = sweeper_ran(demo_payload)
         f_sales.result()
         try:
             leads: dict[str, Any] = f_leads.result()
@@ -155,11 +245,13 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         "goals": CHANNEL_GOALS,
         "leads_channels": list(LEADS_CHANNELS),
         "leads": leads,
+        "self_gen": self_gen_actuals(created, demo_payload, self_sold),
         "sweeper": {"appointments": sweeper_created(created), "ran": ran, "demos": demos, "sales": len(sold)},
         "contract": {
             "sweeper": "Sweeper/Rehash Last Name filled (any name), contact then opportunity",
             "leads_inbound": "Inbound/Lead Locker pipeline opps created in month, Lead Gen Source Inbound or Facebook Quick Form",
             "leads_3pl": "Remaining non-refunded Lead Locker / Solar Reviews title-bucket opps created in month",
+            "self_gen": "Lead Gen Source Self Gen; if Lead Gen Source is blank, setter last name equals the opportunity owner's last name (case-insensitive)",
             "demo_rate": "demos / appointments ran",
             "opp2prelim": "sales / appointments ran",
         },

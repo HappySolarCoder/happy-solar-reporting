@@ -1001,6 +1001,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "setter": setter_s,
                 "lead_source": lead,
                 "sweeperRehashLastName": sweeper_last,
+                "closer": closer or None,
             }
         )
 

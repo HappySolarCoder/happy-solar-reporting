@@ -547,7 +547,8 @@ __LOGIC_JS__
             getJson("/api/metrics/bloom_goals?oc_raw=1&period=" + w.id, true),
           ]);
         });
-        var rosterResult = await Promise.allSettled([rosterJob]);
+        var rolesJob = getJson("/api/metrics/bloom_roles", true);
+        var rosterResult = await Promise.allSettled([rosterJob, rolesJob]);
         var monthResults = await Promise.all(monthJobs);
         var roster = [];
         if (rosterResult[0].status === "fulfilled") {
@@ -580,6 +581,13 @@ __LOGIC_JS__
         });
         state.fma = MT.buildFma({ today: today, roster: roster, feeds: feeds, credits: CREDITS });
         state.closer = MT.buildClosers({ today: today, feeds: feeds, credits: CREDITS });
+        var roles = rosterResult[1].status === "fulfilled" ? rosterResult[1].value : null;
+        if (roles && roles.available) {
+          state.fma = MT.keepBloomRole(state.fma, roles.people, "fma");
+          state.closer = MT.keepBloomRole(state.closer, roles.people, "closer");
+        } else {
+          problems.push("Bloom account roles");
+        }
         renderFind();
         render();
         document.getElementById("asOf").textContent = "Updated " + nyClock() + " ET";

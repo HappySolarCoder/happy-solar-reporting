@@ -191,6 +191,9 @@ class SalesMetricContract:
     )
 
 
+INVALID_PRIMARY_SETTERS = frozenset({"rochester", "buffalo", "virtual", "syracuse", "doors", "phones", "3pl", "none"})
+
+
 def get_db() -> firestore.Client:
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
@@ -539,9 +542,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         primary_s = str(setter_name_primary).strip() if setter_name_primary not in (None, "") else ""
         fallback_s = str(setter_name_fallback).strip() if setter_name_fallback not in (None, "") else ""
 
-        invalid_primary_values = {
-            "rochester", "buffalo", "virtual", "syracuse", "doors", "phones", "3pl", "none"
-        }
+        invalid_primary_values = INVALID_PRIMARY_SETTERS
 
         setter_name = primary_s
         if (not setter_name) or (setter_name.strip().lower() in invalid_primary_values and fallback_s):

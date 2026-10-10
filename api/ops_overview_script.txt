@@ -269,6 +269,19 @@
     if (!sg || f.territory !== "All" || f.source !== "All") return null;
     return pack(sg.appointments, sg.ran, sg.demos, sg.sales);
   }
+  // Overridden deals (setter = owner under another lead source) leave their original channel.
+  function minusMoved(stats, keys) {
+    const sg = selfGenPack() && channelGoals.self_gen;
+    const moved = sg && sg.moved_from;
+    if (!moved) return stats;
+    const take = function (field, val) {
+      if (val == null) return val;
+      let n = 0;
+      keys.forEach(function (k) { Object.keys(moved).forEach(function (m) { if (m.toLowerCase() === String(k).toLowerCase()) n += Number((moved[m] || {})[field] || 0); }); });
+      return Math.max(0, val - n);
+    };
+    return pack(take("appointments", stats.created), take("ran", stats.ran), take("demos", stats.demos), take("sales", stats.sales));
+  }
   function channelsFrom(data) {
     const sales = data.sales || {};
     const created = data.created || {};
@@ -289,7 +302,8 @@
       sales && sales.error ? null : Number(sales.result)
     );
     function leadPack(keys) {
-      return pack(sumKeys(createdLead, keys), sumKeys(ranLead, keys), sumKeys(sitLead, keys), sumKeys(salesLead, keys));
+      const base = pack(sumKeys(createdLead, keys), sumKeys(ranLead, keys), sumKeys(sitLead, keys), sumKeys(salesLead, keys));
+      return data === snapshot ? minusMoved(base, keys) : base;
     }
     const sweeper = pack(sumSweeper(createdPipe), sumSweeper(ranPipe), sumSweeper(sitPipe), sumSweeper(salesPipe));
     return {
@@ -520,7 +534,7 @@
     const ranLead = b(data.demo, "ran_by_lead_gen_source") || b(data.ran, "ran_by_lead_gen_source");
     const sitLead = b(data.demo, "sit_by_lead_gen_source");
     const salesLead = b(data.sales, "sales_by_lead_gen_source");
-    const inbound = pack(lead(createdLead, GOAL_INBOUND_KEYS), lead(ranLead, GOAL_INBOUND_KEYS), lead(sitLead, GOAL_INBOUND_KEYS), lead(salesLead, GOAL_INBOUND_KEYS));
+    const inbound = minusMoved(pack(lead(createdLead, GOAL_INBOUND_KEYS), lead(ranLead, GOAL_INBOUND_KEYS), lead(sitLead, GOAL_INBOUND_KEYS), lead(salesLead, GOAL_INBOUND_KEYS)), GOAL_INBOUND_KEYS);
     const sw = channelGoals.sweeper || {};
     const leads = channelGoals.leads || {};
     const actual = {
@@ -555,7 +569,7 @@
     const rows = channelGoalRows();
     if (!rows) { host.innerHTML = '<p class="chart-note">Channel goals could not be read.</p>'; return; }
     host.innerHTML = '<div class="table-wrap cg-wrap"><table class="cg-table"><thead><tr><th>Channel</th><th class="num">Sales</th><th class="num">Opp2Prelim</th><th class="num">Appointments</th><th class="num">Leads</th><th class="num">Demo rate</th><th class="num">Demos</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form. Self Gen is Lead Gen Source Self Gen, or a blank lead source where the setter last name matches the opportunity owner.</p>';
+      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form. Self Gen is Lead Gen Source Self Gen, or any deal where the setter last name matches the opportunity owner; those deals leave their original channel.</p>';
   }
   async function load() {
     const token = ++requestToken;
@@ -606,7 +620,11 @@
     channelTask.then(function (cg) {
       if (token !== requestToken) return;
       channelGoals = cg;
-      if (cg && cg.self_gen && snapshot && selfGenPack()) fillStage("lgSelfGen", channelsFrom(snapshot)["Self gen"]);
+      if (cg && cg.self_gen && snapshot && selfGenPack()) {
+        const st = channelsFrom(snapshot);
+        const ids = { Doors: "Doors", "Self gen": "SelfGen", Inbound: "Inbound", "3PL": "3pl" };
+        Object.keys(ids).forEach(function (n) { fillStage("lg" + ids[n], st[n]); });
+      }
       paintChannelGoals();
     });
     bloomTask.then(function (bloom) {

@@ -73,13 +73,15 @@ def render_body(nav_html: str) -> str:
           <div class="kpi"><div class="label">Demo %</div><div class="number" id="demoRate">—</div><div class="sub" id="demoSub">Demos / ran</div><div class="pace-caption" id="demoGoal">Goal {COMPANY_DEMO_PCT_TARGET}%</div></div>
           <div class="kpi"><div class="label">Opp2Prelim</div><div class="number" id="opp2">—</div><div class="sub" id="opp2Sub">Sales / ran</div><div class="pace-caption" id="opp2Goal">Goal Not Set</div></div>
         </div>
-        <div class="section-break"><div class="section-number">02</div><div><h2>Lead-generation funnels</h2><p>Select a funnel to see it enlarged with month-to-month performance</p></div><div class="section-rule"></div></div>
+        <div class="section-break"><div class="section-number">02</div><div><h2>Channel goals</h2><p>Month to date against each lead-gen channel's monthly goal</p></div><div class="section-rule"></div></div>
+        <section class="panel channel-goals"><div class="panel-body" id="channelGoalsBody"><p class="chart-note">Loading channel goals…</p></div></section>
+        <div class="section-break"><div class="section-number">03</div><div><h2>Lead-generation funnels</h2><p>Select a funnel to see it enlarged with month-to-month performance</p></div><div class="section-rule"></div></div>
         <div class="funnel-grid" id="funnelCarousel">{funnels}</div>
         <div class="carousel-controls"><button type="button" id="funnelPrev" aria-label="Previous funnel">←</button><div>{dots}</div><button type="button" id="funnelNext" aria-label="Next funnel">→</button></div>
         <p class="funnel-footnote" id="pageNote">Widths organize stages rather than encode volume. Created and ran counts use separate reporting populations.</p>
-        <div class="section-break"><div class="section-number">03</div><div><h2>Performance trends</h2><p>Monthly totals from the company trend metric. Not a daily series.</p></div><div class="section-rule"></div></div>
+        <div class="section-break"><div class="section-number">04</div><div><h2>Performance trends</h2><p>Monthly totals from the company trend metric. Not a daily series.</p></div><div class="section-rule"></div></div>
         <div class="grid equal"><section class="panel"><div class="panel-head"><h2>Sales progress</h2></div><div class="panel-body" id="trendSales"></div></section><section class="panel"><div class="panel-head"><h2>Opportunity progress</h2></div><div class="panel-body" id="trendCreated"></div></section></div>
-        <div class="section-break"><div class="section-number">04</div><div><h2>Next actions</h2><p>Exceptions stay attached to the queues that already own them</p></div><div class="section-rule"></div></div>
+        <div class="section-break"><div class="section-number">05</div><div><h2>Next actions</h2><p>Exceptions stay attached to the queues that already own them</p></div><div class="section-rule"></div></div>
         <div class="grid equal">
           <section class="panel"><div class="panel-head"><h2>Outcome completeness</h2></div><div class="panel-body"><p class="chart-note">Incomplete outcomes and overdue missing dispositions are different queues.</p><a class="link" href="/api/missing_dispos">Review missing dispositions →</a></div></section>
           <section class="panel"><div class="panel-head"><h2>Company goals</h2></div><div class="panel-body" id="companyGoalsBody"><p class="chart-note">Loading Bloom sales goals…</p></div></section>
@@ -88,6 +90,17 @@ def render_body(nav_html: str) -> str:
       <footer><span>HAPPY SOLAR <b>/</b> OPERATIONS CONTROL</span><span id="footerScope">America/New_York</span></footer>
       <div id="overlay" class="overlay" hidden></div>
     </div>
+    <style>
+      .cg-wrap {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+      .cg-table {{ width:100%; border-collapse:collapse; min-width:640px; font-size:13px; }}
+      .cg-table th, .cg-table td {{ padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; white-space:nowrap; }}
+      .cg-table .num {{ text-align:right; }}
+      .cg-table thead th {{ font-size:11px; letter-spacing:.06em; text-transform:uppercase; opacity:.7; }}
+      .cg-table tbody th {{ position:sticky; left:0; background:inherit; }}
+      .cg-table small {{ opacity:.6; }}
+      .cg-table .cg-hit {{ color:#24d4a6; }}
+      .cg-table .cg-na {{ opacity:.4; }}
+    </style>
     <script>
       const INBOUND_KEYS = ['Inbound'];
       const THREE_PL_KEYS = ['3PL'];

@@ -556,6 +556,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "createdAt": opp.get(c.created_at_field),
             "setterLastName": setter_norm,
             "leadGenSource": lead_norm,
+            # Raw Sweeper/Rehash Last Name (contact first, then opportunity). Bloom credits sweeper appointments by it.
+            "sweeperRehashLastName": sweeper_last or None,
         }
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1

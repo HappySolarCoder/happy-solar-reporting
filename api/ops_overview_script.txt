@@ -12,6 +12,8 @@
   let snapshot = null;
   let bloomGoals = null;
   let bloomPending = false;
+  let channelGoals = null;
+  const GOAL_INBOUND_KEYS = ["Inbound", "Facebook Quick Form"];
   const COMPANY_DEMO_PCT_TARGET = __COMPANY_DEMO_PCT_TARGET__;
 
   function esc(value) {
@@ -493,6 +495,60 @@
     document.getElementById("trendSales").innerHTML = '<p class="chart-note">Monthly company sales from GoHighLevel opportunities, August 2025 through the current month. One point per month, so the date range above does not change this chart.</p>' + seriesChart(rows, "sales", "Sales", "");
     document.getElementById("trendCreated").innerHTML = '<p class="chart-note">Monthly opportunities created in GoHighLevel over the same months. The date range above does not change this chart.</p>' + seriesChart(rows, "opps_created", "Opportunities created", "");
   }
+  function goalCell(actual, goal, pct) {
+    if (goal == null) return '<td class="num cg-na">—</td>';
+    const shown = actual == null ? "—" : (pct ? actual.toFixed(1) + "%" : String(actual));
+    const hit = actual != null && actual >= goal;
+    return '<td class="num"><strong class="' + (hit ? "cg-hit" : "") + '">' + esc(shown) + '</strong><small> / ' + esc(goal) + (pct ? "%" : "") + "</small></td>";
+  }
+  function channelGoalRows() {
+    const goals = channelGoals && channelGoals.goals;
+    if (!goals || !snapshot) return null;
+    const stats = channelsFrom(snapshot);
+    const data = snapshot;
+    const lead = function (path, keys) { return sumKeys(path, keys); };
+    const b = function (obj, key) { return ((obj || {}).breakdowns || {})[key] || null; };
+    const createdLead = b(data.created, "created_by_lead_gen_source");
+    const ranLead = b(data.demo, "ran_by_lead_gen_source") || b(data.ran, "ran_by_lead_gen_source");
+    const sitLead = b(data.demo, "sit_by_lead_gen_source");
+    const salesLead = b(data.sales, "sales_by_lead_gen_source");
+    const inbound = pack(lead(createdLead, GOAL_INBOUND_KEYS), lead(ranLead, GOAL_INBOUND_KEYS), lead(sitLead, GOAL_INBOUND_KEYS), lead(salesLead, GOAL_INBOUND_KEYS));
+    const sw = channelGoals.sweeper || {};
+    const leads = channelGoals.leads || {};
+    const actual = {
+      Doors: stats.Doors,
+      "Self Gen": stats["Self gen"],
+      "3PL": stats["3PL"],
+      Inbound: inbound,
+      "Sweeper/Rehash": pack(sw.appointments, sw.ran, sw.demos, sw.sales),
+    };
+    return Object.keys(goals).map(function (name) {
+      const g = goals[name];
+      const a = actual[name] || {};
+      const rate = function (n, d) { return n == null || !d ? null : (n / d) * 100; };
+      return "<tr><th scope=\"row\">" + esc(name) + "</th>" +
+        goalCell(a.sales, g.sales) +
+        goalCell(rate(a.sales, a.ran), g.opp2prelim_pct, true) +
+        goalCell(a.created, g.appointments) +
+        goalCell(g.leads == null ? null : (leads[name] == null ? null : Number(leads[name])), g.leads) +
+        goalCell(rate(a.demos, a.ran), g.demo_rate_pct, true) +
+        goalCell(a.demos, g.demos) + "</tr>";
+    }).join("");
+  }
+  function paintChannelGoals(state) {
+    const host = document.getElementById("channelGoalsBody");
+    if (!host) return;
+    const f = pageFilters || filters();
+    if (f.territory !== "All" || f.source !== "All") {
+      host.innerHTML = '<p class="chart-note">Channel goals are company-wide. Clear the territory and lead source filters to compare them.</p>';
+      return;
+    }
+    if (state === "loading") { host.innerHTML = '<p class="chart-note">Loading channel goals…</p>'; return; }
+    const rows = channelGoalRows();
+    if (!rows) { host.innerHTML = '<p class="chart-note">Channel goals could not be read.</p>'; return; }
+    host.innerHTML = '<div class="table-wrap cg-wrap"><table class="cg-table"><thead><tr><th>Channel</th><th class="num">Sales</th><th class="num">Opp2Prelim</th><th class="num">Appointments</th><th class="num">Leads</th><th class="num">Demo rate</th><th class="num">Demos</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form.</p>';
+  }
   async function load() {
     const token = ++requestToken;
     pageFilters = filters();
@@ -506,6 +562,11 @@
         if (error && error.name === "AbortError") throw error;
         return null;
       });
+    channelGoals = null;
+    const ym = (period || "").split("-");
+    const channelTask = fetch("/api/metrics/channel_goals?year=" + encodeURIComponent(ym[0] || "") + "&month=" + encodeURIComponent(String(Number(ym[1] || 0))), { hsOptional: true })
+      .then(function (res) { return res && res.ok ? res.json() : null; })
+      .catch(function () { return null; });
     let response;
     try {
       response = await fetch("/api/metrics/company_snapshot?" + metricQuery().toString());
@@ -533,6 +594,12 @@
     }
     if (token !== requestToken) return;
     applySnapshot(payload);
+    paintChannelGoals(channelGoals ? null : "loading");
+    channelTask.then(function (cg) {
+      if (token !== requestToken) return;
+      channelGoals = cg;
+      paintChannelGoals();
+    });
     bloomTask.then(function (bloom) {
       if (token !== requestToken) return;
       bloomPending = false;

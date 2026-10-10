@@ -1000,6 +1000,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "contactLastName": contact.get("lastName"),
                 "setter": setter_s,
                 "lead_source": lead,
+                "sweeperRehashLastName": sweeper_last,
             }
         )
 

@@ -177,6 +177,27 @@ var MysteryTrip = (function () {
     return person;
   }
 
+  /**
+   * Bloom role gate for the two paths. FMA path keeps people whose Bloom account role is fma.
+   * Closers path keeps role closer (Solar Consultant in Bloom). Matching follows the portal:
+   * exact normalized name first, then one unique given-name variant (Zach / Zachary).
+   * accounts: [{name, role}] from /api/metrics/bloom_roles.
+   */
+  function bloomRoleFor(name, accounts) {
+    var list = accounts || [];
+    var exact = list.filter(function (a) { return a && normName(a.name) && normName(a.name) === normName(name); });
+    if (exact.length) {
+      var roles = exact.map(function (a) { return a.role; });
+      return roles.every(function (r) { return r === roles[0]; }) ? roles[0] : "";
+    }
+    var loose = list.filter(function (a) { return a && givenVariant(name, a.name); });
+    return loose.length === 1 ? loose[0].role : "";
+  }
+
+  function keepBloomRole(people, accounts, role) {
+    return (people || []).filter(function (p) { return p && bloomRoleFor(p.name, accounts) === role; });
+  }
+
   function closerGoalNames(goals) {
     var names = [];
     Object.keys(goals || {}).forEach(function (id) {
@@ -375,6 +396,8 @@ var MysteryTrip = (function () {
     shortDate: shortDate,
     buildFma: buildFma,
     buildClosers: buildClosers,
+    bloomRoleFor: bloomRoleFor,
+    keepBloomRole: keepBloomRole,
     sortBoard: sortBoard,
     findTraveler: findTraveler,
     currentMonth: currentMonth,

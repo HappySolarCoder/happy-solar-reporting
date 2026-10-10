@@ -210,3 +210,21 @@ function feed(over = {}) {
 }
 
 console.log("mystery trip rules ok");
+
+// Bloom role gate: FMA path keeps role fma, Closers path keeps role closer (Solar Consultant).
+{
+  const accounts = [
+    { name: "Zachary Maecker", role: "fma" },
+    { name: "Steven Emerson", role: "closer" },
+    { name: "Pat Lee", role: "closer" },
+  ];
+  assert.equal(MT.bloomRoleFor("Zach Maecker", accounts), "fma");
+  assert.equal(MT.bloomRoleFor("steven  emerson", accounts), "closer");
+  assert.equal(MT.bloomRoleFor("No Account", accounts), "");
+  const fma = MT.keepBloomRole([{ name: "Zach Maecker" }, { name: "Pat Lee" }, { name: "No Account" }], accounts, "fma");
+  assert.deepEqual(fma.map((p) => p.name), ["Zach Maecker"]);
+  const closers = MT.keepBloomRole([{ name: "Steven Emerson" }, { name: "Zachary Maecker" }], accounts, "closer");
+  assert.deepEqual(closers.map((p) => p.name), ["Steven Emerson"]);
+  // Two accounts with one name and different roles: no match, like the portal's tie rule.
+  assert.equal(MT.bloomRoleFor("Sam Ray", [{ name: "Sam Ray", role: "fma" }, { name: "Sam Ray", role: "closer" }]), "");
+}

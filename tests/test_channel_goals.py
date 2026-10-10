@@ -78,8 +78,9 @@ class SelfGenTests(unittest.TestCase):
         assert self_gen_reason(None, "frazier", "Allen Frazier") == "fallback"
         assert self_gen_reason("none", " Frazier ", "allen frazier") == "fallback"
         assert self_gen_reason("CRM UI", "FRAZIER", "Allen Frazier") == "fallback"
-        # A set lead source wins over the setter/owner match.
-        assert self_gen_reason("Doors", "Frazier", "Allen Frazier") is None
+        # The setter/owner match overrides another lead source.
+        assert self_gen_reason("Doors", "Frazier", "Allen Frazier") == "override"
+        assert self_gen_reason("Doors", "Meehan", "Zachary Maecker") is None
         assert self_gen_reason(None, "Hill", "Allen Frazier") is None
         assert self_gen_reason(None, "", "unassigned") is None
 
@@ -96,8 +97,9 @@ class SelfGenTests(unittest.TestCase):
             {"opportunityId": "b", "lead_source": "none", "setter": "Frazier", "closer": "Allen Frazier", "disposition": "Sit"},
             {"opportunityId": "b", "lead_source": "none", "setter": "Frazier", "closer": "Allen Frazier", "disposition": "Sit"},
         ]}
-        out = self_gen_actuals(created, demo, {"k1": "lead_source"})
-        assert (out["appointments"], out["ran"], out["demos"], out["sales"]) == (2, 1, 1, 1)
+        out = self_gen_actuals(created, demo, {"k1": ("lead_source", "Self Gen"), "k2": ("override", "Doors")})
+        assert (out["appointments"], out["ran"], out["demos"], out["sales"]) == (3, 1, 1, 2)
+        assert out["moved_from"] == {"Doors": {"appointments": 1, "ran": 0, "demos": 0, "sales": 1}}
         assert out["from_fallback"] == {"appointments": 1, "ran": 1, "demos": 1, "sales": 0}
 
 

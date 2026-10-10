@@ -66,29 +66,38 @@ def owner_last_name(owner: Any) -> str:
 
 
 def self_gen_reason(lead_source: Any, setter_last: Any, owner: Any) -> str | None:
-    """'lead_source', 'fallback' or None (Evan, 2026-10-09).
+    """'lead_source', 'fallback', 'override' or None (Evan, 2026-10-10).
 
-    Lead Gen Source decides. Only when it is blank does a setter last name
-    equal to the opportunity owner's last name (case-insensitive) count.
+    A setter last name equal to the opportunity owner's last name
+    (case-insensitive, trimmed) is Self Gen whatever the Lead Gen Source says
+    ('fallback' when the source is blank, 'override' when it named another
+    channel). Lead Gen Source Self Gen also counts.
     """
     lead = _fold(lead_source)
     if lead in SELF_GEN_LEAD_SOURCES:
         return "lead_source"
-    if lead not in BLANK_LEAD_SOURCES:
-        return None
     setter = _fold(setter_last)
     if setter and setter == owner_last_name(owner):
-        return "fallback"
+        return "fallback" if lead in BLANK_LEAD_SOURCES else "override"
     return None
 
 
-def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, Any], sales_reasons: dict[str, str]) -> dict[str, Any]:
-    out = {"appointments": 0, "ran": 0, "demos": 0, "sales": 0}
-    split = {"lead_source": dict(out), "fallback": dict(out)}
+def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, Any], sales_reasons: dict[str, tuple[str, str]]) -> dict[str, Any]:
+    """sales_reasons: contact id -> (reason, lead source label as in sales breakdown).
 
-    def bump(reason, key):
+    moved_from[label] counts overridden rows under the lead-source label the
+    snapshot breakdowns used, so the page can take them out of that channel.
+    """
+    keys = ("appointments", "ran", "demos", "sales")
+    out = dict.fromkeys(keys, 0)
+    split = {r: dict.fromkeys(keys, 0) for r in ("lead_source", "fallback", "override")}
+    moved: dict[str, dict[str, int]] = {}
+
+    def bump(reason, key, label):
         out[key] += 1
         split[reason][key] += 1
+        if reason == "override":
+            moved.setdefault(str(label), dict.fromkeys(keys, 0))[key] += 1
 
     seen: set[str] = set()
     for row in created_payload.get("sample_rows") or []:
@@ -100,7 +109,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         seen.add(oid)
         reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"))
         if reason:
-            bump(reason, "appointments")
+            bump(reason, "appointments", row.get("leadGenSource"))
     seen = set()
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict):
@@ -111,12 +120,18 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         seen.add(oid)
         reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"))
         if reason:
-            bump(reason, "ran")
+            bump(reason, "ran", row.get("lead_source"))
             if row.get("disposition") == "Sit":
-                bump(reason, "demos")
-    for reason in sales_reasons.values():
-        bump(reason, "sales")
-    return {**out, "from_lead_source": split["lead_source"], "from_fallback": split["fallback"]}
+                bump(reason, "demos", row.get("lead_source"))
+    for reason, label in sales_reasons.values():
+        bump(reason, "sales", label)
+    return {
+        **out,
+        "from_lead_source": split["lead_source"],
+        "from_fallback": split["fallback"],
+        "from_override": split["override"],
+        "moved_from": moved,
+    }
 
 
 def filled(value: Any) -> bool:
@@ -196,7 +211,7 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
     import sales as sales_mod
 
     sold: set[str] = set()
-    self_sold: dict[str, str] = {}
+    self_sold: dict[str, tuple[str, str]] = {}
     sc = SalesMetricContract()
 
     def contact_cf(contact, field_id):
@@ -220,8 +235,11 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         if not setter or (setter.casefold() in sales_mod.INVALID_PRIMARY_SETTERS and fallback):
             setter = fallback or setter
         reason = self_gen_reason(lead, setter, salesperson)
+        label = str(lead).strip() if lead is not None else ""
+        if label.casefold() in {"crm ui", "hand", "", "none", "null", "n/a"}:
+            label = "none"
         if contact_id and reason:
-            self_sold[str(contact_id)] = reason
+            self_sold[str(contact_id)] = (reason, label)
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all")
@@ -251,7 +269,7 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
             "sweeper": "Sweeper/Rehash Last Name filled (any name), contact then opportunity",
             "leads_inbound": "Inbound/Lead Locker pipeline opps created in month, Lead Gen Source Inbound or Facebook Quick Form",
             "leads_3pl": "Remaining non-refunded Lead Locker / Solar Reviews title-bucket opps created in month",
-            "self_gen": "Lead Gen Source Self Gen; if Lead Gen Source is blank, setter last name equals the opportunity owner's last name (case-insensitive)",
+            "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source",
             "demo_rate": "demos / appointments ran",
             "opp2prelim": "sales / appointments ran",
         },

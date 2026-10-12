@@ -397,7 +397,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Metric Notes</div>
         <div class="meta">
           Demo commission is based on demo outcomes from <code>/api/metrics/demo_rate</code>.
-          An FMA gets one demo per contact. A 3-day buffer on the stage history dates it: the first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo. An inferred re-disposition is the estimated time when no unused real appointment remains. It counts as an appointment ran and does not add an FMA demo.
+          An FMA gets one demo per contact. A 3-day buffer on the stage history dates it: the first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once. A second demo counts only when Sweeper/Rehash Last Name is filled. It is credited to the setter that field names, including when that name is the original FMA. An empty field leaves one demo with the FMA on the first demo appointment. An inferred re-disposition is the estimated time when no unused real appointment remains. It counts as an appointment ran and does not add an FMA demo.
           Sales commission is based on canonical Sales counts from <code>/api/metrics/sales</code>.
         </div>
       </div>

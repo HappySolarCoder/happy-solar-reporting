@@ -28,7 +28,7 @@ DEFINITION = {
     "pipelines_included": ["buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper"],
     "pipelines_excluded": ["inbound/lead locker"],
     "follow_up": "not a second demo",
-    "setter": "contact Setter Last Name Eq4NLTSkJ56KTxbxypuE, else opportunity same field, else last token of Setter Name Xhy6k4xfHRJ6s5IbfA5x; one demo per contact via select_fma_demos. Sweeper/Rehash Last Name HWfjOp8MvE6soxBAL75f adds another demo only when it is that FMA's own last name and the contact is dispositioned again after the sweep",
+    "setter": "contact Setter Last Name Eq4NLTSkJ56KTxbxypuE, else opportunity same field, else last token of Setter Name Xhy6k4xfHRJ6s5IbfA5x; one demo per contact via select_fma_demos. Sweeper/Rehash Last Name HWfjOp8MvE6soxBAL75f adds a second demo when that field is filled. The second demo is credited to the setter that field names, including when the name is the original FMA. An empty field leaves one demo with the FMA on the first demo appointment",
     "lead_gen_source": "contact hd5QqHEOVSsPom5bJ32P",
     "scheduling_manager": "contact 6QmaNZha745jNHnh3U86",
     "owner": "ghl_opportunities_v2.assignedTo via ghl_users_v2",

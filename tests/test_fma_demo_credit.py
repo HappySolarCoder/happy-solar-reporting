@@ -108,8 +108,8 @@ class CreditTests(unittest.TestCase):
         self.assertEqual(demos[0].last_name, "Hill")
         self.assertEqual(demos[0].reason, "original")
 
-    def test_reset_duplicate_does_not_add_a_second_demo(self):
-        """Stacy S. shape: original Buffalo sit, then a reset opp that also sits."""
+    def test_reset_duplicate_credits_the_named_sweeper(self):
+        """Stacy S. shape: original Buffalo demo stays with Dole; Diamond gets the reset demo."""
         original = {
             "contact_id": "stacy",
             "opportunity_id": "original",
@@ -143,10 +143,13 @@ class CreditTests(unittest.TestCase):
             ],
         }
         demos = select_fma_demos([duplicate, original])
-        self.assertEqual(len(demos), 1)
-        self.assertEqual(demos[0].opportunity_id, "original")
-        self.assertEqual(demos[0].last_name, "Dole")
-        self.assertEqual(demos[0].counted_at, T_APPT)
+        self.assertEqual(
+            [(item.opportunity_id, item.last_name, item.reason, item.counted_at) for item in demos],
+            [
+                ("original", "Dole", "original", T_APPT),
+                ("reset", "Diamond", "sweeper", T_RESET_APPT),
+            ],
+        )
         self.assertEqual(demos[0].date_source, "opportunity_appointment")
 
     def test_self_sweep_can_add_a_second_demo(self):
@@ -182,6 +185,74 @@ class CreditTests(unittest.TestCase):
             ("first", "Hill", "original"),
             ("second", "Hill", "self_sweep"),
         ])
+
+    def _two_demo_opps(self, sweeper):
+        first_appointment = datetime(2026, 9, 2, 15, 0, tzinfo=timezone.utc)
+        first_dispo = datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc)
+        second_appointment = datetime(2026, 9, 20, 15, 0, tzinfo=timezone.utc)
+        second_dispo = datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc)
+        third_appointment = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        third_dispo = datetime(2026, 10, 2, 18, 0, tzinfo=timezone.utc)
+
+        def opp(opportunity_id, dispo_at, appointment):
+            return {
+                "contact_id": "contact-second",
+                "opportunity_id": opportunity_id,
+                "setter": "Hill",
+                "sweeper": sweeper,
+                "pipeline_name": "Buffalo",
+                "stage_name": "Demo-Negotiating",
+                "dispo_at": dispo_at,
+                "appointment_times": [appointment],
+                "appointment_source": "opportunity_appointment",
+                "history": [
+                    {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": dispo_at},
+                ],
+            }
+
+        return (
+            opp("first", first_dispo, first_appointment),
+            opp("second", second_dispo, second_appointment),
+            opp("third", third_dispo, third_appointment),
+            first_appointment,
+            second_appointment,
+        )
+
+    def test_empty_sweeper_field_gives_the_fma_one_demo(self):
+        """(a) An empty Sweeper/Rehash Last Name leaves the second demo uncounted."""
+        for sweeper in ("", "none", "n/a", None):
+            first, second, _third, first_appointment, _second_appointment = self._two_demo_opps(sweeper)
+            demos = select_fma_demos([second, first])
+            self.assertEqual(len(demos), 1, sweeper)
+            self.assertEqual(demos[0].opportunity_id, "first")
+            self.assertEqual(demos[0].last_name, "Hill")
+            self.assertEqual(demos[0].reason, "original")
+            self.assertEqual(demos[0].counted_at, first_appointment)
+
+    def test_other_setter_in_the_sweeper_field_gets_the_second_demo(self):
+        """(b) A different setter named in the field gets the second demo."""
+        first, second, third, first_appointment, second_appointment = self._two_demo_opps("Diamond")
+        demos = select_fma_demos([third, first, second])
+        self.assertEqual(
+            [(item.opportunity_id, item.last_name, item.reason, item.counted_at) for item in demos],
+            [
+                ("first", "Hill", "original", first_appointment),
+                ("second", "Diamond", "sweeper", second_appointment),
+            ],
+        )
+
+    def test_fma_own_last_name_in_the_sweeper_field_gives_two_demos(self):
+        """(c) The FMA's own last name in the field gives that FMA both demos."""
+        first, second, _third, first_appointment, second_appointment = self._two_demo_opps("Hill")
+        demos = select_fma_demos([second, first])
+        self.assertEqual(
+            [(item.opportunity_id, item.last_name, item.reason, item.counted_at) for item in demos],
+            [
+                ("first", "Hill", "original", first_appointment),
+                ("second", "Hill", "self_sweep", second_appointment),
+            ],
+        )
+        self.assertEqual(sum(1 for item in demos if item.last_name == "Hill"), 2)
 
     def test_aidan_dates_to_the_reschedule_not_the_no_show(self):
         """Sep 1 occurred-at is outside 3 days of the Sep 8 disposition. Sep 5 start is inside."""
@@ -439,9 +510,9 @@ class CreditTests(unittest.TestCase):
         Appointment A on Oct 1 is taken by the first dispo. It is still inside
         the third dispo's 3-day window and is not reused. The second and third
         are estimated at their own times. Appointment B on Oct 6 is free, so
-        the fourth uses it. That is still one FMA demo. A second demo counts
-        only when Sweeper/Rehash Last Name is that FMA and a later demo is at
-        or after the sweep.
+        the fourth uses it. The city Demo-* stays one demo for the original
+        FMA. A later Demo-* counts for the setter named in Sweeper/Rehash
+        Last Name when that field is filled.
         """
         appointment_a = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
         no_sit = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
@@ -508,11 +579,13 @@ class CreditTests(unittest.TestCase):
             ],
         )
         someone_else = select_fma_demos([city_opp("Diamond"), later_opp])
-        self.assertEqual(len(someone_else), 1)
-        self.assertEqual(someone_else[0].opportunity_id, "city")
-        self.assertEqual(someone_else[0].last_name, "Dole")
-        self.assertEqual(someone_else[0].reason, "original")
-        self.assertEqual(someone_else[0].counted_at, demo)
+        self.assertEqual(
+            [(item.opportunity_id, item.last_name, item.reason, item.counted_at) for item in someone_else],
+            [
+                ("city", "Dole", "original", demo),
+                ("after-sweep", "Diamond", "sweeper", later_appointment),
+            ],
+        )
         self.assertNotEqual(someone_else[0].counted_at, appointment_a)
         self.assertNotEqual(someone_else[0].counted_at, appointment_b)
 

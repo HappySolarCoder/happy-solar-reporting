@@ -15,7 +15,7 @@ the original setter for created and ran counts.
 FMA demo credit does not use this cutoff. See fma_demo_credit:
 one demo per contact, dated from stage history and the nearest
 appointment. A second demo counts only when Sweeper/Rehash Last Name
-is that FMA's own last name.
+is filled, and it is credited to the setter that field names.
 """
 
 from __future__ import annotations

@@ -728,8 +728,10 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                 "disposition. Each later disposition uses an unused real appointment "
                 "in that window, or an estimated time at the disposition. One "
                 "appointment is used once. A second demo counts only when "
-                "Sweeper/Rehash Last Name is that FMA's own last name and the contact "
-                "is dispositioned again after the sweep. An inferred re-disposition "
+                "Sweeper/Rehash Last Name is filled. It is credited to the setter "
+                "that field names, including when that name is the original FMA. "
+                "An empty field leaves one demo with the FMA on the first demo "
+                "appointment. An inferred re-disposition "
                 "is the estimated appointment when no unused real appointment "
                 "remains. It counts as an appointment ran and does not add another demo."
             ),

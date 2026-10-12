@@ -26,9 +26,9 @@ are not a second real appointment a later disposition can claim. Closer
 and opportunity metrics may still count each appointment or disposition.
 
 A second demo on the same contact counts only when Sweeper/Rehash Last
-Name is that FMA's own last name and a later Demo-* disposition is at or
-after the sweep. A sweep or rehash by someone else, including a duplicate
-opportunity created from a reset, does not add a demo.
+Name is non-empty. That demo is credited to the setter the field names,
+including when the name is the original FMA. An empty field leaves one
+demo with the FMA, dated to the first demo appointment.
 
 Sold and Sale Cancelled count as a demo only when the contact has no
 Demo-* disposition. When a Demo-* disposition already exists, Sold and
@@ -726,12 +726,14 @@ def _group_dispo_map(group: list[dict]) -> tuple[list[tuple[datetime, datetime, 
 
 
 def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
-    """Demos that count. One per FMA per contact, plus a self-sweep follow-up.
+    """Demos that count. One per contact, plus one when the sweeper field is filled.
 
     Each candidate needs contact_id, opportunity_id, setter, sweeper,
     pipeline_name, and dispo_at. history, dispos, real_appointments, and
     inferred_times are optional. The counted day is the appointment the
-    3-day buffer assigns to that disposition.
+    3-day buffer assigns to that disposition. The first demo goes to the
+    original FMA. A second Demo-* counts only when Sweeper/Rehash Last
+    Name is non-empty, and it is credited to that setter.
     """
     grouped: dict[str, list[dict]] = {}
     for candidate in candidates or []:
@@ -753,7 +755,14 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
         mapping, real_source = _group_dispo_map(group)
         sweep_at = contact_sweep_time(group)
         group_has_demo_star = any(candidate_has_demo_star(candidate) for candidate in group)
+        contact_sweeper = ""
+        for candidate in group:
+            name = compact_text(candidate.get("sweeper"))
+            if not _blank(name):
+                contact_sweeper = name
+                break
         primary = ""
+        extra_demo = False
         for candidate in group:
             # Sold and Sale Cancelled attach to an earlier Demo-*. They never add a second demo.
             if not candidate_has_demo_star(candidate) and (group_has_demo_star or primary):
@@ -770,13 +779,13 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
                     reason = "after_sweep"
                 primary = credit_name
             elif (
-                not _blank(sweeper)
-                and names_match(sweeper, primary)
-                and sweep_at is not None
-                and candidate["dispo_at"] >= sweep_at
+                not extra_demo
+                and not _blank(contact_sweeper)
+                and candidate_has_demo_star(candidate)
             ):
-                credit_name = sweeper
-                reason = "self_sweep"
+                credit_name = contact_sweeper
+                reason = "self_sweep" if names_match(contact_sweeper, primary) else "sweeper"
+                extra_demo = True
             else:
                 continue
             lookup_at = candidate.get("demo_buffer_at")

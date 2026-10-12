@@ -2,26 +2,27 @@
 
 """One FMA demo per contact.
 
-An FMA gets one demo per contact. The demo is dated to the nearest past
-appointment within 3 days before the disposition. The disposition time is
-the stage-history ``effectiveAt`` when the opportunity entered a Demo-*
-stage, One Legger, or Sold. If no appointment falls in that window, the
-demo uses the disposition time.
+An FMA gets one demo per contact. The demo date is the appointment the
+delayed-dispo buffer assigns to that disposition. The buffer is 3 days,
+the same window the sync uses.
+
+The first disposition takes the real calendar appointment within 3 days
+before it, including when the rep dispositions late. Each later
+disposition takes an unused real appointment in that window. When none
+is left, the date is an estimated appointment at the disposition time.
+One real appointment is never assigned to two dispositions.
 
 Appointments come from ``ghl_appointments_history_v1`` (contactId, start
 time). That collection fills going forward and may be empty. An empty
 result falls back to the opportunity's appointmentStartTime and
 appointmentOccurredAt, then to the disposition time.
 
-Rows with ``source`` ``inferred_from_dispo`` are real appointments. The
-sync writes one when a rep re-dispositions an opportunity (a two-touch or
-a reschedule) without booking a new GHL appointment. The estimated
-appointment time on that row is the disposition timestamp. When the first
-appointment was a No Sit and a later inferred appointment was
-dispositioned as a Sit, the one FMA demo is dated to that second
-estimated time. Inferred rows also count as appointments ran. They do
-not add an FMA demo. Closer and opportunity metrics may still count each
-appointment or disposition.
+Rows with ``source`` ``inferred_from_dispo`` are the estimated
+appointments the sync writes when a later disposition has no unused real
+calendar appointment. Their start time is the disposition timestamp.
+They count as appointments ran. They do not add an FMA demo, and they
+are not a second real appointment a later disposition can claim. Closer
+and opportunity metrics may still count each appointment or disposition.
 
 A second demo on the same contact counts only when Sweeper/Rehash Last
 Name is that FMA's own last name and a later demo disposition is at or
@@ -46,6 +47,28 @@ INFERRED_APPOINTMENT_SOURCE = "inferred_from_dispo"
 OPPORTUNITY_COLLECTION = "ghl_opportunities_v2"
 SWEEP_PIPELINES = frozenset({"sweeper", "rehash"})
 APPOINTMENT_LOOKBACK = timedelta(days=3)
+# Same dispo list and exclusions as ghl-firestore-sync-v2's delayed-dispo buffer.
+_BUFFER_DISPO_PHRASES = (
+    "rescheduled",
+    "needs reschedule",
+    "reschedule needed",
+    "demo",
+    "sit",
+    "sold",
+    "no sit",
+    "no show",
+    "sale cancelled",
+    "sale canceled",
+    "one legger",
+)
+_HOUSEKEEPING_STAGES = frozenset({"new appointment", "new lead", "dq"})
+_EXCLUDED_DISPO_PIPELINES = (
+    "sweeper",
+    "rehash",
+    "inbound lead locker",
+    "lead locker",
+    "recruiting",
+)
 _SKIPPED_APPOINTMENT_STATUSES = frozenset(
     {"cancelled", "canceled", "invalid", "noshow", "no show", "no-show"}
 )
@@ -309,6 +332,164 @@ def same_appointment_instant(left: datetime | None, right: datetime | None) -> b
     return abs((left - right).total_seconds()) < 1
 
 
+def _phrase_label(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    for char in "-_/":
+        text = text.replace(char, " ")
+    return " ".join(text.split())
+
+
+def _phrase_match(configured: Any, actual: Any) -> bool:
+    """Whole-word phrase match. Demo matches Demo-Negotiating. Sit does not match Rescheduled."""
+    needle = _phrase_label(configured)
+    hay = _phrase_label(actual)
+    if not needle or not hay:
+        return False
+    return f" {needle} " in f" {hay} "
+
+
+def is_buffer_dispo_stage(stage_name: Any, pipeline_name: Any = "") -> bool:
+    """True for a disposition the 3-day buffer assigns to an appointment.
+
+    Matches the sync: Demo, Sit, No Sit, Sold, Rescheduled, No Show, and the
+    rest of that list. New Appointment, DQ, and Sweeper/Rehash pipelines are
+    not dispositions.
+    """
+    name = _phrase_label(stage_name)
+    if not name or name in _HOUSEKEEPING_STAGES:
+        return False
+    pipeline = _phrase_label(pipeline_name)
+    padded = f" {pipeline} "
+    if any(f" {phrase} " in padded for phrase in _EXCLUDED_DISPO_PIPELINES):
+        return False
+    return any(_phrase_match(phrase, stage_name) for phrase in _BUFFER_DISPO_PHRASES)
+
+
+def buffer_dispo_time(row: dict) -> datetime | None:
+    """Sync dispo stamp: GHL lastStageChangeAt, otherwise effectiveAt."""
+    return (
+        _coerce_time(row.get("lastStageChangeAt"))
+        or _coerce_time(row.get("effectiveAt"))
+        or _coerce_time(row.get("opportunityUpdatedAt"))
+    )
+
+
+def buffer_dispo_times(history: list[dict] | None) -> list[datetime]:
+    """Disposition instants on this opportunity, oldest first."""
+    found: list[datetime] = []
+    for row in history or []:
+        if not isinstance(row, dict):
+            continue
+        change = compact_text(row.get("changeType") or "stage_transition")
+        if change != "stage_transition":
+            continue
+        if not is_buffer_dispo_stage(row.get("toStageName"), row.get("pipelineName")):
+            continue
+        moment = buffer_dispo_time(row)
+        if moment is not None:
+            found.append(moment)
+    found.sort()
+    return found
+
+
+def demo_buffer_time(history: list[dict] | None, dispo_at: datetime) -> datetime:
+    """Buffer stamp of the earliest demo-stage disposition, else ``dispo_at``."""
+    times: list[datetime] = []
+    for row in history or []:
+        if not isinstance(row, dict) or not is_demo_stage(row.get("toStageName")):
+            continue
+        if not is_buffer_dispo_stage(row.get("toStageName"), row.get("pipelineName")):
+            continue
+        moment = buffer_dispo_time(row)
+        if moment is not None:
+            times.append(moment)
+    return min(times) if times else dispo_at
+
+
+def _estimated_appointment(row: dict) -> bool:
+    if is_inferred_appointment(row):
+        return True
+    value = row.get("estimated")
+    if value in (True, 1):
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "y"}:
+        return True
+    return False
+
+
+def real_calendar_appointments(rows: list[dict] | None) -> list[tuple[str, datetime]]:
+    """GHL calendar events. Inferred and cancelled rows are not real appointments."""
+    found: list[tuple[str, datetime]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows or []):
+        if not isinstance(row, dict) or _skipped_appointment(row) or _estimated_appointment(row):
+            continue
+        moment = _appointment_moment(row)
+        if moment is None:
+            continue
+        key = compact_text(row.get("eventId") or row.get("id") or row.get("_docId"))
+        if not key:
+            key = f"anon:{moment.isoformat()}:{index}"
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append((key, moment))
+    return found
+
+
+def _opportunity_appointment_keys(opportunity: dict | None) -> list[tuple[str, datetime]]:
+    found: list[tuple[str, datetime]] = []
+    seen: set[datetime] = set()
+    for moment in opportunity_appointment_instants(opportunity):
+        if moment in seen:
+            continue
+        seen.add(moment)
+        found.append((f"opp:{moment.isoformat()}", moment))
+    return found
+
+
+def map_dispo_appointments(
+    dispos: list[datetime],
+    appointments: list[tuple[str, datetime]],
+) -> list[tuple[datetime, datetime, bool]]:
+    """Map each disposition to one appointment time.
+
+    Oldest disposition first. Each takes the latest unused real appointment
+    whose start is inside the 3 days up to and including the disposition.
+    A disposition with none left is dated at its own time. The bool is true
+    when a real appointment was used. Each real appointment is used once.
+    """
+    assigned: set[str] = set()
+    mapped: list[tuple[datetime, datetime, bool]] = []
+    for dispo_at in sorted(moment for moment in dispos if isinstance(moment, datetime)):
+        window_start = dispo_at - APPOINTMENT_LOOKBACK
+        chosen_key = ""
+        chosen_start: datetime | None = None
+        for key, start in appointments:
+            if key in assigned or not isinstance(start, datetime):
+                continue
+            if start < window_start or start > dispo_at:
+                continue
+            if chosen_start is None or start >= chosen_start:
+                chosen_key = key
+                chosen_start = start
+        if chosen_start is not None:
+            assigned.add(chosen_key)
+            mapped.append((dispo_at, chosen_start, True))
+        else:
+            mapped.append((dispo_at, dispo_at, False))
+    return mapped
+
+
+def _dedupe_times(moments: list[datetime]) -> list[datetime]:
+    found: list[datetime] = []
+    for moment in sorted(item for item in moments if isinstance(item, datetime)):
+        if any(same_appointment_instant(moment, existing) for existing in found):
+            continue
+        found.append(moment)
+    return found
+
+
 def opportunity_appointment_instants(opportunity: dict | None) -> list[datetime]:
     """Fallback appointments already stored on the opportunity."""
     opp = opportunity or {}
@@ -341,32 +522,30 @@ def counted_demo_time(
     dispo_at: datetime,
     appointment_times: list[datetime],
     inferred_times: list[datetime] | None = None,
+    prior_dispos: list[datetime] | None = None,
 ) -> tuple[datetime, bool]:
-    """Nearest past appointment within 3 days, otherwise the disposition.
+    """Date of the appointment assigned to this disposition.
 
-    An ``inferred_from_dispo`` appointment's estimated time is the
-    disposition timestamp. When that estimated time is present, it dates
-    the demo ahead of an earlier appointment in the window, such as a
-    No Sit that still has a calendar event.
+    Earlier dispositions claim real appointments first. This disposition
+    then takes the latest unused real appointment in the 3-day buffer, or
+    its own time when none remains. Inferred times are not real appointments.
 
-    The bool is true when an appointment was used.
+    The bool is true when a real appointment was used.
     """
-    estimated = [
-        moment
-        for moment in (inferred_times or [])
-        if isinstance(moment, datetime) and same_appointment_instant(moment, dispo_at)
-    ]
-    if estimated:
-        return estimated[-1], True
-    window_start = dispo_at - APPOINTMENT_LOOKBACK
-    eligible = [
+    inferred = [moment for moment in (inferred_times or []) if isinstance(moment, datetime)]
+    real = [
         moment
         for moment in appointment_times
-        if isinstance(moment, datetime) and window_start <= moment <= dispo_at
+        if isinstance(moment, datetime) and not any(same_appointment_instant(moment, item) for item in inferred)
     ]
-    if not eligible:
-        return dispo_at, False
-    return max(eligible), True
+    dispos = list(prior_dispos or [])
+    if not any(same_appointment_instant(dispo_at, item) for item in dispos):
+        dispos.append(dispo_at)
+    appointments = [(f"t:{moment.isoformat()}:{index}", moment) for index, moment in enumerate(real)]
+    for dispo, counted_at, used_real in map_dispo_appointments(dispos, appointments):
+        if same_appointment_instant(dispo, dispo_at):
+            return counted_at, used_real
+    return dispo_at, False
 
 
 def _city_demo_times(candidate: dict) -> list[datetime]:
@@ -411,15 +590,70 @@ def _blank(value: Any) -> bool:
     return not compact_text(value) or is_blank_last_name(value)
 
 
+def _candidate_dispos(candidate: dict) -> list[datetime]:
+    stored = candidate.get("dispos")
+    if isinstance(stored, list) and stored:
+        return [moment for moment in stored if isinstance(moment, datetime)]
+    found = buffer_dispo_times(candidate.get("history"))
+    dispo_at = candidate.get("demo_buffer_at")
+    if not isinstance(dispo_at, datetime):
+        dispo_at = candidate.get("dispo_at")
+    if isinstance(dispo_at, datetime) and not any(same_appointment_instant(dispo_at, item) for item in found):
+        found.append(dispo_at)
+    return found
+
+
+def _candidate_real_appointments(candidate: dict) -> tuple[list[tuple[str, datetime]], str]:
+    stored = candidate.get("real_appointments")
+    source = compact_text(candidate.get("real_source") or candidate.get("appointment_source"))
+    if isinstance(stored, list):
+        keyed = [
+            (str(key), moment)
+            for key, moment in stored
+            if isinstance(moment, datetime)
+        ]
+        return keyed, source or "opportunity_appointment"
+    inferred = [moment for moment in (candidate.get("inferred_times") or []) if isinstance(moment, datetime)]
+    times = [
+        moment
+        for moment in (candidate.get("appointment_times") or [])
+        if isinstance(moment, datetime) and not any(same_appointment_instant(moment, item) for item in inferred)
+    ]
+    keyed = [(f"t:{moment.isoformat()}:{index}", moment) for index, moment in enumerate(times)]
+    return keyed, source or "opportunity_appointment"
+
+
+def _group_dispo_map(group: list[dict]) -> tuple[list[tuple[datetime, datetime, bool]], str]:
+    """Contact-level assignment. One real appointment is used for one disposition."""
+    history_rows: list[tuple[str, datetime]] = []
+    opportunity_rows: list[tuple[str, datetime]] = []
+    dispos: list[datetime] = []
+    for candidate in group:
+        keyed, source = _candidate_real_appointments(candidate)
+        if source == "appointment_history" and keyed:
+            history_rows.extend(keyed)
+        else:
+            opportunity_rows.extend(keyed)
+        dispos.extend(_candidate_dispos(candidate))
+    chosen = history_rows or opportunity_rows
+    unique: list[tuple[str, datetime]] = []
+    seen: set[str] = set()
+    for key, moment in chosen:
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((key, moment))
+    real_source = "appointment_history" if history_rows else ("opportunity_appointment" if opportunity_rows else "dispo")
+    return map_dispo_appointments(_dedupe_times(dispos), unique), real_source
+
+
 def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
     """Demos that count. One per FMA per contact, plus a self-sweep follow-up.
 
     Each candidate needs contact_id, opportunity_id, setter, sweeper,
-    pipeline_name, dispo_at, and appointment_times. history, stage_name,
-    created_at, stage_changed_at, appointment_source, and inferred_times
-    are optional. inferred_times are estimated times from
-    ``inferred_from_dispo`` rows. A time that matches the disposition
-    dates the demo ahead of an earlier appointment.
+    pipeline_name, and dispo_at. history, dispos, real_appointments, and
+    inferred_times are optional. The counted day is the appointment the
+    3-day buffer assigns to that disposition.
     """
     grouped: dict[str, list[dict]] = {}
     for candidate in candidates or []:
@@ -436,6 +670,7 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
     selected: list[FmaDemo] = []
     for group in grouped.values():
         group.sort(key=lambda row: (row["dispo_at"], compact_text(row.get("opportunity_id"))))
+        mapping, real_source = _group_dispo_map(group)
         sweep_at = contact_sweep_time(group)
         primary = ""
         for candidate in group:
@@ -460,15 +695,24 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
                 reason = "self_sweep"
             else:
                 continue
-            times = [moment for moment in (candidate.get("appointment_times") or []) if isinstance(moment, datetime)]
+            lookup_at = candidate.get("demo_buffer_at")
+            if not isinstance(lookup_at, datetime):
+                lookup_at = candidate["dispo_at"]
+            matched = next(
+                (item for item in mapping if same_appointment_instant(item[0], lookup_at)),
+                None,
+            )
+            if matched is None:
+                counted_at, used_appointment = lookup_at, False
+            else:
+                _, counted_at, used_appointment = matched
             inferred_times = [
                 moment for moment in (candidate.get("inferred_times") or []) if isinstance(moment, datetime)
             ]
-            counted_at, used_appointment = counted_demo_time(
-                candidate["dispo_at"], times, inferred_times
-            )
             if used_appointment:
-                date_source = compact_text(candidate.get("appointment_source")) or "opportunity_appointment"
+                date_source = real_source if real_source in {"appointment_history", "opportunity_appointment"} else "opportunity_appointment"
+            elif any(same_appointment_instant(counted_at, moment) for moment in inferred_times):
+                date_source = "appointment_history"
             else:
                 date_source = "dispo"
             selected.append(
@@ -504,6 +748,16 @@ def make_demo_candidate(
         return None
     times, source = resolve_appointment_instants(appointment_rows, opp)
     inferred_times = [item.start_at for item in inferred_appointments(appointment_rows)]
+    real_appointments = real_calendar_appointments(appointment_rows)
+    if real_appointments:
+        real_source = "appointment_history"
+    else:
+        real_appointments = _opportunity_appointment_keys(opp)
+        real_source = "opportunity_appointment" if real_appointments else "dispo"
+    dispos = buffer_dispo_times(history)
+    buffer_at = demo_buffer_time(history, dispo_at)
+    if not any(same_appointment_instant(buffer_at, moment) for moment in dispos):
+        dispos.append(buffer_at)
     return {
         "contact_id": compact_text(contact_id),
         "opportunity_id": compact_text(opportunity_id),
@@ -515,8 +769,12 @@ def make_demo_candidate(
         "created_at": opp.get("createdAt"),
         "history": list(history or []),
         "dispo_at": dispo_at,
+        "demo_buffer_at": buffer_at,
+        "dispos": dispos,
         "appointment_times": times,
         "appointment_source": source,
+        "real_appointments": real_appointments,
+        "real_source": real_source,
         "inferred_times": inferred_times,
     }
 

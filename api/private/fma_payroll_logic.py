@@ -24,7 +24,7 @@ DEFINITION = {
     "demo": "opportunity dispositionValue == Sit",
     "disposition_field": "GYGpLKBPfMpiBqyU2ogQ",
     "warehouse_field": "ghl_opportunities_v2.dispositionValue",
-    "timestamp": "nearest past appointment within 3 days before stage-history effectiveAt, else the disposition time. An inferred_from_dispo appointment's estimated time is the disposition timestamp and dates the one demo ahead of an earlier appointment",
+    "timestamp": "3-day delayed-dispo buffer. The first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once",
     "pipelines_included": ["buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper"],
     "pipelines_excluded": ["inbound/lead locker"],
     "follow_up": "not a second demo",

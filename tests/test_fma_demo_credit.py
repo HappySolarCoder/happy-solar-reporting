@@ -280,8 +280,8 @@ class CreditTests(unittest.TestCase):
         )
         demos = select_fma_demos([candidate])
         self.assertEqual(len(demos), 1)
-        self.assertEqual(demos[0].counted_at, later)
-        self.assertEqual(demos[0].date_source, "appointment_history")
+        self.assertEqual(demos[0].counted_at, dispo)
+        self.assertEqual(demos[0].date_source, "dispo")
         self.assertEqual(demos[0].last_name, "Cornell-DeAngelis")
 
     def test_no_sit_then_inferred_sit_is_dated_on_the_estimated_second_appointment(self):
@@ -317,7 +317,10 @@ class CreditTests(unittest.TestCase):
             sweeper="",
             pipeline_name="Buffalo",
             stage_name="Demo-Negotiating",
-            history=[{"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": second}],
+            history=[
+                {"pipelineName": "Buffalo", "toStageName": "No Sit", "effectiveAt": first + timedelta(days=1), "lastStageChangeAt": first + timedelta(days=1)},
+                {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": second, "lastStageChangeAt": second},
+            ],
             appointment_rows=rows,
         )
         self.assertEqual(candidate["inferred_times"], [second])
@@ -327,6 +330,96 @@ class CreditTests(unittest.TestCase):
         self.assertNotEqual(demos[0].counted_at, first)
         self.assertEqual(demos[0].date_source, "appointment_history")
         self.assertEqual(demos[0].last_name, "Dole")
+
+    def test_late_first_dispo_maps_to_the_real_appointment(self):
+        """A first Sit two days after the calendar appointment stays on that appointment."""
+        appointment = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        dispo = datetime(2026, 10, 3, 15, 0, tzinfo=timezone.utc)
+        candidate = make_demo_candidate(
+            {"dispositionDate": dispo, "dispositionValue": "Sit", "appointmentStartTime": appointment},
+            contact_id="c",
+            opportunity_id="o",
+            setter="Dole",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[{
+                "pipelineName": "Buffalo",
+                "toStageName": "Demo-Negotiating",
+                "effectiveAt": dispo,
+                "lastStageChangeAt": dispo,
+            }],
+            appointment_rows=[{
+                "source": "ghl-firestore-sync-v2",
+                "eventId": "appt-1",
+                "startTime": appointment,
+                "contactId": "c",
+                "opportunityId": "o",
+            }],
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].dispo_at, dispo)
+        self.assertEqual(demos[0].counted_at, appointment)
+        self.assertNotEqual(demos[0].counted_at, dispo)
+        self.assertEqual(demos[0].date_source, "appointment_history")
+
+    def test_later_dispo_uses_an_unused_appointment_or_the_estimated_time(self):
+        """Monday's appointment is taken by the No Sit. A later Sit does not reuse it."""
+        monday = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        no_sit = datetime(2026, 10, 3, 15, 0, tzinfo=timezone.utc)
+        sit = datetime(2026, 10, 4, 11, 0, tzinfo=timezone.utc)
+        self.assertLessEqual(sit - monday, timedelta(days=3))
+
+        def candidate(rows, sit_at, history):
+            return make_demo_candidate(
+                {"dispositionDate": sit_at, "dispositionValue": "Sit", "appointmentStartTime": monday},
+                contact_id="c",
+                opportunity_id="o",
+                setter="Dole",
+                sweeper="",
+                pipeline_name="Buffalo",
+                stage_name="Demo-Negotiating",
+                history=history,
+                appointment_rows=rows,
+            )
+
+        history = [
+            {"pipelineName": "Buffalo", "toStageName": "No Sit", "effectiveAt": no_sit, "lastStageChangeAt": no_sit},
+            {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": sit, "lastStageChangeAt": sit},
+        ]
+        only_monday = [{
+            "source": "ghl-firestore-sync-v2",
+            "eventId": "appt-1",
+            "startTime": monday,
+            "contactId": "c",
+            "opportunityId": "o",
+        }]
+        estimated = select_fma_demos([candidate(only_monday, sit, history)])
+        self.assertEqual(len(estimated), 1)
+        self.assertEqual(estimated[0].counted_at, sit)
+        self.assertNotEqual(estimated[0].counted_at, monday)
+        self.assertEqual(estimated[0].date_source, "dispo")
+
+        later_appointment = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+        later_sit = datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc)
+        later_history = [
+            {"pipelineName": "Buffalo", "toStageName": "No Sit", "effectiveAt": no_sit, "lastStageChangeAt": no_sit},
+            {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": later_sit, "lastStageChangeAt": later_sit},
+        ]
+        both = only_monday + [{
+            "source": "ghl-firestore-sync-v2",
+            "eventId": "appt-2",
+            "startTime": later_appointment,
+            "contactId": "c",
+            "opportunityId": "o",
+        }]
+        unused = select_fma_demos([candidate(both, later_sit, later_history)])
+        self.assertEqual(len(unused), 1)
+        self.assertEqual(unused[0].counted_at, later_appointment)
+        self.assertNotEqual(unused[0].counted_at, monday)
+        self.assertNotEqual(unused[0].counted_at, later_sit)
+        self.assertEqual(unused[0].date_source, "appointment_history")
 
     def test_appointment_after_the_dispo_does_not_move_the_date(self):
         later = T_DEMO + timedelta(days=2)

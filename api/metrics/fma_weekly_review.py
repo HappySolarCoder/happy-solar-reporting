@@ -721,14 +721,15 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
             "knocks": "Raydar dispositioned leads that count as door knocks (actor attribution matches current FMA dashboard logic).",
             "appointments": "GHL opportunities created by setter last name, pipeline_scope=all, excluding inbound/lead locker.",
             "demos": (
-                "One demo per contact. Dated to the nearest past appointment within "
-                "3 days before the stage-history disposition, or that disposition when "
-                "the appointment is missing. A second demo counts only when "
+                "One demo per contact. A 3-day buffer dates it: the first disposition "
+                "uses the real appointment within 3 days before it, including a late "
+                "disposition. Each later disposition uses an unused real appointment "
+                "in that window, or an estimated time at the disposition. One "
+                "appointment is used once. A second demo counts only when "
                 "Sweeper/Rehash Last Name is that FMA's own last name and the contact "
                 "is dispositioned again after the sweep. An inferred re-disposition "
-                "counts as an appointment ran. Its estimated time is the "
-                "disposition timestamp, and that time dates the one demo ahead of "
-                "an earlier appointment. It does not add another demo."
+                "is the estimated appointment when no unused real appointment "
+                "remains. It counts as an appointment ran and does not add another demo."
             ),
             "sales": "Canonical sales by setter last name using sold-date window.",
         },

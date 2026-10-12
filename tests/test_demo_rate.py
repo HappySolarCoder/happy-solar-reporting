@@ -343,6 +343,16 @@ class CloserAttributionTests(unittest.TestCase):
         self.assertEqual(len(inferred_rows), 1)
         self.assertFalse(inferred_rows[0]["countsAsDemo"])
 
+    def test_new_appointment_is_not_an_appointment_ran(self):
+        ran = self._opp("ran-demo", assigned="userEvan", dispo="Sit", setter="Day")
+        ran._data["pipelineStageName"] = "Demo-Negotiating"
+        waiting = self._opp("still-new", assigned="userEvan", dispo="No Sit", setter="Day")
+        waiting._data["pipelineStageName"] = "New Appointment"
+        payload = self._payload([ran, waiting], self._directory())
+        self.assertEqual(payload["ran_count"], 1)
+        self.assertEqual(payload["sit_count"], 1)
+        self.assertEqual([row["opportunityId"] for row in payload["rows"]], ["ran-demo"])
+
     def test_directory_failure_does_not_change_the_demo_total(self):
         from unittest.mock import patch
 

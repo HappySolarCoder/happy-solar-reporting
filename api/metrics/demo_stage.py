@@ -44,3 +44,8 @@ def stage_is_demo(stage_name: Any) -> bool:
 def stage_is_one_legger(stage_name: Any) -> bool:
     folded = fold_stage(stage_name)
     return bool(folded) and "one legger" in folded
+
+
+def stage_is_new_appointment(stage_name: Any) -> bool:
+    """An opportunity still on New Appointment has not run."""
+    return fold_stage(stage_name) == "new appointment"

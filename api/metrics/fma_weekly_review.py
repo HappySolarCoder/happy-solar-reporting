@@ -32,6 +32,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from demo_stage import stage_is_new_appointment  # noqa: E402
 from fma_demo_credit import (  # noqa: E402
     inferred_appointments,
     load_appointment_history,
@@ -483,6 +484,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
 
     # GHL opp-derived metrics
     sit_candidates: list[dict[str, Any]] = []
+    new_appointment_ids: set[str] = set()
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
         pipeline_id = compact_str(opp.get("pipelineId"))
@@ -522,7 +524,12 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
 
         occurred_at = parse_iso_dt(opp.get("appointmentOccurredAt"))
         disposition = normalize_disposition(opp.get("dispositionValue"))
-        if occurred_at and occurred_at <= today_utc and disposition in {"Sit", "No Sit"}:
+        stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+        stage_label = compact_str(stage_names.get(stage_id) or opp.get("pipelineStageName") or opp.get("stageName"))
+        still_new = stage_is_new_appointment(stage_label)
+        if still_new:
+            new_appointment_ids.add(compact_str(opp.get("id") or snap.id))
+        if occurred_at and occurred_at <= today_utc and disposition in {"Sit", "No Sit"} and not still_new:
             occurred_local = occurred_at.astimezone(TZ)
             if start_local <= occurred_local < end_local:
                 ran_at_by_opp[compact_str(opp.get("id") or snap.id)] = occurred_at
@@ -530,7 +537,6 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                 if disposition != "Sit":
                     bump_person(person, occurred_local.date().isoformat(), "no_sit", 1)
 
-                stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
                 notes = compact_str(
                     opp.get("dispositionNotes")
                     or opp.get("dispositionNote")
@@ -619,7 +625,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
             continue
         seen_inferred.add(identity)
         person = person_by_opp.get(event.opportunity_id)
-        if person is None:
+        if person is None or event.opportunity_id in new_appointment_ids:
             continue
         if same_appointment_instant(ran_at_by_opp.get(event.opportunity_id), event.start_at):
             continue

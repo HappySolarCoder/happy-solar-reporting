@@ -131,12 +131,20 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
     excluded = {"rehash", "sweeper", "inbound/lead locker"}
 
     pipe: dict[str, str] = {}
+    stage_names: dict[str, str] = {}
     for snap in db.collection("ghl_pipelines_v2").stream():
         d = snap.to_dict() or {}
         pid = str(d.get("id") or snap.id)
         nm = str(d.get("name") or "").strip()
         if pid and nm:
             pipe[pid] = nm
+        for stage in d.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            sid = str(stage.get("id") or stage.get("uid") or "").strip()
+            sname = str(stage.get("name") or "").strip()
+            if sid and sname:
+                stage_names[sid] = sname
 
     def contact_lookup(contact_id: str) -> dict | None:
         if not contact_id:
@@ -177,6 +185,10 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
 
         dispo = opp.get("dispositionValue")
         if dispo not in ("Sit", "No Sit"):
+            continue
+        stage_id = str(opp.get("pipelineStageId") or opp.get("pipelineStageUId") or "").strip()
+        stage_name = stage_names.get(stage_id) or str(opp.get("pipelineStageName") or opp.get("stageName") or "")
+        if " ".join(stage_name.replace("-", " ").replace("_", " ").split()).casefold() == "new appointment":
             continue
 
         pid = str(opp.get("pipelineId") or "")

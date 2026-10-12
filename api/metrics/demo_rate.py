@@ -50,6 +50,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from demo_stage import stage_is_new_appointment
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
@@ -954,13 +955,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         pname = resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         if not pipeline_in_demo_scope(pname.lower(), c):
             continue
+        history_pipeline_ids.extend(pipeline_id_keys(opp.get("pipelineId")))
         if opp.get(c.disposition_value_field) != "Sit":
             continue
         sit_opps.append(opp)
         history_ids.append(str(opp.get("id") or ""))
-        history_pipeline_ids.extend(pipeline_id_keys(opp.get("pipelineId")))
     stage_history = load_stage_history(db, history_ids) if history_ids else {}
-    stage_names = load_stage_names(db, history_pipeline_ids) if history_ids else {}
+    stage_names = load_stage_names(db, history_pipeline_ids) if history_pipeline_ids else {}
     appointment_history = load_appointment_history(db, seed_contact_ids)
     demo_candidates = []
     for opp in sit_opps:
@@ -1013,6 +1014,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
         dispo = opp.get(c.disposition_value_field)
         if dispo not in ("Sit", "No Sit"):
+            continue
+        # New Appointment has not run. GHL sets Appointment Outcome only after a later stage.
+        if stage_is_new_appointment(current_stage_name(opp, stage_names)):
             continue
         frozen_dt = frozen_sit_timestamp(
             opp.get(c.appointment_occurred_at_field),
@@ -1224,6 +1228,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                     break
         if not opp:
             continue
+        if stage_is_new_appointment(current_stage_name(opp, stage_names)):
+            continue
         opp_id = str(opp.get("id") or event.opportunity_id)
         if same_appointment_instant(counted_ran_at.get(opp_id), event.start_at):
             continue
@@ -1316,6 +1322,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "Demos / Ran. Window = first-write-wins "
             "min(appointmentOccurredAt, dispositionDate). "
             "GYGpLKBPfMpiBqyU2ogQ / dispositionValue for a demo or no demo. "
+            "An opportunity still in New Appointment has not run. "
             "Follow-up is not a second demo. "
             "An FMA gets one demo per contact. The 3-day delayed-dispo buffer "
             "dates it: the first disposition uses the real appointment within "

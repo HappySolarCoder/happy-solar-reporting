@@ -37,7 +37,15 @@ if str(_METRICS_DIR) not in sys.path:
 from google.oauth2 import service_account
 from google.cloud import firestore
 
-from fma_demo_credit import inferred_appointments, load_appointment_history, load_inferred_appointments, same_appointment_instant
+from demo_stage import stage_is_new_appointment
+from fma_demo_credit import (
+    current_stage_name,
+    inferred_appointments,
+    load_appointment_history,
+    load_inferred_appointments,
+    load_stage_names,
+    same_appointment_instant,
+)
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
@@ -464,6 +472,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             needed_pipeline_ids.extend(pipeline_id_keys(pid_raw))
 
     pipe_names = pipeline_name_lookup(db, needed_pipeline_ids)
+    stage_names = load_stage_names(db, needed_pipeline_ids)
     contact_cache = load_contacts_by_ids(db, needed_contact_ids)
 
     def get_contact(cid: str) -> dict | None:
@@ -491,6 +500,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         # disposition check (use derived field for speed)
         dispo_val = opp.get("dispositionValue")
         if dispo_val not in ("Sit", "No Sit"):
+            continue
+        if stage_is_new_appointment(current_stage_name(opp, stage_names)):
             continue
         matched_dispo += 1
 
@@ -625,7 +636,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         "result": len(matching_rows),
         "count_method": (
             f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] "
-            "is not empty and appointmentOccurredAt in window, plus each ghl_appointments_history_v1 "
+            "is not empty and appointmentOccurredAt in window. An opportunity still in New Appointment has not run. Plus each ghl_appointments_history_v1 "
             "source inferred_from_dispo in that window. An inferred re-dispo does not add an FMA demo."
         ),
         "debug": {

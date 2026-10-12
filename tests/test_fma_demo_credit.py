@@ -744,6 +744,90 @@ class CreditTests(unittest.TestCase):
         self.assertNotEqual(demos[0].counted_at, sold)
         self.assertEqual(demos[0].last_name, "Hill")
 
+    def test_demo_negotiating_then_demo_follow_up_is_one_demo(self):
+        """Any demo stage followed by another demo stage stays on the first appointment."""
+        appointment_1 = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        negotiating = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+        appointment_2 = datetime(2026, 10, 8, 15, 0, tzinfo=timezone.utc)
+        follow_up = datetime(2026, 10, 8, 18, 0, tzinfo=timezone.utc)
+        history = [
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "Demo-Negotiating",
+                "effectiveAt": negotiating,
+                "lastStageChangeAt": negotiating,
+            },
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "Demo-Follow Up",
+                "effectiveAt": follow_up,
+                "lastStageChangeAt": follow_up,
+            },
+        ]
+        rows = [
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-2", "startTime": appointment_2, "contactId": "c"},
+        ]
+        candidate = make_demo_candidate(
+            {"dispositionDate": follow_up, "dispositionValue": "Sit"},
+            contact_id="c",
+            opportunity_id="follow-up",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Follow Up",
+            history=history,
+            appointment_rows=rows,
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, appointment_1)
+        self.assertNotEqual(demos[0].counted_at, appointment_2)
+        self.assertNotEqual(demos[0].counted_at, follow_up)
+        self.assertEqual(demos[0].last_name, "Hill")
+        self.assertTrue(is_demo_stage("Demo-Follow Up"))
+
+        later = make_demo_candidate(
+            {"dispositionDate": follow_up, "dispositionValue": "Sit", "appointmentStartTime": appointment_2},
+            contact_id="c2",
+            opportunity_id="follow-up-opp",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Follow Up",
+            history=[
+                {
+                    "pipelineName": "Buffalo",
+                    "toStageName": "Demo-Follow Up",
+                    "effectiveAt": follow_up,
+                    "lastStageChangeAt": follow_up,
+                }
+            ],
+            appointment_rows=[{"eventId": "appt-2", "startTime": appointment_2, "contactId": "c2"}],
+        )
+        first = make_demo_candidate(
+            {"dispositionDate": negotiating, "dispositionValue": "Sit", "appointmentStartTime": appointment_1},
+            contact_id="c2",
+            opportunity_id="negotiating-opp",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[
+                {
+                    "pipelineName": "Buffalo",
+                    "toStageName": "Demo-Negotiating",
+                    "effectiveAt": negotiating,
+                    "lastStageChangeAt": negotiating,
+                }
+            ],
+            appointment_rows=[{"eventId": "appt-1", "startTime": appointment_1, "contactId": "c2"}],
+        )
+        separate = select_fma_demos([later, first])
+        self.assertEqual(len(separate), 1)
+        self.assertEqual(separate[0].opportunity_id, "negotiating-opp")
+        self.assertEqual(separate[0].counted_at, appointment_1)
+
     def test_later_sold_does_not_add_a_second_demo(self):
         """A Sold opp after a Demo-* attaches to that demo, even when the sweeper is the FMA."""
         appointment_1 = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)

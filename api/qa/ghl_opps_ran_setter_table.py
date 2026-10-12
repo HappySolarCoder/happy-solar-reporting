@@ -6,7 +6,7 @@ QA: list the exact opportunities that feed the FMS "GHL — Demo Rate by Setter"
 
 Business logic source: GHLMetrics.md
 - Time filter field: ghl_opportunities_v2.appointmentOccurredAt
-- Ran qualification: dispositionValue in (Sit, No Sit)
+- Ran qualification: dispositionValue in (Sit, No Sit), excluding New Appointment
 - Setter: ghl_contacts_v2.customFields[Eq4NLTSkJ56KTxbxypuE] via contactId join
 - Pipeline scope: included buffalo/rochester/virtual/syracuse; excluded rehash/sweeper/inbound/lead locker
 
@@ -37,6 +37,7 @@ METRICS_DIR = QA_DIR.parent / "metrics"
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from demo_stage import stage_is_new_appointment  # noqa: E402
 from fma_demo_credit import (  # noqa: E402
     current_stage_name,
     inferred_appointments,
@@ -199,6 +200,11 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
         .where(c.time_field, ">=", start_utc)
         .where(c.time_field, "<", end_utc)
     )
+    snaps = list(q.stream())
+    stage_names = load_stage_names(
+        db,
+        [str((snap.to_dict() or {}).get("pipelineId") or "") for snap in snaps],
+    )
 
     rows: list[dict[str, Any]] = []
     ran_by_setter: dict[str, int] = {}
@@ -208,12 +214,14 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
     row_by_opp: dict[str, dict[str, Any]] = {}
 
     scanned = 0
-    for snap in q.stream():
+    for snap in snaps:
         scanned += 1
         opp = snap.to_dict() or {}
 
         dispo = opp.get(c.disposition_field)
         if dispo not in ("Sit", "No Sit"):
+            continue
+        if stage_is_new_appointment(current_stage_name(opp, stage_names)):
             continue
 
         pid = str(opp.get("pipelineId") or "")

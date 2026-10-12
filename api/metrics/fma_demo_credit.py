@@ -30,10 +30,12 @@ Name is non-empty. That demo is credited to the setter the field names,
 including when the name is the original FMA. An empty field leaves one
 demo with the FMA, dated to the first demo appointment.
 
-Sold and Sale Cancelled count as a demo only when the contact has no
-Demo-* disposition. When a Demo-* disposition already exists, Sold and
-Sale Cancelled attach to that earlier demo and do not add another. The
-counted appointment stays the one mapped to the Demo-* disposition.
+A later demo stage on that same appointment stays with the first one.
+Demo-Negotiating followed by Demo-Follow Up is one demo, dated to the
+first demo appointment. Sold and Sale Cancelled do the same: they count
+as a demo only when the contact has no Demo-* disposition, and otherwise
+attach to that earlier demo. A filled Sweeper/Rehash Last Name is what
+adds one later demo, credited to the setter that field names.
 
 One Legger is a disposition in the buffer, so it can claim an appointment.
 It is not a demo. One Legger followed later by Demo-Negotiating is one

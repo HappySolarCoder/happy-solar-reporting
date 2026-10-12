@@ -91,3 +91,16 @@ test("Company Overview dates do not raise the error cover", async ({ page }) => 
   await expect(page.locator("#ocStart")).toHaveValue(START);
   await expect(page.locator("#ocEnd")).toHaveValue(END);
 });
+
+test("Company Overview keeps the quick date preset buttons", async ({ page }) => {
+  const errors = watch(page);
+  await page.goto("/api/company_overview");
+  await assertClear(page, errors);
+  for (const label of ["Today", "Yesterday", "This week", "Last week", "MTD", "Last month", "Last 30", "YTD"]) {
+    await expect(page.locator("#filterHost .date-preset", { hasText: new RegExp("^" + label + "$") })).toHaveCount(1);
+  }
+  await page.locator('#filterHost [data-preset="lastmonth"]').click();
+  await assertClear(page, errors);
+  await expect(page.locator("#ocStart")).toHaveValue(/-01$/);
+  await expect(page.locator('#filterHost [data-preset="lastmonth"]')).toHaveAttribute("aria-pressed", "true");
+});

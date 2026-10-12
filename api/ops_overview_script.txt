@@ -193,6 +193,38 @@
     return months;
   }
 
+  // Quick date presets. Regression-tested in tests/test_ops_date_presets.py; do not remove.
+  const DATE_PRESETS = [
+    { id: "today", label: "Today" },
+    { id: "yesterday", label: "Yesterday" },
+    { id: "thisweek", label: "This week" },
+    { id: "lastweek", label: "Last week" },
+    { id: "mtd", label: "MTD" },
+    { id: "lastmonth", label: "Last month" },
+    { id: "last30", label: "Last 30" },
+    { id: "ytd", label: "YTD" },
+  ];
+  function ymdShift(ymd, days) {
+    const d = new Date(ymd + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  function presetRange(id) {
+    if (window.hsOpsPresetRange) return window.hsOpsPresetRange(id);
+    const today = nyToday();
+    const dow = (new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7;
+    const monday = ymdShift(today, -dow);
+    const firstOfMonth = today.slice(0, 8) + "01";
+    if (id === "today") return { start: today, end: today };
+    if (id === "yesterday") { const y = ymdShift(today, -1); return { start: y, end: y }; }
+    if (id === "thisweek") return { start: monday, end: today };
+    if (id === "lastweek") return { start: ymdShift(monday, -7), end: ymdShift(monday, -1) };
+    if (id === "lastmonth") { const e = ymdShift(firstOfMonth, -1); return { start: e.slice(0, 8) + "01", end: e }; }
+    if (id === "last30") return { start: ymdShift(today, -29), end: today };
+    if (id === "ytd") return { start: today.slice(0, 5) + "01-01", end: today };
+    return { start: firstOfMonth, end: today };
+  }
+
   function renderFilterBar() {
     const f = filters();
     pageFilters = f;
@@ -213,7 +245,20 @@
         return '<option' + (f.source === x ? " selected" : "") + ">" + x + "</option>";
       }).join("") + "</select></label>" +
       '<button type="button" class="filter-reset" id="ocReset">Reset filters</button></div>' +
+      '<div class="date-presets" role="group" aria-label="Quick date ranges">' + DATE_PRESETS.map(function (p) {
+        const r = presetRange(p.id);
+        const on = r.start === f.start && r.end === f.end;
+        return '<button type="button" class="date-preset' + (on ? " active" : "") + '" data-preset="' + p.id + '" aria-pressed="' + on + '">' + p.label + "</button>";
+      }).join("") + "</div>" +
       '<div class="filter-chips">' + chips.join("") + '<span>America/New_York · filters kept across pages</span></div></div>';
+    document.querySelectorAll("#filterHost [data-preset]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        const r = presetRange(button.getAttribute("data-preset"));
+        saveFilters(Object.assign({}, filters(), { start: r.start, end: r.end }));
+        renderFilterBar();
+        load();
+      });
+    });
     document.getElementById("ocStart").addEventListener("change", applyFilters);
     document.getElementById("ocEnd").addEventListener("change", applyFilters);
     document.getElementById("ocTerritory").addEventListener("change", applyFilters);

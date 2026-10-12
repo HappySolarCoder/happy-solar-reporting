@@ -867,6 +867,9 @@ def _legacy_nav_css() -> str:
       .oc-menu-btn { display: inline-flex; position: fixed; top: 10px; left: 10px; z-index: 40; }
     }
     .oc-injected-filters { margin: 12px 16px 16px; }
+    .date-presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+    .date-preset { font-size:10px; padding:5px 10px; background:#0c3045; border:1px solid #36657a; color:#cfe6f2; border-radius:6px; cursor:pointer; }
+    .date-preset.active { background:#123e52; border-color:#26d9eb; color:#26d9eb; }
     .oc-injected-filters .global-filterbar,
     .oc-injected-filters.global-filterbar {
       background: #0a2438;
@@ -1425,6 +1428,35 @@ def render_dashboard_nav(current: str) -> str:
                 source: params.get('source') || stored.source || 'All'
               }};
             }};
+            // Shared quick date presets for every Data Center page. Guarded by tests/test_ops_date_presets.py.
+            window.hsOpsDatePresets = [
+              {{ id: 'today', label: 'Today' }}, {{ id: 'yesterday', label: 'Yesterday' }},
+              {{ id: 'thisweek', label: 'This week' }}, {{ id: 'lastweek', label: 'Last week' }},
+              {{ id: 'mtd', label: 'MTD' }}, {{ id: 'lastmonth', label: 'Last month' }},
+              {{ id: 'last30', label: 'Last 30' }}, {{ id: 'ytd', label: 'YTD' }}
+            ];
+            window.hsOpsPresetRange = function(id) {{
+              function shift(ymd, days) {{ var d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }}
+              var today = nyToday();
+              var dow = (new Date(today + 'T12:00:00Z').getUTCDay() + 6) % 7;
+              var monday = shift(today, -dow);
+              var first = today.slice(0, 8) + '01';
+              if (id === 'today') return {{ start: today, end: today }};
+              if (id === 'yesterday') {{ var y = shift(today, -1); return {{ start: y, end: y }}; }}
+              if (id === 'thisweek') return {{ start: monday, end: today }};
+              if (id === 'lastweek') return {{ start: shift(monday, -7), end: shift(monday, -1) }};
+              if (id === 'lastmonth') {{ var e = shift(first, -1); return {{ start: e.slice(0, 8) + '01', end: e }}; }}
+              if (id === 'last30') return {{ start: shift(today, -29), end: today }};
+              if (id === 'ytd') return {{ start: today.slice(0, 5) + '01-01', end: today }};
+              return {{ start: first, end: today }};
+            }};
+            window.hsOpsPresetButtons = function(cur) {{
+              return '<div class="date-presets" role="group" aria-label="Quick date ranges">' + window.hsOpsDatePresets.map(function(p) {{
+                var r = window.hsOpsPresetRange(p.id);
+                var on = r.start === cur.start && r.end === cur.end;
+                return '<button type="button" class="date-preset' + (on ? ' active' : '') + '" data-preset="' + p.id + '" aria-pressed="' + on + '">' + p.label + '</button>';
+              }}).join('') + '</div>';
+            }};
             window.hsOpsWriteFilters = function(filters) {{
               localStorage.setItem(FILTER_KEY, JSON.stringify(filters));
             }};
@@ -1477,7 +1509,7 @@ def render_dashboard_nav(current: str) -> str:
             var dateControls = ownDates
               ? '<input id="ocStart" type="hidden" value="'+f.start+'"><input id="ocEnd" type="hidden" value="'+f.end+'">'
               : '<label>Dates from<input id="ocStart" type="date" aria-label="Start date" value="'+f.start+'"></label><label>Dates to<input id="ocEnd" type="date" aria-label="End date" value="'+f.end+'"></label>';
-            bar.innerHTML = '<div class="filter-controls">'+dateControls+'<label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div><div class="filter-chips" id="ocChips"></div>';
+            bar.innerHTML = '<div class="filter-controls">'+dateControls+'<label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div>'+(ownDates ? '' : window.hsOpsPresetButtons(f))+'<div class="filter-chips" id="ocChips"></div>';
             host.insertBefore(bar, host.firstChild);
             function chips() {{
               var cur = window.hsOpsReadFilters();
@@ -1516,6 +1548,9 @@ def render_dashboard_nav(current: str) -> str:
               document.getElementById('ocTerritory').value = 'All';
               document.getElementById('ocSource').value = 'All';
               apply();
+            }});
+            bar.querySelectorAll('[data-preset]').forEach(function(b) {{
+              b.addEventListener('click', function() {{ apply(window.hsOpsPresetRange(b.getAttribute('data-preset'))); }});
             }});
             document.getElementById('ocChips').addEventListener('click', function(event) {{
               var b = event.target.closest('button');

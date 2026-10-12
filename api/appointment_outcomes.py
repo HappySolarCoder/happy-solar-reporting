@@ -29,6 +29,12 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
+METRICS_DIR = API_DIR / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from needs_rebook import apply_reporting_stages  # noqa: E402
+
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
 DISPOSITION_NOTES_FIELD_ID = "cCcnzoIp8YgW2Pr0sB5E"  # GHL custom field: Disposition Notes
@@ -536,6 +542,8 @@ class handler(BaseHTTPRequestHandler):
                         "opp_id": opp_id,
                     }
                 )
+
+            apply_reporting_stages(db, opp_rows, stage_key="pipeline_stage", id_key="opp_id")
 
             opp_rows.sort(
                 key=lambda r: r["dt_utc"],

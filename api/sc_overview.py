@@ -43,6 +43,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import is_inbound_lead_source
+from needs_rebook import is_needs_rebook_stage, reporting_stage_name
 
 TZ = ZoneInfo("America/New_York")
 
@@ -158,7 +159,12 @@ def normalize_disposition(value: Any) -> str:
     return text
 
 
-def normalize_completed_outcome_bucket(pipeline_name: Any, stage_name: Any) -> str:
+def normalize_completed_outcome_bucket(
+    pipeline_name: Any,
+    stage_name: Any,
+    history: list[dict[str, Any]] | None = None,
+) -> str:
+    stage_name = reporting_stage_name(stage_name, history)
     pipeline = compact_str(pipeline_name)
     stage = compact_str(stage_name)
     pipeline_low = pipeline.lower()
@@ -205,11 +211,14 @@ def close_rate_on_demos(sales: int, demos: int) -> float | None:
 
 
 def is_new_appointment_stage(stage_name: Any) -> bool:
+    if is_needs_rebook_stage(stage_name):
+        return False
     stage_low = normalize_stage_text(stage_name)
     return stage_low == "new appointment"
 
 
-def is_rescheduled_stage(stage_name: Any) -> bool:
+def is_rescheduled_stage(stage_name: Any, history: list[dict[str, Any]] | None = None) -> bool:
+    stage_name = reporting_stage_name(stage_name, history)
     stage_low = normalize_stage_text(stage_name)
     if not stage_low:
         return False
@@ -631,12 +640,14 @@ def qualifies_two_touch_close(
 
     # Current opp stage / pipeline for supplementary checks
     opp_stage_id = compact_str(opp.get("pipelineStageId") or "")
-    opp_stage_name = stage_names.get(opp_stage_id, "")
+    opp_stage_name = reporting_stage_name(stage_names.get(opp_stage_id, ""), history_rows)
     opp_pipeline_id = compact_str(opp.get("pipelineId") or "")
     opp_pipeline_name = stage_names.get(opp_pipeline_id, "")
 
     for row in history_rows:
         stage_name = row.get("toStageName")
+        if is_needs_rebook_stage(stage_name):
+            continue
         stage_id = row.get("toStageId")
         pipeline_name = row.get("pipelineName")
         if is_sale_stage(stage_id, stage_name):
@@ -778,7 +789,10 @@ def build_payload(
             or stage_id
             or "Unknown Stage"
         )
-        outcome_bucket = normalize_completed_outcome_bucket(pname, stage_name)
+        opp_id = compact_str(opp.get("id") or doc.id)
+        history_rows = stage_history_by_opp.get(opp_id, [])
+        stage_name = reporting_stage_name(stage_name, history_rows)
+        outcome_bucket = normalize_completed_outcome_bucket(pname, stage_name, history_rows)
         stage_counts[outcome_bucket] = stage_counts.get(outcome_bucket, 0) + 1
         notes = compact_str(
             opp.get("dispositionNotes")
@@ -888,6 +902,8 @@ def build_payload(
             or compact_str(opp.get("stageName"))
             or stage_id
         )
+        touch_opp_id = compact_str(opp.get("id") or doc.id)
+        stage_name = reporting_stage_name(stage_name, stage_history_by_opp.get(touch_opp_id, []))
         if not is_touch_close_stage(stage_name):
             continue
         if stage_id in SALE_STAGE_IDS:

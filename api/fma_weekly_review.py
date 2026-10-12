@@ -652,6 +652,15 @@ HTML = r"""<!doctype html>
       }).join('');
     }
 
+    function reviewOutcomeLabel(row) {
+      // Needs Rebook is not a demo. The stage cell comes from the metric,
+      // which replaces that name with the prior disposition. The pill stays
+      // on the stored Sit / No Sit.
+      if (row.outcome === 'Sit') return 'Demo';
+      if (row.outcome === 'No Sit') return 'No demo';
+      return row.outcome || '';
+    }
+
     function renderAppointments(rows) {
       const body = $('appointmentsBody');
       if (!rows.length) {
@@ -660,7 +669,7 @@ HTML = r"""<!doctype html>
       }
       body.innerHTML = rows.map((row) => {
         const outcomeClass = row.outcome === 'Sit' ? 'sit' : 'nosit';
-        const outcomeLabel = row.outcome === 'Sit' ? 'Demo' : (row.outcome === 'No Sit' ? 'No demo' : (row.outcome || ''));
+        const outcomeLabel = reviewOutcomeLabel(row);
         const salePill = row.is_sale_stage ? '<span class="pill sale">Sale Stage</span>' : '';
         return `
           <tr>

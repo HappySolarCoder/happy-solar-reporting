@@ -34,6 +34,12 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from needs_rebook import (  # noqa: E402
+    is_needs_rebook_stage,
+    reporting_stage_name,
+    stage_name_is_demo,
+)
+
 TIMEZONE_NAME = "America/Phoenix"
 PHOENIX = ZoneInfo(TIMEZONE_NAME)
 PHOENIX_ZONE_NAMES = frozenset({"america/phoenix", "us/arizona"})
@@ -233,16 +239,8 @@ def _contact_id(opp: dict[str, Any]) -> str:
 
 
 def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage, One Legger, or Sold is a demo."""
-    folded = _fold(stage_name).replace("-", " ").replace("/", " ")
-    folded = " ".join(folded.split())
-    if not folded:
-        return False
-    if folded == "sold" or folded.startswith("sold "):
-        return True
-    if "one legger" in folded:
-        return True
-    return folded == "demo" or folded.startswith("demo ")
+    """A Demo-* stage, One Legger, or Sold is a demo. Needs Rebook is not."""
+    return stage_name_is_demo(stage_name)
 
 
 def _sold_stage_ids() -> set[str]:
@@ -504,7 +502,10 @@ def _history_has_city_demo(rows: list[dict[str, Any]] | None, stage_names: dict[
     for row in rows or []:
         if not isinstance(row, dict) or not _row_stage_pipeline_is_city(row):
             continue
-        if stage_is_demo(_history_stage_label(row, stage_names)):
+        label = _history_stage_label(row, stage_names)
+        if is_needs_rebook_stage(label):
+            continue
+        if stage_is_demo(label):
             return True
     return False
 
@@ -566,6 +567,10 @@ def classify_window(
         blobs = _contact_blobs(contact, opp)
         names = _person_names(contact, opp)
         contact_created = _moment(_first_value(blobs, ("dateAdded", "createdAt", "dateCreated")))
+        raw_stage = opp_stage_label(opp, stage_names)
+        stage = raw_stage
+        if is_needs_rebook_stage(raw_stage):
+            stage = reporting_stage_name(raw_stage, history.get(opp_id), stage_names)
         rows.append(
             {
                 "contact_id": contact_id,
@@ -577,7 +582,7 @@ def classify_window(
                 "email": _email_key(_first_value(blobs, ("email", "emailAddress"))),
                 "name": names[0] if names else "",
                 "names": names,
-                "stage": opp_stage_label(opp, stage_names),
+                "stage": stage,
             }
         )
 
@@ -629,7 +634,13 @@ def classify_window(
         if not _opp_was_territory(opp, history):
             continue
         opp_ids.add(opp_id)
-        if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
+        raw_stage = opp_stage_label(opp, stage_names)
+        effective_stage = (
+            reporting_stage_name(raw_stage, history.get(opp_id), stage_names)
+            if is_needs_rebook_stage(raw_stage)
+            else raw_stage
+        )
+        if stage_is_demo(effective_stage) or _history_has_city_demo(history.get(opp_id), stage_names):
             demo_ids.add(opp_id)
 
     other_created: dict[str, list[datetime]] = {}

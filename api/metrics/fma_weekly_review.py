@@ -36,6 +36,7 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 
 from lead_gen_source import inbound_source_label
+from needs_rebook import apply_reporting_stages, keeps_ran_outcome
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
@@ -492,7 +493,13 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
 
         occurred_at = parse_iso_dt(opp.get("appointmentOccurredAt"))
         disposition = normalize_disposition(opp.get("dispositionValue"))
-        if occurred_at and occurred_at <= today_utc and disposition in {"Sit", "No Sit"}:
+        stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+        stage_label = compact_str(stage_names.get(stage_id) or stage_id)
+        if (
+            occurred_at
+            and occurred_at <= today_utc
+            and keeps_ran_outcome(disposition, stage_label)
+        ):
             occurred_local = occurred_at.astimezone(TZ)
             if start_local <= occurred_local < end_local:
                 bump_person(person, occurred_local.date().isoformat(), "ran", 1)
@@ -500,7 +507,6 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                 if disposition == "Sit":
                     bump_person(person, occurred_local.date().isoformat(), "demos", 1)
 
-                stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
                 notes = compact_str(
                     opp.get("dispositionNotes")
                     or opp.get("dispositionNote")
@@ -539,6 +545,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         if not (start_local <= sold_local < end_local):
             continue
         bump_person(person, sold_local.date().isoformat(), "sales", 1)
+
+    apply_reporting_stages(db, ran_appointments, stage_key="pipeline_stage", id_key="opportunity_id")
 
     roster_people.sort(key=lambda row: (-row["metrics"]["knocks"], -row["metrics"]["appointments"], row["display_name"].lower()))
     ran_appointments.sort(key=lambda row: row["appointment_occurred_at"], reverse=True)

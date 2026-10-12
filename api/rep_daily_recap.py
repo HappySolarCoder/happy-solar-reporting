@@ -89,6 +89,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import inbound_source_label
+from needs_rebook import apply_reporting_stages
 from sit_timestamp import frozen_sit_timestamp
 
 
@@ -1063,6 +1064,11 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         if demo_local is None:
             continue
         append_appointment(opp, snap.id, demo_local, attribution="frozen_demo")
+
+    listed_appointments: list[dict[str, Any]] = []
+    for bucket in owner_buckets.values():
+        listed_appointments.extend(bucket.get("appointments") or [])
+    apply_reporting_stages(db, listed_appointments, stage_key="stage", id_key="opportunity_id")
 
     # Register live owner-bucket labels so Powerline/Raydar join owners already
     # on the page (assignedTo / owner_label), plus non-setter GHL users

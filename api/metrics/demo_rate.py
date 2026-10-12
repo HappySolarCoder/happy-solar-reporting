@@ -1330,6 +1330,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "is that FMA's own last name and the contact is dispositioned again "
             "after the sweep. A reset by someone else does not add a demo. "
             "One Legger is not a demo. Demos are Demo-* stages or Sold. "
+            "Sold or Sale Cancelled counts as a demo only when the contact "
+            "has no Demo-* disposition; otherwise it stays on that earlier demo. "
             "Closer and opportunity sits follow that same demo rule."
         ),
         "breakdowns": {

@@ -18,14 +18,27 @@ def fold_stage(value: Any) -> str:
     return " ".join(text.split())
 
 
-def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage or Sold is a demo. One Legger is not."""
+def stage_is_demo_star(stage_name: Any) -> bool:
+    """A Demo-* stage. Sold, Sale Cancelled, and One Legger are not Demo-*."""
     folded = fold_stage(stage_name)
-    if not folded:
-        return False
-    if folded == "sold" or folded.startswith("sold "):
-        return True
     return folded == "demo" or folded.startswith("demo ")
+
+
+def stage_is_sold(stage_name: Any) -> bool:
+    folded = fold_stage(stage_name)
+    return folded == "sold" or folded.startswith("sold ")
+
+
+def stage_is_sale_cancelled(stage_name: Any) -> bool:
+    folded = fold_stage(stage_name)
+    return folded in {"sale cancelled", "sale canceled"} or folded.startswith("sale cancelled ") or folded.startswith("sale canceled ")
+
+
+def stage_is_demo(stage_name: Any) -> bool:
+    """A Demo-* stage or Sold is a demo. One Legger is not. Sale cancelled is not."""
+    if not fold_stage(stage_name):
+        return False
+    return stage_is_sold(stage_name) or stage_is_demo_star(stage_name)
 
 
 def stage_is_one_legger(stage_name: Any) -> bool:

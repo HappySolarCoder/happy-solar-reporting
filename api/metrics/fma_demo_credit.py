@@ -26,14 +26,18 @@ are not a second real appointment a later disposition can claim. Closer
 and opportunity metrics may still count each appointment or disposition.
 
 A second demo on the same contact counts only when Sweeper/Rehash Last
-Name is that FMA's own last name and a later demo disposition is at or
+Name is that FMA's own last name and a later Demo-* disposition is at or
 after the sweep. A sweep or rehash by someone else, including a duplicate
 opportunity created from a reset, does not add a demo.
 
+Sold and Sale Cancelled count as a demo only when the contact has no
+Demo-* disposition. When a Demo-* disposition already exists, Sold and
+Sale Cancelled attach to that earlier demo and do not add another. The
+counted appointment stays the one mapped to the Demo-* disposition.
+
 One Legger is a disposition in the buffer, so it can claim an appointment.
-It is not a demo. Demos are Demo-* stages and Sold. One Legger followed
-later by Demo-Negotiating is one demo, dated to the appointment mapped
-to that later disposition.
+It is not a demo. One Legger followed later by Demo-Negotiating is one
+demo, dated to the appointment mapped to that later disposition.
 
 Ran and created counts stay on ``attributed_last_name``.
 """
@@ -44,7 +48,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from demo_stage import stage_is_demo, stage_is_one_legger
+from demo_stage import (
+    stage_is_demo,
+    stage_is_demo_star,
+    stage_is_one_legger,
+    stage_is_sale_cancelled,
+    stage_is_sold,
+)
 from sit_timestamp import as_aware_utc
 from sweeper_rehash_attribution import compact_text, is_blank_last_name
 
@@ -205,23 +215,37 @@ def _history_marks(history: list[dict] | None) -> tuple[list[datetime], list[dat
     return city_demos, sweep_demos, sweeps
 
 
-def dispo_timestamp(history: list[dict] | None, opportunity: dict | None, stage_name: Any = "") -> datetime | None:
-    """When this opportunity was dispositioned as a demo.
-
-    Stage history ``effectiveAt`` wins. The current demo stage's
-    ``lastStageChangeAt`` is next, then ``dispositionDate``.
-    """
+def _history_stage_times(history: list[dict] | None, predicate) -> list[datetime]:
     times: list[datetime] = []
     for row in history or []:
-        if not isinstance(row, dict) or not is_demo_stage(row.get("toStageName")):
+        if not isinstance(row, dict) or not predicate(row.get("toStageName")):
             continue
         moment = _event_time(row)
         if moment is not None:
             times.append(moment)
-    if times:
-        return min(times)
+    return times
+
+
+def _implied_demo_stage(value: Any) -> bool:
+    """Sold or Sale Cancelled. These count as a demo only with no Demo-*."""
+    return stage_is_sold(value) or stage_is_sale_cancelled(value)
+
+
+def dispo_timestamp(history: list[dict] | None, opportunity: dict | None, stage_name: Any = "") -> datetime | None:
+    """When this opportunity was dispositioned as a demo.
+
+    A Demo-* stage wins over a later Sold or Sale Cancelled. Stage history
+    ``effectiveAt`` wins. The current stage's ``lastStageChangeAt`` is next,
+    then ``dispositionDate``.
+    """
+    demo_star = _history_stage_times(history, stage_is_demo_star)
+    if demo_star:
+        return min(demo_star)
+    implied = _history_stage_times(history, _implied_demo_stage)
+    if implied:
+        return min(implied)
     opp = opportunity or {}
-    if is_demo_stage(stage_name):
+    if is_demo_stage(stage_name) or stage_is_sale_cancelled(stage_name):
         changed = as_aware_utc(opp.get("lastStageChangeAt"))
         if changed is not None:
             return changed
@@ -417,18 +441,45 @@ def buffer_dispo_times(history: list[dict] | None) -> list[datetime]:
     return found
 
 
-def demo_buffer_time(history: list[dict] | None, dispo_at: datetime) -> datetime:
-    """Buffer stamp of the earliest demo-stage disposition, else ``dispo_at``."""
+def _buffer_stage_times(history: list[dict] | None, predicate) -> list[datetime]:
     times: list[datetime] = []
     for row in history or []:
-        if not isinstance(row, dict) or not is_demo_stage(row.get("toStageName")):
+        if not isinstance(row, dict) or not predicate(row.get("toStageName")):
             continue
         if not is_buffer_dispo_stage(row.get("toStageName"), row.get("pipelineName")):
             continue
         moment = buffer_dispo_time(row)
         if moment is not None:
             times.append(moment)
-    return min(times) if times else dispo_at
+    return times
+
+
+def demo_buffer_time(history: list[dict] | None, dispo_at: datetime) -> datetime:
+    """Buffer stamp of the demo this credit attaches to.
+
+    A Demo-* disposition wins, so a later Sold or Sale Cancelled stays on
+    that earlier demo. With no Demo-*, the earliest Sold or Sale Cancelled
+    is the demo. Otherwise ``dispo_at``.
+    """
+    demo_star = _buffer_stage_times(history, stage_is_demo_star)
+    if demo_star:
+        return min(demo_star)
+    implied = _buffer_stage_times(history, _implied_demo_stage)
+    if implied:
+        return min(implied)
+    return dispo_at
+
+
+def candidate_has_demo_star(candidate: dict) -> bool:
+    """True when this sit reached a Demo-* stage, not only Sold or Sale Cancelled."""
+    if stage_is_demo_star(candidate.get("stage_name")):
+        return True
+    for row in candidate.get("history") or []:
+        if not isinstance(row, dict):
+            continue
+        if stage_is_demo_star(row.get("toStageName")) or stage_is_demo_star(row.get("fromStageName")):
+            return True
+    return False
 
 
 def _estimated_appointment(row: dict) -> bool:
@@ -701,8 +752,12 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
         group.sort(key=lambda row: (row["dispo_at"], compact_text(row.get("opportunity_id"))))
         mapping, real_source = _group_dispo_map(group)
         sweep_at = contact_sweep_time(group)
+        group_has_demo_star = any(candidate_has_demo_star(candidate) for candidate in group)
         primary = ""
         for candidate in group:
+            # Sold and Sale Cancelled attach to an earlier Demo-*. They never add a second demo.
+            if not candidate_has_demo_star(candidate) and (group_has_demo_star or primary):
+                continue
             setter = compact_text(candidate.get("setter"))
             sweeper = compact_text(candidate.get("sweeper"))
             original = demo_is_original(candidate, sweep_at)

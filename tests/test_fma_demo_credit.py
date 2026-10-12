@@ -629,6 +629,119 @@ class CreditTests(unittest.TestCase):
         self.assertEqual(demos[0].last_name, "Hill")
         self.assertEqual(demos[0].date_source, "appointment_history")
 
+    def test_sold_after_demo_negotiating_credits_appointment_1(self):
+        """Demo-Negotiating on appointment 1, then Sold later, is one demo on appointment 1."""
+        appointment_1 = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        demo = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+        appointment_2 = datetime(2026, 10, 8, 15, 0, tzinfo=timezone.utc)
+        sold = datetime(2026, 10, 8, 18, 0, tzinfo=timezone.utc)
+        history = [
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "Demo-Negotiating",
+                "effectiveAt": demo,
+                "lastStageChangeAt": demo,
+            },
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "Sold",
+                "effectiveAt": sold,
+                "lastStageChangeAt": sold,
+            },
+        ]
+        rows = [
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-2", "startTime": appointment_2, "contactId": "c"},
+        ]
+        candidate = make_demo_candidate(
+            {"dispositionDate": sold, "dispositionValue": "Sit"},
+            contact_id="c",
+            opportunity_id="deal",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Sold",
+            history=history,
+            appointment_rows=rows,
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, appointment_1)
+        self.assertNotEqual(demos[0].counted_at, appointment_2)
+        self.assertNotEqual(demos[0].counted_at, sold)
+        self.assertEqual(demos[0].last_name, "Hill")
+
+    def test_later_sold_does_not_add_a_second_demo(self):
+        """A Sold opp after a Demo-* attaches to that demo, even when the sweeper is the FMA."""
+        appointment_1 = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        demo = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+        sweep = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+        sold_appointment = datetime(2026, 10, 8, 15, 0, tzinfo=timezone.utc)
+        sold = datetime(2026, 10, 8, 18, 0, tzinfo=timezone.utc)
+        first = make_demo_candidate(
+            {"dispositionDate": demo, "dispositionValue": "Sit", "appointmentStartTime": appointment_1},
+            contact_id="c",
+            opportunity_id="demo",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[
+                {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": demo, "lastStageChangeAt": demo},
+                {"pipelineName": "Sweeper", "toStageName": "Reset", "effectiveAt": sweep, "lastStageChangeAt": sweep},
+            ],
+            appointment_rows=[
+                {"eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+                {"eventId": "appt-sold", "startTime": sold_appointment, "contactId": "c"},
+            ],
+        )
+        later = make_demo_candidate(
+            {"dispositionDate": sold, "dispositionValue": "Sit", "appointmentStartTime": sold_appointment},
+            contact_id="c",
+            opportunity_id="sold",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Sold",
+            history=[
+                {"pipelineName": "Buffalo", "toStageName": "Sold", "effectiveAt": sold, "lastStageChangeAt": sold},
+            ],
+            appointment_rows=[
+                {"eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+                {"eventId": "appt-sold", "startTime": sold_appointment, "contactId": "c"},
+            ],
+        )
+        demos = select_fma_demos([first, later])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].opportunity_id, "demo")
+        self.assertEqual(demos[0].counted_at, appointment_1)
+
+    def test_sale_cancelled_with_no_demo_star_counts_once(self):
+        appointment = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        cancelled = datetime(2026, 10, 2, 18, 0, tzinfo=timezone.utc)
+        candidate = make_demo_candidate(
+            {"dispositionDate": cancelled, "dispositionValue": "Sit", "appointmentStartTime": appointment},
+            contact_id="c",
+            opportunity_id="cancelled",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Sale Cancelled",
+            history=[
+                {
+                    "pipelineName": "Buffalo",
+                    "toStageName": "Sale Cancelled",
+                    "effectiveAt": cancelled,
+                    "lastStageChangeAt": cancelled,
+                }
+            ],
+            appointment_rows=[{"eventId": "appt-1", "startTime": appointment, "contactId": "c"}],
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, appointment)
+        self.assertFalse(is_demo_stage("Sale Cancelled"))
+
     def test_unclassified_sit_still_counts(self):
         candidate = make_demo_candidate(
             {"dispositionDate": T_DEMO, "appointmentStartTime": T_APPT, "dispositionValue": "Sit"},

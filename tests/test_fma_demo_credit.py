@@ -17,6 +17,7 @@ from fma_demo_credit import (  # noqa: E402
     inferred_appointments,
     is_demo_stage,
     make_demo_candidate,
+    map_dispo_appointments,
     names_match,
     select_fma_demos,
 )
@@ -420,6 +421,113 @@ class CreditTests(unittest.TestCase):
         self.assertNotEqual(unused[0].counted_at, monday)
         self.assertNotEqual(unused[0].counted_at, later_sit)
         self.assertEqual(unused[0].date_source, "appointment_history")
+
+    def test_four_dispos_follow_the_later_rule_and_stay_one_fma_demo(self):
+        """The second, third, and fourth dispos use the same later-dispo rule.
+
+        Appointment A on Oct 1 is taken by the first dispo. It is still inside
+        the third dispo's 3-day window and is not reused. The second and third
+        are estimated at their own times. Appointment B on Oct 6 is free, so
+        the fourth uses it. That is still one FMA demo. A second demo counts
+        only when Sweeper/Rehash Last Name is that FMA and a later demo is at
+        or after the sweep.
+        """
+        appointment_a = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        no_sit = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+        rescheduled = datetime(2026, 10, 3, 15, 0, tzinfo=timezone.utc)
+        demo = datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc)
+        appointment_b = datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc)
+        sold = datetime(2026, 10, 7, 15, 0, tzinfo=timezone.utc)
+        sweep = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
+        later_appointment = datetime(2026, 10, 11, 15, 0, tzinfo=timezone.utc)
+        later_demo = datetime(2026, 10, 12, 15, 0, tzinfo=timezone.utc)
+        self.assertEqual(demo - appointment_a, timedelta(days=3))
+
+        mapped = map_dispo_appointments(
+            [no_sit, rescheduled, demo, sold],
+            [("appt-a", appointment_a), ("appt-b", appointment_b)],
+        )
+        self.assertEqual(
+            [(item[0], item[1], item[2]) for item in mapped],
+            [
+                (no_sit, appointment_a, True),
+                (rescheduled, rescheduled, False),
+                (demo, demo, False),
+                (sold, appointment_b, True),
+            ],
+        )
+        self.assertEqual(len({item[1] for item in mapped if item[2]}), 2)
+
+        def city_opp(sweeper):
+            return make_demo_candidate(
+                {"dispositionDate": sold, "dispositionValue": "Sit", "appointmentStartTime": appointment_b},
+                contact_id="contact-4",
+                opportunity_id="city",
+                setter="Dole",
+                sweeper=sweeper,
+                pipeline_name="Buffalo",
+                stage_name="Sold",
+                history=[
+                    {"pipelineName": "Buffalo", "toStageName": "No Sit", "effectiveAt": no_sit, "lastStageChangeAt": no_sit},
+                    {"pipelineName": "Buffalo", "toStageName": "Rescheduled", "effectiveAt": rescheduled, "lastStageChangeAt": rescheduled},
+                    {"pipelineName": "Buffalo", "toStageName": "Demo", "effectiveAt": demo, "lastStageChangeAt": demo},
+                    {"pipelineName": "Buffalo", "toStageName": "Sold", "effectiveAt": sold, "lastStageChangeAt": sold},
+                    {"pipelineName": "Sweeper", "toStageName": "Reset", "effectiveAt": sweep, "lastStageChangeAt": sweep},
+                ],
+                appointment_rows=[
+                    {"source": "ghl-firestore-sync-v2", "eventId": "appt-a", "startTime": appointment_a, "contactId": "contact-4"},
+                    {"source": "ghl-firestore-sync-v2", "eventId": "appt-b", "startTime": appointment_b, "contactId": "contact-4"},
+                    {"source": "ghl-firestore-sync-v2", "eventId": "appt-later", "startTime": later_appointment, "contactId": "contact-4"},
+                ],
+            )
+
+        later_opp = make_demo_candidate(
+            {"dispositionDate": later_demo, "dispositionValue": "Sit", "appointmentStartTime": later_appointment},
+            contact_id="contact-4",
+            opportunity_id="after-sweep",
+            setter="Dole",
+            sweeper="Diamond",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[{"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": later_demo, "lastStageChangeAt": later_demo}],
+            appointment_rows=[
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-a", "startTime": appointment_a, "contactId": "contact-4"},
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-b", "startTime": appointment_b, "contactId": "contact-4"},
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-later", "startTime": later_appointment, "contactId": "contact-4"},
+            ],
+        )
+        someone_else = select_fma_demos([city_opp("Diamond"), later_opp])
+        self.assertEqual(len(someone_else), 1)
+        self.assertEqual(someone_else[0].opportunity_id, "city")
+        self.assertEqual(someone_else[0].last_name, "Dole")
+        self.assertEqual(someone_else[0].reason, "original")
+        self.assertEqual(someone_else[0].counted_at, demo)
+        self.assertNotEqual(someone_else[0].counted_at, appointment_a)
+        self.assertNotEqual(someone_else[0].counted_at, appointment_b)
+
+        own_sweep = make_demo_candidate(
+            {"dispositionDate": later_demo, "dispositionValue": "Sit", "appointmentStartTime": later_appointment},
+            contact_id="contact-4",
+            opportunity_id="after-sweep",
+            setter="Dole",
+            sweeper="Dole",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[{"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": later_demo, "lastStageChangeAt": later_demo}],
+            appointment_rows=[
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-a", "startTime": appointment_a, "contactId": "contact-4"},
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-b", "startTime": appointment_b, "contactId": "contact-4"},
+                {"source": "ghl-firestore-sync-v2", "eventId": "appt-later", "startTime": later_appointment, "contactId": "contact-4"},
+            ],
+        )
+        self_sweep = select_fma_demos([city_opp("Dole"), own_sweep])
+        self.assertEqual(
+            [(item.opportunity_id, item.last_name, item.reason, item.counted_at) for item in self_sweep],
+            [
+                ("city", "Dole", "original", demo),
+                ("after-sweep", "Dole", "self_sweep", later_appointment),
+            ],
+        )
 
     def test_appointment_after_the_dispo_does_not_move_the_date(self):
         later = T_DEMO + timedelta(days=2)

@@ -7,10 +7,11 @@ delayed-dispo buffer assigns to that disposition. The buffer is 3 days,
 the same window the sync uses.
 
 The first disposition takes the real calendar appointment within 3 days
-before it, including when the rep dispositions late. Each later
-disposition takes an unused real appointment in that window. When none
-is left, the date is an estimated appointment at the disposition time.
-One real appointment is never assigned to two dispositions.
+before it, including when the rep dispositions late. Every disposition
+after the first — the second, third, fourth, and each one after that —
+uses the same later-dispo rule: an unused real appointment in that
+window, or an estimated appointment at the disposition time when none
+is left. One real appointment is never assigned to two dispositions.
 
 Appointments come from ``ghl_appointments_history_v1`` (contactId, start
 time). That collection fills going forward and may be empty. An empty
@@ -454,10 +455,12 @@ def map_dispo_appointments(
 ) -> list[tuple[datetime, datetime, bool]]:
     """Map each disposition to one appointment time.
 
-    Oldest disposition first. Each takes the latest unused real appointment
-    whose start is inside the 3 days up to and including the disposition.
-    A disposition with none left is dated at its own time. The bool is true
-    when a real appointment was used. Each real appointment is used once.
+    Oldest first. The first disposition and every disposition after it use
+    this same rule, including the second, third, and fourth. Each takes the
+    latest unused real appointment whose start is inside the 3 days up to
+    and including the disposition. A disposition with none left is dated at
+    its own time. The bool is true when a real appointment was used. Each
+    real appointment is used once.
     """
     assigned: set[str] = set()
     mapped: list[tuple[datetime, datetime, bool]] = []

@@ -9,7 +9,7 @@ contest graphic; the middle Self-Gen column is left out on purpose.
 Read-only. Numbers come from the canonical metric endpoints, fetched in the
 browser the same way the Scottsdale incentive page does it:
 - /api/metrics/fma_weekly_review  FMA roster (name + setter last name)
-- /api/metrics/demo_rate          per-setter demos (Sweeper/Rehash credit applied)
+- /api/metrics/demo_rate          per-setter demos (one per contact)
 - /api/metrics/sales              sales by setter and by owner (sold date)
 - /api/metrics/sales_cancellations cancellation rate by owner
 - /api/metrics/bloom_goals        monthly demo and sales goals set in Bloom
@@ -353,7 +353,7 @@ __DASHBOARD_NAV_HTML__
       <div class="mt-panel">
         <h2>How we count</h2>
         <ul>
-          <li><b>Demos</b> are the same count as the Demo % dashboards: appointments marked Demo, credited to the setter (Sweeper/Rehash credit included), counted by the Steak Dinner deadline.</li>
+          <li><b>Demos</b> are the same count as the Demo % dashboards: one per contact. A 3-day buffer dates each one: the first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once. Another one counts only when Sweeper/Rehash Last Name is filled. It is credited to the setter that field names, including when that name is the original FMA. An empty field leaves one demo with the FMA on the first demo appointment. An inferred re-disposition is the estimated time when no unused real appointment remains. It counts as an appointment ran and does not add a demo. Counted by the Steak Dinner deadline.</li>
           <li><b>Stipend requirement</b> is your monthly demo goal in Bloom. If no goal is set, it is the standard 15 demos.</li>
           <li><b>FMA sales</b> are sales credited to you as the setter, by sold date. <b>Closer sales</b> are credited to the opportunity owner, by sold date.</li>
           <li><b>Cancellation rate</b> is sales you closed that month that are now cancelled, divided by sales you closed that month. A later cancellation can still change a month.</li>

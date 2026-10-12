@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By last name. On or after Thu Sep 24, 2026 (ET), rehash or a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
+          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact. A 3-day buffer dates it: the first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once. A second demo counts only when Sweeper/Rehash Last Name is filled. It is credited to the setter that field names, including when that name is the original FMA. An empty field leaves one demo with the FMA on the first demo appointment. An inferred re-disposition is the estimated time when no unused real appointment remains. It counts as an appointment ran and does not add an FMA demo.</div>
         </div>
         <div class="tablewrap">
           <table>

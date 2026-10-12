@@ -231,7 +231,6 @@ def is_touch_close_stage(stage_name: Any) -> bool:
     return (
         "demo negotiating" in stage_low
         or "demo not interested" in stage_low
-        or "one legger" in stage_low
     )
 
 
@@ -1474,7 +1473,7 @@ def render_html(
 
       <div class="card span-8">
         <div class="card-title">Two-Touch Close / Pipeline Work Rate</div>
-        <div class="meta">Two-touch close means the rep had a demo on the first appointment, did not sell there, then later hit Demo-Negotiating, Demo-Not Interested, One Legger, or moved into Rehash/Sweeper before it sold in the selected Sold Date window. Rescheduled does not count. Open/stale touch-stage opps are current queue signals and are not sold-date filtered.</div>
+        <div class="meta">Two-touch close means the rep had a demo on the first appointment, did not sell there, then later hit Demo-Negotiating, Demo-Not Interested, or moved into Rehash/Sweeper before it sold in the selected Sold Date window. Rescheduled does not count. One Legger is not a demo. Open/stale touch-stage opps are current queue signals and are not sold-date filtered.</div>
         <div id="touchWindowMeta" class="meta"></div>
         <form class="mini-filters" method="get" action="/api/sc_overview">
           <input type="hidden" name="team" value="{selected_team}" />

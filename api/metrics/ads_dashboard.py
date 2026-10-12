@@ -34,6 +34,8 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from demo_stage import stage_is_demo  # noqa: E402
+
 TIMEZONE_NAME = "America/Phoenix"
 PHOENIX = ZoneInfo(TIMEZONE_NAME)
 PHOENIX_ZONE_NAMES = frozenset({"america/phoenix", "us/arizona"})
@@ -230,19 +232,6 @@ def _opp_id(opp: dict[str, Any], fallback: str) -> str:
 
 def _contact_id(opp: dict[str, Any]) -> str:
     return cac.compact_str(opp.get("contactId"))
-
-
-def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage, One Legger, or Sold is a demo."""
-    folded = _fold(stage_name).replace("-", " ").replace("/", " ")
-    folded = " ".join(folded.split())
-    if not folded:
-        return False
-    if folded == "sold" or folded.startswith("sold "):
-        return True
-    if "one legger" in folded:
-        return True
-    return folded == "demo" or folded.startswith("demo ")
 
 
 def _sold_stage_ids() -> set[str]:

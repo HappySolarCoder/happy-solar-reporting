@@ -28,9 +28,21 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-_METRICS_DIR = Path(__file__).resolve().parent
-if str(_METRICS_DIR) not in sys.path:
-    sys.path.insert(0, str(_METRICS_DIR))
+METRICS_DIR = Path(__file__).resolve().parent
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from demo_stage import stage_is_new_appointment  # noqa: E402
+from fma_demo_credit import (  # noqa: E402
+    inferred_appointments,
+    load_appointment_history,
+    load_inferred_appointments,
+    load_stage_history,
+    make_demo_candidate,
+    same_appointment_instant,
+    select_fma_demos,
+)
+from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -414,6 +426,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
 
     daily_totals: dict[str, dict[str, int]] = {}
     ran_appointments: list[dict[str, Any]] = []
+    person_by_opp: dict[str, dict[str, Any]] = {}
+    ran_at_by_opp: dict[str, datetime] = {}
 
     def ensure_daily(bucket: dict[str, Any], key: str) -> dict[str, int]:
         if key not in bucket:
@@ -469,6 +483,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         bump_person(person, date_key_local(ts), "knocks", 1)
 
     # GHL opp-derived metrics
+    sit_candidates: list[dict[str, Any]] = []
+    new_appointment_ids: set[str] = set()
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
         pipeline_id = compact_str(opp.get("pipelineId"))
@@ -481,6 +497,22 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         setter_last = resolve_setter_last_name(opp, contact)
         setter_key = normalize_last_name(setter_last)
         person = person_by_setter_last.get(setter_key)
+        disposition_for_demo = normalize_disposition(opp.get("dispositionValue"))
+        if disposition_for_demo == "Sit":
+            stage_id_for_demo = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+            sit_candidates.append(
+                {
+                    "opp": opp,
+                    "contact": contact,
+                    "setter_last": setter_last,
+                    "pipeline_name": pipeline_name,
+                    "stage_name": compact_str(stage_names.get(stage_id_for_demo) or stage_id_for_demo),
+                    "opportunity_id": compact_str(opp.get("id") or snap.id),
+                    "contact_id": contact_id,
+                }
+            )
+        if person:
+            person_by_opp[compact_str(opp.get("id") or snap.id)] = person
         if not person:
             continue
 
@@ -492,37 +524,41 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
 
         occurred_at = parse_iso_dt(opp.get("appointmentOccurredAt"))
         disposition = normalize_disposition(opp.get("dispositionValue"))
-        if occurred_at and occurred_at <= today_utc and disposition in {"Sit", "No Sit"}:
+        stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+        stage_label = compact_str(stage_names.get(stage_id) or opp.get("pipelineStageName") or opp.get("stageName"))
+        still_new = stage_is_new_appointment(stage_label)
+        if still_new:
+            new_appointment_ids.add(compact_str(opp.get("id") or snap.id))
+        if occurred_at and occurred_at <= today_utc and disposition in {"Sit", "No Sit"} and not still_new:
             occurred_local = occurred_at.astimezone(TZ)
             if start_local <= occurred_local < end_local:
+                ran_at_by_opp[compact_str(opp.get("id") or snap.id)] = occurred_at
                 bump_person(person, occurred_local.date().isoformat(), "ran", 1)
-                bump_person(person, occurred_local.date().isoformat(), "sit" if disposition == "Sit" else "no_sit", 1)
-                if disposition == "Sit":
-                    bump_person(person, occurred_local.date().isoformat(), "demos", 1)
+                if disposition != "Sit":
+                    bump_person(person, occurred_local.date().isoformat(), "no_sit", 1)
 
-                stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
                 notes = compact_str(
                     opp.get("dispositionNotes")
                     or opp.get("dispositionNote")
                     or opp.get("notes")
                     or get_custom_field_value(opp.get("customFields") or [], DISPOSITION_NOTES_FIELD_ID)
                 )
-                ran_appointments.append(
-                    {
-                        "person_key": person["person_key"],
-                        "display_name": person["display_name"],
-                        "setter_last_name": setter_last,
-                        "appointment_occurred_at": occurred_local.isoformat(),
-                        "outcome": disposition,
-                        "contact": resolve_contact_name(opp, contact),
-                        "owner": resolve_owner_name(opp, ghl_user_names),
-                        "pipeline": pipeline_name,
-                        "pipeline_stage": compact_str(stage_names.get(stage_id) or stage_id),
-                        "opportunity_id": compact_str(opp.get("id") or snap.id),
-                        "disposition_notes": notes,
-                        "is_sale_stage": stage_id in SOLD_STAGE_IDS,
-                    }
-                )
+                opp_id = compact_str(opp.get("id") or snap.id)
+                row = {
+                    "person_key": person["person_key"],
+                    "display_name": person["display_name"],
+                    "setter_last_name": setter_last,
+                    "appointment_occurred_at": occurred_local.isoformat(),
+                    "outcome": disposition,
+                    "contact": resolve_contact_name(opp, contact),
+                    "owner": resolve_owner_name(opp, ghl_user_names),
+                    "pipeline": pipeline_name,
+                    "pipeline_stage": compact_str(stage_names.get(stage_id) or stage_id),
+                    "opportunity_id": opp_id,
+                    "disposition_notes": notes,
+                    "is_sale_stage": stage_id in SOLD_STAGE_IDS,
+                }
+                ran_appointments.append(row)
 
         sale_stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
         if sale_stage_id not in SOLD_STAGE_IDS:
@@ -539,6 +575,84 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         if not (start_local <= sold_local < end_local):
             continue
         bump_person(person, sold_local.date().isoformat(), "sales", 1)
+
+    history_ids = [item["opportunity_id"] for item in sit_candidates]
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    appointment_history = load_appointment_history(db, [item["contact_id"] for item in sit_candidates])
+    demo_candidates = []
+    for item in sit_candidates:
+        opp = item["opp"]
+        contact = item["contact"] or {}
+        candidate = make_demo_candidate(
+            opp,
+            contact_id=item["contact_id"],
+            opportunity_id=item["opportunity_id"],
+            setter=item["setter_last"],
+            sweeper=sweeper_rehash_last_name(contact, opp),
+            pipeline_name=item["pipeline_name"],
+            stage_name=item["stage_name"],
+            history=stage_history.get(item["opportunity_id"]) or [],
+            appointment_rows=appointment_history.get(item["contact_id"]) or [],
+        )
+        if candidate:
+            demo_candidates.append(candidate)
+    rows_by_opp = {row["opportunity_id"]: row for row in ran_appointments}
+    for demo in select_fma_demos(demo_candidates):
+        counted_local = demo.counted_at.astimezone(TZ)
+        if not (start_local <= counted_local < end_local):
+            continue
+        credited = person_by_setter_last.get(normalize_last_name(demo.last_name))
+        day_key = counted_local.date().isoformat()
+        if credited:
+            bump_person(credited, day_key, "sit", 1)
+            bump_person(credited, day_key, "demos", 1)
+        row = rows_by_opp.get(demo.opportunity_id)
+        if row is None or row.get("appointment_source") == "inferred_from_dispo":
+            continue
+        if credited:
+            row["person_key"] = credited["person_key"]
+            row["display_name"] = credited["display_name"]
+        row["setter_last_name"] = demo.last_name or row["setter_last_name"]
+
+    window_inferred = inferred_appointments(load_inferred_appointments(db, start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)))
+    history_inferred = []
+    for rows in appointment_history.values():
+        history_inferred.extend(inferred_appointments(rows))
+    seen_inferred: set[tuple[str, str, datetime]] = set()
+    for event in window_inferred + history_inferred:
+        identity = (event.contact_id, event.opportunity_id, event.start_at)
+        if identity in seen_inferred or event.start_at > today_utc:
+            continue
+        seen_inferred.add(identity)
+        person = person_by_opp.get(event.opportunity_id)
+        if person is None or event.opportunity_id in new_appointment_ids:
+            continue
+        if same_appointment_instant(ran_at_by_opp.get(event.opportunity_id), event.start_at):
+            continue
+        inferred_local = event.start_at.astimezone(TZ)
+        if not (start_local <= inferred_local < end_local):
+            continue
+        day_key = inferred_local.date().isoformat()
+        bump_person(person, day_key, "ran", 1)
+        if event.outcome == "No Sit":
+            bump_person(person, day_key, "no_sit", 1)
+        ran_appointments.append(
+            {
+                "person_key": person["person_key"],
+                "display_name": person["display_name"],
+                "setter_last_name": person.get("ghl_setter_last_name") or "",
+                "appointment_occurred_at": inferred_local.isoformat(),
+                "outcome": event.outcome or "Ran",
+                "contact": "",
+                "owner": "",
+                "pipeline": "",
+                "pipeline_stage": "",
+                "opportunity_id": event.opportunity_id,
+                "disposition_notes": "",
+                "is_sale_stage": False,
+                "appointment_source": event.source,
+            }
+        )
 
     roster_people.sort(key=lambda row: (-row["metrics"]["knocks"], -row["metrics"]["appointments"], row["display_name"].lower()))
     ran_appointments.sort(key=lambda row: row["appointment_occurred_at"], reverse=True)
@@ -614,7 +728,19 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         "notes": {
             "knocks": "Raydar dispositioned leads that count as door knocks (actor attribution matches current FMA dashboard logic).",
             "appointments": "GHL opportunities created by setter last name, pipeline_scope=all, excluding inbound/lead locker.",
-            "demos": "GHL opportunities ran with disposition Sit.",
+            "demos": (
+                "One demo per contact. A 3-day buffer dates it: the first disposition "
+                "uses the real appointment within 3 days before it, including a late "
+                "disposition. Each later disposition uses an unused real appointment "
+                "in that window, or an estimated time at the disposition. One "
+                "appointment is used once. A second demo counts only when "
+                "Sweeper/Rehash Last Name is filled. It is credited to the setter "
+                "that field names, including when that name is the original FMA. "
+                "An empty field leaves one demo with the FMA on the first demo "
+                "appointment. An inferred re-disposition "
+                "is the estimated appointment when no unused real appointment "
+                "remains. It counts as an appointment ran and does not add another demo."
+            ),
             "sales": "Canonical sales by setter last name using sold-date window.",
         },
         "debug": {

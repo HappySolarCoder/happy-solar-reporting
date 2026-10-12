@@ -220,6 +220,8 @@ class CloserAttributionTests(unittest.TestCase):
             "dispositionDate": occurred,
             "customFields": [{"id": "Eq4NLTSkJ56KTxbxypuE", "value": setter}],
         }
+        if dispo == "Sit":
+            opp["pipelineStageName"] = "Demo-Negotiating"
         if assigned is not None:
             opp["assignedTo"] = assigned
         if name is not None:
@@ -307,6 +309,51 @@ class CloserAttributionTests(unittest.TestCase):
         self.assertEqual(profiles["William Breen"]["email"], "william@happyslr.com")
         self.assertEqual(profiles["Casey Lane"]["ghl_user_id"], "")
         self.assertNotIn("evan@happyslr.com", str(payload["rows"]))
+
+    def test_inferred_redispo_counts_as_ran_and_not_as_a_second_fma_demo(self):
+        from unittest.mock import patch
+
+        import demo_rate
+
+        snaps = [self._opp("sit-evan", assigned="userEvan", dispo="Sit", setter="Day")]
+        inferred_start = datetime(2026, 10, 5, 18, 0, tzinfo=timezone.utc)
+        history = {
+            "contact-sit-evan": [
+                {
+                    "contactId": "contact-sit-evan",
+                    "opportunityId": "sit-evan",
+                    "source": "inferred_from_dispo",
+                    "startTime": inferred_start,
+                    "dispositionValue": "Sit",
+                }
+            ]
+        }
+        filters = {"pipeline": None, "setter": None, "lead_source": None, "sweeper": None}
+        with (
+            patch.object(demo_rate, "load_demo_rate_snaps", return_value=snaps),
+            patch.object(demo_rate, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
+            patch.object(demo_rate, "load_contacts_by_ids", return_value={}),
+            patch.object(demo_rate, "load_appointment_history", return_value=history),
+        ):
+            payload = demo_rate.build_payload(self._directory(), 2026, 10, filters, "2026-10-01", "2026-10-07")
+        self.assertEqual(payload["ran_count"], 2)
+        self.assertEqual(payload["sit_count"], 1)
+        self.assertEqual(payload["breakdowns"]["sit_by_setter_last_name"], {"Day": 1})
+        self.assertEqual(payload["breakdowns"]["ran_by_owner"]["Evan R Day"], 2)
+        self.assertEqual(payload["breakdowns"]["sit_by_owner"]["Evan R Day"], 2)
+        inferred_rows = [row for row in payload["rows"] if row.get("appointmentSource") == "inferred_from_dispo"]
+        self.assertEqual(len(inferred_rows), 1)
+        self.assertFalse(inferred_rows[0]["countsAsDemo"])
+
+    def test_new_appointment_is_not_an_appointment_ran(self):
+        ran = self._opp("ran-demo", assigned="userEvan", dispo="Sit", setter="Day")
+        ran._data["pipelineStageName"] = "Demo-Negotiating"
+        waiting = self._opp("still-new", assigned="userEvan", dispo="No Sit", setter="Day")
+        waiting._data["pipelineStageName"] = "New Appointment"
+        payload = self._payload([ran, waiting], self._directory())
+        self.assertEqual(payload["ran_count"], 1)
+        self.assertEqual(payload["sit_count"], 1)
+        self.assertEqual([row["opportunityId"] for row in payload["rows"]], ["ran-demo"])
 
     def test_directory_failure_does_not_change_the_demo_total(self):
         from unittest.mock import patch

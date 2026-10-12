@@ -115,15 +115,18 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict):
             continue
-        oid = str(row.get("opportunityId") or "")
+        oid = str(row.get("ranAppointmentId") or row.get("opportunityId") or "")
         if oid in seen:
             continue
         seen.add(oid)
         reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"))
         if reason:
             bump(reason, "ran", row.get("lead_source"))
-            if row.get("disposition") == "Sit":
-                bump(reason, "demos", row.get("lead_source"))
+        if row.get("disposition") == "Sit" and row.get("countsAsDemo", True):
+            demo_setter = row.get("demoCreditLastName") or row.get("setter")
+            demo_reason = self_gen_reason(row.get("lead_source"), demo_setter, row.get("closer"))
+            if demo_reason:
+                bump(demo_reason, "demos", row.get("lead_source"))
     for reason, label in sales_reasons.values():
         bump(reason, "sales", label)
     return {
@@ -156,12 +159,12 @@ def sweeper_ran(demo_payload: dict[str, Any]) -> tuple[int, int]:
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict) or not filled(row.get("sweeperRehashLastName")):
             continue
-        key = str(row.get("opportunityId") or "")
+        key = str(row.get("ranAppointmentId") or row.get("opportunityId") or "")
         if key in seen:
             continue
         seen.add(key)
         ran += 1
-        if row.get("disposition") == "Sit":
+        if row.get("disposition") == "Sit" and row.get("countsAsDemo", True):
             demos += 1
     return ran, demos
 

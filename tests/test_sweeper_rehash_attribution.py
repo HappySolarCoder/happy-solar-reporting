@@ -170,9 +170,11 @@ class DashboardWiringTests(unittest.TestCase):
             (DEMO, "add_casefold_count(ran_by_setter"),
         ):
             self.assertIn("sweeper_rehash_last_name(", src)
-            self.assertIn("credited = attributed_last_name(", src)
+            self.assertIn("attributed_last_name(", src)
             self.assertIn("lead_source_matches(", src)
-            self.assertLess(src.index("credited = attributed_last_name("), src.index(count_call))
+            self.assertLess(src.index("attributed_last_name("), src.index(count_call))
+        self.assertIn("select_fma_demos(", DEMO)
+        self.assertLess(DEMO.index("select_fma_demos("), DEMO.index("add_casefold_count(sit_by_setter"))
 
         self.assertIn("created_by_setter_last_name", CREATED)
         self.assertIn("ran_by_setter_last_name", DEMO)
@@ -197,11 +199,12 @@ class DashboardWiringTests(unittest.TestCase):
         self.assertNotIn("is_recap_appointment_pipeline", CREATED)
 
     def test_pay_pages_read_the_same_demo_breakdown(self):
-        for src in (COMMISSIONS, INCENTIVE):
+        for src in (COMMISSIONS, INCENTIVE, FMA_DASH):
             self.assertIn("sit_by_setter_last_name", src)
-            self.assertIn("2026-09-24", src)
+            self.assertIn("stage history", src.lower())
             self.assertNotIn("attributed_last_name", src)
-        self.assertIn("attributed_last_name(setter, lead, sweeper_last, local_dt.date())", PAYROLL)
+        self.assertIn("select_fma_demos(", PAYROLL)
+        self.assertNotIn("attributed_last_name(setter, lead, sweeper_last, local_dt.date())", PAYROLL)
         self.assertIn("scheduling_manager", PAYROLL_LOGIC)
         self.assertIn("HWfjOp8MvE6soxBAL75f", PAYROLL_LOGIC)
         self.assertNotIn("sweeper_rehash", PAYROLL_LOGIC.split("scheduling_manager")[1])
@@ -250,6 +253,7 @@ def _flagged_records(day: date, *, sweeper: str | None, lead: str = "Doors"):
         "dispositionValue": "Sit",
         "appointmentOccurredAt": _sit_stamp(day),
         "dispositionDate": _sit_stamp(day),
+        "pipelineStageName": "Demo-Negotiating",
         "createdAt": _sit_stamp(day).isoformat().replace("+00:00", "Z"),
         "customFields": [
             {"id": "Eq4NLTSkJ56KTxbxypuE", "value": "Hill"},
@@ -273,20 +277,37 @@ class SurfaceCreditTests(unittest.TestCase):
         self.payroll = fma_payroll
         self.created = opportunities_created
 
-    def _run(self, day: date, *, sweeper: str | None, lead: str = "Doors", lead_filter: str | None = None):
+    def _run(
+        self,
+        day: date,
+        *,
+        sweeper: str | None,
+        lead: str = "Doors",
+        lead_filter: str | None = None,
+        history: list | None = None,
+        pipeline_name: str = "Buffalo",
+        pipeline_id: str = "pipe-buffalo",
+    ):
         contact, opp = _flagged_records(day, sweeper=sweeper, lead=lead)
+        opp["pipelineId"] = pipeline_id
         snap = _Snap("opp-1", opp)
         filters = {"pipeline": None, "setter": None, "lead_source": lead_filter}
         start = day.isoformat()
         end = day.isoformat()
+        hist = {"opp-1": history or []}
+        pipes = {pipeline_id: pipeline_name}
         with (
             patch.object(self.demo_rate, "load_demo_rate_snaps", return_value=[snap]),
-            patch.object(self.demo_rate, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
+            patch.object(self.demo_rate, "pipeline_name_lookup", return_value=pipes),
             patch.object(self.demo_rate, "load_contacts_by_ids", return_value={"contact-1": contact}),
-            patch.object(self.created, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
+            patch.object(self.demo_rate, "load_stage_history", return_value=hist),
+            patch.object(self.demo_rate, "load_stage_names", return_value={}),
+            patch.object(self.created, "pipeline_name_lookup", return_value=pipes),
             patch.object(self.created, "load_contacts_by_ids", return_value={"contact-1": contact}),
             patch.object(self.created, "user_name_lookup", return_value={}),
             patch.object(self.payroll, "load_users_by_ids", return_value={}),
+            patch.object(self.payroll, "load_stage_history", return_value=hist),
+            patch.object(self.payroll, "load_stage_names", return_value={}),
         ):
             demo = self.demo_rate.build_payload(object(), day.year, day.month, filters, start, end)
             created = self.created.compute(
@@ -326,13 +347,19 @@ class SurfaceCreditTests(unittest.TestCase):
             self.assertEqual(out["payroll_setter"], "Hill")
             self.assertEqual(out["payroll_manager"], "")
 
-    def test_post_cutoff_flagged_contact_goes_to_sweeper_on_all_four_surfaces(self):
+    def test_post_cutoff_city_sit_stays_with_the_fma_while_ran_moves(self):
         out = self._run(POST_CUTOFF, sweeper="Calabrese")
         self.assertEqual(out["dashboard_ran"], {"Calabrese": 1})
-        self.assertEqual(out["dashboard_sit"], {"Calabrese": 1})
+        self.assertEqual(out["dashboard_sit"], {"Hill": 1})
         self.assertEqual(out["dashboard_created"], {"Calabrese": 1})
-        self.assertEqual(out["commissions"], {"Calabrese": 1})
-        self.assertEqual(out["incentive"], {"Calabrese": 1})
+        self.assertEqual(out["commissions"], {"Hill": 1})
+        self.assertEqual(out["incentive"], {"Hill": 1})
+        self.assertEqual(out["payroll_setter"], "Hill")
+
+    def test_sweeper_pipeline_demo_without_an_earlier_sit_counts_for_the_sweeper(self):
+        out = self._run(POST_CUTOFF, sweeper="Calabrese", pipeline_name="Sweeper", pipeline_id="pipe-sweeper")
+        self.assertEqual(out["dashboard_ran"], {"Calabrese": 1})
+        self.assertEqual(out["dashboard_sit"], {"Calabrese": 1})
         self.assertEqual(out["payroll_setter"], "Calabrese")
 
     def test_empty_field_stays_with_setter_after_cutoff(self):
@@ -346,8 +373,8 @@ class SurfaceCreditTests(unittest.TestCase):
         for day, sweeper, expected in (
             (AUGUST, "Calabrese", "Hill"),
             (date(2026, 9, 20), "Calabrese", "Hill"),
-            (POST_CUTOFF, "Calabrese", "Calabrese"),
-            (date(2026, 9, 26), "Nguyen", "Nguyen"),
+            (POST_CUTOFF, "Calabrese", "Hill"),
+            (date(2026, 9, 26), "Nguyen", "Hill"),
             (POST_CUTOFF, "", "Hill"),
             (POST_CUTOFF, "none", "Hill"),
         ):
@@ -367,9 +394,11 @@ class SurfaceCreditTests(unittest.TestCase):
             patch.object(self.demo_rate, "pipeline_name_lookup", return_value={"pipe-buffalo": "Buffalo"}),
             patch.object(self.demo_rate, "load_contacts_by_ids", return_value={"contact-1": contact}),
             patch.object(self.payroll, "load_users_by_ids", return_value={}),
+            patch.object(self.payroll, "load_stage_history", return_value={}),
+            patch.object(self.payroll, "load_stage_names", return_value={}),
         ):
             sits = self.payroll.collect_sits(object(), POST_CUTOFF, POST_CUTOFF)
-        self.assertEqual(sits[0]["setter_last_name"], "Calabrese")
+        self.assertEqual(sits[0]["setter_last_name"], "Hill")
         self.assertEqual(sits[0]["scheduling_manager"], "Diamond")
 
     def test_self_gen_filter_matches_base_before_cutoff(self):
@@ -378,8 +407,8 @@ class SurfaceCreditTests(unittest.TestCase):
         self.assertEqual(before["dashboard_sit"], {})
         after = self._run(POST_CUTOFF, sweeper="Calabrese", lead="Doors", lead_filter="Self Gen")
         self.assertEqual(after["dashboard_created"], {"Calabrese": 1})
-        self.assertEqual(after["dashboard_sit"], {"Calabrese": 1})
-        self.assertEqual(after["commissions"], {"Calabrese": 1})
+        self.assertEqual(after["dashboard_sit"], {"Hill": 1})
+        self.assertEqual(after["commissions"], {"Hill": 1})
 
 
 if __name__ == "__main__":

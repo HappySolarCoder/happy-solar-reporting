@@ -1891,8 +1891,10 @@ def assemble_inbound_cac(
                     "unavailable; never invented $0 CPL). Not $45/$70"
                 ),
                 "sits": (
-                    "Ads Dashboard demos for that lead set: a Demo stage, One Legger, "
-                    "or Sold on the current city stage or in city-pipeline history."
+                    "Ads Dashboard demos for that lead set: a Demo stage, Sold, "
+                    "or Sale Cancelled on the current city stage or in "
+                    "city-pipeline history. Sale Cancelled counts like Sold. "
+                    "One Legger is not a demo."
                     if use_ads
                     else
                     "territory Sit + appointmentOccurredAt in the clamped Inbound "

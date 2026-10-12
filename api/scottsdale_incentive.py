@@ -364,7 +364,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Demo Notes</div>
         <div class="meta">
           Demos are marked-demo outcomes only, using the canonical demo metric appointment window semantics in
-          <code>America/New_York</code>. A filled Sweeper/Rehash Last Name replaces the setter only when the demo date is on or after 2026-09-24. Earlier demos in this window stay with the original setter.
+          <code>America/New_York</code>. An FMA gets one demo per contact. A 3-day buffer on the stage history dates it: the first disposition uses the real appointment within 3 days before it, including a late disposition. Each later disposition uses an unused real appointment in that window, or an estimated time at the disposition. One appointment is used once. A second demo counts only when Sweeper/Rehash Last Name is filled. It is credited to the setter that field names, including when that name is the original FMA. An empty field leaves one demo with the FMA on the first demo appointment. An inferred re-disposition is the estimated time when no unused real appointment remains. It counts as an appointment ran and does not add an FMA demo.
         </div>
         <div class="meta">
           Breakdown source: <code>sit_by_setter_last_name</code>.
@@ -485,7 +485,7 @@ __DASHBOARD_NAV_HTML__
           'Zach Maecker',
           1
         );
-        // Per-sit cutoff lives in demo_rate (SWEEPER_ATTRIBUTION_START 2026-09-24).
+        // Demo credit lives in demo_rate via select_fma_demos (one demo per contact).
         const demoEntries = addManualCount(
           filteredEntries((demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {}, true),
           'Emerson',

@@ -6,7 +6,7 @@ QA: list the exact opportunities that feed the FMS "GHL — Demo Rate by Setter"
 
 Business logic source: GHLMetrics.md
 - Time filter field: ghl_opportunities_v2.appointmentOccurredAt
-- Ran qualification: dispositionValue in (Sit, No Sit)
+- Ran qualification: dispositionValue in (Sit, No Sit), excluding New Appointment
 - Setter: ghl_contacts_v2.customFields[Eq4NLTSkJ56KTxbxypuE] via contactId join
 - Pipeline scope: included buffalo/rochester/virtual/syracuse; excluded rehash/sweeper/inbound/lead locker
 
@@ -24,11 +24,33 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+QA_DIR = Path(__file__).resolve().parent
+METRICS_DIR = QA_DIR.parent / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from demo_stage import stage_is_new_appointment  # noqa: E402
+from fma_demo_credit import (  # noqa: E402
+    current_stage_name,
+    inferred_appointments,
+    load_appointment_history,
+    load_inferred_appointments,
+    load_opportunities_by_contact,
+    load_stage_history,
+    load_stage_names,
+    make_demo_candidate,
+    same_appointment_instant,
+    select_fma_demos,
+)
+from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -178,18 +200,28 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
         .where(c.time_field, ">=", start_utc)
         .where(c.time_field, "<", end_utc)
     )
+    snaps = list(q.stream())
+    stage_names = load_stage_names(
+        db,
+        [str((snap.to_dict() or {}).get("pipelineId") or "") for snap in snaps],
+    )
 
     rows: list[dict[str, Any]] = []
     ran_by_setter: dict[str, int] = {}
     sit_by_setter: dict[str, int] = {}
+    pending_sits: list[dict[str, Any]] = []
+    ran_at_by_opp: dict[str, Any] = {}
+    row_by_opp: dict[str, dict[str, Any]] = {}
 
     scanned = 0
-    for snap in q.stream():
+    for snap in snaps:
         scanned += 1
         opp = snap.to_dict() or {}
 
         dispo = opp.get(c.disposition_field)
         if dispo not in ("Sit", "No Sit"):
+            continue
+        if stage_is_new_appointment(current_stage_name(opp, stage_names)):
             continue
 
         pid = str(opp.get("pipelineId") or "")
@@ -207,31 +239,150 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
         contact = contact_lookup(db, c, cid)
         setter = contact_custom_field(contact, c.setter_cf_id)
         setter_s = str(setter).strip() if setter not in (None, "") else "none"
+        sweeper_last = sweeper_rehash_last_name(contact, opp)
 
         ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
-        if dispo == "Sit":
-            sit_by_setter[setter_s] = sit_by_setter.get(setter_s, 0) + 1
 
         occ = opp.get(c.time_field)
         occ_iso = occ.isoformat() if hasattr(occ, "isoformat") else str(occ)
 
         contact_last = (contact.get("lastName") if isinstance(contact, dict) else None)
+        opp_id = str(opp.get("id") or snap.id)
 
+        row = {
+            "opportunityId": opp_id,
+            "contactId": cid,
+            "contactLastName": contact_last,
+            "setterLastName": setter_s,
+            "pipeline": pname,
+            "dispositionValue": dispo,
+            "appointmentOccurredAt": occ_iso,
+        }
+        rows.append(row)
+        row_by_opp[opp_id] = row
+        ran_at_by_opp[opp_id] = occ if isinstance(occ, datetime) else None
+        if dispo == "Sit":
+            pending_sits.append(
+                {
+                    "row": row,
+                    "setter": setter_s,
+                    "sweeper": sweeper_last,
+                    "pipeline": pname,
+                    "pipeline_id": pid,
+                    "opp": opp,
+                    "demo_at": occ,
+                    "needs_history": bool(sweeper_last) and not names_match(setter_s, sweeper_last),
+                }
+            )
+
+    contact_ids = [item["row"]["contactId"] for item in pending_sits]
+    known_ids = {item["row"]["opportunityId"] for item in pending_sits}
+    for extra in load_opportunities_by_contact(db, contact_ids):
+        extra_id = str(extra.get("id") or "")
+        if not extra_id or extra_id in known_ids:
+            continue
+        if extra.get(c.disposition_field) != "Sit":
+            continue
+        known_ids.add(extra_id)
+        pid = str(extra.get("pipelineId") or "")
+        pname = (pipe_names.get(pid) or "").strip() or pid
+        cid = str(extra.get("contactId") or "")
+        contact = contact_lookup(db, c, cid)
+        setter = contact_custom_field(contact, c.setter_cf_id)
+        setter_s = str(setter).strip() if setter not in (None, "") else "none"
+        pending_sits.append(
+            {
+                "row": {"opportunityId": extra_id, "contactId": cid},
+                "setter": setter_s,
+                "sweeper": sweeper_rehash_last_name(contact, extra),
+                "pipeline": pname,
+                "pipeline_id": pid,
+                "opp": extra,
+                "in_table": False,
+            }
+        )
+    history_ids = [item["row"]["opportunityId"] for item in pending_sits]
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    stage_names = load_stage_names(db, [item["pipeline_id"] for item in pending_sits]) if history_ids else {}
+    appointment_history = load_appointment_history(db, [item["row"]["contactId"] for item in pending_sits])
+    candidates = []
+    item_by_opp = {}
+    for item in pending_sits:
+        opp_id = item["row"]["opportunityId"]
+        item_by_opp[opp_id] = item
+        candidate = make_demo_candidate(
+            item["opp"],
+            contact_id=item["row"]["contactId"],
+            opportunity_id=opp_id,
+            setter=item["setter"],
+            sweeper=item["sweeper"],
+            pipeline_name=item["pipeline"],
+            stage_name=current_stage_name(item["opp"], stage_names),
+            history=stage_history.get(opp_id) or [],
+            appointment_rows=appointment_history.get(item["row"]["contactId"]) or [],
+        )
+        if candidate:
+            candidates.append(candidate)
+    for demo in select_fma_demos(candidates):
+        try:
+            from zoneinfo import ZoneInfo
+
+            counted_local = demo.counted_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= counted_local < end_local):
+            continue
+        demo_name = str(demo.last_name).strip() or "none"
+        sit_by_setter[demo_name] = sit_by_setter.get(demo_name, 0) + 1
+        item = item_by_opp.get(demo.opportunity_id)
+        if item and "setterLastName" in item["row"]:
+            item["row"]["demoCreditLastName"] = demo_name
+            item["row"]["demoCountedAt"] = counted_local.isoformat()
+            item["row"]["countsAsDemo"] = True
+
+    inferred_rows = list(load_inferred_appointments(db, start_utc, end_utc))
+    for history_rows in appointment_history.values():
+        inferred_rows.extend(history_rows or [])
+    seen_inferred: set[tuple[str, str, datetime]] = set()
+    for event in inferred_appointments(inferred_rows):
+        identity = (event.contact_id, event.opportunity_id, event.start_at)
+        if identity in seen_inferred:
+            continue
+        seen_inferred.add(identity)
+        parent = row_by_opp.get(event.opportunity_id)
+        if parent is None:
+            continue
+        if same_appointment_instant(ran_at_by_opp.get(event.opportunity_id), event.start_at):
+            continue
+        try:
+            from zoneinfo import ZoneInfo
+
+            inferred_local = event.start_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= inferred_local < end_local):
+            continue
+        setter_s = parent.get("setterLastName") or "none"
+        ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
         rows.append(
             {
-                "opportunityId": str(opp.get("id") or snap.id),
-                "contactId": cid,
-                "contactLastName": contact_last,
+                "opportunityId": parent.get("opportunityId"),
+                "ranAppointmentId": f"{parent.get('opportunityId')}:inferred:{event.start_at.isoformat()}",
+                "contactId": parent.get("contactId"),
+                "contactLastName": parent.get("contactLastName"),
                 "setterLastName": setter_s,
-                "pipeline": pname,
-                "dispositionValue": dispo,
-                "appointmentOccurredAt": occ_iso,
+                "pipeline": parent.get("pipeline"),
+                "dispositionValue": event.outcome or "Ran",
+                "appointmentOccurredAt": inferred_local.isoformat(),
+                "appointmentSource": event.source,
+                "countsAsDemo": False,
             }
         )
 
-    # Compute demo% by setter
+    # Compute demo% by setter. A moved demo can belong to a name with no ran row.
     demo_pct_by_setter: dict[str, float] = {}
-    for setter, ran in ran_by_setter.items():
+    for setter in set(ran_by_setter) | set(sit_by_setter):
+        ran = ran_by_setter.get(setter, 0)
         sit = sit_by_setter.get(setter, 0)
         demo_pct_by_setter[setter] = round((sit / ran) * 100, 1) if ran else 0.0
 

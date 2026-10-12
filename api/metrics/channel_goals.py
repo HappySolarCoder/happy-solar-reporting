@@ -14,9 +14,10 @@ Actuals served here:
   (pipeline_scope=all) rows, sales = locked Sales grain, ran / demos = demo_rate
   rows. Same field reader as sweeper_credit.
 - Leads: new opportunities in the Inbound/Lead Locker pipeline created in the
-  month (America/New_York). Inbound = contact Lead Gen Source "Inbound" or
-  "Facebook Quick Form". 3PL = the remaining NR (non-refunded) Lead Locker /
-  Solar Reviews title-bucket leads from inbound_cac.
+  month (America/New_York). Inbound = lead_gen_source.is_inbound_lead_source
+  (Inbound, or a Facebook Quick Form variant such as FB Quick Form). 3PL = the
+  remaining NR (non-refunded) Lead Locker / Solar Reviews title-bucket leads
+  from inbound_cac.
 
 Doors, Self Gen, 3PL and Inbound sales / appointments / ran / demos stay on
 company_snapshot lead-source breakdowns. Reads only.
@@ -38,6 +39,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from lead_gen_source import inbound_source_label, is_inbound_lead_source
 from sweeper_rehash_attribution import is_blank_last_name, sweeper_rehash_last_name
 
 NY = ZoneInfo("America/New_York")
@@ -51,7 +53,6 @@ CHANNEL_GOALS: dict[str, dict[str, Any]] = {
     "Sweeper/Rehash": {"sales": 7, "opp2prelim_pct": 50, "appointments": 14, "leads": None, "demo_rate_pct": 50, "demos": 10},
 }
 LEADS_CHANNELS = ("3PL", "Inbound")
-INBOUND_LEAD_SOURCES = frozenset({"inbound", "facebook quick form"})
 SELF_GEN_LEAD_SOURCES = frozenset({"self gen", "selfgen", "self-gen", "self generated", "self-generated"})
 BLANK_LEAD_SOURCES = frozenset({"", "none", "null", "n/a", "crm ui", "hand", "manual"})
 
@@ -175,7 +176,7 @@ def split_leads(raws: list, sources: dict[str, str], start_local, end_local) -> 
         oid = raw.opportunity_id
         if not oid:
             continue
-        if str(sources.get(oid) or "").strip().casefold() in INBOUND_LEAD_SOURCES:
+        if is_inbound_lead_source(sources.get(oid)):
             inbound.add(oid)
         elif raw.bucket and not raw.refunded:
             three_pl.add(oid)
@@ -238,6 +239,7 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         label = str(lead).strip() if lead is not None else ""
         if label.casefold() in {"crm ui", "hand", "", "none", "null", "n/a"}:
             label = "none"
+        label = inbound_source_label(label) or label
         if contact_id and reason:
             self_sold[str(contact_id)] = (reason, label)
 
@@ -267,7 +269,7 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         "sweeper": {"appointments": sweeper_created(created), "ran": ran, "demos": demos, "sales": len(sold)},
         "contract": {
             "sweeper": "Sweeper/Rehash Last Name filled (any name), contact then opportunity",
-            "leads_inbound": "Inbound/Lead Locker pipeline opps created in month, Lead Gen Source Inbound or Facebook Quick Form",
+            "leads_inbound": "Inbound/Lead Locker pipeline opps created in month whose Lead Gen Source counts as Inbound, including Facebook Quick Form and FB Quick Form",
             "leads_3pl": "Remaining non-refunded Lead Locker / Solar Reviews title-bucket opps created in month",
             "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source",
             "demo_rate": "demos / appointments ran",

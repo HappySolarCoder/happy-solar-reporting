@@ -11,7 +11,7 @@ OBSERVED_SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
     "doors": ("Doors",),
     "self_gen": ("Self Gen", "self gen", "selfgen", "SelfGen"),
     "phones": ("Phones", "Virtual"),
-    "inbound": ("Inbound",),
+    "inbound": ("Inbound", "Facebook Quick Form", "FB Quick Form"),
     "3pl": ("3PL",),
 }
 

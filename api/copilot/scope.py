@@ -515,7 +515,7 @@ def _term_hint(text: str) -> str | None:
         return "doors"
     if "3pl" in lowered or "3 pl" in lowered:
         return "three_pl"
-    if "inbound" in lowered:
+    if "quick form" in lowered or "quickform" in lowered or "inbound" in lowered:
         return "inbound"
     if re.search(r"\bsales?\b", lowered):
         return "sales"

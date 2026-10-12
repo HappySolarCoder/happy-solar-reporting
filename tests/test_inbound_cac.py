@@ -976,6 +976,10 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertFalse(metric.is_inbound_lead_source("3PL"))
         self.assertFalse(metric.is_inbound_lead_source("3pl/inbound"))
         self.assertFalse(metric.is_inbound_lead_source("Lead Locker"))
+        self.assertTrue(metric.is_inbound_lead_source("Facebook Quick Form"))
+        self.assertTrue(metric.is_inbound_lead_source("  fb quick form "))
+        self.assertTrue(metric.is_inbound_lead_source("FB-Quick-Form"))
+        self.assertFalse(metric.is_inbound_lead_source("Quick Form"))
         self.assertEqual(metric.normalize_lead_gen_source(""), "none")
         self.assertEqual(metric.normalize_lead_gen_source("Inbound"), "Inbound")
 

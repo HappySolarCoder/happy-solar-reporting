@@ -37,8 +37,8 @@ Metric per row (same rules for YTD window or a single NY month):
    series. Months with sales=0 are JSON null gaps, never 0.
 
 Inbound CF-grain / Meta section (third row; not title-bucket; not 3PL; not
-pipeline 7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P normalized →
-Inbound (same strip/none helper as sales.py / opportunities_created.py).
+pipeline 7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is Inbound
+or a Facebook Quick Form variant (lead_gen_source.is_inbound_lead_source).
 Inbound window is the selected LL/SR window intersected with
 inbound_window_floor 2026-08-01 America/New_York → existing window end
 ("now" = request time ET using ytd/month exclusive-end semantics). A selected
@@ -134,6 +134,7 @@ from funnel_test_address import (
     fetch_named_fills,
     fill_is_test,
 )
+from lead_gen_source import is_facebook_quick_form_source, is_inbound_lead_source
 from sales import SalesMetricContract, get_db
 
 TIMEZONE_NAME = "America/New_York"
@@ -340,11 +341,6 @@ def normalize_lead_gen_source(value: Any) -> str:
             return "none"
         return norm
     return str(value)
-
-
-def is_inbound_lead_source(value: Any) -> bool:
-    """True only for CF Inbound. 3PL and title-buckets do not match."""
-    return normalize_lead_gen_source(value).strip().lower() == INBOUND_CF_SOURCE.lower()
 
 
 def contact_is_inbound(contact: dict[str, Any] | None) -> bool:
@@ -1736,7 +1732,8 @@ def assemble_inbound_cac(
                 ),
                 "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
                 "lead_definition": (
-                    "contact CF hd5QqHEOVSsPom5bJ32P normalized to Inbound; "
+                    "contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is "
+                    "Inbound or a Facebook Quick Form variant (FB Quick Form included); "
                     "territory pipelines Buffalo/Rochester/Syracuse/Virtual; "
                     "not title-bucket; not 3PL; not pipeline 7nSEgeo"
                 ),

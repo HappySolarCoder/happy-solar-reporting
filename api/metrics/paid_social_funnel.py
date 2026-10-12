@@ -4,7 +4,8 @@
 
 Lead: an opportunity on the 3PL/Inbound pipeline
 (7nSEgeoBYXZiIS7x41Jy) whose contact Lead Gen Source
-(hd5QqHEOVSsPom5bJ32P) strips to Inbound, case-insensitive.
+(hd5QqHEOVSsPom5bJ32P) counts as Inbound. That is Inbound or a
+Facebook Quick Form variant, via lead_gen_source.is_inbound_lead_source.
 Blank, 3PL, and Doors do not count. Not every opportunity in that
 pipeline is a lead. Title buckets are not the lead number. The
 inbound CAC form-fill row is not the lead number.
@@ -14,7 +15,7 @@ Rochester, Syracuse, or Virtual, dated by that territory
 opportunity's createdAt in America/New_York.
 
 Demos: distinct opportunity in Buffalo, Rochester, Syracuse, or
-Virtual only, whose contact Lead Gen Source strips to Inbound and
+Virtual only, whose contact Lead Gen Source counts as Inbound and
 whose dispositionValue equals SIT_DISPOSITION exactly, dated by
 appointmentOccurredAt in America/New_York (territory_sit_in_window).
 A demo does not have to be one of the lead contacts. 3PL/Inbound
@@ -146,7 +147,7 @@ LEAD_ACTIONS_NOTE = (
 )
 LEAD_NOTE = (
     "A lead is an opportunity in the 3PL/Inbound pipeline whose Lead Gen Source "
-    "strips to Inbound. Blank, 3PL, and Doors do not count. Not every "
+    "counts as Inbound, including Facebook Quick Form. Blank, 3PL, and Doors do not count. Not every "
     "opportunity in that pipeline is a lead. Title buckets are not this number."
 )
 OPP_NOTE = (
@@ -156,7 +157,7 @@ OPP_NOTE = (
 )
 DEMO_NOTE = (
     "A demo is a distinct Buffalo, Rochester, Syracuse, or Virtual opportunity "
-    "whose Lead Gen Source is Inbound and whose appointment outcome is the "
+    "whose Lead Gen Source counts as Inbound and whose appointment outcome is the "
     "existing demo outcome, dated by appointment time in America/New_York. "
     "It does not have to be one of these lead contacts. 3PL/Inbound pipeline "
     "opportunities are never demos."
@@ -172,7 +173,7 @@ def territory_name(pipeline_id: Any) -> str | None:
 
 
 def source_is_inbound(contact: dict[str, Any] | None) -> bool:
-    """True only when Lead Gen Source strips to Inbound. 3PL and blank do not."""
+    """True when Lead Gen Source counts as Inbound, including Facebook Quick Form."""
     raw = cac.contact_custom_field(contact, SOURCE_FIELD_ID)
     return cac.is_inbound_lead_source(raw)
 

@@ -88,6 +88,7 @@ METRICS_DIR = API_DIR / "metrics"
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from lead_gen_source import inbound_source_label
 from sit_timestamp import frozen_sit_timestamp
 
 
@@ -231,8 +232,9 @@ def normalize_lead_source(value: Any) -> str:
         return "Phones"
     if low == "selfgen":
         return SELF_GEN_LEAD_SOURCE
-    if low == "inbound":
-        return "Inbound"
+    labeled = inbound_source_label(text)
+    if labeled:
+        return labeled
     if low == "3pl/inbound":
         return "3PL/Inbound"
     if low == "phones":

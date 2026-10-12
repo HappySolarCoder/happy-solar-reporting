@@ -50,6 +50,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
 from sweeper_rehash_attribution import (
@@ -284,7 +285,9 @@ def normalize_lead_source(v: Any) -> str:
     if low in ("3pl", "3p", "threepl"):
         return "3PL"
 
-    # fallback to raw casing
+    labeled = inbound_source_label(s)
+    if labeled:
+        return labeled
     return s
 
 

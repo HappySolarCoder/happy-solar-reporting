@@ -1695,6 +1695,8 @@ def assemble_inbound_cac(
                 "Inbound/Lead Locker opportunities whose Lead Gen Source counts as "
                 "Inbound or a Facebook Quick Form variant, Lead Locker and Solar "
                 "Reviews titles excluded, deduped by phone then email then name; "
+                "the same inbound_window_floor 2026-08-01 applies on America/Phoenix "
+                "days, so the default view is since Aug 1, 2026 rather than year to date; "
                 "opps, demos, and sales are that same lead set; "
                 "website form fills are website_form_fills, not the lead count; "
                 "spend is Meta Ads for those Phoenix days "
@@ -1900,14 +1902,22 @@ def inbound_row_window(
     month: int | None,
     now: datetime,
 ) -> tuple[datetime, datetime, str, str]:
-    """Selected dates as America/Phoenix midnights. Same bounds as Ads Dashboard."""
+    """America/Phoenix bounds, then the existing Aug 1, 2026 floor.
+
+    The floor rule is clamp_inbound_window. This does not change that rule.
+    A default year view that starts on the floor is labeled on the page as
+    since Aug 1, 2026, not year to date.
+    """
     tz_name = INBOUND_ROW_TIMEZONE
     phoenix_now = now.astimezone(ZoneInfo(tz_name)) if now.tzinfo else now.replace(tzinfo=ZoneInfo(tz_name))
     if start and end:
-        return date_range_window(start, end, tz_name)
-    if month is None:
-        return ytd_window(year, tz_name, phoenix_now)
-    return month_window(year, month, tz_name)
+        start_local, end_local, _, _ = date_range_window(start, end, tz_name)
+    elif month is None:
+        start_local, end_local, _, _ = ytd_window(year, tz_name, phoenix_now)
+    else:
+        start_local, end_local, _, _ = month_window(year, month, tz_name)
+    start_local, end_local = clamp_inbound_window(start_local, end_local, tz_name)
+    return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
 def load_ads_lead_inputs(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
@@ -2042,6 +2052,9 @@ def compute_inbound_cac(
         ad_monthly = {}
         for chart_month in ytd_months(year, now.astimezone(ZoneInfo(INBOUND_ROW_TIMEZONE))):
             month_start, month_end, _, _ = month_window(year, chart_month, INBOUND_ROW_TIMEZONE)
+            month_start, month_end = clamp_inbound_window(
+                month_start, month_end, INBOUND_ROW_TIMEZONE
+            )
             ad_monthly[f"{year}-{chart_month:02d}"] = ads_cohort_for_window(
                 ads_inputs, month_start, month_end, now_utc
             )

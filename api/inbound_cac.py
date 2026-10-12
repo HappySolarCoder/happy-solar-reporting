@@ -9,7 +9,7 @@ Inbound uses the Ads Dashboard GHL lead set on America/Phoenix days, plus Meta A
 Inbound leads are deduped Inbound and Facebook Quick Form contacts. Website form fills are a sub-line.
 Inbound CPL is Meta spend ÷ those GHL leads.
 Overall stays Lead Locker + Solar Reviews only.
-Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
+Data: /api/metrics/inbound_cac (JSON). Default Inbound view is since Aug 1, 2026 · America/Phoenix.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses the same GHL leads as the Ads Dashboard: contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is Inbound or a Facebook Quick Form variant, Lead Locker and Solar Reviews titles excluded, deduped, on America/Phoenix days. Inbound cost per lead is Meta spend ÷ those leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Website form fills stay on their own sub-line. Opps, demos, sales, and CAC follow that lead set. Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (Lead Locker and Solar Reviews use America/New_York; the Inbound row uses America/Phoenix). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses the same GHL leads as the Ads Dashboard: contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is Inbound or a Facebook Quick Form variant, Lead Locker and Solar Reviews titles excluded, deduped, on America/Phoenix days. Inbound cost per lead is Meta spend ÷ those leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Website form fills stay on their own sub-line. Opps, demos, sales, and CAC follow that lead set. Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is since Aug 1, 2026 · America/Phoenix for Inbound. Lead Locker and Solar Reviews stay year to date in America/New_York. Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -149,14 +149,14 @@ __DASHBOARD_NAV_HTML__
         <div class="meta" id="setterUnitMeta">$500 per sale (constant)</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Inbound CAC</div>
+        <div class="card-title" id="inboundCacTitle">Inbound CAC · since Aug 1, 2026 · America/Phoenix</div>
         <div class="kpi" id="inboundCac">—</div>
-        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales · America/Phoenix</div>
+        <div class="meta" id="inboundCacMeta">Inbound sales · since Aug 1, 2026 · America/Phoenix</div>
       </div>
       <div class="card span-3">
-        <div class="card-title">Inbound TAC</div>
+        <div class="card-title" id="inboundTacTitle">Inbound TAC · since Aug 1, 2026 · America/Phoenix</div>
         <div class="kpi" id="inboundTac">—</div>
-        <div class="meta" id="inboundTacMeta">lead CAC + $500 setter</div>
+        <div class="meta" id="inboundTacMeta">since Aug 1, 2026 · America/Phoenix</div>
       </div>
       <div class="card span-3">
         <div class="card-title">Inbound CPL</div>
@@ -168,26 +168,26 @@ __DASHBOARD_NAV_HTML__
         <div class="meta" id="inboundSpendBannerMeta">Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.</div>
       </div>
       <div class="card span-12">
-        <div class="card-title">YTD totals</div>
+        <div class="card-title" id="totalsTitle">since Aug 1, 2026 · America/Phoenix</div>
         <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Cost per lead is $45 / $70 for Lead Locker / Solar Reviews. Inbound cost per lead is Meta spend ÷ GHL inbound leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound spend is Meta Ads for the America/Phoenix window (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are the Ads Dashboard set. Website form fills are a sub-line, not the lead count. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
-        <div class="card-title">Performance KPIs</div>
+        <div class="card-title" id="kpiTitle">Performance KPIs · since Aug 1, 2026 · America/Phoenix</div>
         <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate row and is not folded into Overall. Inbound NR Leads are the Ads Dashboard GHL set on America/Phoenix days, including Facebook Quick Form, with Lead Locker and Solar Reviews titles excluded and the ads dedupe rules applied. Website form fills are a sub-line. Opps, demos, and sales follow that lead set and are Buffalo / Rochester / Syracuse / Virtual opportunities for those leads. NR Leads for Lead Locker / Solar Reviews are inbound/3PL bought-lead titles excluding refunded. Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s demos ÷ opps created (Evan’s formula — not the bot KPI of demos divided by demos plus no-demos). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Month-by-month CAC and TAC</div>
-        <div class="meta">YTD months in America/New_York. Months with sales=0 are gaps, never plotted as 0.</div>
+        <div class="meta" id="chartMeta">Inbound CAC and TAC are since Aug 1, 2026 · America/Phoenix. Lead Locker and Solar Reviews months use America/New_York. Months with sales=0 are gaps, never plotted as 0.</div>
         <div class="legend" id="cacLegend">
           <span><span class="swatch" style="background:#2196F3"></span>Lead Locker CAC</span>
           <span><span class="swatch" style="background:#00C853"></span>Solar Reviews CAC</span>
           <span><span class="swatch" style="background:#1565C0"></span>Lead Locker TAC</span>
           <span><span class="swatch" style="background:#2E7D32"></span>Solar Reviews TAC</span>
-          <span id="legendInboundCac" style="display:none"><span class="swatch" style="background:#7C3AED"></span>Inbound CAC</span>
-          <span id="legendInboundTac" style="display:none"><span class="swatch" style="background:#5B21B6"></span>Inbound TAC</span>
+          <span id="legendInboundCac" style="display:none"><span class="swatch" style="background:#7C3AED"></span><span id="legendInboundCacLabel">Inbound CAC · since Aug 1, 2026 · America/Phoenix</span></span>
+          <span id="legendInboundTac" style="display:none"><span class="swatch" style="background:#5B21B6"></span><span id="legendInboundTacLabel">Inbound TAC · since Aug 1, 2026 · America/Phoenix</span></span>
         </div>
         <div class="chartBox" id="cacChart"></div>
       </div>
@@ -211,7 +211,7 @@ function setOptions(sel, options, value) {
 }
 var years = [];
 for (var y = defaultYear - 2; y <= defaultYear + 1; y++) years.push({value: y, label: y});
-var months = [{value: 'ytd', label: 'YTD'}];
+var months = [{value: 'ytd', label: 'since Aug 1, 2026 · America/Phoenix'}];
 for (var i = 0; i < 12; i++) months.push({value: i + 1, label: new Date(2000, i, 1).toLocaleString('en-US', {month: 'long'})});
 setOptions(yearSel, years, defaultYear);
 setOptions(monthSel, months, defaultMonth);
@@ -239,6 +239,13 @@ function query() {
   }
   return new URLSearchParams(params).toString();
 }
+var inboundPeriodLabel = 'since Aug 1, 2026 · America/Phoenix';
+function inboundDefaultLabel(data) {
+  if (!data || data.timeframe !== 'ytd') return '';
+  var start = String(data.inbound_window_start_local || '').slice(0, 10);
+  if (start !== '2026-08-01') return '';
+  return 'since Aug 1, 2026 · ' + (data.inbound_timezone || 'America/Phoenix');
+}
 function leadSubline(r) {
   if (!r) return '';
   var bits = [];
@@ -246,6 +253,13 @@ function leadSubline(r) {
   if (r.website_form_fills != null) bits.push('Website form fills ' + r.website_form_fills);
   if (!bits.length) return '';
   return '<div class="subline">' + esc(bits.join(' · ')) + '</div>';
+}
+function sourceCell(r) {
+  var html = esc(r.source);
+  if (r && r.source === 'Inbound' && inboundPeriodLabel) {
+    html += '<div class="subline">' + esc(inboundPeriodLabel) + '</div>';
+  }
+  return html;
 }
 function rowBySource(rows, name) {
   rows = rows || [];
@@ -274,7 +288,7 @@ function renderTable(el, rows, overall) {
   } else {
     all.forEach(function(r) {
       html += '<tr>';
-      html += '<td>' + esc(r.source) + '</td>';
+      html += '<td>' + sourceCell(r) + '</td>';
       html += '<td class="num">' + fmtMoney(r.cost_per_lead != null ? r.cost_per_lead : r.unit_cost) + '</td>';
       html += '<td class="num">' + esc(r.opp_count) + leadSubline(r) + '</td>';
       html += '<td class="num">' + esc(r.refunded_excluded_count) + '</td>';
@@ -310,7 +324,7 @@ function renderKpiTable(el, kpis) {
     all.forEach(function(r) {
       var opps = (r.opps_created == null) ? r.opportunities_created : r.opps_created;
       html += '<tr>';
-      html += '<td>' + esc(r.source) + '</td>';
+      html += '<td>' + sourceCell(r) + '</td>';
       html += '<td class="num">' + esc(r.nr_leads == null ? '—' : r.nr_leads) + leadSubline(r) + '</td>';
       html += '<td class="num">' + esc(opps == null ? '—' : opps) + '</td>';
       html += '<td class="num">' + fmtPct(r.opps_pct) + '</td>';
@@ -474,16 +488,39 @@ async function load() {
     : 'lead CAC + $500 setter';
   document.getElementById('overallTac').textContent = fmtMoney(overall.tac);
   document.getElementById('overallTacMeta').textContent = (fmtMoney(overall.setter_spend) + ' setter spend · ' + (overall.sales == null ? '—' : overall.sales) + ' sales');
+  inboundPeriodLabel = inboundDefaultLabel(data);
+  var ytdOpt = monthSel.querySelector('option[value="ytd"]');
+  if (ytdOpt) ytdOpt.textContent = inboundPeriodLabel || 'Year to date';
+  var totalsTitle = document.getElementById('totalsTitle');
+  if (totalsTitle) totalsTitle.textContent = inboundPeriodLabel || (data.timeframe === 'month' ? 'Month totals' : (data.timeframe === 'ytd' ? 'Year to date' : 'Range totals'));
+  var kpiTitle = document.getElementById('kpiTitle');
+  if (kpiTitle) kpiTitle.textContent = inboundPeriodLabel ? ('Performance KPIs · ' + inboundPeriodLabel) : 'Performance KPIs';
+  var inboundCacTitle = document.getElementById('inboundCacTitle');
+  if (inboundCacTitle) inboundCacTitle.textContent = inboundPeriodLabel ? ('Inbound CAC · ' + inboundPeriodLabel) : 'Inbound CAC';
+  var inboundTacTitle = document.getElementById('inboundTacTitle');
+  if (inboundTacTitle) inboundTacTitle.textContent = inboundPeriodLabel ? ('Inbound TAC · ' + inboundPeriodLabel) : 'Inbound TAC';
+  var chartMeta = document.getElementById('chartMeta');
+  if (chartMeta) {
+    chartMeta.textContent = (inboundPeriodLabel ? ('Inbound CAC and TAC are ' + inboundPeriodLabel + '. ') : '')
+      + 'Lead Locker and Solar Reviews months use America/New_York. Months with sales=0 are gaps, never plotted as 0.';
+  }
+  var legendCacLabel = document.getElementById('legendInboundCacLabel');
+  if (legendCacLabel) legendCacLabel.textContent = inboundPeriodLabel ? ('Inbound CAC · ' + inboundPeriodLabel) : 'Inbound CAC';
+  var legendTacLabel = document.getElementById('legendInboundTacLabel');
+  if (legendTacLabel) legendTacLabel.textContent = inboundPeriodLabel ? ('Inbound TAC · ' + inboundPeriodLabel) : 'Inbound TAC';
   document.getElementById('inboundCac').textContent = inbound ? fmtMoney(inbound.cac) : '—';
   document.getElementById('inboundCacMeta').textContent = inbound
-    ? ((inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable') + ' lead spend · ' + inbound.sales + ' sales')
-    : 'Meta Ads spend / Inbound sales';
+    ? ((inboundPeriodLabel ? (inboundPeriodLabel + ' · ') : '')
+      + (inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable')
+      + ' lead spend · ' + inbound.sales + ' Inbound sales')
+    : (inboundPeriodLabel || 'Inbound sales');
   document.getElementById('inboundTac').textContent = inbound ? fmtMoney(inbound.tac) : '—';
   document.getElementById('inboundTacMeta').textContent = inbound
-    ? (inbound.spend_status === 'ok'
-      ? (fmtMoney(inbound.setter_spend) + ' setter · TAC = CAC + $500')
-      : (fmtMoney(inbound.setter_spend) + ' setter · TAC blank until spend is live'))
-    : 'lead CAC + $500 setter';
+    ? ((inboundPeriodLabel ? (inboundPeriodLabel + ' · ') : '')
+      + (inbound.spend_status === 'ok'
+        ? (fmtMoney(inbound.setter_spend) + ' setter · TAC = CAC + $500')
+        : (fmtMoney(inbound.setter_spend) + ' setter · TAC blank until spend is live')))
+    : (inboundPeriodLabel || 'lead CAC + $500 setter');
   var inboundCpl = inbound
     ? (inbound.cost_per_lead != null ? inbound.cost_per_lead : inbound.unit_cost)
     : null;
@@ -496,12 +533,22 @@ async function load() {
   var banner = document.getElementById('inboundSpendBanner');
   if (banner) banner.style.display = (!inbound || inbound.spend_status !== 'ok') ? '' : 'none';
   document.getElementById('setterUnitKpi').textContent = fmtMoney(setterUnit != null ? setterUnit : 500);
-  document.getElementById('setterUnitMeta').textContent = (overall.setter_spend == null ? '$500 per sale (constant)' : (fmtMoney(overall.setter_spend) + ' setter spend YTD'));
+  document.getElementById('setterUnitMeta').textContent = (overall.setter_spend == null
+    ? '$500 per sale (constant)'
+    : (fmtMoney(overall.setter_spend) + (inboundPeriodLabel ? ' setter spend · America/New_York' : ' setter spend')));
   var start = String(data.window_start_local || '').slice(0, 10);
   var end = String(data.window_end_local || '').slice(0, 10);
-  var frame = data.timeframe === 'ytd' ? 'YTD' : 'Month';
-  document.getElementById('windowKpi').textContent = frame + ' · ' + start + ' → ' + end;
-  document.getElementById('windowMeta').textContent = data.timezone || 'America/New_York';
+  var inboundStart = String(data.inbound_window_start_local || '').slice(0, 10);
+  var inboundEnd = String(data.inbound_window_end_local || '').slice(0, 10);
+  if (inboundPeriodLabel) {
+    document.getElementById('windowKpi').textContent = inboundPeriodLabel;
+    document.getElementById('windowMeta').textContent = inboundStart + ' → ' + inboundEnd
+      + ' · Lead Locker and Solar Reviews ' + start + ' → ' + end + ' ' + (data.timezone || 'America/New_York');
+  } else {
+    var frame = data.timeframe === 'ytd' ? 'Year to date' : (data.timeframe === 'range' ? 'Range' : 'Month');
+    document.getElementById('windowKpi').textContent = frame + ' · ' + start + ' → ' + end;
+    document.getElementById('windowMeta').textContent = data.timezone || 'America/New_York';
+  }
   renderTable(document.getElementById('cacTable'), data.rows || [], overall);
   renderKpiTable(document.getElementById('kpiTable'), data.performance_kpis || {});
   drawCacChart(data.chart || {});

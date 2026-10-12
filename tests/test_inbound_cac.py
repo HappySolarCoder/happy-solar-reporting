@@ -237,10 +237,16 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;", page_html)
         self.assertIn("if (v === null || v === undefined || v === '') return null;", page_html)
         self.assertNotIn("|| 0", page_html)
-        ytd_at = page_html.find("YTD totals")
-        kpi_at = page_html.find("Performance KPIs")
+        ytd_at = page_html.find('id="totalsTitle"')
+        kpi_at = page_html.find('id="kpiTitle"')
         chart_at = page_html.find("Month-by-month CAC and TAC")
         self.assertTrue(0 < ytd_at < kpi_at < chart_at)
+        self.assertIn("since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn("Inbound sales", page_html)
+        self.assertIn("Inbound CAC · since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn("Inbound TAC · since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn('id="inboundCacTitle"', page_html)
+        self.assertIn('id="kpiTitle"', page_html)
         self.assertIn('id="kpiTable"', page_html)
         self.assertIn("id=\"leadLockerCac\"", page_html)
         self.assertIn("id=\"solarReviewsCac\"", page_html)
@@ -1276,6 +1282,33 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         sep_start, sep_end, _, _ = metric.month_window(2026, 9, "America/New_York")
         sep_in_start, sep_in_end = metric.clamp_inbound_window(sep_start, sep_end)
         self.assertEqual((sep_in_start, sep_in_end), (sep_start, sep_end))
+
+    def test_live_inbound_window_keeps_aug_1_floor_on_phoenix_days(self):
+        now = datetime(2026, 10, 12, 15, 0, tzinfo=NY)
+        phoenix = ZoneInfo("America/Phoenix")
+        start, end, _, _ = metric.inbound_row_window(
+            start=None, end=None, year=2026, month=None, now=now
+        )
+        self.assertEqual(start, datetime(2026, 8, 1, 0, 0, tzinfo=phoenix))
+        self.assertEqual(metric.INBOUND_WINDOW_FLOOR, "2026-08-01")
+        self.assertGreater(end, start)
+
+        october_start, october_end, _, _ = metric.inbound_row_window(
+            start="2026-10-05", end="2026-10-11", year=2026, month=None, now=now
+        )
+        self.assertEqual(october_start, datetime(2026, 10, 5, 0, 0, tzinfo=phoenix))
+        self.assertEqual(october_end, datetime(2026, 10, 12, 0, 0, tzinfo=phoenix))
+
+        july_start, july_end, _, _ = metric.inbound_row_window(
+            start=None, end=None, year=2026, month=7, now=now
+        )
+        self.assertTrue(metric.inbound_window_is_empty(july_start, july_end))
+
+        quarter_start, quarter_end, _, _ = metric.inbound_row_window(
+            start="2026-07-01", end="2026-09-30", year=2026, month=None, now=now
+        )
+        self.assertEqual(quarter_start, datetime(2026, 8, 1, 0, 0, tzinfo=phoenix))
+        self.assertEqual(quarter_end, datetime(2026, 10, 1, 0, 0, tzinfo=phoenix))
 
     def test_ytd_clamps_inbound_start_to_aug_1_and_ll_sr_stay_full_year(self):
         now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)

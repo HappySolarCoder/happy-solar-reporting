@@ -900,9 +900,20 @@ __DASHBOARD_NAV_HTML__
       if (Object.prototype.hasOwnProperty.call(byLast, last)) byLast[last] = null;
       else byLast[last] = person;
     }
+    // A demo login can share a production FMA's display name. Keep the
+    // production goal. A name that exists only on a demo login still fills in.
+    const chosen = {};
     for (const goal of personGoals) {
       const metric = String(goal.settings_metric || '');
-      if (!metric || goal.target == null) continue;
+      const name = normGoalName(goal.name);
+      if (!metric || goal.target == null || !name) continue;
+      const key = name + '\n' + metric;
+      const current = chosen[key];
+      const demo = String(goal.assignee_user_id || '').startsWith('demo-');
+      if (!current || (String(current.assignee_user_id || '').startsWith('demo-') && !demo)) chosen[key] = goal;
+    }
+    for (const goal of Object.values(chosen)) {
+      const metric = String(goal.settings_metric || '');
       const name = normGoalName(goal.name);
       let person = name ? byName[name] : null;
       if (!person && name) {

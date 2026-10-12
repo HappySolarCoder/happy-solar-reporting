@@ -159,7 +159,17 @@ __DASHBOARD_NAV_HTML__
     el.innerHTML=items.map(x=>`<li>${x}</li>`).join('');
   }
 
-  async function j(u){ const r=await fetch(u); if(!r.ok) throw new Error(`${u} -> ${r.status}`); return await r.json(); }
+  async function j(u){
+    let r;
+    try { r = await fetch(u); }
+    catch (error) {
+      if (error && (error.name === 'AbortError' || error.name === 'TimeoutError')) return null;
+      throw error;
+    }
+    if (!r) return null;
+    if (!r.ok) throw new Error(`${u} -> ${r.status}`);
+    return await r.json();
+  }
 
   async function load(){
     let s=url.searchParams.get('start');
@@ -182,6 +192,7 @@ __DASHBOARD_NAV_HTML__
       j(`/api/metrics/sales?${qp}`),
       j(`/api/metrics/opportunities_created?${qp}`),
     ]);
+    if (!sales || !ran || !created || !demo || !knocks || !calls || !salesPrev || !createdPrev) return;
 
     const salesDelta=Number(sales.result||0)-Number(salesPrev.result||0);
     const createdDelta=Number(created.result||0)-Number(createdPrev.result||0);

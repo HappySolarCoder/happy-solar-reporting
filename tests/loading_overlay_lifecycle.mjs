@@ -61,8 +61,10 @@ function makeElement(tag) {
     },
     querySelector(sel) {
       if (sel === "button") return this._buttons[0] || null;
-      if (sel === "#loadingRetry") return this._buttons.find((button) => button.id === "loadingRetry") || null;
-      if (sel === "#loadingBack") return this._buttons.find((button) => button.id === "loadingBack") || null;
+      if (typeof sel === "string" && sel.charAt(0) === "#") {
+        const id = sel.slice(1);
+        return this._buttons.find((button) => button.id === id) || null;
+      }
       return null;
     },
     querySelectorAll(sel) {
@@ -229,13 +231,16 @@ async function mainTest() {
   assert(!/Preview loading/.test(source), "production script has no Preview loading control");
   assert(!/previewDashboardLoading/.test(source), "production script does not start a timed preview");
   assert(!/(^|[^0-9])5000([^0-9]|$)/.test(source), "production script has no five-second timer");
+  assert(loading.REQUEST_TIMEOUT_MS === 90000, "request timeout is 90 seconds");
+  assert(source.includes('new DOMException("superseded", "AbortError")'), "aborts name a superseded reason");
+  assert(source.includes(">Change dates<"), "error card offers change dates");
 
   await wait(20);
   let lateCommitted = false;
   const latePage = loading
     .fetch(laterFetch(400, http(true, { value: 3 })), "/api/metrics/sales?format=json&late=1")
-    .then(() => {
-      lateCommitted = true;
+    .then((res) => {
+      if (res) lateCommitted = true;
     })
     .catch(() => {});
   await wait(180);
@@ -382,6 +387,7 @@ async function mainTest() {
     return loading
       .fetch(laterFetch(delay, http(true, { value: label })), "/api/metrics/company_snapshot?" + label)
       .then(async (res) => {
+        if (!res) return;
         const data = await res.json();
         if (loading.currentId !== generation) return;
         commits.push(data.value);
@@ -564,6 +570,33 @@ async function mainTest() {
   ]);
   await wait(40);
   assert(layer().hidden, "one successful section keeps the page when no metrics request is primary");
+
+  function timeoutFetch() {
+    return () => {
+      const error = new Error("The operation was aborted due to timeout");
+      error.name = "TimeoutError";
+      return Promise.reject(error);
+    };
+  }
+  loading.begin("view");
+  await Promise.allSettled([
+    loading.fetch(laterFetch(0, http(true, { result: 1 })), "/api/metrics/sales?timeout-wave=1"),
+    loading.fetch(timeoutFetch(), "/api/powerline_dashboard?timeout-wave=1"),
+  ]);
+  await wait(40);
+  const timeoutChip = document.getElementById("hsFreshness");
+  assert(layer().hidden, "a secondary timeout does not open the error card");
+  assert(!String(layer()._html).includes("couldn’t"), "a secondary timeout leaves the error card off");
+  assert(timeoutChip && timeoutChip.textContent === "This section timed out", "a secondary timeout shows inline");
+
+  loading.begin("view");
+  await loading.fetch(timeoutFetch(), "/api/metrics/company_snapshot?timeout-only=1");
+  await wait(40);
+  assert(!layer().hidden, "a primary timeout still opens the error card");
+  assert(String(layer()._html).includes("couldn’t"), "a primary timeout uses the full-screen error");
+  const changeDates = layer().querySelector("#loadingChangeDates");
+  assert(changeDates && changeDates.textContent === "Change dates", "Change dates sits on the error card");
+  layer().querySelector("#loadingBack").dispatch("click", {});
 
   if (failures) {
     console.error(failures + " assertion(s) failed");

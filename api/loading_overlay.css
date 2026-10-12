@@ -16,7 +16,9 @@
 body.loading-open .goose-open,body.loading-open .goose-panel{z-index:1;pointer-events:none}
 .dashboard-loading .loading-brand > span { color: #9ab8c9; }
 .hs-focus-target:focus,.hs-focus-target:focus-visible{outline:none!important}
-.hs-freshness{position:fixed;right:16px;bottom:16px;z-index:30;margin:0;padding:6px 10px;border:1px solid #24435a;border-radius:999px;background:#0c253bcc;color:#9ab8c9;font:11px/1.4 'DM Sans',Arial,sans-serif;pointer-events:none}
+.hs-freshness{position:fixed;right:16px;bottom:16px;z-index:12050;margin:0;padding:6px 10px;border:1px solid #24435a;border-radius:999px;background:#0c253bcc;color:#9ab8c9;font:11px/1.4 'DM Sans',Arial,sans-serif;pointer-events:none}
+.hs-freshness.is-error{color:#ffbe45;border-color:#8b784c}
+.loading-open .global-filterbar,.loading-open .oc-injected-filters,.loading-open .filters,.loading-open .filter-controls,.loading-open #filterHost,.loading-open input[type="date"],.loading-open input[type="month"],.loading-open input[type="week"]{position:relative;z-index:12000;pointer-events:auto}
 .hs-freshness[hidden]{display:none}
 @media(max-height:720px),(max-width:800px){
   .dashboard-loading{overflow:auto;align-items:flex-start;justify-content:center;overscroll-behavior:contain}

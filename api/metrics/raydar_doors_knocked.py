@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
@@ -44,6 +45,14 @@ from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
+
+_RAYDAR_CACHE = QueryCache()
 
 
 @dataclass(frozen=True)
@@ -610,13 +619,20 @@ class handler(BaseHTTPRequestHandler):
         fmt = (qs.get("format", [""])[0] or "").lower()
 
         try:
-            db = get_db()
-            payload = build_payload(db, year, month, period, start, end)
+            cache_key = f"year={year}&month={month}&period={period or ''}&start={start or ''}&end={end or ''}"
+            payload = _RAYDAR_CACHE.get(cache_key)
+            cache_hit = payload is not None
+            if payload is None:
+                db = get_db()
+                payload = build_payload(db, year, month, period, start, end)
+                end_ymd = range_end_ymd(start=start, end=end, year=year, month=month, period=period)
+                _RAYDAR_CACHE.put(cache_key, payload, ttl_seconds(end_ymd))
 
             if fmt == "json":
                 body = json.dumps(payload, indent=2).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("X-Query-Cache", "hit" if cache_hit else "miss")
                 self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")
                 self.end_headers()
                 self.wfile.write(body)

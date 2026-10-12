@@ -111,8 +111,12 @@ from zoneinfo import ZoneInfo
 from google.cloud import firestore
 
 METRICS_DIR = Path(__file__).resolve().parent
-if str(METRICS_DIR) not in sys.path:
-    sys.path.insert(0, str(METRICS_DIR))
+API_DIR = METRICS_DIR.parent
+for _path in (str(API_DIR), str(METRICS_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
 
 from funnel_test_address import (
     NAMED_FILLS_COLLECTION,
@@ -2193,6 +2197,13 @@ def compute_inbound_cac(
     )
 
 
+_INBOUND_CACHE = QueryCache()
+
+
+def _inbound_cache_key(year: int, month: int | None, start: str | None, end: str | None, tz: str) -> str:
+    return f"year={year}&month={month or ''}&start={start or ''}&end={end or ''}&tz={tz}"
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
@@ -2201,12 +2212,19 @@ class handler(BaseHTTPRequestHandler):
             year, month = parse_inbound_cac_params(qs, now)
             start, end = parse_optional_range(qs)
             tz = TIMEZONE_NAME
-            payload = compute_inbound_cac(
-                get_db(), year=year, month=month, tz=tz, now=now, start=start, end=end
-            )
+            cache_key = _inbound_cache_key(year, month, start, end, tz)
+            payload = _INBOUND_CACHE.get(cache_key)
+            cache_hit = payload is not None
+            if payload is None:
+                payload = compute_inbound_cac(
+                    get_db(), year=year, month=month, tz=tz, now=now, start=start, end=end
+                )
+                end_ymd = end or range_end_ymd(year=year, month=month, now=now)
+                _INBOUND_CACHE.put(cache_key, payload, ttl_seconds(end_ymd, now=now))
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("X-Query-Cache", "hit" if cache_hit else "miss")
             self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")
             self.end_headers()
             self.wfile.write(body)

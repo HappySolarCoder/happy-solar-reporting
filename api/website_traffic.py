@@ -39,6 +39,10 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
+from query_result_cache import QueryCache, ttl_seconds
+
+_TRAFFIC_CACHE = QueryCache()
+
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -609,8 +613,21 @@ def apply_first_paint(html: str, data: dict, start: str, end: str) -> str:
     return out
 
 
+def _traffic_cache_key(qs: dict[str, list[str]]) -> str:
+    items = []
+    for key in ("start", "end", "domain", "test_filter", "testFilter", "compare_prior", "comparePrior"):
+        value = (qs.get(key) or [""])[0]
+        if value:
+            items.append(f"{key}={value}")
+    return "&".join(sorted(items)) or "default"
+
+
 def build_payload(qs: dict[str, list[str]] | None = None, now: datetime | None = None) -> dict:
     qs = qs or {}
+    cache_key = _traffic_cache_key(qs)
+    cached = _TRAFFIC_CACHE.get(cache_key)
+    if isinstance(cached, dict):
+        return cached
     db = None
     db_connected = False
     try:
@@ -621,13 +638,16 @@ def build_payload(qs: dict[str, list[str]] | None = None, now: datetime | None =
     except Exception:
         db = None
     try:
-        return metric.payload_from_query(qs, db=db, now=now)
+        payload = metric.payload_from_query(qs, db=db, now=now)
     except AttributeError as e:
         return metric.example_degrade_payload(error=str(e), now=now)
     except Exception as e:
         if db_connected:
             return metric.example_degrade_payload(error=str(e), now=now)
         raise
+    if isinstance(payload, dict) and not payload.get("error"):
+        _TRAFFIC_CACHE.put(cache_key, payload, ttl_seconds(str(payload.get("end") or "")[:10] or None, now=now))
+    return payload
 
 
 def render_html(now: datetime | None = None, payload: dict | None = None) -> str:
@@ -1326,15 +1346,21 @@ var initialPayload = __PAYLOAD__;
     if (link) link.href = '/api/website_traffic?' + query();
   }
   async function load() {
+    try {
     var q = query();
     document.getElementById('jsonLink').href = '/api/website_traffic?' + q;
     var res = await fetch('/api/website_traffic?' + q);
+    if (!res) return;
     var data = await res.json();
     if (!res.ok) {
       document.getElementById('statusBanner').textContent = data.error || 'Failed to load Website Traffic.';
       return;
     }
     paint(data);
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) return;
+      throw err;
+    }
   }
   document.getElementById('apply').addEventListener('click', load);
   document.getElementById('testFilter').addEventListener('change', function() { paintChrome(); });
@@ -1359,6 +1385,7 @@ class handler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         want_json = (qs.get("format", [""])[0] or "").lower() == "json"
         payload = None
+        cache_hit = isinstance(_TRAFFIC_CACHE.get(_traffic_cache_key(qs)), dict)
         try:
             payload = build_payload(qs)
         except AttributeError as e:
@@ -1379,6 +1406,7 @@ class handler(BaseHTTPRequestHandler):
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("X-Query-Cache", "hit" if cache_hit else "miss")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)

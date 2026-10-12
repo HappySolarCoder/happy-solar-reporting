@@ -1,7 +1,23 @@
 {
   "functions": {
     "api/index.py": {
-      "includeFiles": "api/**"
+      "includeFiles": "api/**",
+      "maxDuration": 90
+    },
+    "api/metrics/inbound_cac.py": {
+      "maxDuration": 90
+    },
+    "api/powerline_dashboard.py": {
+      "maxDuration": 90
+    },
+    "api/metrics/raydar_doors_knocked.py": {
+      "maxDuration": 90
+    },
+    "api/metrics/kixie_calls_summary.py": {
+      "maxDuration": 90
+    },
+    "api/website_traffic.py": {
+      "maxDuration": 90
     }
   },
   "rewrites": [

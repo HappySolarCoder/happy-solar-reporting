@@ -6,3 +6,5 @@ __pycache__/
 .DS_Store
 .vercel
 .env*.local
+test-results/
+playwright-report/

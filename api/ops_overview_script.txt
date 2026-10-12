@@ -493,7 +493,7 @@
       trendUnavailable();
       return;
     }
-    if (!res.ok) {
+    if (!res || !res.ok) {
       trendUnavailable();
       return;
     }
@@ -581,7 +581,7 @@
     const bloomTask = fetch("/api/metrics/bloom_goals?oc_raw=1&period=" + encodeURIComponent(period), { hsOptional: true })
       .then(function (res) { return res && res.ok ? res.json() : null; })
       .catch(function (error) {
-        if (error && error.name === "AbortError") throw error;
+        if (error && error.name === "AbortError") return null;
         return null;
       });
     channelGoals = null;
@@ -598,7 +598,7 @@
       if (!snapshot) showUnavailable();
       return;
     }
-    if (token !== requestToken) return;
+    if (!response || token !== requestToken) return;
     if (!response.ok) {
       if (!snapshot) showUnavailable();
       return;
@@ -668,8 +668,14 @@
     return '<div class="compact-stage" style="--inset:' + (index * 4) + "%;--next:" + ((index + 1) * 4) + "%;--stage-color:" + colors[index] + '"><span>' + esc(label) + "</span><strong>" + esc(value) + "</strong><small>" + esc(detail) + "</small></div>";
   }
   async function monthRow(name, month) {
-    const response = await fetch("/api/metrics/company_snapshot?" + channelQuery(name, month).toString());
-    if (!response.ok) return { month: month.label, missing: true };
+    let response;
+    try {
+      response = await fetch("/api/metrics/company_snapshot?" + channelQuery(name, month).toString());
+    } catch (error) {
+      if (error && error.name === "AbortError") return { month: month.label, missing: true };
+      return { month: month.label, missing: true };
+    }
+    if (!response || !response.ok) return { month: month.label, missing: true };
     const payload = await response.json();
     const stats = channelsFrom(payload.data || {}).Company;
     return { month: month.label, partial: month.partial, asOf: month.asOf, created: stats.created, ran: stats.ran, demos: stats.demos, sales: stats.sales };

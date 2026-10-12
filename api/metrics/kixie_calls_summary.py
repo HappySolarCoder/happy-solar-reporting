@@ -29,13 +29,23 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from query_result_cache import QueryCache, ttl_seconds
+
+_KIXIE_CACHE = QueryCache()
 
 
 def get_db() -> firestore.Client:
@@ -128,6 +138,33 @@ class handler(BaseHTTPRequestHandler):
             start_utc = start_local.astimezone(timezone.utc)
             end_utc = end_local.astimezone(timezone.utc)
 
+            cache_key = f"start={start}&end={end}"
+            payload = _KIXIE_CACHE.get(cache_key)
+            cache_hit = payload is not None
+            if payload is None:
+                payload = _compute_kixie_summary(start, end, start_local, end_local, start_utc, end_utc, tz)
+                _KIXIE_CACHE.put(cache_key, payload, ttl_seconds(end))
+
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("X-Query-Cache", "hit" if cache_hit else "miss")
+            self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        except Exception as e:
+            body = json.dumps({"error": str(e)}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+
+def _compute_kixie_summary(start, end, start_local, end_local, start_utc, end_utc, tz):
             db = get_db()
             col = db.collection("kixie_calls")
 
@@ -241,20 +278,4 @@ class handler(BaseHTTPRequestHandler):
                 "by_agent_day": by_agent_day,
                 "debug": {"scanned_limit": 5000, "docs_streamed": scanned},
             }
-
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        except Exception as e:
-            body = json.dumps({"error": str(e)}).encode("utf-8")
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            return payload

@@ -41,6 +41,7 @@ from google.oauth2 import service_account
 from google.cloud import firestore
 
 from ghl_user_names import load_ghl_user_names
+from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 
 OWNER_NAME_OVERRIDES = {
@@ -50,6 +51,16 @@ OWNER_NAME_OVERRIDES = {
 
 def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def normalize_sales_lead_source(value: Any) -> str:
+    """Blank sources stay none. Inbound and Facebook Quick Form share one bucket."""
+    if value is None:
+        return "none"
+    norm = str(value).strip()
+    if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
+        return "none"
+    return inbound_source_label(norm) or norm
 
 
 def looks_like_identifier(value: Any) -> bool:
@@ -482,19 +493,11 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             if isinstance(attr, dict):
                 lead_src = attr.get("sessionSource") or attr.get("medium")
 
-        # Normalize buckets (treat CRM UI / Hand / blank as none)
-        if lead_src is None:
-            lead_src = "none"
-        if isinstance(lead_src, str):
-            norm = lead_src.strip()
-            if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
-                lead_src = "none"
-            else:
-                lead_src = norm
+        lead_src = normalize_sales_lead_source(lead_src)
 
-        # Optional lead source filter (normalized comparison)
+        # Optional lead source filter. Facebook Quick Form matches Inbound.
         if lead_source is not None and str(lead_source).strip() != "":
-            want = str(lead_source).strip()
+            want = normalize_sales_lead_source(lead_source)
             if str(lead_src).strip().lower() != want.lower():
                 continue
 

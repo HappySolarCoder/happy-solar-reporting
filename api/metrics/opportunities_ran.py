@@ -38,6 +38,7 @@ from google.oauth2 import service_account
 from google.cloud import firestore
 
 from ghl_user_names import load_ghl_user_names
+from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 
 OWNER_NAME_OVERRIDES = {
@@ -402,7 +403,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     lead_source_norm = None
     if lead_source is not None and str(lead_source).strip() != "":
         v = str(lead_source).strip()
-        lead_source_norm = "none" if v.lower() in {"crm ui", "hand", "", "none", "null", "n/a"} else v
+        if v.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
+            lead_source_norm = "none"
+        else:
+            lead_source_norm = inbound_source_label(v) or v
 
     user_names = user_name_lookup(db)
 
@@ -511,6 +515,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             lead = "none" if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"} else norm
         if lead is None:
             lead = "none"
+        labeled = inbound_source_label(lead)
+        if labeled:
+            lead = labeled
 
         if lead_source_norm and str(lead).strip().lower() != str(lead_source_norm).strip().lower():
             continue

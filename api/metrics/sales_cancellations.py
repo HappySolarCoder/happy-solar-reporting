@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+from lead_gen_source import inbound_source_label
 
 
 OWNER_NAME_OVERRIDES = {
@@ -136,7 +144,7 @@ def normalize_channel(v: Any) -> str:
         return "none"
     if norm.lower() == "virtual":
         return "Phones"
-    return norm
+    return inbound_source_label(norm) or norm
 
 
 def resolve_setter(contact: dict[str, Any], c: MetricContract) -> str:

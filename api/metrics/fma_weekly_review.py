@@ -20,14 +20,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+from lead_gen_source import inbound_source_label
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
@@ -178,7 +186,7 @@ def normalize_channel(value: Any) -> str:
         return "Doors"
     if low in {"3pl", "3p", "threepl"}:
         return "3PL"
-    return text
+    return inbound_source_label(text) or text
 
 
 def ymd_range_or_default(qs: dict[str, list[str]]) -> tuple[str, str]:

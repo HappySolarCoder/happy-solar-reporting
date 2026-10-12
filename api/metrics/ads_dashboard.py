@@ -4,9 +4,10 @@
 
 Days are America/Phoenix. The window is [start 00:00 Phoenix, end+1 00:00 Phoenix).
 An ad lead is a unique contact with an Inbound/Lead Locker opportunity created
-in that window whose Lead Gen Source trims to inbound. Facebook Quick Form
+in that window whose Lead Gen Source counts as Inbound. That is the word
+Inbound, or a Facebook Quick Form variant, via lead_gen_source. Quick Form
 contacts are included when INCLUDE_FB_QUICK_FORM is true. They still surface
-as their own count.
+as their own count. Lead Locker and Solar Reviews titles stay out.
 
 This module reads Meta account insights and GA4. It does not create, change,
 or remove ads or campaigns.
@@ -201,21 +202,19 @@ def lead_source(contact: dict[str, Any] | None) -> str:
 
 def is_quick_form(contact: dict[str, Any] | None, source: str | None = None) -> bool:
     folded = lead_source(contact) if source is None else source
-    if folded == FB_QUICK_FORM_SOURCE:
+    if cac.is_facebook_quick_form_source(folded):
         return True
     return any(tag in {FB_QUICK_FORM_TAG, FB_QUICK_FORM_SOURCE} for tag in tag_texts(contact))
 
 
 def is_ad_lead(contact: dict[str, Any] | None, include_quick_form: bool | None = None) -> bool:
-    """Lead Gen Source must be Inbound. Quick Form is a tag on those contacts."""
+    """Inbound, or a Facebook Quick Form variant when that switch is on."""
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
     source = lead_source(contact)
-    if source != INBOUND_SOURCE:
-        return False
     if is_quick_form(contact, source) and not include_quick_form:
         return False
-    return True
+    return cac.is_inbound_lead_source(source)
 
 
 def _in_window(moment: datetime | None, start_local: datetime, end_local: datetime) -> bool:

@@ -150,6 +150,9 @@ class SourceFilterTests(unittest.TestCase):
         self.assertFalse(metric.source_is_inbound(contact("c", "   ")))
         self.assertFalse(metric.source_is_inbound({"customFields": []}))
         self.assertFalse(metric.source_is_inbound(None))
+        self.assertTrue(metric.source_is_inbound(contact("c", "Facebook Quick Form")))
+        self.assertTrue(metric.source_is_inbound(contact("c", "FB Quick Form")))
+        self.assertFalse(metric.source_is_inbound(contact("c", "3pl/inbound")))
 
     def test_module_does_not_use_title_buckets_or_the_form_fill_row(self):
         self.assertNotIn("bucket_title(", METRIC_SRC)

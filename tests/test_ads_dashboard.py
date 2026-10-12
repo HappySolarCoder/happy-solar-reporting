@@ -357,7 +357,19 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(later["kpis"]["demos"]["value"], 0)
 
     def test_title_phone_and_near_name_dedupe(self):
-        self.assertFalse(metric.is_ad_lead(contact("qf", "Facebook Quick Form", "fb-quick-form"), True))
+        self.assertTrue(metric.is_ad_lead(contact("qf", "Facebook Quick Form", "fb-quick-form"), True))
+        self.assertTrue(metric.is_ad_lead(contact("fb", "FB Quick Form"), True))
+        self.assertFalse(metric.is_ad_lead(contact("qf", "Facebook Quick Form", "fb-quick-form"), False))
+        self.assertFalse(metric.is_ad_lead(contact("fb", "FB Quick Form"), False))
+        quick_locker = pipeline_opp("quick-locker", "quick-locked", INSIDE, "New Lead")
+        quick_locker["name"] = "Lead Locker"
+        excluded = assemble(
+            {"quick-locked": contact("quick-locked", "FB Quick Form")},
+            [quick_locker],
+            [],
+            {"stage-New Lead": "New Lead"},
+        )
+        self.assertEqual(excluded["kpis"]["inbound_leads"]["value"], 0)
         locker = pipeline_opp("locker", "locked", INSIDE, "New Lead")
         locker["name"] = "Lead Locker Jane"
         reviews = pipeline_opp("reviews", "solar", INSIDE, "New Lead")

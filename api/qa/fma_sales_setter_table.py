@@ -22,14 +22,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+_METRICS_DIR = Path(__file__).resolve().parents[1] / "metrics"
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+from lead_gen_source import inbound_source_label
 
 
 @dataclass(frozen=True)
@@ -135,7 +143,7 @@ def normalize_lead_source(v: Any) -> str:
     s = str(v).strip()
     if s.lower() in {"", "none", "null", "n/a", "crm ui", "hand"}:
         return "none"
-    return s
+    return inbound_source_label(s) or s
 
 
 def user_name(users_col: firestore.CollectionReference, cache: dict[str, str], uid: str | None) -> str:

@@ -13,7 +13,7 @@
   let bloomGoals = null;
   let bloomPending = false;
   let channelGoals = null;
-  const GOAL_INBOUND_KEYS = ["Inbound", "Facebook Quick Form"];
+  const GOAL_INBOUND_KEYS = ["Inbound", "Facebook Quick Form", "FB Quick Form"];
   const COMPANY_DEMO_PCT_TARGET = __COMPANY_DEMO_PCT_TARGET__;
 
   function esc(value) {

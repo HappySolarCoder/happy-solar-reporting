@@ -119,6 +119,12 @@ from funnel_test_address import (
     fetch_named_fills,
     fill_is_test,
 )
+from needs_rebook import (
+    is_needs_rebook_stage,
+    load_stage_history_for_opportunities,
+    reporting_stage_name,
+    stage_name_is_sit,
+)
 from lead_gen_source import is_facebook_quick_form_source, is_inbound_lead_source
 from sales import SalesMetricContract, get_db
 
@@ -247,6 +253,7 @@ class TerritoryOpp:
     created_local: datetime | None
     occurred_utc: datetime | None = None
     disposition: str | None = None
+    stage_name: str = ""
 
 
 def compact_str(value: Any) -> str:
@@ -865,6 +872,11 @@ def territory_sit_in_window(
     end_local: datetime,
     now_utc: datetime,
 ) -> bool:
+    # Needs Rebook is not a sit. Resolving it to No Show or Rescheduled does
+    # not create one, and it does not clear a Sit already stored.
+    if is_needs_rebook_stage(opp.stage_name) or stage_name_is_sit(opp.stage_name):
+        if opp.disposition != SIT_DISPOSITION:
+            return False
     if not opp.opportunity_id or opp.disposition != SIT_DISPOSITION or not opp.occurred_utc:
         return False
     if opp.occurred_utc > now_utc:
@@ -1422,6 +1434,7 @@ def territory_from_opp(opp: dict[str, Any], tzinfo, snap_id: str = "") -> Territ
         created_local=created_local,
         occurred_utc=as_occurred_dt(opp.get(APPOINTMENT_OCCURRED_AT_FIELD)),
         disposition=compact_str(opp.get(DISPOSITION_VALUE_FIELD)) or None,
+        stage_name=compact_str(opp.get("_reporting_stage")),
     )
 
 
@@ -1449,6 +1462,35 @@ def load_territory_created(
     return list(found.values())
 
 
+def _stage_name_from_opp(opp: dict[str, Any], stage_names: dict[str, str]) -> str:
+    named = compact_str(opp.get("pipelineStageName") or opp.get("stageName"))
+    if named:
+        return named
+    stage_id = compact_str(opp.get(STAGE_FIELD) or opp.get("pipelineStageUId"))
+    return stage_names.get(stage_id, "") if stage_id else ""
+
+
+def _load_pipeline_stage_names(db: firestore.Client, pipeline_ids: list[str]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    seen: set[str] = set()
+    for pipeline_id in pipeline_ids:
+        if not pipeline_id or pipeline_id in seen:
+            continue
+        seen.add(pipeline_id)
+        snap = db.collection("ghl_pipelines_v2").document(pipeline_id).get()
+        if not getattr(snap, "exists", False):
+            continue
+        data = snap.to_dict() or {}
+        for stage in data.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = compact_str(stage.get("id"))
+            stage_name = compact_str(stage.get("name"))
+            if stage_id and stage_name:
+                names[stage_id] = stage_name
+    return names
+
+
 def load_territory_sits(
     db: firestore.Client,
     start_local: datetime,
@@ -1466,10 +1508,36 @@ def load_territory_sits(
         .where(APPOINTMENT_OCCURRED_AT_FIELD, "<", end_utc)
         .stream()
     )
+    loaded = [(snap, snap.to_dict() or {}) for snap in snaps]
+    stage_names: dict[str, str] = {}
+    if any(compact_str(opp.get(STAGE_FIELD) or opp.get("pipelineStageUId")) for _snap, opp in loaded):
+        try:
+            stage_names = _load_pipeline_stage_names(
+                db, [compact_str(opp.get("pipelineId")) for _snap, opp in loaded]
+            )
+        except Exception:
+            stage_names = {}
+    prepared: list[tuple[Any, dict[str, Any], str]] = []
+    rebook_ids: list[str] = []
+    for snap, opp in loaded:
+        stage_name = _stage_name_from_opp(opp, stage_names)
+        opp_id = compact_str(opp.get("id") or snap.id)
+        if is_needs_rebook_stage(stage_name):
+            rebook_ids.append(opp_id)
+        prepared.append((snap, opp, stage_name))
+    history: dict[str, list[dict[str, Any]]] = {}
+    if rebook_ids:
+        try:
+            history = load_stage_history_for_opportunities(db, rebook_ids)
+        except Exception:
+            history = {}
     tzinfo = start_local.tzinfo
     found: dict[str, TerritoryOpp] = {}
-    for snap in snaps:
-        opp = snap.to_dict() or {}
+    for snap, opp, stage_name in prepared:
+        opp_id = compact_str(opp.get("id") or snap.id)
+        if is_needs_rebook_stage(stage_name):
+            stage_name = reporting_stage_name(stage_name, history.get(opp_id), stage_names)
+        opp["_reporting_stage"] = stage_name
         if opp.get(DISPOSITION_VALUE_FIELD) != SIT_DISPOSITION:
             continue
         parsed = territory_from_opp(opp, tzinfo, snap.id)
@@ -1493,6 +1561,7 @@ def merge_territory_opps(*groups: list[TerritoryOpp]) -> list[TerritoryOpp]:
                 created_local=opp.created_local or prev.created_local,
                 occurred_utc=opp.occurred_utc or prev.occurred_utc,
                 disposition=opp.disposition or prev.disposition,
+                stage_name=opp.stage_name or prev.stage_name,
             )
     return list(merged.values())
 

@@ -31,11 +31,24 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
+from needs_rebook import (  # noqa: E402
+    is_needs_rebook_stage,
+    keeps_sit_outcome,
+    load_stage_history_for_opportunities,
+    reporting_stage_name,
+)
 
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -165,15 +178,23 @@ def get_db() -> firestore.Client:
     return firestore.Client(project=project_id, database=database_id, credentials=creds)
 
 
-def pipeline_name_lookup(db: firestore.Client, collection: str) -> dict[str, str]:
+def pipeline_name_lookup(db: firestore.Client, collection: str) -> tuple[dict[str, str], dict[str, str]]:
     out: dict[str, str] = {}
+    stage_names: dict[str, str] = {}
     for doc in db.collection(collection).stream():
         data = doc.to_dict() or {}
         pid = compact_str(data.get("id") or doc.id)
         name = compact_str(data.get("name"))
         if pid and name:
             out[pid] = name
-    return out
+        for stage in data.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = compact_str(stage.get("id") or stage.get("uid"))
+            stage_name = compact_str(stage.get("name"))
+            if stage_id and stage_name:
+                stage_names[stage_id] = stage_name
+    return out, stage_names
 
 
 def finalize_breakdown(store: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -209,7 +230,7 @@ def build_payload(
     else:
         start_local, end_local, window_start, window_end = month_window(year, month, contract.timezone)
 
-    pipe_names = pipeline_name_lookup(db, contract.pipeline_collection)
+    pipe_names, stage_names = pipeline_name_lookup(db, contract.pipeline_collection)
     pipeline_scope_norm = compact_str(pipeline_scope or "core").lower()
     included = {name.lower() for name in contract.included_pipeline_names}
     excluded = {name.lower() for name in contract.excluded_pipeline_names}
@@ -228,6 +249,7 @@ def build_payload(
     demoed_total = 0
     breakdown_store: dict[str, dict[str, Any]] = {}
     sample_rows: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
 
     for doc in db.collection(contract.opp_collection).stream():
         scanned += 1
@@ -260,7 +282,32 @@ def build_payload(
         with_manager += 1
 
         disposition = normalize_disposition(opp.get(contract.disposition_value_field))
-        demoed = disposition == "Sit"
+        stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+        stage_name = stage_names.get(stage_id, "")
+        opp_id = compact_str(opp.get("id") or doc.id)
+        if is_needs_rebook_stage(stage_name):
+            deferred.append(
+                {
+                    "manager": manager,
+                    "disposition": disposition,
+                    "stage_name": stage_name,
+                    "opportunity_id": opp_id,
+                    "created_at": opp.get(contract.created_at_field),
+                    "pipeline": pipeline_name,
+                    "contact_name": compact_str(
+                        (opp.get("contact") or {}).get("name")
+                        or contact.get("contactName")
+                        or " ".join(
+                            part
+                            for part in [compact_str(contact.get("firstName")), compact_str(contact.get("lastName"))]
+                            if part
+                        )
+                    ),
+                }
+            )
+            continue
+
+        demoed = keeps_sit_outcome(disposition, stage_name)
         if demoed:
             demoed_total += 1
 
@@ -284,6 +331,33 @@ def build_payload(
                     ),
                 }
             )
+
+    if deferred:
+        history_by_opp = load_stage_history_for_opportunities(
+            db, [item["opportunity_id"] for item in deferred]
+        )
+        for item in deferred:
+            history_rows = history_by_opp.get(item["opportunity_id"], [])
+            resolved = reporting_stage_name(item["stage_name"], history_rows)
+            demoed = keeps_sit_outcome(item["disposition"], resolved, history_rows)
+            if demoed:
+                demoed_total += 1
+            bucket = breakdown_store.setdefault(item["manager"], {"created": 0, "demoed": 0})
+            bucket["created"] += 1
+            if demoed:
+                bucket["demoed"] += 1
+            if len(sample_rows) < 500:
+                sample_rows.append(
+                    {
+                        "opportunityId": item["opportunity_id"],
+                        "createdAt": item["created_at"],
+                        "pipeline": item["pipeline"],
+                        "schedulingManager": item["manager"],
+                        "disposition": item["disposition"] or "—",
+                        "contactName": item["contact_name"],
+                        "stage": resolved,
+                    }
+                )
 
     rows = finalize_breakdown(breakdown_store)
     total_demo_pct = round((demoed_total / with_manager) * 100, 1) if with_manager else 0.0

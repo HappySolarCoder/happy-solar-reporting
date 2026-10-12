@@ -11,9 +11,17 @@ opportunity after the same appointment was dispositioned on another one.
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
+
+_METRICS_DIR = Path(__file__).resolve().parent / "metrics"
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
+from needs_rebook import is_needs_rebook_stage  # noqa: E402
 
 # Territory pipelines plus the duplicate pipelines a dispositioned appointment
 # is moved into. Lead-locker stages are not appointment dispositions.
@@ -68,6 +76,8 @@ def normalize_pipeline_name(value: Any) -> str:
 
 
 def is_new_appointment_stage(stage_name: Any) -> bool:
+    if is_needs_rebook_stage(stage_name):
+        return False
     return normalize_stage_name(stage_name) == "new appointment"
 
 

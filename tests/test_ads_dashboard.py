@@ -600,6 +600,8 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertTrue(metric.stage_is_demo("Demo-Not Interested"))
         self.assertFalse(metric.stage_is_demo("Sale Cancelled"))
         self.assertFalse(metric.stage_is_demo("Reschedule Needed"))
+        self.assertFalse(metric.stage_is_demo("Needs Rebook"))
+        self.assertFalse(metric.stage_is_demo("needs-rebook"))
 
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]

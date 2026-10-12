@@ -128,32 +128,33 @@ def is_sweep_stage(value: Any) -> bool:
 
 
 def is_demo_stage(value: Any) -> bool:
-    """A Demo-* stage or Sold is a demo. One Legger is not. Sale cancelled is not."""
+    """A Demo-* stage, Sold, or Sale Cancelled is a demo. One Legger is not."""
     return stage_is_demo(value)
 
 
 def sit_earns_demo_credit(history: list[dict] | None, stage_name: Any = "") -> bool:
-    """True when this sit reached a Demo-* or Sold stage.
+    """True when the stage itself is a demo. Outcome Sit never earns credit.
 
-    One Legger alone does not. A sit with no stage name and no history
-    still counts, so an unclassified sit is not dropped.
+    A Demo-* stage earns credit. Sold or Sale Cancelled earns credit when
+    this opportunity has no Demo-* stage; with an earlier Demo-* the credit
+    comes from that stage, and the later Sold or Sale Cancelled attaches to
+    it. DQ'ed, Rescheduled, Sweeper Not Interested, One Legger, and a blank
+    stage do not earn credit, even when Appointment Outcome is Sit.
     """
-    saw_demo = is_demo_stage(stage_name)
-    saw_one_legger = stage_is_one_legger(stage_name)
+    saw_demo_star = stage_is_demo_star(stage_name)
+    saw_implied = _implied_demo_stage(stage_name)
     for row in history or []:
         if not isinstance(row, dict):
             continue
         for key in ("toStageName", "fromStageName"):
             label = row.get(key)
-            if is_demo_stage(label):
-                saw_demo = True
-            if stage_is_one_legger(label):
-                saw_one_legger = True
-    if saw_demo:
+            if stage_is_demo_star(label):
+                saw_demo_star = True
+            elif _implied_demo_stage(label):
+                saw_implied = True
+    if saw_demo_star:
         return True
-    if saw_one_legger:
-        return False
-    return True
+    return saw_implied
 
 
 def names_match(setter: Any, sweeper: Any) -> bool:

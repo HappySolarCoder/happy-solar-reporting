@@ -253,6 +253,7 @@ def _flagged_records(day: date, *, sweeper: str | None, lead: str = "Doors"):
         "dispositionValue": "Sit",
         "appointmentOccurredAt": _sit_stamp(day),
         "dispositionDate": _sit_stamp(day),
+        "pipelineStageName": "Demo-Negotiating",
         "createdAt": _sit_stamp(day).isoformat().replace("+00:00", "Z"),
         "customFields": [
             {"id": "Eq4NLTSkJ56KTxbxypuE", "value": "Hill"},

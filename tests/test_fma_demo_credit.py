@@ -21,6 +21,7 @@ from fma_demo_credit import (  # noqa: E402
     map_dispo_appointments,
     names_match,
     select_fma_demos,
+    sit_earns_demo_credit,
 )
 
 T_DEMO = datetime(2026, 9, 4, 20, 20, tzinfo=timezone.utc)
@@ -51,7 +52,15 @@ def _one(**kwargs):
 
 class DemoStageTests(unittest.TestCase):
     def test_demo_stages_are_demo_star_or_sold(self):
-        for name in ("Demo-Negotiating", "Demo - Not Interested", "DEMO NO SALE", "Sold", "Sold Pending"):
+        for name in (
+            "Demo-Negotiating",
+            "Demo - Not Interested",
+            "DEMO NO SALE",
+            "Sold",
+            "Sold Pending",
+            "Sale Cancelled",
+            "Sale Canceled",
+        ):
             self.assertTrue(is_demo_stage(name), name)
         for name in (
             "One Legger",
@@ -59,8 +68,8 @@ class DemoStageTests(unittest.TestCase):
             "New Appointment",
             "No Show",
             "Rescheduled",
-            "Sale Cancelled",
-            "Sale Canceled",
+            "DQ'ed",
+            "Sweeper Not Interested",
             "Negotiating",
             "",
         ):
@@ -897,23 +906,95 @@ class CreditTests(unittest.TestCase):
         demos = select_fma_demos([candidate])
         self.assertEqual(len(demos), 1)
         self.assertEqual(demos[0].counted_at, appointment)
-        self.assertFalse(is_demo_stage("Sale Cancelled"))
+        self.assertTrue(is_demo_stage("Sale Cancelled"))
+        self.assertTrue(is_demo_stage("Sale Canceled"))
 
-    def test_unclassified_sit_still_counts(self):
-        candidate = make_demo_candidate(
-            {"dispositionDate": T_DEMO, "appointmentStartTime": T_APPT, "dispositionValue": "Sit"},
+    def test_sale_cancelled_after_demo_negotiating_stays_on_the_first_appointment(self):
+        """Sale Cancelled after a Demo-* attaches to that demo and does not add another."""
+        appointment_1 = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+        demo = datetime(2026, 10, 1, 18, 0, tzinfo=timezone.utc)
+        sweep = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+        cancelled_appointment = datetime(2026, 10, 8, 15, 0, tzinfo=timezone.utc)
+        cancelled = datetime(2026, 10, 8, 18, 0, tzinfo=timezone.utc)
+        first = make_demo_candidate(
+            {"dispositionDate": demo, "dispositionValue": "Sit", "appointmentStartTime": appointment_1},
             contact_id="c",
-            opportunity_id="unclassified",
+            opportunity_id="demo",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[
+                {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": demo, "lastStageChangeAt": demo},
+                {"pipelineName": "Sweeper", "toStageName": "Reset", "effectiveAt": sweep, "lastStageChangeAt": sweep},
+            ],
+            appointment_rows=[
+                {"eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+                {"eventId": "appt-cancelled", "startTime": cancelled_appointment, "contactId": "c"},
+            ],
+        )
+        later = make_demo_candidate(
+            {"dispositionDate": cancelled, "dispositionValue": "Sit", "appointmentStartTime": cancelled_appointment},
+            contact_id="c",
+            opportunity_id="cancelled",
+            setter="Hill",
+            sweeper="Hill",
+            pipeline_name="Buffalo",
+            stage_name="Sale Cancelled",
+            history=[
+                {
+                    "pipelineName": "Buffalo",
+                    "toStageName": "Sale Cancelled",
+                    "effectiveAt": cancelled,
+                    "lastStageChangeAt": cancelled,
+                }
+            ],
+            appointment_rows=[
+                {"eventId": "appt-1", "startTime": appointment_1, "contactId": "c"},
+                {"eventId": "appt-cancelled", "startTime": cancelled_appointment, "contactId": "c"},
+            ],
+        )
+        demos = select_fma_demos([first, later])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].opportunity_id, "demo")
+        self.assertEqual(demos[0].counted_at, appointment_1)
+        self.assertNotEqual(demos[0].counted_at, cancelled_appointment)
+
+    def test_outcome_sit_on_a_non_demo_stage_earns_no_credit(self):
+        """Appointment Outcome Sit is a cross-check. The stage is what earns credit."""
+        for stage in ("", "DQ'ed", "Rescheduled", "Sweeper Not Interested", "One Legger", "New Appointment"):
+            history = [{"pipelineName": "Buffalo", "toStageName": stage, "effectiveAt": T_DEMO}] if stage else []
+            self.assertFalse(
+                sit_earns_demo_credit(history, stage),
+                stage or "blank",
+            )
+            candidate = make_demo_candidate(
+                {"dispositionDate": T_DEMO, "appointmentStartTime": T_APPT, "dispositionValue": "Sit"},
+                contact_id="c",
+                opportunity_id=f"non-demo-{stage or 'blank'}",
+                setter="Hill",
+                sweeper="",
+                pipeline_name="Buffalo",
+                stage_name=stage,
+                history=history,
+            )
+            self.assertIsNone(candidate, stage or "blank")
+            self.assertEqual(select_fma_demos([candidate] if candidate else []), [])
+
+        demo_history = [{"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": T_DEMO}]
+        self.assertTrue(sit_earns_demo_credit(demo_history, "DQ'ed"))
+        kept = make_demo_candidate(
+            {"dispositionDate": T_DEMO, "appointmentStartTime": T_APPT, "dispositionValue": "Sit"},
+            contact_id="kept",
+            opportunity_id="dq-after-demo",
             setter="Hill",
             sweeper="",
             pipeline_name="Buffalo",
-            stage_name="",
-            history=[],
+            stage_name="DQ'ed",
+            history=demo_history,
         )
-        self.assertIsNotNone(candidate)
-        demos = select_fma_demos([candidate])
-        self.assertEqual(len(demos), 1)
-        self.assertEqual(demos[0].last_name, "Hill")
+        self.assertIsNotNone(kept)
+        self.assertEqual(len(select_fma_demos([kept])), 1)
 
 
 if __name__ == "__main__":

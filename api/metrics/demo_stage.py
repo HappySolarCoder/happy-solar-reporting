@@ -2,9 +2,11 @@
 
 """Shared demo-stage check.
 
-A Demo-* stage or Sold is a demo. Sold implies a demo. One Legger
-(only one spouse present) is not a demo and gets no demo credit.
-Sale cancelled is not a demo.
+A Demo-* stage, Sold, or Sale Cancelled is a demo. Sold and Sale
+Cancelled imply a demo. Sale Cancelled counts exactly like Sold: it is
+a demo only when the contact has no earlier Demo-* stage, and otherwise
+it attaches to that earlier demo. One Legger (only one spouse present)
+is not a demo and gets no demo credit.
 """
 
 from __future__ import annotations
@@ -35,10 +37,19 @@ def stage_is_sale_cancelled(stage_name: Any) -> bool:
 
 
 def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage or Sold is a demo. One Legger is not. Sale cancelled is not."""
+    """A Demo-* stage, Sold, or Sale Cancelled is a demo. One Legger is not.
+
+    Sale Cancelled matches Sold. The contact-level rule — count it only
+    when there is no earlier Demo-* stage, otherwise attach it to that
+    demo — lives with the FMA helper that sees the whole contact.
+    """
     if not fold_stage(stage_name):
         return False
-    return stage_is_sold(stage_name) or stage_is_demo_star(stage_name)
+    return (
+        stage_is_sold(stage_name)
+        or stage_is_sale_cancelled(stage_name)
+        or stage_is_demo_star(stage_name)
+    )
 
 
 def stage_is_one_legger(stage_name: Any) -> bool:

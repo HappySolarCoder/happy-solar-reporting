@@ -220,6 +220,8 @@ class CloserAttributionTests(unittest.TestCase):
             "dispositionDate": occurred,
             "customFields": [{"id": "Eq4NLTSkJ56KTxbxypuE", "value": setter}],
         }
+        if dispo == "Sit":
+            opp["pipelineStageName"] = "Demo-Negotiating"
         if assigned is not None:
             opp["assignedTo"] = assigned
         if name is not None:

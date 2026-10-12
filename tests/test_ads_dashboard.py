@@ -598,8 +598,49 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(payload["kpis"]["demos"]["value"], 1)
         self.assertFalse(metric.stage_is_demo("One Legger"))
         self.assertTrue(metric.stage_is_demo("Demo-Not Interested"))
-        self.assertFalse(metric.stage_is_demo("Sale Cancelled"))
+        self.assertTrue(metric.stage_is_demo("Sale Cancelled"))
+        self.assertTrue(metric.stage_is_demo("Sale Canceled"))
         self.assertFalse(metric.stage_is_demo("Reschedule Needed"))
+
+    def test_sale_cancelled_stage_counts_as_a_demo(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        cancelled = city_opp("cancelled", "c", INSIDE, "No Sit")
+        cancelled["pipelineStageId"] = "stage-cancelled"
+        names = {"stage-New Lead": "New Lead", "stage-cancelled": "Sale Cancelled"}
+        payload = assemble(contacts, pipeline, [cancelled], names)
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+
+        attached = city_opp("attached", "c2", INSIDE, "No Sit")
+        attached["pipelineStageId"] = "stage-cancelled"
+        contacts["c2"] = contact("c2", "inbound")
+        pipeline.append(pipeline_opp("lead-2", "c2", INSIDE, "New Lead"))
+        with_demo = assemble(
+            contacts,
+            pipeline,
+            [cancelled, attached],
+            names,
+            history={
+                "attached": [
+                    {
+                        "opportunityId": "attached",
+                        "contactId": "c2",
+                        "pipelineName": "Rochester",
+                        "toStageName": "Demo-Negotiating",
+                        "effectiveAt": "2026-10-08T17:00:00.000Z",
+                    },
+                    {
+                        "opportunityId": "attached",
+                        "contactId": "c2",
+                        "pipelineName": "Rochester",
+                        "toStageName": "Sale Cancelled",
+                        "effectiveAt": "2026-10-09T17:00:00.000Z",
+                    },
+                ]
+            },
+        )
+        self.assertEqual(with_demo["kpis"]["demos"]["value"], 2)
 
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]

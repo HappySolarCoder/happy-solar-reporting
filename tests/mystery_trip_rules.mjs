@@ -209,6 +209,93 @@ function feed(over = {}) {
   assert.equal(MT.shortDate("2026-10-24"), "Oct 24");
 }
 
+// Manager exclusion list: exact name and a hyphenated surname form come off both boards.
+// A similarly named different person stays, and everyone else is unchanged.
+{
+  const excluded = ["April Cornell"];
+  assert.equal(MT.isExcludedTraveler("April Cornell", excluded), true);
+  assert.equal(MT.isExcludedTraveler("  APRIL   Cornell ", excluded), true);
+  assert.equal(MT.isExcludedTraveler("April Cornell-DeAngelis", excluded), true);
+  assert.equal(MT.isExcludedTraveler("April Cornell - DeAngelis", excluded), true);
+  assert.equal(MT.isExcludedTraveler("April Cornellson", excluded), false);
+  assert.equal(MT.isExcludedTraveler("April Cornell Smith", excluded), false);
+  assert.equal(MT.isExcludedTraveler("Bob Cornell", excluded), false);
+  // Listing the hyphenated form also removes the short name.
+  assert.equal(MT.isExcludedTraveler("April Cornell", ["April Cornell-DeAngelis"]), true);
+
+  const closerFeeds = {
+    "2026-10": feed({
+      salesByOwner: { "April Cornell-DeAngelis": 1, "Allen Frazier": 3 },
+      cancelByOwner: [
+        { label: "April Cornell-DeAngelis", sold_date_total: 1, cancelled: 0 },
+        { label: "Allen Frazier", sold_date_total: 3, cancelled: 0 },
+        { label: "April Cornellson", sold_date_total: 2, cancelled: 0 },
+      ],
+      goals: goals([
+        ["April Cornell", "closer", "sales", 1],
+        ["Allen Frazier", "closer", "sales", 7],
+        ["April Cornellson", "closer", "sales", 4],
+      ]),
+    }),
+  };
+  const closerInput = { today: "2026-10-12", feeds: closerFeeds, credits: [] };
+  const closersAll = MT.buildClosers({ ...closerInput, excluded: [] });
+  const closers = MT.buildClosers({ ...closerInput, excluded });
+  assert.deepEqual(closersAll.map((p) => p.name).sort(), [
+    "Allen Frazier",
+    "April Cornell",
+    "April Cornell-DeAngelis",
+    "April Cornellson",
+  ]);
+  assert.deepEqual(closers.map((p) => p.name).sort(), ["Allen Frazier", "April Cornellson"]);
+  assert.deepEqual(
+    closers.find((p) => p.name === "Allen Frazier"),
+    closersAll.find((p) => p.name === "Allen Frazier"),
+  );
+  assert.deepEqual(
+    closers.find((p) => p.name === "April Cornellson"),
+    closersAll.find((p) => p.name === "April Cornellson"),
+  );
+
+  const roster = [
+    { name: "April Cornell", setterLastName: "Cornell" },
+    { name: "April Cornell-DeAngelis", setterLastName: "DeAngelis" },
+    { name: "April Cornellson", setterLastName: "Cornellson" },
+    { name: "Bo Hill", setterLastName: "Hill" },
+  ];
+  const fmaFeeds = { "2026-10": feed({ steakDemos: { Cornell: 4, DeAngelis: 5, Cornellson: 6, Hill: 7 } }) };
+  const fmaInput = { today: "2026-10-12", roster, feeds: fmaFeeds, credits: [] };
+  const fmaAll = MT.buildFma({ ...fmaInput, excluded: [] });
+  const fma = MT.buildFma({ ...fmaInput, excluded });
+  assert.deepEqual(fmaAll.map((p) => p.name), [
+    "April Cornell",
+    "April Cornell-DeAngelis",
+    "April Cornellson",
+    "Bo Hill",
+  ]);
+  assert.deepEqual(fma.map((p) => p.name), ["April Cornellson", "Bo Hill"]);
+  assert.deepEqual(
+    fma.find((p) => p.name === "Bo Hill"),
+    fmaAll.find((p) => p.name === "Bo Hill"),
+  );
+  assert.deepEqual(
+    fma.find((p) => p.name === "April Cornellson"),
+    fmaAll.find((p) => p.name === "April Cornellson"),
+  );
+
+  const board = fma.concat(closers);
+  assert.equal(MT.findTraveler(board, "April Cornell"), null);
+  assert.equal(MT.findTraveler(board, "April Cornell-DeAngelis"), null);
+  assert.equal(MT.findTraveler(fma, "April Cornell"), null);
+  assert.equal(MT.findTraveler(fma, "April Cornell-DeAngelis"), null);
+  assert.equal(MT.findTraveler(closers, "April Cornell"), null);
+  assert.equal(MT.findTraveler(closers, "April Cornell-DeAngelis"), null);
+  assert.equal(MT.findTraveler(fma, "April Cornellson").name, "April Cornellson");
+  assert.equal(MT.findTraveler(closers, "April Cornellson").name, "April Cornellson");
+  assert.equal(MT.findTraveler(fma, "Bo Hill").name, "Bo Hill");
+  assert.equal(MT.findTraveler(closers, "Allen Frazier").name, "Allen Frazier");
+}
+
 console.log("mystery trip rules ok");
 
 // Bloom role gate: FMA path keeps role fma, Closers path keeps role closer (Solar Consultant).

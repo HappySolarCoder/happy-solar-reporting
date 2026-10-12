@@ -8,6 +8,10 @@
  * - /api/metrics/sales_cancellations tables.by_owner (cancelled / sold in the month)
  * - /api/metrics/bloom_goals       person_goals (monthly demo and sales goals set in Bloom)
  * - /api/metrics/fma_weekly_review people (the FMA roster and each FMA's setter last name)
+ *
+ * input.excluded is the manager list from EXCLUDED_TRAVELERS. A listed name is
+ * left off both boards. The exact name matches, and so does a hyphenated
+ * surname form of that name. Nobody else is removed.
  */
 var MysteryTrip = (function () {
   var CONTEST = { start: "2026-10-01", end: "2026-12-23", label: "Oct 1 – Dec 23" };
@@ -68,6 +72,54 @@ var MysteryTrip = (function () {
     var x = normName(a);
     if (!x) return false;
     return x === normName(b) || givenVariant(a, b);
+  }
+
+  /** Like normName, but a hyphen stays so a surname suffix can be told from a separate word. */
+  function normKeepingHyphen(value) {
+    return String(value == null ? "" : value)
+      .trim()
+      .toLowerCase()
+      .replace(/['’]/g, "")
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/[^a-z0-9\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /**
+   * fullName is baseName with a hyphenated surname suffix.
+   * "April Cornell-DeAngelis" is a form of "April Cornell".
+   * "April Cornell Smith" and "April Cornellson" are not.
+   */
+  function hyphenatedSurnameOf(baseName, fullName) {
+    var base = normName(baseName);
+    var full = normName(fullName);
+    if (!base || !full || full === base || full.indexOf(base + " ") !== 0) return false;
+    var marked = normKeepingHyphen(fullName);
+    return marked.indexOf(base + "-") === 0 || marked.indexOf(base + " -") === 0;
+  }
+
+  function nameMatchesExclusion(listed, candidate) {
+    var listedName = normName(listed);
+    var candidateName = normName(candidate);
+    if (!listedName || !candidateName) return false;
+    if (listedName === candidateName) return true;
+    return hyphenatedSurnameOf(listed, candidate) || hyphenatedSurnameOf(candidate, listed);
+  }
+
+  /** True when name is on the manager exclusion list, including a hyphenated surname form. */
+  function isExcludedTraveler(name, excluded) {
+    var list = Array.isArray(excluded) ? excluded : [];
+    for (var i = 0; i < list.length; i += 1) {
+      if (nameMatchesExclusion(list[i], name)) return true;
+    }
+    return false;
+  }
+
+  function withoutExcluded(people, excluded) {
+    return (people || []).filter(function (person) {
+      return person && !isExcludedTraveler(person.name, excluded);
+    });
   }
 
   /** Value for one full name from a {name: count} map. Exact name first, then a unique given-name variant. */
@@ -212,7 +264,7 @@ var MysteryTrip = (function () {
 
   /**
    * FMA path. Steak Dinner month = demos credited by the deadline reach the stipend requirement.
-   * input: { today, roster: [{name, setterLastName}], feeds: {monthId: {steakDemos, salesBySetter, goals}}, credits }
+   * input: { today, roster: [{name, setterLastName}], feeds: {monthId: {steakDemos, salesBySetter, goals}}, credits, excluded }
    */
   function buildFma(input) {
     var today = input.today;
@@ -228,7 +280,7 @@ var MysteryTrip = (function () {
       var key = normName(row.setterLastName || lastKey(row.name)).replace(/ /g, "");
       lastCounts[key] = (lastCounts[key] || 0) + 1;
     });
-    return roster.map(function (row) {
+    return withoutExcluded(roster.map(function (row) {
       var last = row.setterLastName || lastKey(row.name);
       var shared = lastCounts[normName(last).replace(/ /g, "")] > 1;
       var totalSales = 0;
@@ -267,13 +319,13 @@ var MysteryTrip = (function () {
       if (totalSales >= FMA_PLUS_ONE_SALES) person.plusOne = person.trip === "earned" ? "earned" : over ? "missed" : "needs-trip";
       else person.plusOne = over ? "missed" : "in-reach";
       return person;
-    });
+    }), input.excluded);
   }
 
   /**
    * Closer path. Goal month = sales in the month reach that closer's Bloom monthly sales goal.
    * Plus one = every month's cancellation rate stays under 30%.
-   * input: { today, feeds: {monthId: {salesByOwner, cancelByOwner, goals}}, credits }
+   * input: { today, feeds: {monthId: {salesByOwner, cancelByOwner, goals}}, credits, excluded }
    */
   function buildClosers(input) {
     var today = input.today;
@@ -288,7 +340,7 @@ var MysteryTrip = (function () {
         if (!names.some(function (name) { return samePerson(name, clean); })) names.push(clean);
       });
     });
-    return names.map(function (name) {
+    return withoutExcluded(names.map(function (name) {
       var cancelOk = true;
       var cancelFinalMiss = false;
       var months = MONTHS.map(function (month) {
@@ -335,7 +387,7 @@ var MysteryTrip = (function () {
       else if (over) person.plusOne = person.trip === "earned" ? "earned" : "needs-trip";
       else person.plusOne = "in-reach";
       return person;
-    });
+    }), input.excluded);
   }
 
   function currentMonth(person) {
@@ -396,6 +448,7 @@ var MysteryTrip = (function () {
     shortDate: shortDate,
     buildFma: buildFma,
     buildClosers: buildClosers,
+    isExcludedTraveler: isExcludedTraveler,
     bloomRoleFor: bloomRoleFor,
     keepBloomRole: keepBloomRole,
     sortBoard: sortBoard,

@@ -73,7 +73,7 @@ class MysteryTripTests(unittest.TestCase):
 
     def test_page_renders_with_logic_and_no_placeholders(self):
         html = trip.render_page()
-        for marker in ("__DASHBOARD_NAV_CSS__", "__DASHBOARD_NAV_HTML__", "__LOGIC_JS__", "__CREDITS_JSON__", "__PLANE__", "__PALM_LEFT__"):
+        for marker in ("__DASHBOARD_NAV_CSS__", "__DASHBOARD_NAV_HTML__", "__LOGIC_JS__", "__CREDITS_JSON__", "__EXCLUDED_JSON__", "__PLANE__", "__PALM_LEFT__"):
             self.assertNotIn(marker, html)
         self.assertIn("var MysteryTrip", html)
         self.assertIn("<h1 class=\"mt-title\" id=\"mtTitle\">Mystery Trip</h1>", html)
@@ -130,6 +130,23 @@ class MysteryTripTests(unittest.TestCase):
         finally:
             trip.RECRUIT_CREDITS = original
         self.assertNotIn("</script><b>x", html)
+
+    def test_excluded_travelers_are_embedded_for_both_boards(self):
+        self.assertEqual(trip.excluded_payload(), ["April Cornell"])
+        html = trip.render_page()
+        self.assertIn('var EXCLUDED = ["April Cornell"];', html)
+        self.assertEqual(html.count("excluded: EXCLUDED"), 2)
+        self.assertIn("isExcludedTraveler", html)
+
+    def test_excluded_payload_skips_blank_and_duplicate_names(self):
+        original = trip.EXCLUDED_TRAVELERS
+        try:
+            trip.EXCLUDED_TRAVELERS = ("April Cornell", "  ", "", "april cornell", "Bo Hill")
+            rows = trip.excluded_payload()
+        finally:
+            trip.EXCLUDED_TRAVELERS = original
+        self.assertEqual(rows, ["April Cornell", "Bo Hill"])
+        self.assertEqual(trip.excluded_payload(), ["April Cornell"])
 
 
 if __name__ == "__main__":

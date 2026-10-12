@@ -247,3 +247,5 @@ body.oc-root .delta.down { color: #ff99a5; }
 body.oc-root .delta.up { color: #8ef0c8; }
 body.oc-root .trendlabel { color: #d5e3ec; }
 body.oc-root .hbar-label { color: #d5e3ec !important; } body.oc-root .hbar-val { color: #91abc0 !important; }
+
+.oc-page .date-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.oc-page .date-preset{font-size:10px;padding:5px 10px;background:#0c3045;border:1px solid #36657a;color:#cfe6f2;border-radius:6px}.oc-page .date-preset.active{background:#123e52;border-color:#26d9eb;color:#26d9eb}

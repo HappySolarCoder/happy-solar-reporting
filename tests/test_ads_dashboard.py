@@ -492,6 +492,51 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(payload["kpis"]["demos"]["value"], 0)
         self.assertEqual(metric._first_history_time(history["gone"]).isoformat(), "2026-10-08T16:00:00+00:00")
 
+    def test_deleted_opp_within_ten_minutes_of_another_is_ignored(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        live = city_opp("live", "c", INSIDE, "No Sit")
+        names = {"stage-New Lead": "New Lead", "stage-reschedule": "Reschedule Needed"}
+
+        def history_only(opp_id: str, effective_at: str) -> dict:
+            return {
+                opp_id: [
+                    {
+                        "opportunityId": opp_id,
+                        "contactId": "c",
+                        "pipelineName": "Buffalo",
+                        "toStageName": "New Appointment",
+                        "effectiveAt": effective_at,
+                    }
+                ]
+            }
+
+        near = assemble(
+            contacts,
+            pipeline,
+            [live],
+            names,
+            history=history_only("dup", "2026-10-08T18:05:00.000Z"),
+        )
+        self.assertEqual(near["kpis"]["opps"]["value"], 1)
+        self.assertEqual(near["kpis"]["demos"]["value"], 0)
+        apart = assemble(
+            contacts,
+            pipeline,
+            [live],
+            names,
+            history=history_only("kept", "2026-10-08T18:20:00.000Z"),
+        )
+        self.assertEqual(apart["kpis"]["opps"]["value"], 2)
+        lead_only = assemble(
+            contacts,
+            pipeline,
+            [],
+            names,
+            history=history_only("dup-of-lead", "2026-10-08T18:05:00.000Z"),
+        )
+        self.assertEqual(lead_only["kpis"]["opps"]["value"], 0)
+
     def test_sweeper_opp_keeps_a_prior_demo_stage(self):
         contacts = {"c": contact("c", "inbound")}
         pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]

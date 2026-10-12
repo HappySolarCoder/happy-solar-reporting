@@ -54,6 +54,7 @@ SWEEPER_PIPELINE_ID = "0VNxqmhbk7FDO64j2pKu"
 REHASH_PIPELINE_ID = "vQ63K9v80I6SLIUZ0MPJ"
 TERRITORY_PIPELINE_NAMES = frozenset({"buffalo", "rochester", "syracuse", "virtual"})
 NEAR_NAME_WINDOW = timedelta(minutes=10)
+DELETED_OPP_WINDOW = timedelta(minutes=10)
 CONTACT_COLLECTION = "ghl_contacts_v2"
 PIPELINE_COLLECTION = "ghl_pipelines_v2"
 GOALS_COLLECTION = "goals_monthly_v1"
@@ -632,6 +633,16 @@ def classify_window(
         if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
             demo_ids.add(opp_id)
 
+    other_created: dict[str, list[datetime]] = {}
+    for opp in list(contact_opps) + list(pipeline_opps):
+        contact_id = _contact_id(opp)
+        if contact_id not in member_ids:
+            continue
+        created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
+        if created is not None:
+            other_created.setdefault(contact_id, []).append(created)
+
+    deleted_candidates: list[tuple[datetime, str, str, list[dict[str, Any]]]] = []
     for opp_id, history_rows in history.items():
         if not opp_id or opp_id in seen_city:
             continue
@@ -643,6 +654,12 @@ def classify_window(
         created = _first_history_time(history_rows)
         if not _in_window(created, start_local, end_local):
             continue
+        deleted_candidates.append((created, opp_id, contact_id, history_rows))
+    deleted_candidates.sort(key=lambda item: (item[0], item[1]))
+    for created, opp_id, contact_id, history_rows in deleted_candidates:
+        if any(_within(created, other, DELETED_OPP_WINDOW) for other in other_created.get(contact_id, [])):
+            continue
+        other_created.setdefault(contact_id, []).append(created)
         opp_ids.add(opp_id)
         if _history_has_city_demo(history_rows, stage_names):
             demo_ids.add(opp_id)

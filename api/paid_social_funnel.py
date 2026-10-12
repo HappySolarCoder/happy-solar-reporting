@@ -23,7 +23,7 @@ for path in (str(API_DIR), str(METRICS_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from dashboard_nav import embed_section_row_css, render_embed_section_row  # noqa: E402
+from dashboard_nav import date_preset_links_html, embed_section_row_css, render_embed_section_row  # noqa: E402
 from growth_command import (  # noqa: E402
     CPL_TARGET,
     DEMO_COST_TARGET,
@@ -278,6 +278,7 @@ def _header(model: dict, badge: str) -> str:
         </details>
         <a class="mode-link" href="{_esc(_href(model, source="live" if model.get("is_demo") else "demo"))}">{'Live data' if model.get('is_demo') else 'Open the Sample fixture'}</a>
       </div>
+      {date_preset_links_html(lambda a, b: _href(model, preset="custom", start=a, end=b), model.get("range_start", ""), model.get("range_end", ""))}
     </header>
     """
 
@@ -657,6 +658,11 @@ h3 { margin:16px 0 8px; font-size:13px; line-height:19px; }
 .mode-link, .text-btn { text-decoration:none; color:var(--secondary); display:inline-flex; align-items:center; }
 .date-panel { position:absolute; right:0; z-index:5; margin-top:8px; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px; min-width:240px; }
 .date-menu { position:relative; }
+.date-presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; width:100%; }
+.date-preset { font-size:11px; padding:5px 10px; border:1px solid var(--border); border-radius:6px; text-decoration:none; color:var(--text); }
+.date-preset.active { border-color:var(--secondary); color:var(--secondary); }
+input[type="date"] { color-scheme: dark; }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) sepia(1) saturate(6) hue-rotate(140deg) brightness(1.5); opacity:1; cursor:pointer; }
 .date-panel a { color:var(--cyan); text-decoration:none; }
 .date-panel label { display:flex; justify-content:space-between; gap:8px; color:var(--secondary); font-size:12px; }
 input[type="date"] { background:var(--canvas); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }

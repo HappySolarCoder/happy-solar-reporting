@@ -54,11 +54,14 @@ from pipeline_scope import pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
 from fma_demo_credit import (
     current_stage_name,
+    inferred_appointments,
     load_appointment_history,
+    load_inferred_appointments,
     load_opportunities_by_contact,
     load_stage_history,
     load_stage_names,
     make_demo_candidate,
+    same_appointment_instant,
     select_fma_demos,
 )
 from sweeper_rehash_attribution import (
@@ -979,6 +982,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             demo_candidates.append(candidate)
     selected_demos = select_fma_demos(demo_candidates)
     demo_by_opp = {demo.opportunity_id: demo for demo in selected_demos}
+    counted_ran_at: dict[str, datetime] = {}
 
     def remember_closer(label: str, uid: str, email: str) -> None:
         key = label.casefold()
@@ -1067,6 +1071,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
         if ran_matches:
             ran += 1
+            counted_ran_at[opp_id] = frozen_dt
             ran_name = add_casefold_count(ran_by_setter, setter_labels, ran_name, empty="none")
         closer, closer_id, closer_email = resolve_closer(opp, closer_directory)
         if closer and closer.casefold() not in {"unassigned", "none", "unknown"} and ran_matches:
@@ -1075,6 +1080,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if ran_matches:
             by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
             by_lead[lead] = by_lead.get(lead, 0) + 1
+        # Closer and opportunity sits follow each disposition. FMA demos do not.
+        if ran_matches and dispo == "Sit":
+            if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
+                add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
+                remember_closer(normalize_person_display(closer, empty="unassigned"), closer_id, closer_email)
+            sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
+            sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
 
         matching.append(
             {
@@ -1091,6 +1103,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "contactFirstName": contact.get("firstName"),
                 "contactLastName": contact.get("lastName"),
                 "setter": ran_name,
+                "ranAppointmentId": opp_id,
                 "demoCreditLastName": demo_name if demo_matches else None,
                 "demoCreditReason": demo_decision.reason if demo_matches and demo_decision else None,
                 "demoCountedAt": counted_local.isoformat() if demo_matches and demo_decision else None,
@@ -1135,12 +1148,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             continue
         sit += 1
         demo_name = add_casefold_count(sit_by_setter, setter_labels, demo_name, empty="none")
-        closer, closer_id, closer_email = resolve_closer(opp, closer_directory)
-        if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
-            add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
-            remember_closer(normalize_person_display(closer, empty="unassigned"), closer_id, closer_email)
-        sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
-        sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
+        closer, _closer_id, _closer_email = resolve_closer(opp, closer_directory)
         if demo.opportunity_id in seen_demo_rows:
             for row in matching:
                 if str(row.get("opportunityId") or "") != demo.opportunity_id:
@@ -1164,11 +1172,108 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "contactFirstName": contact.get("firstName"),
                 "contactLastName": contact.get("lastName"),
                 "setter": demo_name,
+                "ranAppointmentId": demo.opportunity_id,
                 "demoCreditLastName": demo_name,
                 "demoCreditReason": demo.reason,
                 "demoCountedAt": counted_local.isoformat(),
                 "demoDateSource": demo.date_source,
                 "countsAsDemo": True,
+                "lead_source": lead,
+                "sweeperRehashLastName": sweeper_last,
+                "closer": closer or None,
+            }
+        )
+
+    # A re-dispo without a new GHL booking is an appointment ran. It does not
+    # add an FMA demo. Closer and pipeline sits still count a Sit disposition.
+    inferred_rows = list(load_inferred_appointments(db, start_utc, end_utc))
+    for rows in appointment_history.values():
+        inferred_rows.extend(rows or [])
+    seen_inferred: set[tuple[str, str, datetime]] = set()
+    for event in inferred_appointments(inferred_rows):
+        identity = (event.contact_id, event.opportunity_id, event.start_at)
+        if identity in seen_inferred:
+            continue
+        seen_inferred.add(identity)
+        if event.start_at > now_utc:
+            continue
+        try:
+            from zoneinfo import ZoneInfo
+
+            inferred_local = event.start_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= inferred_local < end_local):
+            continue
+        opp = opp_by_id.get(event.opportunity_id) or {}
+        if not opp and event.contact_id:
+            for candidate in opp_by_id.values():
+                if str(candidate.get("contactId") or "").strip() != event.contact_id:
+                    continue
+                pname_candidate = resolve_pipeline_name(pipelines, candidate.get("pipelineId"), fallback="").strip()
+                if pipeline_in_demo_scope(pname_candidate.lower(), c):
+                    opp = candidate
+                    break
+        if not opp:
+            continue
+        opp_id = str(opp.get("id") or event.opportunity_id)
+        if same_appointment_instant(counted_ran_at.get(opp_id), event.start_at):
+            continue
+        pname = resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
+        if not pipeline_in_demo_scope(pname.lower(), c):
+            continue
+        if not pipeline_in_scope(
+            pname,
+            pipeline=filters.get("pipeline"),
+            sweeper=truthy_flag(filters.get("sweeper")),
+        ):
+            continue
+        contact = contacts_map.get(str(opp.get("contactId") or event.contact_id).strip()) or {}
+        setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
+        setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        setter = setter_opp if setter_opp not in (None, "") else setter_contact
+        lead = normalize_lead_source(contact_custom_field(contact, c.lead_gen_source_contact_cf_id))
+        sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
+        ran_credited = attributed_last_name(setter, lead, sweeper_last, inferred_local.date())
+        ran_name = normalize_person_display(ran_credited, empty="none")
+        setter_filter = str(filters.get("setter") or "").strip().lower()
+        if setter_filter and ran_name.lower() != setter_filter:
+            continue
+        if not lead_source_matches(filters.get("lead_source"), lead, sweeper_last, inferred_local.date()):
+            continue
+        ran += 1
+        ran_name = add_casefold_count(ran_by_setter, setter_labels, ran_name, empty="none")
+        closer, closer_id, closer_email = resolve_closer(opp, closer_directory)
+        if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
+            closer_label = add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
+            remember_closer(closer_label, closer_id, closer_email)
+        by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
+        by_lead[lead] = by_lead.get(lead, 0) + 1
+        outcome = event.outcome or "Ran"
+        if outcome == "Sit" and closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
+            add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
+            remember_closer(normalize_person_display(closer, empty="unassigned"), closer_id, closer_email)
+        if outcome == "Sit":
+            sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
+            sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
+        matching.append(
+            {
+                "opportunityId": opp_id,
+                "ranAppointmentId": f"{opp_id}:inferred:{event.start_at.isoformat()}",
+                "pipeline": pname,
+                "disposition": outcome,
+                "frozenAppointmentOccurredAt": inferred_local.isoformat(),
+                "appointmentOccurredAt": inferred_local.isoformat(),
+                "dispositionDate": inferred_local.isoformat(),
+                "contactFirstName": contact.get("firstName"),
+                "contactLastName": contact.get("lastName"),
+                "setter": ran_name,
+                "demoCreditLastName": None,
+                "demoCreditReason": None,
+                "demoCountedAt": None,
+                "demoDateSource": None,
+                "countsAsDemo": False,
+                "appointmentSource": event.source,
                 "lead_source": lead,
                 "sweeperRehashLastName": sweeper_last,
                 "closer": closer or None,
@@ -1202,10 +1307,13 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "Follow-up is not a second demo. "
             "An FMA gets one demo per contact. The demo date is the nearest past "
             "appointment within 3 days before the stage-history disposition, or "
-            "the disposition time when that appointment is missing. A second demo "
-            "counts only when Sweeper/Rehash Last Name is that FMA's own last name "
-            "and the contact is dispositioned again after the sweep. A reset by "
-            "someone else does not add a demo."
+            "the disposition time when that appointment is missing. "
+            "ghl_appointments_history_v1 source inferred_from_dispo is a real "
+            "appointment for that date and for appointments ran. It does not add "
+            "an FMA demo. A second demo counts only when Sweeper/Rehash Last Name "
+            "is that FMA's own last name and the contact is dispositioned again "
+            "after the sweep. A reset by someone else does not add a demo. "
+            "Closer and opportunity sits count each Sit disposition."
         ),
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),

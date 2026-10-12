@@ -39,11 +39,14 @@ if str(METRICS_DIR) not in sys.path:
 
 from fma_demo_credit import (  # noqa: E402
     current_stage_name,
+    inferred_appointments,
     load_appointment_history,
+    load_inferred_appointments,
     load_opportunities_by_contact,
     load_stage_history,
     load_stage_names,
     make_demo_candidate,
+    same_appointment_instant,
     select_fma_demos,
 )
 from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
@@ -201,6 +204,8 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
     ran_by_setter: dict[str, int] = {}
     sit_by_setter: dict[str, int] = {}
     pending_sits: list[dict[str, Any]] = []
+    ran_at_by_opp: dict[str, Any] = {}
+    row_by_opp: dict[str, dict[str, Any]] = {}
 
     scanned = 0
     for snap in q.stream():
@@ -246,6 +251,8 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
             "appointmentOccurredAt": occ_iso,
         }
         rows.append(row)
+        row_by_opp[opp_id] = row
+        ran_at_by_opp[opp_id] = occ if isinstance(occ, datetime) else None
         if dispo == "Sit":
             pending_sits.append(
                 {
@@ -324,6 +331,45 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
             item["row"]["demoCreditLastName"] = demo_name
             item["row"]["demoCountedAt"] = counted_local.isoformat()
             item["row"]["countsAsDemo"] = True
+
+    inferred_rows = list(load_inferred_appointments(db, start_utc, end_utc))
+    for history_rows in appointment_history.values():
+        inferred_rows.extend(history_rows or [])
+    seen_inferred: set[tuple[str, str, datetime]] = set()
+    for event in inferred_appointments(inferred_rows):
+        identity = (event.contact_id, event.opportunity_id, event.start_at)
+        if identity in seen_inferred:
+            continue
+        seen_inferred.add(identity)
+        parent = row_by_opp.get(event.opportunity_id)
+        if parent is None:
+            continue
+        if same_appointment_instant(ran_at_by_opp.get(event.opportunity_id), event.start_at):
+            continue
+        try:
+            from zoneinfo import ZoneInfo
+
+            inferred_local = event.start_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= inferred_local < end_local):
+            continue
+        setter_s = parent.get("setterLastName") or "none"
+        ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
+        rows.append(
+            {
+                "opportunityId": parent.get("opportunityId"),
+                "ranAppointmentId": f"{parent.get('opportunityId')}:inferred:{event.start_at.isoformat()}",
+                "contactId": parent.get("contactId"),
+                "contactLastName": parent.get("contactLastName"),
+                "setterLastName": setter_s,
+                "pipeline": parent.get("pipeline"),
+                "dispositionValue": event.outcome or "Ran",
+                "appointmentOccurredAt": inferred_local.isoformat(),
+                "appointmentSource": event.source,
+                "countsAsDemo": False,
+            }
+        )
 
     # Compute demo% by setter. A moved demo can belong to a name with no ran row.
     demo_pct_by_setter: dict[str, float] = {}

@@ -14,6 +14,7 @@ if str(METRICS) not in sys.path:
     sys.path.insert(0, str(METRICS))
 
 from fma_demo_credit import (  # noqa: E402
+    inferred_appointments,
     is_demo_stage,
     make_demo_candidate,
     names_match,
@@ -251,6 +252,37 @@ class CreditTests(unittest.TestCase):
         ])
         self.assertEqual(demos[0].counted_at, dispo)
         self.assertEqual(demos[0].date_source, "dispo")
+
+    def test_inferred_redispo_dates_the_demo_and_does_not_add_another(self):
+        dispo = datetime(2026, 9, 8, 16, 59, tzinfo=timezone.utc)
+        inferred = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+        later = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+        opp = {
+            "dispositionDate": dispo,
+            "appointmentStartTime": datetime(2026, 9, 1, 21, 0, tzinfo=timezone.utc),
+        }
+        rows = [
+            {"source": "inferred_from_dispo", "startTime": inferred, "dispositionValue": "Sit", "contactId": "c", "opportunityId": "o"},
+            {"source": "inferred_from_dispo", "startTime": later, "dispositionValue": "No Sit", "contactId": "c", "opportunityId": "o"},
+            {"source": "inferred_from_dispo", "startTime": datetime(2026, 9, 6, tzinfo=timezone.utc), "deleted": True},
+        ]
+        self.assertEqual(len(inferred_appointments(rows)), 2)
+        candidate = make_demo_candidate(
+            opp,
+            contact_id="c",
+            opportunity_id="o",
+            setter="Cornell-DeAngelis",
+            sweeper="",
+            pipeline_name="Syracuse",
+            stage_name="Demo-Negotiating",
+            history=[{"pipelineName": "Syracuse", "toStageName": "Demo-Negotiating", "effectiveAt": dispo}],
+            appointment_rows=rows,
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, later)
+        self.assertEqual(demos[0].date_source, "appointment_history")
+        self.assertEqual(demos[0].last_name, "Cornell-DeAngelis")
 
     def test_appointment_after_the_dispo_does_not_move_the_date(self):
         later = T_DEMO + timedelta(days=2)

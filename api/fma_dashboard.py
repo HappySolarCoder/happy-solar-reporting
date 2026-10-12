@@ -774,7 +774,7 @@ __DASHBOARD_NAV_HTML__
           <div>
             <div class="card-title">GHL — Demo Rate by Setter</div>
             <div class="scopeNote scopeNoteInline"><span class="scopeTag">Table dates</span><strong id="setterScopeMeta">Current month to date</strong><span>Set with Start and End below. The page dates above do not change this table.</span></div>
-            <div class="meta">Opps Ran / Demos / Demo % (Demos / Ran). Ran moves to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact, dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo.</div>
+            <div class="meta">Opps Ran / Demos / Demo % (Demos / Ran). Ran moves to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact, dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo. A re-disposition stored as an inferred appointment counts as an appointment ran and can date the demo. It does not add another FMA demo.</div>
           </div>
         </div>
 

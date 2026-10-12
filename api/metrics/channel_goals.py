@@ -114,7 +114,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict):
             continue
-        oid = str(row.get("opportunityId") or "")
+        oid = str(row.get("ranAppointmentId") or row.get("opportunityId") or "")
         if oid in seen:
             continue
         seen.add(oid)
@@ -158,7 +158,7 @@ def sweeper_ran(demo_payload: dict[str, Any]) -> tuple[int, int]:
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict) or not filled(row.get("sweeperRehashLastName")):
             continue
-        key = str(row.get("opportunityId") or "")
+        key = str(row.get("ranAppointmentId") or row.get("opportunityId") or "")
         if key in seen:
             continue
         seen.add(key)

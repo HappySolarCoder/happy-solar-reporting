@@ -13,6 +13,12 @@ time). That collection fills going forward and may be empty. An empty
 result falls back to the opportunity's appointmentStartTime and
 appointmentOccurredAt, then to the disposition time.
 
+Rows with ``source`` ``inferred_from_dispo`` are real appointments. The
+sync writes one when a rep re-dispositions an opportunity (a two-touch or
+a reschedule) without booking a new GHL appointment. They date a demo and
+count as appointments ran. They do not add an FMA demo. Closer and
+opportunity metrics may still count each appointment or disposition.
+
 A second demo on the same contact counts only when Sweeper/Rehash Last
 Name is that FMA's own last name and a later demo disposition is at or
 after the sweep. A sweep or rehash by someone else, including a duplicate
@@ -32,6 +38,7 @@ from sweeper_rehash_attribution import compact_text, is_blank_last_name
 
 HISTORY_COLLECTION = "ghl_opportunity_stage_history_v1"
 APPOINTMENT_HISTORY_COLLECTION = "ghl_appointments_history_v1"
+INFERRED_APPOINTMENT_SOURCE = "inferred_from_dispo"
 OPPORTUNITY_COLLECTION = "ghl_opportunities_v2"
 SWEEP_PIPELINES = frozenset({"sweeper", "rehash"})
 APPOINTMENT_LOOKBACK = timedelta(days=3)
@@ -170,7 +177,26 @@ def dispo_timestamp(history: list[dict] | None, opportunity: dict | None, stage_
     return as_aware_utc(opp.get("dispositionDate")) or as_aware_utc(opp.get("appointmentOccurredAt"))
 
 
+def is_inferred_appointment(row: dict | None) -> bool:
+    """True for a re-dispo the sync stored without a new GHL calendar event."""
+    if not isinstance(row, dict):
+        return False
+    return normalize_label(row.get("source")) == normalize_label(INFERRED_APPOINTMENT_SOURCE)
+
+
+def _deleted_appointment(row: dict) -> bool:
+    for key in ("deleted", "isDeleted", "is_deleted"):
+        value = row.get(key)
+        if value in (True, 1):
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "y"}:
+            return True
+    return False
+
+
 def _skipped_appointment(row: dict) -> bool:
+    if _deleted_appointment(row):
+        return True
     for key in ("appointmentStatus", "status", "appStatus"):
         label = normalize_label(row.get(key))
         if label in _SKIPPED_APPOINTMENT_STATUSES:
@@ -178,31 +204,105 @@ def _skipped_appointment(row: dict) -> bool:
     return False
 
 
+def _appointment_moment(row: dict) -> datetime | None:
+    keys = (
+        "startTime",
+        "startTimeMs",
+        "appointmentStartTime",
+        "startAt",
+        "start",
+        "scheduledAt",
+        "appointmentTime",
+    )
+    if is_inferred_appointment(row):
+        keys = keys + ("dispositionDate", "effectiveAt", "occurredAt")
+    for key in keys:
+        moment = _coerce_time(row.get(key))
+        if moment is not None:
+            return moment
+    return None
+
+
+def appointment_outcome(row: dict | None) -> str:
+    """Sit or No Sit when the history row says which. Blank when it does not."""
+    if not isinstance(row, dict):
+        return ""
+    for key in ("dispositionValue", "outcome", "whatHappened", "disposition", "appointmentStatus", "status"):
+        label = normalize_label(row.get(key))
+        if label == "sit":
+            return "Sit"
+        if label == "no sit":
+            return "No Sit"
+    return ""
+
+
 def appointment_instants(rows: list[dict] | None) -> list[datetime]:
-    """Start times from appointment-history documents."""
+    """Start times from appointment-history documents.
+
+    ``inferred_from_dispo`` rows are included. Cancelled, no-show, and
+    deleted rows are not.
+    """
     found: list[datetime] = []
     seen: set[datetime] = set()
     for row in rows or []:
         if not isinstance(row, dict) or _skipped_appointment(row):
             continue
-        moment = None
-        for key in (
-            "startTime",
-            "startTimeMs",
-            "appointmentStartTime",
-            "startAt",
-            "start",
-            "scheduledAt",
-            "appointmentTime",
-        ):
-            moment = _coerce_time(row.get(key))
-            if moment is not None:
-                break
+        moment = _appointment_moment(row)
         if moment is None or moment in seen:
             continue
         seen.add(moment)
         found.append(moment)
     return found
+
+
+@dataclass(frozen=True)
+class InferredAppointment:
+    """One re-dispo that counts as an appointment ran, not as an extra FMA demo."""
+
+    contact_id: str
+    opportunity_id: str
+    start_at: datetime
+    outcome: str
+    source: str
+
+
+def inferred_appointments(rows: list[dict] | None) -> list[InferredAppointment]:
+    """Inferred re-dispos that count as appointments ran.
+
+    A missing start time, a deleted row, or a cancelled row is omitted.
+    Callers still apply the one-demo-per-contact rule separately.
+    """
+    found: list[InferredAppointment] = []
+    seen: set[tuple[str, str, datetime]] = set()
+    for row in rows or []:
+        if not isinstance(row, dict) or not is_inferred_appointment(row) or _skipped_appointment(row):
+            continue
+        moment = _appointment_moment(row)
+        if moment is None:
+            continue
+        contact_id = compact_text(row.get("contactId"))
+        opportunity_id = compact_text(row.get("opportunityId") or row.get("opportunity_id"))
+        key = (contact_id, opportunity_id, moment)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(
+            InferredAppointment(
+                contact_id=contact_id,
+                opportunity_id=opportunity_id,
+                start_at=moment,
+                outcome=appointment_outcome(row),
+                source=INFERRED_APPOINTMENT_SOURCE,
+            )
+        )
+    return found
+
+
+def same_appointment_instant(left: datetime | None, right: datetime | None) -> bool:
+    """True when two timestamps are the same appointment, within one second."""
+    if left is None or right is None:
+        return False
+    return abs((left - right).total_seconds()) < 1
 
 
 def opportunity_appointment_instants(opportunity: dict | None) -> list[datetime]:
@@ -462,6 +562,23 @@ def load_appointment_history(db: Any, contact_ids) -> dict[str, list[dict]]:
     except Exception:
         return {cid: [] for cid in ids}
     return out
+
+
+def load_inferred_appointments(db: Any, start: datetime, end: datetime) -> list[dict]:
+    """Inferred re-dispos whose startTime falls in ``[start, end)``.
+
+    A missing collection, a missing index, or a test double returns an empty
+    list. Contact-scoped history is the other way those rows are found.
+    """
+    collection = _safe_collection(db, APPOINTMENT_HISTORY_COLLECTION)
+    if collection is None or start is None or end is None:
+        return []
+    try:
+        query = collection.where("source", "==", INFERRED_APPOINTMENT_SOURCE)
+        query = query.where("startTime", ">=", start).where("startTime", "<", end)
+        return [snap.to_dict() or {} for snap in query.stream()]
+    except Exception:
+        return []
 
 
 def load_opportunities_by_contact(db: Any, contact_ids) -> list[dict]:

@@ -37,6 +37,7 @@ if str(_METRICS_DIR) not in sys.path:
 from google.oauth2 import service_account
 from google.cloud import firestore
 
+from fma_demo_credit import inferred_appointments, load_appointment_history, load_inferred_appointments, same_appointment_instant
 from ghl_user_names import load_ghl_user_names
 from pipeline_scope import pipeline_in_scope, truthy_flag
 
@@ -477,6 +478,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     by_lead: dict[str, int] = {}
 
     matching_rows: dict[str, dict[str, Any]] = {}
+    credit_by_opp: dict[str, tuple[Any, str]] = {}
 
     for doc in opp_snaps:
         opp = doc.to_dict() or {}
@@ -529,11 +531,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             add_casefold_count(by_setter, setter_labels, setter, empty="none")
 
         by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
+        credit_by_opp[opp_id] = (setter, str(lead))
 
         # Capture matching row keyed by opportunityId so result and list cannot diverge
         last_name = (contact.get("lastName") if isinstance(contact, dict) else None)
         matching_rows[opp_id] = {
             "opportunityId": opp_id,
+            "ranAppointmentId": opp_id,
             "contactId": cid,
             "contactLastName": last_name,
             "pipeline": pname,
@@ -546,6 +550,52 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "appointmentOccurredAt": opp.get(c.appointment_occurred_at_field),
             "whatHappened": dispo_val,
         }
+
+    ran_at_by_opp = {
+        opp_id: row.get("appointmentOccurredAt")
+        for opp_id, row in matching_rows.items()
+        if isinstance(row.get("appointmentOccurredAt"), datetime)
+    }
+    inferred_rows = list(load_inferred_appointments(db, start_utc, end_utc))
+    for history_rows in load_appointment_history(db, needed_contact_ids).values():
+        inferred_rows.extend(history_rows or [])
+    seen_inferred: set[tuple[str, str, datetime]] = set()
+    for event in inferred_appointments(inferred_rows):
+        identity = (event.contact_id, event.opportunity_id, event.start_at)
+        if identity in seen_inferred or event.start_at > now_utc:
+            continue
+        seen_inferred.add(identity)
+        parent = matching_rows.get(event.opportunity_id)
+        if parent is None:
+            continue
+        if same_appointment_instant(ran_at_by_opp.get(event.opportunity_id), event.start_at):
+            continue
+        try:
+            from zoneinfo import ZoneInfo
+
+            inferred_local = event.start_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= inferred_local < end_local):
+            continue
+        ran_id = f"{event.opportunity_id}:inferred:{event.start_at.isoformat()}"
+        matching_rows[ran_id] = {
+            "opportunityId": event.opportunity_id,
+            "ranAppointmentId": ran_id,
+            "contactId": parent.get("contactId"),
+            "contactLastName": parent.get("contactLastName"),
+            "pipeline": parent.get("pipeline"),
+            "ownerId": parent.get("ownerId"),
+            "appointmentOccurredAt": inferred_local.isoformat(),
+            "whatHappened": event.outcome or "Ran",
+            "appointmentSource": event.source,
+        }
+        pipeline_name = parent.get("pipeline") or "unknown"
+        by_pipeline[pipeline_name] = by_pipeline.get(pipeline_name, 0) + 1
+        setter_name, lead_name = credit_by_opp.get(event.opportunity_id, (None, "none"))
+        if setter_name:
+            add_casefold_count(by_setter, setter_labels, setter_name, empty="none")
+        by_lead[lead_name] = by_lead.get(lead_name, 0) + 1
 
     fill_missing_user_names(db, user_names, (r.get("ownerId") for r in matching_rows.values()))
     by_owner = {}
@@ -566,7 +616,11 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "result": len(matching_rows),
-        "count_method": f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] is not empty and appointmentOccurredAt in window",
+        "count_method": (
+            f"COUNT_DISTINCT({c.opp_collection}.id) where {c.opp_collection}.customFields[{c.what_happened_custom_field_id}] "
+            "is not empty and appointmentOccurredAt in window, plus each ghl_appointments_history_v1 "
+            "source inferred_from_dispo in that window. An inferred re-dispo does not add an FMA demo."
+        ),
         "debug": {
             "opps_scanned": scanned,  # scanned within time window query
             "opps_with_disposition": matched_dispo,

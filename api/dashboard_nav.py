@@ -990,6 +990,7 @@ NAV_GROUPS = (
     (
         "INBOUND",
         (
+            ("ads_dashboard", "Ads Dashboard", "/api/ads_dashboard"),
             ("paid_social_funnel", "Ads & Inbound Funnel", "/api/paid_social_funnel"),
             ("website_funnel", "Website Funnel", "/api/website_funnel"),
             ("website_traffic", "Website Traffic", "/api/website_traffic"),
@@ -1042,6 +1043,7 @@ EMBED_MENUS = (
             "fma_dashboard",
             "appointment_outcomes",
             "fma_commissions",
+            "ads_dashboard",
             "paid_social_funnel",
             "website_funnel",
             "website_traffic",

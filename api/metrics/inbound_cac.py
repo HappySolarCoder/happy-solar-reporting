@@ -36,38 +36,23 @@ Metric per row (same rules for YTD window or a single NY month):
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
    series. Months with sales=0 are JSON null gaps, never 0.
 
-Inbound CF-grain / Meta section (third row; not title-bucket; not 3PL; not
-pipeline 7nSEgeoBYXZiIS7x41Jy). Contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is Inbound
-or a Facebook Quick Form variant (lead_gen_source.is_inbound_lead_source).
-Inbound window is the selected LL/SR window intersected with
-inbound_window_floor 2026-08-01 America/New_York → existing window end
-("now" = request time ET using ytd/month exclusive-end semantics). A selected
-window entirely before the floor is empty (zeros / null CAC), never pre-Aug
-data. Lead Locker / Solar Reviews / Overall keep the unclamped window.
-- Leads (nr_leads / CAC table Leads) = live website form fills from
-  web_funnel_named_fills_v1 in the clamped window. Same warehouse source as
-  Website Traffic named fills. Exclude test fills via funnel_test_address
-  (24 Hawkstone Way, 313 E Stonebridge, Test Test / Evan Day,
-  adchday@gmail.com / evanrday23@gmail.com) and host/preview/internal
-  exclusion_reason when host/page_location is present. NOT territory opp
-  counts and NOT Inbound/Lead Locker title-bucket NR leads.
-- Opps created = COUNT_DISTINCT territory-pipeline (Buffalo
-  GQtUlcTmLJ61HZjrGEPC / Rochester qJNvqKWp8Xc7DaBr8QYc / Syracuse
-  etLURrEVxupngZZRlISG / Virtual r1b9pwgliYj7WyWBchTV)
-  ghl_opportunities_v2.id with createdAt in the clamped window AND contact CF
-  = Inbound. Do not use pipeline 7nSEgeoBYXZiIS7x41Jy. No refunded-stage
-  filter on this CF grain.
-- opps_pct = opps_created / leads (null if leads=0). Not forced 1.0.
-- Sits = territory Sit + appointmentOccurredAt in the clamped window + CF =
-  Inbound (same sits rules as existing inbound_cac performance KPIs).
-- Sales = distinct contactId among Sold / Sale Cancelled stage IDs with Contact
-  Sold Date in the clamped window AND CF = Inbound (same as
-  /api/metrics/sales?lead_source=Inbound).
-- Spend = Meta Marketing API account insights spend for the same clamped
-  since/until (META_ADS_ACCESS_TOKEN + META_ADS_ACCOUNT_ID act_…). Missing env,
-  expired token, or Graph 401/403 → spend null, spend_status=unavailable. Do
-  not invent EXAMPLE dollars. Empty clamped window → spend 0 / null CAC.
-- Cost per lead (CPL) = Meta spend / form-fill leads. leads==0 or spend
+Inbound row (third row; not title-bucket; not folded into Overall). Days are
+America/Phoenix, the same window the Ads Dashboard uses. Leads are the Ads
+Dashboard GHL set: an Inbound/Lead Locker opportunity created in that window
+whose Lead Gen Source counts as Inbound (the word Inbound, or a Facebook
+Quick Form variant), excluding Lead Locker and Solar Reviews titles, deduped
+by phone, then email, then name, including the 10-minute near-name rule.
+Opps, demos (the Demos column, JSON `sits`), and sales are that same lead
+set, from ads_dashboard.classify_window. CAC = Meta spend for those Phoenix
+days / those sales. CPL = that spend / those leads. Website form fills
+(web_funnel_named_fills_v1, test and preview hosts excluded) stay on the row
+as website_form_fills and are not the lead count.
+Lead Locker / Solar Reviews / Overall keep America/New_York and are not clamped.
+- Spend = Meta Marketing API account insights spend for the Phoenix window
+  (META_ADS_ACCESS_TOKEN + META_ADS_ACCOUNT_ID act_…). Missing env, expired
+  token, or Graph 401/403 → spend null, spend_status=unavailable. Do not
+  invent EXAMPLE dollars. Empty window → spend 0 / null CAC.
+- Cost per lead (CPL) = Meta spend / GHL inbound leads. leads==0 or spend
   unavailable → JSON null, never invented $0 CPL. Lead Locker / Solar Reviews
   keep fixed unit costs $45 / $70 (also exposed as cost_per_lead).
 - Setter $500 / TAC same formula. CAC/TAC null when spend is null or sales=0.
@@ -138,6 +123,7 @@ from lead_gen_source import is_facebook_quick_form_source, is_inbound_lead_sourc
 from sales import SalesMetricContract, get_db
 
 TIMEZONE_NAME = "America/New_York"
+INBOUND_ROW_TIMEZONE = "America/Phoenix"
 OPP_COLLECTION = "ghl_opportunities_v2"
 CONTACT_COLLECTION = "ghl_contacts_v2"
 CREATED_AT_FIELD = "createdAt"
@@ -580,12 +566,14 @@ def build_inbound_source_row(
     nr_leads: int,
     sales: int,
     spend_result: MetaSpendResult,
+    website_form_fills: int | None = None,
+    fb_quick_form_leads: int | None = None,
 ) -> dict[str, Any]:
     ok = spend_result.spend_status == "ok" and spend_result.spend is not None
     spend = spend_result.spend if ok else None
     costs = compute_inbound_acquisition(spend, sales)
     leads = int(nr_leads)
-    return {
+    row = {
         "source": INBOUND_CF_SOURCE,
         "unit_cost": None,
         "cost_per_lead": compute_cost_per_lead(spend, leads),
@@ -602,6 +590,11 @@ def build_inbound_source_row(
         "tac": costs["tac"],
         "example_banner": not ok,
     }
+    if website_form_fills is not None:
+        row["website_form_fills"] = int(website_form_fills)
+    if fb_quick_form_leads is not None:
+        row["fb_quick_form_leads"] = int(fb_quick_form_leads)
+    return row
 
 
 def count_inbound_cf_performance(
@@ -1514,6 +1507,8 @@ def assemble_inbound_cac(
     inbound_spend: MetaSpendResult | None = None,
     inbound_monthly_spend: dict[str, MetaSpendResult] | None = None,
     named_fills: list[dict[str, Any]] | None = None,
+    ad_cohort: dict[str, Any] | None = None,
+    ad_monthly: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -1531,32 +1526,52 @@ def assemble_inbound_cac(
         raws, contacts_map, sold_stage_ids, start_local, end_local
     )
     now_utc = now.astimezone(timezone.utc)
-    inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
+    use_ads = ad_cohort is not None
+    if use_ads:
+        inbound_start = datetime.fromisoformat(str(ad_cohort["window_start"]))
+        inbound_end = datetime.fromisoformat(str(ad_cohort["window_end"]))
+        ghl_leads = int(ad_cohort.get("inbound_leads") or 0)
+        ghl_opps = int(ad_cohort.get("opps") or 0)
+        ghl_sits = int(ad_cohort.get("demos") or 0)
+        ghl_sales = int(ad_cohort.get("sales") or 0)
+        quick_leads = int(ad_cohort.get("fb_quick_form_leads") or 0)
+    else:
+        inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
+        inbound_created, inbound_sits = count_inbound_cf_performance(
+            territory_opps or [], contacts_map, inbound_start, inbound_end, now_utc
+        )
+        inbound_sold = inbound_sales_contact_ids(
+            contacts_map, sold_stage_ids, inbound_start, inbound_end
+        )
+        ghl_leads = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
+        ghl_opps = len(inbound_created)
+        ghl_sits = len(inbound_sits)
+        ghl_sales = len(inbound_sold)
+        quick_leads = None
     inbound_empty = inbound_window_is_empty(inbound_start, inbound_end)
     if inbound_empty:
         spend_result = empty_inbound_spend()
     else:
         spend_result = inbound_spend or unavailable_meta_spend("missing_env")
-    inbound_created, inbound_sits = count_inbound_cf_performance(
-        territory_opps or [], contacts_map, inbound_start, inbound_end, now_utc
-    )
-    inbound_sold = inbound_sales_contact_ids(
-        contacts_map, sold_stage_ids, inbound_start, inbound_end
-    )
-    inbound_leads = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
+    form_fills = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
     inbound_row = build_inbound_source_row(
-        nr_leads=inbound_leads,
-        sales=len(inbound_sold),
+        nr_leads=ghl_leads,
+        sales=ghl_sales,
         spend_result=spend_result,
+        website_form_fills=form_fills if use_ads else None,
+        fb_quick_form_leads=quick_leads if use_ads else None,
     )
     inbound_kpi = kpi_row(
         source=INBOUND_CF_SOURCE,
-        nr_leads=inbound_leads,
-        leads=inbound_leads,
-        opps_created=len(inbound_created),
-        sits=len(inbound_sits),
-        sales=len(inbound_sold),
+        nr_leads=ghl_leads,
+        leads=ghl_leads,
+        opps_created=ghl_opps,
+        sits=ghl_sits,
+        sales=ghl_sales,
     )
+    if use_ads:
+        inbound_kpi["website_form_fills"] = form_fills
+        inbound_kpi["fb_quick_form_leads"] = quick_leads
 
     monthly: list[dict[str, Any]] = []
     if timeframe != "range":
@@ -1565,23 +1580,44 @@ def assemble_inbound_cac(
             _m_records, m_rows, m_overall, _ = _window_bundle(
                 raws, contacts_map, sold_stage_ids, m_start, m_end
             )
-            inbound_m_start, inbound_m_end = clamp_inbound_window(m_start, m_end, tz)
-            m_created, _m_sits = count_inbound_cf_performance(
-                territory_opps or [], contacts_map, inbound_m_start, inbound_m_end, now_utc
-            )
-            m_sold = inbound_sales_contact_ids(
-                contacts_map, sold_stage_ids, inbound_m_start, inbound_m_end
-            )
-            m_leads = count_inbound_named_fills(named_fills, inbound_m_start, inbound_m_end)
-            if inbound_window_is_empty(inbound_m_start, inbound_m_end):
-                m_spend = unavailable_meta_spend("inbound_window_before_floor")
+            if use_ads:
+                label = f"{year}-{chart_month:02d}"
+                cohort = (ad_monthly or {}).get(label) or {}
+                phoenix_start, phoenix_end, _, _ = month_window(
+                    year, chart_month, INBOUND_ROW_TIMEZONE
+                )
+                m_leads = int(cohort.get("inbound_leads") or 0)
+                m_sales = int(cohort.get("sales") or 0)
+                m_fills = count_inbound_named_fills(named_fills, phoenix_start, phoenix_end)
+                if inbound_window_is_empty(phoenix_start, phoenix_end):
+                    m_spend = empty_inbound_spend()
+                else:
+                    m_spend = month_spend_result(year, chart_month, inbound_monthly_spend)
+                m_inbound = build_inbound_source_row(
+                    nr_leads=m_leads,
+                    sales=m_sales,
+                    spend_result=m_spend,
+                    website_form_fills=m_fills,
+                    fb_quick_form_leads=int(cohort.get("fb_quick_form_leads") or 0),
+                )
             else:
-                m_spend = month_spend_result(year, chart_month, inbound_monthly_spend)
-            m_inbound = build_inbound_source_row(
-                nr_leads=m_leads,
-                sales=len(m_sold),
-                spend_result=m_spend,
-            )
+                inbound_m_start, inbound_m_end = clamp_inbound_window(m_start, m_end, tz)
+                _m_created, _m_sits = count_inbound_cf_performance(
+                    territory_opps or [], contacts_map, inbound_m_start, inbound_m_end, now_utc
+                )
+                m_sold = inbound_sales_contact_ids(
+                    contacts_map, sold_stage_ids, inbound_m_start, inbound_m_end
+                )
+                m_leads = count_inbound_named_fills(named_fills, inbound_m_start, inbound_m_end)
+                if inbound_window_is_empty(inbound_m_start, inbound_m_end):
+                    m_spend = unavailable_meta_spend("inbound_window_before_floor")
+                else:
+                    m_spend = month_spend_result(year, chart_month, inbound_monthly_spend)
+                m_inbound = build_inbound_source_row(
+                    nr_leads=m_leads,
+                    sales=len(m_sold),
+                    spend_result=m_spend,
+                )
             monthly.append(
                 {
                     "year": year,
@@ -1619,6 +1655,7 @@ def assemble_inbound_cac(
         "month": month,
         "timeframe": timeframe,
         "timezone": tz,
+        "inbound_timezone": INBOUND_ROW_TIMEZONE if use_ads else tz,
         "window_start_local": start_iso,
         "window_end_local": end_iso,
         "inbound_window_start_local": inbound_start.isoformat(),
@@ -1653,23 +1690,38 @@ def assemble_inbound_cac(
             "demo_rate = that source's territory demos / opps_created "
             "(null if opps_created=0; not the bot KPI of demos divided by demos plus no-demos); "
             "unattributed territory opps are JSON leftover, not Overall; "
-            "Inbound row is contact CF hd5QqHEOVSsPom5bJ32P=Inbound on territory "
-            "pipelines (not title-bucket, not 3PL, not pipeline 7nSEgeo); "
-            "Inbound window is clamped to inbound_window_floor 2026-08-01 ET "
-            "through the selected window end (empty if the selected window is "
-            "entirely before the floor); "
-            "Inbound leads = live web_funnel_named_fills_v1 form fills in that "
-            "clamped window (test/preview/internal excluded); "
-            "Inbound opps_created = territory-pipeline createdAt + CF=Inbound "
-            "in the same clamped window; "
-            "Inbound opps_pct = opps_created / leads (null if leads=0); "
-            "Inbound demos/sales keep CF-grain rules on the clamped window; "
-            "spend is Meta Ads account insights for the same clamped since/until "
-            "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
-            "Inbound cost_per_lead = Meta spend / form-fill leads "
-            "(null if leads=0 or spend unavailable; never invented $0 CPL); "
-            "Lead Locker / Solar Reviews cost_per_lead is the fixed $45 / $70 unit cost; "
-            "Overall stays Lead Locker + Solar Reviews only"
+            + (
+                "Inbound row uses the Ads Dashboard lead set on America/Phoenix days: "
+                "Inbound/Lead Locker opportunities whose Lead Gen Source counts as "
+                "Inbound or a Facebook Quick Form variant, Lead Locker and Solar "
+                "Reviews titles excluded, deduped by phone then email then name; "
+                "opps, demos, and sales are that same lead set; "
+                "website form fills are website_form_fills, not the lead count; "
+                "spend is Meta Ads for those Phoenix days "
+                "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
+                "Inbound cost_per_lead = Meta spend / those GHL leads "
+                "(null if leads=0 or spend unavailable; never invented $0 CPL); "
+                if use_ads
+                else
+                "Inbound row is contact CF hd5QqHEOVSsPom5bJ32P=Inbound on territory "
+                "pipelines (not title-bucket, not 3PL, not pipeline 7nSEgeo); "
+                "Inbound window is clamped to inbound_window_floor 2026-08-01 ET "
+                "through the selected window end (empty if the selected window is "
+                "entirely before the floor); "
+                "Inbound leads = live web_funnel_named_fills_v1 form fills in that "
+                "clamped window (test/preview/internal excluded); "
+                "Inbound opps_created = territory-pipeline createdAt + CF=Inbound "
+                "in the same clamped window; "
+                "Inbound demos/sales keep CF-grain rules on the clamped window; "
+                "spend is Meta Ads account insights for the same clamped since/until "
+                "(null + spend_status=unavailable when token/act_ id missing or Graph 401/403); "
+                "Inbound cost_per_lead = Meta spend / form-fill leads "
+                "(null if leads=0 or spend unavailable; never invented $0 CPL); "
+            )
+            + (
+                "Lead Locker / Solar Reviews cost_per_lead is the fixed $45 / $70 unit cost; "
+                "Overall stays Lead Locker + Solar Reviews only"
+            )
         ),
         "contract": {
             "base_collection": OPP_COLLECTION,
@@ -1715,7 +1767,7 @@ def assemble_inbound_cac(
                 "channel_key": INBOUND_CF_SOURCE_KEY,
                 "source": INBOUND_CF_SOURCE,
                 "inbound_window_floor": INBOUND_WINDOW_FLOOR,
-                "inbound_window_timezone": TIMEZONE_NAME,
+                "inbound_window_timezone": INBOUND_ROW_TIMEZONE if use_ads else TIMEZONE_NAME,
                 "named_fills_collection": NAMED_FILLS_COLLECTION,
                 "spend_source": META_ADS_SPEND_SOURCE,
                 "env": [META_ADS_ACCESS_TOKEN_ENV, META_ADS_ACCOUNT_ID_ENV],
@@ -1732,12 +1784,23 @@ def assemble_inbound_cac(
                 ),
                 "lead_gen_source_contact_cf": LEAD_GEN_SOURCE_CONTACT_CF_ID,
                 "lead_definition": (
+                    "Ads Dashboard GHL leads on America/Phoenix days. Lead Gen Source "
+                    "counts as Inbound when it is Inbound or a Facebook Quick Form "
+                    "variant. Lead Locker and Solar Reviews titles are excluded. "
+                    "Phone, email, name, and the 10-minute near-name rule dedupe the set. "
+                    "Opps, demos, and sales are that lead set."
+                    if use_ads
+                    else
                     "contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is "
                     "Inbound or a Facebook Quick Form variant (FB Quick Form included); "
                     "territory pipelines Buffalo/Rochester/Syracuse/Virtual; "
                     "not title-bucket; not 3PL; not pipeline 7nSEgeo"
                 ),
                 "nr_leads": (
+                    "COUNT deduped Ads Dashboard inbound leads in the Phoenix window. "
+                    "Website form fills are website_form_fills, not this count."
+                    if use_ads
+                    else
                     "COUNT live web_funnel_named_fills_v1 website form fills in the "
                     "clamped Inbound window; exclude Hawkstone / Stonebridge / "
                     "Test Test / Evan Day / adchday@gmail.com / evanrday23@gmail.com "
@@ -1745,20 +1808,38 @@ def assemble_inbound_cac(
                     "Not territory opp counts; not Inbound/Lead Locker title-bucket NR"
                 ),
                 "opps_created": (
+                    "City opps for that lead set, including history-only city opps, "
+                    "with a deleted opp ignored when it was created within 10 minutes "
+                    "of another opp for the same contact. Same rule as the Ads Dashboard."
+                    if use_ads
+                    else
                     "COUNT_DISTINCT territory ghl_opportunities_v2.id createdAt in "
                     "the clamped window + CF=Inbound on Buffalo/Rochester/Syracuse/"
                     "Virtual; not pipeline 7nSEgeo; no refunded-stage filter"
                 ),
                 "opps_pct": "opps_created / nr_leads (null if nr_leads=0); not forced 1.0",
                 "cost_per_lead": (
+                    "Meta spend / GHL inbound leads (null if leads=0 or spend "
+                    "unavailable; never invented $0 CPL). Not $45/$70. "
+                    "Website form fills are not the denominator."
+                    if use_ads
+                    else
                     "Meta spend / form-fill leads (null if leads=0 or spend "
                     "unavailable; never invented $0 CPL). Not $45/$70"
                 ),
                 "sits": (
+                    "Ads Dashboard demos for that lead set: a Demo stage, One Legger, "
+                    "or Sold on the current city stage or in city-pipeline history."
+                    if use_ads
+                    else
                     "territory Sit + appointmentOccurredAt in the clamped Inbound "
                     "window + CF=Inbound (same sit rules as LL/SR KPI sits)"
                 ),
                 "sales": (
+                    "Ads Dashboard sales for that lead set: Sold or Sale Cancelled "
+                    "plus Contact Sold Date in the Phoenix window."
+                    if use_ads
+                    else
                     "COUNT_DISTINCT contactId Sold/Sale Cancelled + Contact Sold Date "
                     "in the clamped Inbound window + CF=Inbound "
                     "(same as /api/metrics/sales?lead_source=Inbound)"
@@ -1791,14 +1872,124 @@ def assemble_inbound_cac(
                 "territory_pool_opportunities_created"
             ),
             "inbound_cf_nr_leads": inbound_row["opp_count"],
-            "inbound_named_fills": inbound_leads,
-            "inbound_cf_opps": len(inbound_created),
+            "inbound_named_fills": form_fills if use_ads else ghl_leads,
+            "inbound_cf_opps": ghl_opps,
             "inbound_cf_sales": inbound_row["sales"],
+            "inbound_lead_basis": "ads_dashboard" if use_ads else "website_form_fills",
+            "fb_quick_form_leads": quick_leads if use_ads else None,
             "inbound_spend_status": inbound_row["spend_status"],
             "inbound_spend_reason": inbound_row.get("spend_reason"),
             "inbound_window_empty": inbound_empty,
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def _ads_dashboard():
+    """Lazy import. ads_dashboard imports this module through paid social."""
+    import ads_dashboard
+
+    return ads_dashboard
+
+
+def inbound_row_window(
+    *,
+    start: str | None,
+    end: str | None,
+    year: int,
+    month: int | None,
+    now: datetime,
+) -> tuple[datetime, datetime, str, str]:
+    """Selected dates as America/Phoenix midnights. Same bounds as Ads Dashboard."""
+    tz_name = INBOUND_ROW_TIMEZONE
+    phoenix_now = now.astimezone(ZoneInfo(tz_name)) if now.tzinfo else now.replace(tzinfo=ZoneInfo(tz_name))
+    if start and end:
+        return date_range_window(start, end, tz_name)
+    if month is None:
+        return ytd_window(year, tz_name, phoenix_now)
+    return month_window(year, month, tz_name)
+
+
+def load_ads_lead_inputs(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
+    """Inbound-pipeline opps, contacts, city opps, and stage history for one window."""
+    ads = _ads_dashboard()
+    notes: list[str] = []
+    pipeline_opps = ads.load_pipeline_opps(db, start_local, end_local)
+    contacts = ads.load_contacts(db, [ads._contact_id(opp) for opp in pipeline_opps])
+    flag = ads.INCLUDE_FB_QUICK_FORM
+    lead_ids = [
+        cid
+        for cid in {ads._contact_id(opp) for opp in pipeline_opps}
+        if cid and ads.is_ad_lead(contacts.get(cid), flag)
+    ]
+    contact_opps = ads.load_opps_for_contacts(db, lead_ids)
+    by_opportunity: dict[str, list] = {}
+    by_contact: dict[str, list] = {}
+    try:
+        by_opportunity = ads.load_stage_history(db, [ads._opp_id(opp, "") for opp in contact_opps])
+    except Exception:
+        notes.append(
+            "Opportunity stage history could not be read, so opps only include "
+            "opportunities currently in Buffalo, Rochester, Syracuse, or Virtual."
+        )
+    try:
+        by_contact = ads.load_stage_history_by_contact(db, lead_ids)
+    except Exception:
+        notes.append("Stage history for deleted opportunities could not be read.")
+    try:
+        stage_names = ads.load_stage_names(db)
+    except Exception:
+        stage_names = {}
+        notes.append("Pipeline stage names could not be read.")
+    try:
+        stage_names = {
+            **stage_names,
+            **ads.load_pipeline_stage_map(
+                db,
+                (*ads.TERRITORY_PIPELINE_IDS, ads.SWEEPER_PIPELINE_ID, ads.REHASH_PIPELINE_ID),
+            ),
+        }
+    except Exception:
+        pass
+    return {
+        "pipeline_opps": pipeline_opps,
+        "contact_opps": contact_opps,
+        "contacts": contacts,
+        "stage_names": stage_names,
+        "history": ads.merge_stage_history(by_opportunity, by_contact),
+        "notes": notes,
+    }
+
+
+def ads_cohort_for_window(
+    inputs: dict[str, Any],
+    start_local: datetime,
+    end_local: datetime,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    """classify_window counts for one Phoenix window, using opps already loaded."""
+    ads = _ads_dashboard()
+    counted = ads.classify_window(
+        inputs["pipeline_opps"],
+        inputs["contact_opps"],
+        inputs["contacts"],
+        inputs["stage_names"],
+        start_local,
+        end_local,
+        now_utc,
+        history=inputs.get("history") or {},
+    )
+    return {
+        "inbound_leads": counted["inbound_leads"],
+        "opps": counted["opps"],
+        "demos": counted["demos"],
+        "sales": counted["sales"],
+        "fb_quick_form_leads": counted["fb_quick_form_leads"],
+        "lead_contact_ids": counted["lead_contact_ids"],
+        "timezone": INBOUND_ROW_TIMEZONE,
+        "window_start": start_local.isoformat(),
+        "window_end": end_local.isoformat(),
+        "notes": list(inputs.get("notes") or []),
     }
 
 
@@ -1836,16 +2027,28 @@ def compute_inbound_cac(
             needed_contacts.add(opp.contact_id)
     contacts_map = load_contacts_by_ids(db, needed_contacts)
 
-    inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
+    row_start, row_end, _, _ = inbound_row_window(
+        start=start, end=end, year=year, month=month, now=now
+    )
     if start and end:
-        fill_start, fill_end = inbound_start, inbound_end
+        load_start, load_end = row_start, row_end
     else:
-        ytd_start, ytd_end, _, _ = ytd_window(year, tz, now)
-        fill_start, fill_end = clamp_inbound_window(ytd_start, ytd_end, tz)
-    named_fills = fetch_inbound_named_fills(db, fill_start, fill_end)
+        phoenix_now = now.astimezone(ZoneInfo(INBOUND_ROW_TIMEZONE))
+        load_start, load_end, _, _ = ytd_window(year, INBOUND_ROW_TIMEZONE, phoenix_now)
+    ads_inputs = load_ads_lead_inputs(db, load_start, load_end)
+    ad_cohort = ads_cohort_for_window(ads_inputs, row_start, row_end, now_utc)
+    ad_monthly = None
+    if not (start and end):
+        ad_monthly = {}
+        for chart_month in ytd_months(year, now.astimezone(ZoneInfo(INBOUND_ROW_TIMEZONE))):
+            month_start, month_end, _, _ = month_window(year, chart_month, INBOUND_ROW_TIMEZONE)
+            ad_monthly[f"{year}-{chart_month:02d}"] = ads_cohort_for_window(
+                ads_inputs, month_start, month_end, now_utc
+            )
+    named_fills = fetch_inbound_named_fills(db, load_start, load_end)
 
     token, account_id, cred_reason = read_meta_ads_credentials()
-    if inbound_window_is_empty(inbound_start, inbound_end):
+    if inbound_window_is_empty(row_start, row_end):
         inbound_spend = empty_inbound_spend()
         inbound_monthly_spend = {}
     elif cred_reason:
@@ -1853,12 +2056,12 @@ def compute_inbound_cac(
         inbound_monthly_spend = None
     else:
         inbound_spend = fetch_meta_ads_spend(
-            inbound_start, inbound_end, token=token, account_id=account_id
+            row_start, row_end, token=token, account_id=account_id
         )
         inbound_monthly_spend = None
         if not (start and end) and inbound_spend.spend_status == "ok":
             inbound_monthly_spend = fetch_meta_ads_spend_by_month(
-                fill_start, fill_end, token=token, account_id=account_id
+                load_start, load_end, token=token, account_id=account_id
             )
 
     return assemble_inbound_cac(
@@ -1876,6 +2079,8 @@ def compute_inbound_cac(
         inbound_spend=inbound_spend,
         inbound_monthly_spend=inbound_monthly_spend,
         named_fills=named_fills,
+        ad_cohort=ad_cohort,
+        ad_monthly=ad_monthly,
     )
 
 

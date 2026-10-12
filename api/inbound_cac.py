@@ -5,9 +5,9 @@
 Leadership Inbound CAC / TAC dashboard for Lead Locker, Solar Reviews, and Inbound.
 Not listed on the main dashboard Lead Generation nav.
 Setter unit cost is $500 per sale. TAC = lead CAC + $500.
-Inbound uses contact CF hd5QqHEOVSsPom5bJ32P + Meta Ads spend (not $45/$70).
-Inbound leads are website form fills; Inbound CPL is Meta spend ÷ form fills.
-Inbound data starts 2026-08-01 ET.
+Inbound uses the Ads Dashboard GHL lead set on America/Phoenix days, plus Meta Ads spend (not $45/$70).
+Inbound leads are deduped Inbound and Facebook Quick Form contacts. Website form fills are a sub-line.
+Inbound CPL is Meta spend ÷ those GHL leads.
 Overall stays Lead Locker + Solar Reviews only.
 Data: /api/metrics/inbound_cac (JSON). Default timeframe is YTD.
 """
@@ -76,6 +76,7 @@ __DASHBOARD_NAV_CSS__
     th, td { border-bottom:1px solid var(--border); padding:11px 12px; text-align:left; font-size:14px; }
     th { color:#64748b; font-weight:900; background:#fafbfc; white-space:nowrap; }
     td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .subline { display:block; margin-top:3px; font-size:11px; font-weight:650; color:#64748b; line-height:1.35; }
     th.num { text-align:right; }
     .jsonlink { color:#0a7a34; font-weight:800; text-decoration:none; }
     .legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:10px 0 6px; font-size:12px; font-weight:800; color:#334155; }
@@ -95,7 +96,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Inbound CAC</div>
-        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses contact CF hd5QqHEOVSsPom5bJ32P = Inbound plus Meta Ads account spend (not a $45/$70 unit cost; not title-bucket; not 3PL; not pipeline 7nSEgeo). Inbound leads are website form fills (named estimate fills); Inbound cost per lead is Meta spend ÷ form fills (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound opps are territory + CF Inbound. Inbound data starts 2026-08-01 ET (YTD Inbound is Aug 1 → now, not Jan 1). Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (calendar year America/New_York). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
+        <div class="subtitle">Leadership page (direct URL — not on the main Lead Generation nav). Lead CAC uses Lead Locker ($45/lead) and Solar Reviews ($70/lead) on Inbound/Lead Locker. Inbound uses the same GHL leads as the Ads Dashboard: contact CF hd5QqHEOVSsPom5bJ32P counts as Inbound when it is Inbound or a Facebook Quick Form variant, Lead Locker and Solar Reviews titles excluded, deduped, on America/Phoenix days. Inbound cost per lead is Meta spend ÷ those leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Website form fills stay on their own sub-line. Opps, demos, sales, and CAC follow that lead set. Setter cost is $500 per sale. TAC = lead CAC + $500 (or (lead spend + setter spend) / sales). Overall stays Lead Locker + Solar Reviews only. Default view is YTD (Lead Locker and Solar Reviews use America/New_York; the Inbound row uses America/Phoenix). Sales use locked Sold / Sale Cancelled stages and Contact Sold Date in the same window. Months with no sales are chart gaps, not $0.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -150,7 +151,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-3">
         <div class="card-title">Inbound CAC</div>
         <div class="kpi" id="inboundCac">—</div>
-        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales · window starts 2026-08-01 ET</div>
+        <div class="meta" id="inboundCacMeta">Meta Ads spend / Inbound sales · America/Phoenix</div>
       </div>
       <div class="card span-3">
         <div class="card-title">Inbound TAC</div>
@@ -160,7 +161,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-3">
         <div class="card-title">Inbound CPL</div>
         <div class="kpi" id="inboundCpl">—</div>
-        <div class="meta" id="inboundCplMeta">Meta spend ÷ website form fills</div>
+        <div class="meta" id="inboundCplMeta">Meta spend ÷ GHL inbound leads</div>
       </div>
       <div class="card span-3 banner" id="inboundSpendBanner">
         <div class="card-title">EXAMPLE / spend unavailable <span class="example-tag">EXAMPLE</span></div>
@@ -168,12 +169,12 @@ __DASHBOARD_NAV_HTML__
       </div>
       <div class="card span-12">
         <div class="card-title">YTD totals</div>
-        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Cost per lead is $45 / $70 for Lead Locker / Solar Reviews. Inbound CPL is Meta Ads spend ÷ website form fills (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound spend is Meta Ads for 2026-08-01 ET → now (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are website form fills, not bought-lead titles. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+        <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Cost per lead is $45 / $70 for Lead Locker / Solar Reviews. Inbound cost per lead is Meta spend ÷ GHL inbound leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound spend is Meta Ads for the America/Phoenix window (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are the Ads Dashboard set. Website form fills are a sub-line, not the lead count. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
       </div>
       <div class="card span-12">
         <div class="card-title">Performance KPIs</div>
-        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate CF-grain row (hd5QqHEOVSsPom5bJ32P = Inbound on Buffalo / Rochester / Syracuse / Virtual) and is not folded into Overall. Inbound KPIs use 2026-08-01 ET → now. NR Leads are inbound/3PL bought-lead titles excluding refunded (same spend-universe as the CAC table) for LL/SR; Inbound NR Leads = website form fills (named estimate fills), not territory opp counts. Opps created and demos are Buffalo / Rochester / Syracuse / Virtual opps attributed by the contact’s inbound/3PL bought-lead title (LL/SR) or CF Inbound (Inbound row). Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s demos ÷ opps created (Evan’s formula — not the bot KPI of demos divided by demos plus no-demos). Rates are blank when the denominator is 0.</div>
+        <div class="meta" style="margin-bottom:10px">Same window and Lead Locker / Solar Reviews / Overall split as the CAC totals. Inbound is a separate row and is not folded into Overall. Inbound NR Leads are the Ads Dashboard GHL set on America/Phoenix days, including Facebook Quick Form, with Lead Locker and Solar Reviews titles excluded and the ads dedupe rules applied. Website form fills are a sub-line. Opps, demos, and sales follow that lead set and are Buffalo / Rochester / Syracuse / Virtual opportunities for those leads. NR Leads for Lead Locker / Solar Reviews are inbound/3PL bought-lead titles excluding refunded. Opps % = opps created ÷ NR Leads (Inbound is not forced to 100%). Opp to prelim = that source’s sales ÷ opps created. Demo rate = that source’s demos ÷ opps created (Evan’s formula — not the bot KPI of demos divided by demos plus no-demos). Rates are blank when the denominator is 0.</div>
         <div class="tableWrap"><table id="kpiTable"></table></div>
         <div class="meta" id="kpiJoinGap" style="margin-top:10px"></div>
       </div>
@@ -226,10 +227,25 @@ function fmtPct(v) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
   return (Number(v) * 100).toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%';
 }
+var pageRange = new URLSearchParams(window.location.search);
+var usePageRange = !!(pageRange.get('start') && pageRange.get('end'));
 function query() {
   var params = { format: 'json', year: yearSel.value };
-  if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;
+  if (usePageRange) {
+    params.start = pageRange.get('start');
+    params.end = pageRange.get('end');
+  } else {
+    if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;
+  }
   return new URLSearchParams(params).toString();
+}
+function leadSubline(r) {
+  if (!r) return '';
+  var bits = [];
+  if (r.fb_quick_form_leads != null) bits.push('FB Quick Form ' + r.fb_quick_form_leads);
+  if (r.website_form_fills != null) bits.push('Website form fills ' + r.website_form_fills);
+  if (!bits.length) return '';
+  return '<div class="subline">' + esc(bits.join(' · ')) + '</div>';
 }
 function rowBySource(rows, name) {
   rows = rows || [];
@@ -260,7 +276,7 @@ function renderTable(el, rows, overall) {
       html += '<tr>';
       html += '<td>' + esc(r.source) + '</td>';
       html += '<td class="num">' + fmtMoney(r.cost_per_lead != null ? r.cost_per_lead : r.unit_cost) + '</td>';
-      html += '<td class="num">' + esc(r.opp_count) + '</td>';
+      html += '<td class="num">' + esc(r.opp_count) + leadSubline(r) + '</td>';
       html += '<td class="num">' + esc(r.refunded_excluded_count) + '</td>';
       html += '<td class="num">' + fmtMoney(r.spend) + '</td>';
       html += '<td class="num">' + esc(r.sales) + '</td>';
@@ -295,7 +311,7 @@ function renderKpiTable(el, kpis) {
       var opps = (r.opps_created == null) ? r.opportunities_created : r.opps_created;
       html += '<tr>';
       html += '<td>' + esc(r.source) + '</td>';
-      html += '<td class="num">' + esc(r.nr_leads == null ? '—' : r.nr_leads) + '</td>';
+      html += '<td class="num">' + esc(r.nr_leads == null ? '—' : r.nr_leads) + leadSubline(r) + '</td>';
       html += '<td class="num">' + esc(opps == null ? '—' : opps) + '</td>';
       html += '<td class="num">' + fmtPct(r.opps_pct) + '</td>';
       html += '<td class="num">' + esc(r.sits == null ? '—' : r.sits) + '</td>';
@@ -474,8 +490,9 @@ async function load() {
   document.getElementById('inboundCpl').textContent = fmtMoney(inboundCpl);
   document.getElementById('inboundCplMeta').textContent = inbound
     ? ((inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable')
-      + ' ÷ ' + (inbound.opp_count == null ? '—' : inbound.opp_count) + ' form fills')
-    : 'Meta spend ÷ website form fills';
+      + ' ÷ ' + (inbound.opp_count == null ? '—' : inbound.opp_count) + ' GHL inbound leads'
+      + (inbound.website_form_fills == null ? '' : ' · website form fills ' + inbound.website_form_fills))
+    : 'Meta spend ÷ GHL inbound leads';
   var banner = document.getElementById('inboundSpendBanner');
   if (banner) banner.style.display = (!inbound || inbound.spend_status !== 'ok') ? '' : 'none';
   document.getElementById('setterUnitKpi').textContent = fmtMoney(setterUnit != null ? setterUnit : 500);
@@ -489,7 +506,10 @@ async function load() {
   renderKpiTable(document.getElementById('kpiTable'), data.performance_kpis || {});
   drawCacChart(data.chart || {});
 }
-document.getElementById('apply').addEventListener('click', load);
+document.getElementById('apply').addEventListener('click', function() {
+  usePageRange = false;
+  load();
+});
 load();
 </script>
 </body>

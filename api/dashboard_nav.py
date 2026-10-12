@@ -1580,3 +1580,52 @@ def render_dashboard_nav(current: str) -> str:
         "<!-- HAPPY_SOLAR_LOADING -->",
         "<script>\n" + overlay + "\n</script>",
     )
+
+
+DATE_PRESETS = (
+    ("today", "Today"), ("yesterday", "Yesterday"), ("thisweek", "This week"), ("lastweek", "Last week"),
+    ("mtd", "This month"), ("lastmonth", "Last month"), ("last30", "Last 30"), ("ytd", "YTD"),
+)
+
+
+def date_preset_range(preset_id: str, today=None) -> tuple[str, str]:
+    """Server-side twin of window.hsOpsPresetRange (America/New_York days)."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    t = today or datetime.now(ZoneInfo("America/New_York")).date()
+    monday = t - timedelta(days=t.weekday())
+    first = t.replace(day=1)
+    if preset_id == "today":
+        a, b = t, t
+    elif preset_id == "yesterday":
+        a = b = t - timedelta(days=1)
+    elif preset_id == "thisweek":
+        a, b = monday, t
+    elif preset_id == "lastweek":
+        a, b = monday - timedelta(days=7), monday - timedelta(days=1)
+    elif preset_id == "lastmonth":
+        b = first - timedelta(days=1)
+        a = b.replace(day=1)
+    elif preset_id == "last30":
+        a, b = t - timedelta(days=29), t
+    elif preset_id == "ytd":
+        a, b = t.replace(month=1, day=1), t
+    else:
+        a, b = first, t
+    return a.isoformat(), b.isoformat()
+
+
+def date_preset_links_html(href_for, start: str = "", end: str = "") -> str:
+    """Row of quick date links for server-rendered pages. href_for(start, end) -> URL."""
+    import html as _h
+
+    parts = []
+    for pid, label in DATE_PRESETS:
+        a, b = date_preset_range(pid)
+        on = a == start and b == end
+        parts.append(
+            f'<a class="date-preset{" active" if on else ""}" data-preset="{pid}" aria-pressed="{str(on).lower()}" '
+            f'href="{_h.escape(href_for(a, b))}">{label}</a>'
+        )
+    return '<div class="date-presets" role="group" aria-label="Quick date ranges">' + "".join(parts) + "</div>"

@@ -56,3 +56,23 @@ class EveryDashboardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServerRenderedPresetsTest(unittest.TestCase):
+    def test_paid_social_has_presets(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "api"))
+        import paid_social_funnel
+        html = paid_social_funnel.render_html()
+        self.assertGreaterEqual(html.count('data-preset="'), 8)
+        self.assertIn(">This month</a>", html)
+
+    def test_server_ranges_match(self):
+        import sys
+        from datetime import date
+        sys.path.insert(0, str(ROOT / "api"))
+        from dashboard_nav import date_preset_range
+        t = date(2026, 10, 12)
+        self.assertEqual(date_preset_range("lastweek", t), ("2026-10-05", "2026-10-11"))
+        self.assertEqual(date_preset_range("lastmonth", t), ("2026-09-01", "2026-09-30"))
+        self.assertEqual(date_preset_range("last30", t), ("2026-09-13", "2026-10-12"))

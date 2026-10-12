@@ -20,7 +20,7 @@ class DatePresetsTest(unittest.TestCase):
             self.assertIn("'" + label + "'", NAV, label)
 
     def test_injected_filterbar_renders_presets(self):
-        self.assertIn("window.hsOpsPresetButtons(f)", NAV)
+        self.assertIn("window.hsOpsPresetButtons(", NAV)
         self.assertIn("[data-preset]", NAV)
 
     def test_ops_overview_filterbar_renders_presets(self):

@@ -17,6 +17,9 @@ browser the same way the Scottsdale incentive page does it:
 Rules live in mystery_trip_logic.txt (pure JS, tested in Node).
 Recruiting credits have no data source yet. RECRUIT_CREDITS is the list a
 manager confirms; each entry is one qualifying-month credit for the recruiter.
+EXCLUDED_TRAVELERS takes someone off this page only. One full name per line.
+The exact name is removed, and so is a hyphenated surname form of that name.
+Bloom goals and the shared metric feeds stay as they are.
 """
 
 from __future__ import annotations
@@ -37,6 +40,17 @@ from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 # {"recruiter": "Full Name", "recruit": "Full Name", "month": "2026-10"}
 # The recruit earned their full stipend in their first full month.
 RECRUIT_CREDITS: tuple[dict[str, str], ...] = ()
+
+# People a manager has taken off this page. One full name per line.
+# The exact name is removed from the FMA board, the Closer board, the
+# boarding-pass picker, and ?traveler= lookups. A hyphenated surname form of
+# that same name is removed too ("April Cornell" also removes
+# "April Cornell-DeAngelis"). A different person who only shares part of the
+# name stays. This does not change Bloom or any shared metric feed.
+# ClickUp 86bcgp47t.
+EXCLUDED_TRAVELERS: tuple[str, ...] = (
+    "April Cornell",
+)
 
 
 def logic_js() -> str:
@@ -356,6 +370,7 @@ __LOGIC_JS__
     (function () {
       var MT = MysteryTrip;
       var CREDITS = __CREDITS_JSON__;
+      var EXCLUDED = __EXCLUDED_JSON__;
       var STORE_KEY = "hsMysteryTripTraveler";
       var state = { path: "fma", fma: [], closer: [], traveler: "" };
 
@@ -579,8 +594,8 @@ __LOGIC_JS__
             goals: (goals && goals.person_goals) || [],
           };
         });
-        state.fma = MT.buildFma({ today: today, roster: roster, feeds: feeds, credits: CREDITS });
-        state.closer = MT.buildClosers({ today: today, feeds: feeds, credits: CREDITS });
+        state.fma = MT.buildFma({ today: today, roster: roster, feeds: feeds, credits: CREDITS, excluded: EXCLUDED });
+        state.closer = MT.buildClosers({ today: today, feeds: feeds, credits: CREDITS, excluded: EXCLUDED });
         var roles = rosterResult[1].status === "fulfilled" ? rosterResult[1].value : null;
         if (roles && roles.available) {
           state.fma = MT.keepBloomRole(state.fma, roles.people, "fma");
@@ -645,6 +660,22 @@ __LOGIC_JS__
 """
 
 
+def excluded_payload() -> list[str]:
+    """Names a manager has taken off the Mystery Trip page."""
+    rows: list[str] = []
+    seen: set[str] = set()
+    for name in EXCLUDED_TRAVELERS:
+        clean = " ".join(str(name or "").split())
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(clean)
+    return rows
+
+
 def credits_payload() -> list[dict[str, str]]:
     labels = {"2026-10": "October", "2026-11": "November", "2026-12": "December"}
     rows = []
@@ -660,6 +691,7 @@ def credits_payload() -> list[dict[str, str]]:
 
 def render_page() -> str:
     credits = json.dumps(credits_payload()).replace("</", "<\\/")
+    excluded = json.dumps(excluded_payload()).replace("</", "<\\/")
     return (
         HTML.replace("__DASHBOARD_NAV_CSS__", dashboard_nav_css())
         .replace("__DASHBOARD_NAV_HTML__", render_dashboard_nav("mystery_trip"))
@@ -668,6 +700,7 @@ def render_page() -> str:
         .replace("__PLANE__", PLANE_SVG)
         .replace("__LOGIC_JS__", logic_js())
         .replace("__CREDITS_JSON__", credits)
+        .replace("__EXCLUDED_JSON__", excluded)
     )
 
 

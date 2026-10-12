@@ -237,10 +237,16 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("if (monthSel.value && monthSel.value !== 'ytd') params.month = monthSel.value;", page_html)
         self.assertIn("if (v === null || v === undefined || v === '') return null;", page_html)
         self.assertNotIn("|| 0", page_html)
-        ytd_at = page_html.find("YTD totals")
-        kpi_at = page_html.find("Performance KPIs")
+        ytd_at = page_html.find('id="totalsTitle"')
+        kpi_at = page_html.find('id="kpiTitle"')
         chart_at = page_html.find("Month-by-month CAC and TAC")
         self.assertTrue(0 < ytd_at < kpi_at < chart_at)
+        self.assertIn("since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn("Inbound sales", page_html)
+        self.assertIn("Inbound CAC · since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn("Inbound TAC · since Aug 1, 2026 · America/Phoenix", page_html)
+        self.assertIn('id="inboundCacTitle"', page_html)
+        self.assertIn('id="kpiTitle"', page_html)
         self.assertIn('id="kpiTable"', page_html)
         self.assertIn("id=\"leadLockerCac\"", page_html)
         self.assertIn("id=\"solarReviewsCac\"", page_html)
@@ -1222,15 +1228,15 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertIn('id="inboundTac"', page_html)
         self.assertIn('id="inboundCpl"', page_html)
         self.assertIn("Cost per lead", page_html)
-        self.assertIn("Meta spend ÷ website form fills", page_html)
+        self.assertIn("Meta spend ÷ GHL inbound leads", page_html)
         self.assertNotIn("Lead unit", page_html)
         self.assertIn("EXAMPLE / spend unavailable", page_html)
         self.assertIn("Meta Ads auth not ready — lead KPIs live; spend/CAC/TAC blank until token + act_ id are set.", page_html)
         self.assertIn("hd5QqHEOVSsPom5bJ32P", page_html)
-        self.assertIn("Inbound uses contact CF", page_html)
+        self.assertIn("hd5QqHEOVSsPom5bJ32P counts as Inbound", page_html)
         self.assertIn("Overall stays Lead Locker + Solar Reviews only", page_html)
-        self.assertIn("2026-08-01", page_html)
-        self.assertIn("website form fills", page_html)
+        self.assertIn("America/Phoenix", page_html)
+        self.assertIn("Website form fills", page_html)
         self.assertIn("legendInboundCac", page_html)
         self.assertIn("inbound.spend_status", page_html)
         self.assertIn("composio", METRIC_SRC.lower())
@@ -1276,6 +1282,33 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         sep_start, sep_end, _, _ = metric.month_window(2026, 9, "America/New_York")
         sep_in_start, sep_in_end = metric.clamp_inbound_window(sep_start, sep_end)
         self.assertEqual((sep_in_start, sep_in_end), (sep_start, sep_end))
+
+    def test_live_inbound_window_keeps_aug_1_floor_on_phoenix_days(self):
+        now = datetime(2026, 10, 12, 15, 0, tzinfo=NY)
+        phoenix = ZoneInfo("America/Phoenix")
+        start, end, _, _ = metric.inbound_row_window(
+            start=None, end=None, year=2026, month=None, now=now
+        )
+        self.assertEqual(start, datetime(2026, 8, 1, 0, 0, tzinfo=phoenix))
+        self.assertEqual(end, datetime(2026, 10, 12, 0, 0, tzinfo=phoenix))
+        self.assertEqual(metric.INBOUND_WINDOW_FLOOR, "2026-08-01")
+
+        october_start, october_end, _, _ = metric.inbound_row_window(
+            start="2026-10-05", end="2026-10-11", year=2026, month=None, now=now
+        )
+        self.assertEqual(october_start, datetime(2026, 10, 5, 0, 0, tzinfo=phoenix))
+        self.assertEqual(october_end, datetime(2026, 10, 12, 0, 0, tzinfo=phoenix))
+
+        july_start, july_end, _, _ = metric.inbound_row_window(
+            start=None, end=None, year=2026, month=7, now=now
+        )
+        self.assertTrue(metric.inbound_window_is_empty(july_start, july_end))
+
+        quarter_start, quarter_end, _, _ = metric.inbound_row_window(
+            start="2026-07-01", end="2026-09-30", year=2026, month=None, now=now
+        )
+        self.assertEqual(quarter_start, datetime(2026, 8, 1, 0, 0, tzinfo=phoenix))
+        self.assertEqual(quarter_end, datetime(2026, 10, 1, 0, 0, tzinfo=phoenix))
 
     def test_ytd_clamps_inbound_start_to_aug_1_and_ll_sr_stay_full_year(self):
         now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
@@ -1449,6 +1482,23 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         self.assertEqual(inbound_kpi["opps_pct"], 0.5)
 
     def test_leads_come_from_named_fills_not_opp_count_and_exclude_tests(self):
+        # The page module is also named website_funnel and has no host filter.
+        # Preview fills must still be excluded. This count is named fills, not
+        # city opps, so stage history and the 10-minute deleted-opp rule do not apply.
+        import types
+
+        poisoned = types.ModuleType("website_funnel")
+        previous = sys.modules.get("website_funnel")
+        sys.modules["website_funnel"] = poisoned
+        try:
+            self._assert_named_fills_exclude_preview_and_tests()
+        finally:
+            if previous is None:
+                sys.modules.pop("website_funnel", None)
+            else:
+                sys.modules["website_funnel"] = previous
+
+    def _assert_named_fills_exclude_preview_and_tests(self):
         now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
         contacts_map = {
             "c-in": self._cf("Inbound", "2026-09-08"),
@@ -1484,6 +1534,8 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
         inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
         self.assertEqual(inbound["opp_count"], 3)
+        self.assertEqual(inbound["leads"], 3)
+        self.assertEqual(inbound["nr_leads"], 3)
         self.assertNotEqual(inbound["opp_count"], 2)
         self.assertEqual(inbound_kpi["nr_leads"], 3)
         self.assertEqual(inbound_kpi["opps_created"], 2)
@@ -1568,8 +1620,9 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         self.assertIn("web_funnel_named_fills_v1", METRIC_SRC)
         self.assertIn("not forced 1.0", METRIC_SRC)
         page_html = page.render_html(2026)
-        self.assertIn("Inbound data starts 2026-08-01 ET", page_html)
-        self.assertIn("website form fills", page_html)
+        self.assertIn("America/Phoenix", page_html)
+        self.assertIn("Website form fills", page_html)
+        self.assertNotIn("Inbound data starts 2026-08-01 ET", page_html)
 
 
 class InboundCostPerLeadTests(unittest.TestCase):
@@ -1636,9 +1689,166 @@ class InboundCostPerLeadTests(unittest.TestCase):
 
     def test_page_copy_says_inbound_cpl_is_spend_over_form_fills(self):
         page_html = page.render_html(2026)
-        self.assertIn("Inbound cost per lead is Meta spend ÷ form fills", page_html)
+        self.assertIn("Inbound cost per lead is Meta spend ÷ GHL inbound leads", page_html)
         self.assertIn("cost_per_lead", page_html)
         self.assertIn("Inbound CPL", page_html)
+
+
+class InboundAdsCohortTests(unittest.TestCase):
+    def test_quick_form_lead_set_drives_opps_demos_sales_and_keeps_form_fills(self):
+        ads = load_module("ads_dashboard_for_inbound_cac", METRICS / "ads_dashboard.py")
+        phoenix = ZoneInfo("America/Phoenix")
+        start = datetime(2026, 10, 5, tzinfo=phoenix)
+        end = datetime(2026, 10, 12, tzinfo=phoenix)
+        sold_stage = next(iter(sales.SalesMetricContract().stage_ids))
+        quick = {
+            "id": "c-quick",
+            "phone": "7165550100",
+            "email": "quick@example.com",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "customFields": [{"id": "hd5QqHEOVSsPom5bJ32P", "value": "FB Quick Form"}],
+        }
+        inbound = {
+            "id": "c-in",
+            "phone": "7165550199",
+            "email": "in@example.com",
+            "firstName": "Grace",
+            "lastName": "Hopper",
+            "customFields": [
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "Inbound"},
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-10-09"},
+            ],
+        }
+        duplicate = {
+            "id": "c-dup",
+            "phone": "7165550100",
+            "email": "other@example.com",
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "customFields": [{"id": "hd5QqHEOVSsPom5bJ32P", "value": "Facebook Quick Form"}],
+        }
+        locker = {
+            "id": "c-ll",
+            "phone": "7165550177",
+            "customFields": [{"id": "hd5QqHEOVSsPom5bJ32P", "value": "Inbound"}],
+        }
+        created = "2026-10-08T18:00:00.000Z"
+        pipeline = [
+            {
+                "id": "lead-quick",
+                "pipelineId": metric.INBOUND_PIPELINE_ID,
+                "name": "Ada Lovelace",
+                "contactId": "c-quick",
+                "createdAt": created,
+            },
+            {
+                "id": "lead-dup",
+                "pipelineId": metric.INBOUND_PIPELINE_ID,
+                "name": "Ada Lovelace 2",
+                "contactId": "c-dup",
+                "createdAt": "2026-10-08T18:02:00.000Z",
+            },
+            {
+                "id": "lead-in",
+                "pipelineId": metric.INBOUND_PIPELINE_ID,
+                "name": "Grace Hopper",
+                "contactId": "c-in",
+                "createdAt": created,
+            },
+            {
+                "id": "lead-ll",
+                "pipelineId": metric.INBOUND_PIPELINE_ID,
+                "name": "Lead Locker Grace",
+                "contactId": "c-ll",
+                "createdAt": created,
+            },
+        ]
+        city = [
+            {
+                "id": "city-in",
+                "pipelineId": metric.TERRITORY_PIPELINE_IDS[0],
+                "contactId": "c-in",
+                "createdAt": created,
+                "pipelineStageId": sold_stage,
+                "pipelineStageName": "Sold",
+            },
+            {
+                "id": "city-quick",
+                "pipelineId": metric.TERRITORY_PIPELINE_IDS[0],
+                "contactId": "c-quick",
+                "createdAt": created,
+                "pipelineStageId": "demo-stage",
+                "pipelineStageName": "Demo - Negotiating",
+            },
+        ]
+        contacts = {"c-quick": quick, "c-in": inbound, "c-dup": duplicate, "c-ll": locker}
+        stage_names = {sold_stage: "Sold", "demo-stage": "Demo - Negotiating"}
+        counted = ads.classify_window(
+            pipeline,
+            city,
+            contacts,
+            stage_names,
+            start,
+            end,
+            datetime(2026, 10, 12, tzinfo=timezone.utc),
+        )
+        self.assertEqual(counted["inbound_leads"], 2)
+        self.assertEqual(counted["fb_quick_form_leads"], 1)
+        self.assertEqual(counted["opps"], 2)
+        self.assertEqual(counted["demos"], 2)
+        self.assertEqual(counted["sales"], 1)
+        cohort = {
+            "inbound_leads": counted["inbound_leads"],
+            "opps": counted["opps"],
+            "demos": counted["demos"],
+            "sales": counted["sales"],
+            "fb_quick_form_leads": counted["fb_quick_form_leads"],
+            "timezone": "America/Phoenix",
+            "window_start": start.isoformat(),
+            "window_end": end.isoformat(),
+        }
+        fills = [
+            {"date": "2026-10-06", "name": "Pat Lee", "email": "pat@example.com", "address": "1 Main"},
+            {"date": "2026-10-07", "name": "Ann Lee", "email": "ann@example.com", "address": "2 Main"},
+            {"date": "2026-09-01", "name": "Old", "email": "old@example.com", "address": "3 Main"},
+        ]
+        payload = metric.assemble_inbound_cac(
+            [],
+            {},
+            set(),
+            year=2026,
+            month=10,
+            now=datetime(2026, 10, 12, tzinfo=NY),
+            start="2026-10-05",
+            end="2026-10-11",
+            inbound_spend=metric.MetaSpendResult(spend=270.3, spend_status="ok"),
+            named_fills=fills,
+            ad_cohort=cohort,
+        )
+        inbound_row = {row["source"]: row for row in payload["rows"]}["Inbound"]
+        self.assertEqual(inbound_row["opp_count"], 2)
+        self.assertEqual(inbound_row["leads"], 2)
+        self.assertEqual(inbound_row["nr_leads"], 2)
+        self.assertEqual(inbound_row["sales"], 1)
+        self.assertEqual(inbound_row["website_form_fills"], 2)
+        self.assertEqual(inbound_row["fb_quick_form_leads"], 1)
+        self.assertEqual(inbound_row["cac"], 270.3)
+        self.assertEqual(inbound_row["cost_per_lead"], 135.15)
+        self.assertEqual(payload["inbound_timezone"], "America/Phoenix")
+        self.assertTrue(payload["inbound_window_start_local"].startswith("2026-10-05"))
+        self.assertIn("-07:00", payload["inbound_window_start_local"])
+        kpi = payload["performance_kpis"]["inbound"]
+        self.assertEqual(kpi["nr_leads"], 2)
+        self.assertEqual(kpi["opps_created"], 2)
+        self.assertEqual(kpi["sits"], 2)
+        self.assertEqual(kpi["sales"], 1)
+        self.assertEqual(kpi["website_form_fills"], 2)
+        self.assertEqual(payload["debug"]["inbound_lead_basis"], "ads_dashboard")
+        self.assertIn("Ads Dashboard", payload["count_method"])
+        page_html = page.render_html(2026)
+        self.assertIn("leadSubline", page_html)
+        self.assertIn("website_form_fills", page_html)
 
 
 if __name__ == "__main__":

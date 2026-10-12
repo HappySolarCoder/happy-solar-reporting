@@ -447,6 +447,103 @@ class AdsDashboardTests(unittest.TestCase):
         )
         self.assertEqual(demo["kpis"]["demos"]["value"], 1)
 
+    def test_deleted_opp_counts_from_contact_history(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        names = {"stage-New Lead": "New Lead"}
+        history = {
+            "gone": [
+                {
+                    "opportunityId": "gone",
+                    "contactId": "c",
+                    "pipelineName": "Buffalo",
+                    "toStageName": "New Appointment",
+                    "effectiveAt": "2026-10-08T16:00:00.000Z",
+                },
+                {
+                    "opportunityId": "gone",
+                    "contactId": "c",
+                    "pipelineName": "Buffalo",
+                    "toStageName": "Reschedule Needed",
+                    "effectiveAt": "2026-10-08T18:00:00.000Z",
+                },
+            ],
+            "too-early": [
+                {
+                    "opportunityId": "too-early",
+                    "contactId": "c",
+                    "pipelineName": "Rochester",
+                    "toStageName": "New Appointment",
+                    "effectiveAt": "2026-10-04T12:00:00.000Z",
+                }
+            ],
+            "not-city": [
+                {
+                    "opportunityId": "not-city",
+                    "contactId": "c",
+                    "pipelineName": "Sweeper",
+                    "toStageName": "New Appointment",
+                    "effectiveAt": INSIDE,
+                }
+            ],
+        }
+        payload = assemble(contacts, pipeline, [], names, history=history)
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 0)
+        self.assertEqual(metric._first_history_time(history["gone"]).isoformat(), "2026-10-08T16:00:00+00:00")
+
+    def test_sweeper_opp_keeps_a_prior_demo_stage(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        moved = city_opp("moved", "c", INSIDE, "No Sit")
+        moved["pipelineId"] = metric.SWEEPER_PIPELINE_ID
+        moved["pipelineStageId"] = "stage-rehash"
+        names = {
+            "stage-New Lead": "New Lead",
+            "stage-rehash": "Rehash",
+            "stage-reschedule": "Reschedule Needed",
+        }
+        payload = assemble(
+            contacts,
+            pipeline,
+            [moved],
+            names,
+            history={
+                "moved": [
+                    {
+                        "opportunityId": "moved",
+                        "contactId": "c",
+                        "pipelineName": "Rochester",
+                        "toStageName": "Demo-Negotiating",
+                        "effectiveAt": "2026-10-08T17:00:00.000Z",
+                    },
+                    {
+                        "opportunityId": "moved",
+                        "contactId": "c",
+                        "pipelineName": "Sweeper",
+                        "toStageName": "Rehash",
+                        "effectiveAt": "2026-10-09T17:00:00.000Z",
+                    },
+                ]
+            },
+        )
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+
+    def test_sold_stage_counts_as_a_demo(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        sold = city_opp("sold", "c", INSIDE, "No Sit")
+        sold["pipelineStageId"] = "stage-sold"
+        names = {"stage-New Lead": "New Lead", "stage-sold": "Sold", "stage-leg": "One Legger"}
+        payload = assemble(contacts, pipeline, [sold], names)
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+        self.assertTrue(metric.stage_is_demo("One Legger"))
+        self.assertTrue(metric.stage_is_demo("Demo-Not Interested"))
+        self.assertFalse(metric.stage_is_demo("Sale Cancelled"))
+        self.assertFalse(metric.stage_is_demo("Reschedule Needed"))
+
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]
         contacts = {"c": contact("c", "inbound", sold="2026-10-08")}
@@ -536,6 +633,7 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertNotIn('db.collection("ghl_pipelines_v2").stream()', METRIC_SRC)
         self.assertNotIn('db.collection("ghl_opportunity_stage_history_v1").stream()', METRIC_SRC)
         self.assertIn('.where("opportunityId", "in", chunk)', METRIC_SRC)
+        self.assertIn('HISTORY_COLLECTION).where("contactId", "in", chunk)', METRIC_SRC)
         self.assertIn("db.get_all(", METRIC_SRC)
         self.assertIn('.where("pipelineId", "==", LEAD_PIPELINE_ID)', METRIC_SRC)
         self.assertIn('.where("createdAt", ">=", start_iso)', METRIC_SRC)

@@ -233,14 +233,16 @@ def _contact_id(opp: dict[str, Any]) -> str:
 
 
 def stage_is_demo(stage_name: Any) -> bool:
-    """Pipeline stage is the GHL disposition. A demo stage is a demo."""
+    """A Demo-* stage, One Legger, or Sold is a demo."""
     folded = _fold(stage_name).replace("-", " ").replace("/", " ")
     folded = " ".join(folded.split())
     if not folded:
         return False
+    if folded == "sold" or folded.startswith("sold "):
+        return True
     if "one legger" in folded:
         return True
-    return "demo" in folded
+    return folded == "demo" or folded.startswith("demo ")
 
 
 def _sold_stage_ids() -> set[str]:
@@ -448,6 +450,65 @@ def _opp_was_territory(opp: dict[str, Any], history: dict[str, list[dict[str, An
     return _history_was_territory(history.get(_opp_id(opp, "")))
 
 
+def _history_timestamp(row: dict[str, Any]) -> datetime | None:
+    for key in ("effectiveAt", "createdAt", "timestamp", "changedAt"):
+        moment = cac.parse_iso_dt(row.get(key))
+        if moment is not None:
+            return moment
+    return None
+
+
+def _first_history_time(rows: list[dict[str, Any]] | None) -> datetime | None:
+    moments = [_history_timestamp(row) for row in rows or [] if isinstance(row, dict)]
+    found = [moment for moment in moments if moment is not None]
+    if not found:
+        return None
+    return min(found)
+
+
+def _history_contact_id(rows: list[dict[str, Any]] | None) -> str:
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        contact_id = cac.compact_str(row.get("contactId") or row.get("contact_id"))
+        if contact_id:
+            return contact_id
+    return ""
+
+
+def _row_stage_pipeline_is_city(row: dict[str, Any]) -> bool:
+    """The stage on this row was in Buffalo, Rochester, Syracuse, or Virtual."""
+    to_id = row.get("toPipelineId")
+    to_name = row.get("toPipelineName")
+    if to_id not in (None, "") or to_name not in (None, ""):
+        return cac.is_territory_pipeline(to_id) or _fold(to_name) in TERRITORY_PIPELINE_NAMES
+    if cac.is_territory_pipeline(row.get("pipelineId")):
+        return True
+    return _fold(row.get("pipelineName") or row.get("pipeline")) in TERRITORY_PIPELINE_NAMES
+
+
+def _history_stage_label(row: dict[str, Any], stage_names: dict[str, str]) -> str:
+    for key in ("toStageName", "stageName"):
+        label = cac.compact_str(row.get(key))
+        if label:
+            return label
+    for key in ("toStageId", "stageId", "pipelineStageId"):
+        stage_id = cac.compact_str(row.get(key))
+        if not stage_id:
+            continue
+        return stage_names.get(stage_id) or stage_id
+    return ""
+
+
+def _history_has_city_demo(rows: list[dict[str, Any]] | None, stage_names: dict[str, str]) -> bool:
+    for row in rows or []:
+        if not isinstance(row, dict) or not _row_stage_pipeline_is_city(row):
+            continue
+        if stage_is_demo(_history_stage_label(row, stage_names)):
+            return True
+    return False
+
+
 def opp_stage_label(opp: dict[str, Any], stage_names: dict[str, str]) -> str:
     stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
     label = (
@@ -568,7 +629,22 @@ def classify_window(
         if not _opp_was_territory(opp, history):
             continue
         opp_ids.add(opp_id)
-        if stage_is_demo(opp_stage_label(opp, stage_names)):
+        if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
+            demo_ids.add(opp_id)
+
+    for opp_id, history_rows in history.items():
+        if not opp_id or opp_id in seen_city:
+            continue
+        contact_id = _history_contact_id(history_rows)
+        if contact_id not in member_ids:
+            continue
+        if not _history_was_territory(history_rows):
+            continue
+        created = _first_history_time(history_rows)
+        if not _in_window(created, start_local, end_local):
+            continue
+        opp_ids.add(opp_id)
+        if _history_has_city_demo(history_rows, stage_names):
             demo_ids.add(opp_id)
 
     sales: set[str] = set()
@@ -1077,8 +1153,14 @@ def load_opps_for_contacts(db: Any, contact_ids: list[str]) -> list[dict[str, An
     return list(found.values())
 
 
+def _append_history_row(found: dict[str, list[dict[str, Any]]], row: dict[str, Any]) -> None:
+    opp_id = cac.compact_str(row.get("opportunityId"))
+    if opp_id:
+        found.setdefault(opp_id, []).append(row)
+
+
 def load_stage_history(db: Any, opportunity_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """Bounded history reads for the already-loaded opportunities. No collection scan."""
+    """Bounded history reads for opportunities that still exist. No collection scan."""
     ids: list[str] = []
     seen: set[str] = set()
     for raw in opportunity_ids:
@@ -1092,11 +1174,35 @@ def load_stage_history(db: Any, opportunity_ids: list[str]) -> dict[str, list[di
         chunk = ids[offset : offset + CONTACT_IN_CHUNK]
         query = db.collection(HISTORY_COLLECTION).where("opportunityId", "in", chunk)
         for snap in query.stream():
-            row = snap.to_dict() or {}
-            opp_id = cac.compact_str(row.get("opportunityId"))
-            if opp_id:
-                found.setdefault(opp_id, []).append(row)
+            _append_history_row(found, snap.to_dict() or {})
     return found
+
+
+def load_stage_history_by_contact(db: Any, contact_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """History for lead contacts, including opportunities that were deleted."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in contact_ids:
+        contact_id = cac.compact_str(raw)
+        if not contact_id or contact_id in seen:
+            continue
+        seen.add(contact_id)
+        ids.append(contact_id)
+    found: dict[str, list[dict[str, Any]]] = {}
+    for offset in range(0, len(ids), CONTACT_IN_CHUNK):
+        chunk = ids[offset : offset + CONTACT_IN_CHUNK]
+        query = db.collection(HISTORY_COLLECTION).where("contactId", "in", chunk)
+        for snap in query.stream():
+            _append_history_row(found, snap.to_dict() or {})
+    return found
+
+
+def merge_stage_history(*parts: dict[str, list[dict[str, Any]]] | None) -> dict[str, list[dict[str, Any]]]:
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for part in parts:
+        for opp_id, rows in (part or {}).items():
+            merged.setdefault(opp_id, []).extend(rows)
+    return merged
 
 
 def load_pipeline_stage_map(db: Any, pipeline_ids: tuple[str, ...] | list[str]) -> dict[str, str]:
@@ -1568,14 +1674,22 @@ def compute_ads_dashboard(
     ]
     contact_opps = load_opps_for_contacts(db, lead_ids)
     history_note = None
+    by_opportunity: dict[str, list[dict[str, Any]]] = {}
+    by_contact: dict[str, list[dict[str, Any]]] = {}
     try:
-        history = load_stage_history(db, [_opp_id(opp, "") for opp in contact_opps])
+        by_opportunity = load_stage_history(db, [_opp_id(opp, "") for opp in contact_opps])
     except Exception:
-        history = {}
         history_note = (
             "Opportunity stage history could not be read, so opps only include "
             "opportunities currently in Buffalo, Rochester, Syracuse, or Virtual."
         )
+    try:
+        by_contact = load_stage_history_by_contact(db, lead_ids)
+    except Exception:
+        history_note = history_note or (
+            "Stage history for deleted opportunities could not be read."
+        )
+    history = merge_stage_history(by_opportunity, by_contact)
     try:
         stage_names = load_stage_names(db)
         stage_status = "ok"

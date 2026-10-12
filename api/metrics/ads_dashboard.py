@@ -48,6 +48,12 @@ CONTACT_GET_ALL_CHUNK = 300
 CACHE_TTL_SECONDS = 600
 MAX_RANGE_DAYS = 366
 OPP_COLLECTION = "ghl_opportunities_v2"
+HISTORY_COLLECTION = "ghl_opportunity_stage_history_v1"
+# Current pipeline after a move. History still shows the city pipeline they left.
+SWEEPER_PIPELINE_ID = "0VNxqmhbk7FDO64j2pKu"
+REHASH_PIPELINE_ID = "vQ63K9v80I6SLIUZ0MPJ"
+TERRITORY_PIPELINE_NAMES = frozenset({"buffalo", "rochester", "syracuse", "virtual"})
+NEAR_NAME_WINDOW = timedelta(minutes=10)
 CONTACT_COLLECTION = "ghl_contacts_v2"
 PIPELINE_COLLECTION = "ghl_pipelines_v2"
 GOALS_COLLECTION = "goals_monthly_v1"
@@ -200,16 +206,15 @@ def is_quick_form(contact: dict[str, Any] | None, source: str | None = None) -> 
 
 
 def is_ad_lead(contact: dict[str, Any] | None, include_quick_form: bool | None = None) -> bool:
-    """Inbound Lead Gen Source, optionally keeping Quick Form contacts."""
+    """Lead Gen Source must be Inbound. Quick Form is a tag on those contacts."""
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
     source = lead_source(contact)
-    quick = is_quick_form(contact, source)
-    if quick and not include_quick_form:
+    if source != INBOUND_SOURCE:
         return False
-    if source == INBOUND_SOURCE:
-        return True
-    return bool(include_quick_form and source == FB_QUICK_FORM_SOURCE)
+    if is_quick_form(contact, source) and not include_quick_form:
+        return False
+    return True
 
 
 def _in_window(moment: datetime | None, start_local: datetime, end_local: datetime) -> bool:
@@ -227,16 +232,231 @@ def _contact_id(opp: dict[str, Any]) -> str:
     return cac.compact_str(opp.get("contactId"))
 
 
-def outcome_is_demo(opp: dict[str, Any], start_local: datetime, end_local: datetime, now_utc: datetime) -> bool:
-    """Reuse the territory appointment rule. A no-show outcome does not count."""
-    parsed = cac.territory_from_opp(opp, start_local.tzinfo)
-    if parsed is None:
+def stage_is_demo(stage_name: Any) -> bool:
+    """Pipeline stage is the GHL disposition. A demo stage is a demo."""
+    folded = _fold(stage_name).replace("-", " ").replace("/", " ")
+    folded = " ".join(folded.split())
+    if not folded:
         return False
-    return bool(cac.territory_sit_in_window(parsed, start_local, end_local, now_utc))
+    if "one legger" in folded:
+        return True
+    return "demo" in folded
 
 
 def _sold_stage_ids() -> set[str]:
     return set(cac.SalesMetricContract().stage_ids)
+
+
+def _digits(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _phone_key(value: Any) -> str:
+    digits = _digits(value)
+    if len(digits) < 10:
+        return ""
+    return digits[-10:]
+
+
+def _email_key(value: Any) -> str:
+    text = str(value or "").strip().casefold()
+    return text if "@" in text else ""
+
+
+def _normalize_person_name(value: Any) -> str:
+    text = "".join(ch if ch.isalnum() else " " for ch in str(value or "").casefold())
+    tokens = text.split()
+    if tokens and tokens[0] == "inbound":
+        tokens = tokens[1:]
+    return " ".join(tokens)
+
+
+def _edit_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if abs(len(left) - len(right)) > 1:
+        return 2
+    previous = list(range(len(right) + 1))
+    for index, char in enumerate(left, 1):
+        current = [index]
+        for other_index, other in enumerate(right, 1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[other_index] + 1,
+                    previous[other_index - 1] + (char != other),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _names_near(left: str, right: str) -> bool:
+    """One token differs by a single character. Madison and Maddison match."""
+    left_tokens = left.split()
+    right_tokens = right.split()
+    if len(left_tokens) < 2 or len(left_tokens) != len(right_tokens):
+        return False
+    diffs = 0
+    for left_token, right_token in zip(left_tokens, right_tokens):
+        if left_token == right_token:
+            continue
+        if _edit_distance(left_token, right_token) != 1:
+            return False
+        diffs += 1
+    return diffs == 1
+
+
+def _contact_blobs(contact: dict[str, Any] | None, opp: dict[str, Any]) -> list[dict[str, Any]]:
+    blobs: list[dict[str, Any]] = []
+    if isinstance(contact, dict):
+        blobs.append(contact)
+    nested = opp.get("contact")
+    if isinstance(nested, dict):
+        blobs.append(nested)
+    return blobs
+
+
+def _first_value(blobs: list[dict[str, Any]], keys: tuple[str, ...]) -> Any:
+    for blob in blobs:
+        for key in keys:
+            value = blob.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _person_names(contact: dict[str, Any] | None, opp: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    blobs = _contact_blobs(contact, opp)
+    for blob in blobs:
+        joined = " ".join(
+            part
+            for part in (
+                cac.compact_str(blob.get("firstName")),
+                cac.compact_str(blob.get("lastName")),
+            )
+            if part
+        )
+        if joined:
+            names.append(joined)
+        for key in ("name", "contactName", "fullName"):
+            text = cac.compact_str(blob.get(key))
+            if text:
+                names.append(text)
+    title = cac.compact_str(opp.get(cac.TITLE_FIELD) or opp.get("name"))
+    if title:
+        names.append(title)
+    folded: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        normalized = _normalize_person_name(name)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            folded.append(normalized)
+    return folded
+
+
+def _moment(value: Any) -> datetime | None:
+    return cac.parse_iso_dt(value)
+
+
+def _within(left: datetime | None, right: datetime | None, span: timedelta) -> bool:
+    if left is None or right is None:
+        return False
+    return abs((left - right).total_seconds()) <= span.total_seconds()
+
+
+def _rows_near_in_time(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    for left_moment in (left.get("contact_created"), left.get("opp_created")):
+        for right_moment in (right.get("contact_created"), right.get("opp_created")):
+            if _within(left_moment, right_moment, NEAR_NAME_WINDOW):
+                return True
+    return False
+
+
+def dedupe_lead_rows(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """One lead per phone, else email, else name. Near names within 10 minutes collapse."""
+    count = len(rows)
+    parent = list(range(count))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    by_contact: dict[str, int] = {}
+    by_phone: dict[str, int] = {}
+    by_email: dict[str, int] = {}
+    by_name: dict[str, int] = {}
+    for index, row in enumerate(rows):
+        contact_id = row["contact_id"]
+        if contact_id in by_contact:
+            union(index, by_contact[contact_id])
+        else:
+            by_contact[contact_id] = index
+        for value, index_map in (
+            (row.get("phone"), by_phone),
+            (row.get("email"), by_email),
+            (row.get("name"), by_name),
+        ):
+            if not value:
+                continue
+            if value in index_map:
+                union(index, index_map[value])
+            else:
+                index_map[value] = index
+    for left in range(count):
+        for right in range(left + 1, count):
+            if find(left) == find(right):
+                continue
+            if not _rows_near_in_time(rows[left], rows[right]):
+                continue
+            left_names = rows[left].get("names") or []
+            right_names = rows[right].get("names") or []
+            if any(_names_near(left_name, right_name) for left_name in left_names for right_name in right_names):
+                union(left, right)
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        groups.setdefault(find(index), []).append(row)
+    return list(groups.values())
+
+
+def _history_was_territory(rows: list[dict[str, Any]] | None) -> bool:
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for key in ("pipelineId", "toPipelineId", "fromPipelineId"):
+            if cac.is_territory_pipeline(row.get(key)):
+                return True
+        for key in ("pipelineName", "toPipelineName", "fromPipelineName", "pipeline"):
+            if _fold(row.get(key)) in TERRITORY_PIPELINE_NAMES:
+                return True
+    return False
+
+
+def _opp_was_territory(opp: dict[str, Any], history: dict[str, list[dict[str, Any]]]) -> bool:
+    if cac.is_territory_pipeline(opp.get("pipelineId")):
+        return True
+    return _history_was_territory(history.get(_opp_id(opp, "")))
+
+
+def opp_stage_label(opp: dict[str, Any], stage_names: dict[str, str]) -> str:
+    stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
+    label = (
+        stage_names.get(stage_id)
+        or cac.compact_str(opp.get("pipelineStageName"))
+        or cac.compact_str(opp.get("stageName"))
+        or stage_id
+    )
+    return label or DASH
 
 
 def classify_window(
@@ -249,18 +469,21 @@ def classify_window(
     now_utc: datetime,
     *,
     include_quick_form: bool | None = None,
+    history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Count unique ad-lead contacts and the city opps that belong to them."""
+    """Count deduped ad leads and the city opps that belong to them."""
+    del now_utc
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
-    lead_contacts: set[str] = set()
-    quick_contacts: set[str] = set()
+    history = history or {}
     quick_matched: set[str] = set()
-    stages: dict[str, int] = {}
+    rows: list[dict[str, Any]] = []
     seen_opps: set[str] = set()
 
     for index, opp in enumerate(pipeline_opps):
         if cac.compact_str(opp.get("pipelineId")) != LEAD_PIPELINE_ID:
+            continue
+        if cac.bucket_title(opp.get(cac.TITLE_FIELD) or opp.get("name")):
             continue
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
@@ -271,7 +494,7 @@ def classify_window(
         contact = contacts.get(contact_id)
         source = lead_source(contact)
         quick = is_quick_form(contact, source)
-        if quick and (source == INBOUND_SOURCE or source == FB_QUICK_FORM_SOURCE):
+        if quick and source == INBOUND_SOURCE:
             quick_matched.add(contact_id)
         if not is_ad_lead(contact, include_quick_form):
             continue
@@ -279,12 +502,50 @@ def classify_window(
         if opp_id in seen_opps:
             continue
         seen_opps.add(opp_id)
-        lead_contacts.add(contact_id)
-        if quick:
-            quick_contacts.add(contact_id)
-        stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
-        stage_label = stage_names.get(stage_id) or (stage_id if stage_id else DASH)
-        stages[stage_label] = stages.get(stage_label, 0) + 1
+        blobs = _contact_blobs(contact, opp)
+        names = _person_names(contact, opp)
+        contact_created = _moment(_first_value(blobs, ("dateAdded", "createdAt", "dateCreated")))
+        rows.append(
+            {
+                "contact_id": contact_id,
+                "opp_id": opp_id,
+                "opp_created": created,
+                "contact_created": contact_created,
+                "quick": quick,
+                "phone": _phone_key(_first_value(blobs, ("phone", "phoneNumber"))),
+                "email": _email_key(_first_value(blobs, ("email", "emailAddress"))),
+                "name": names[0] if names else "",
+                "names": names,
+                "stage": opp_stage_label(opp, stage_names),
+            }
+        )
+
+    clusters = dedupe_lead_rows(rows)
+    member_ids: set[str] = set()
+    quick_clusters = 0
+    stages: dict[str, int] = {}
+    canonical_ids: list[str] = []
+    for cluster in clusters:
+        ids = {row["contact_id"] for row in cluster}
+        member_ids.update(ids)
+        if any(row["quick"] for row in cluster):
+            quick_clusters += 1
+        latest = max(
+            cluster,
+            key=lambda row: (
+                row.get("opp_created") or datetime.min.replace(tzinfo=timezone.utc),
+                row["opp_id"],
+            ),
+        )
+        stages[latest["stage"]] = stages.get(latest["stage"], 0) + 1
+        earliest = min(
+            cluster,
+            key=lambda row: (
+                row.get("opp_created") or datetime.max.replace(tzinfo=timezone.utc),
+                row["contact_id"],
+            ),
+        )
+        canonical_ids.append(earliest["contact_id"])
 
     opp_ids: set[str] = set()
     demo_ids: set[str] = set()
@@ -293,7 +554,7 @@ def classify_window(
     seen_city: set[str] = set()
     for index, opp in enumerate(contact_opps):
         contact_id = _contact_id(opp)
-        if contact_id not in lead_contacts:
+        if contact_id not in member_ids:
             continue
         opp_id = _opp_id(opp, f"city:{index}:{contact_id}")
         if opp_id in seen_city:
@@ -301,28 +562,34 @@ def classify_window(
         seen_city.add(opp_id)
         if cac.compact_str(opp.get(cac.STAGE_FIELD)) in sold_ids:
             sold_contacts.add(contact_id)
-        parsed = cac.territory_from_opp(opp, start_local.tzinfo, opp_id)
-        if parsed is None:
+        created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
+        if not _in_window(created, start_local, end_local):
             continue
-        if cac.territory_created_in_window(parsed, start_local, end_local):
-            opp_ids.add(parsed.opportunity_id)
-        if outcome_is_demo(opp, start_local, end_local, now_utc) and parsed.opportunity_id in opp_ids:
-            demo_ids.add(parsed.opportunity_id)
+        if not _opp_was_territory(opp, history):
+            continue
+        opp_ids.add(opp_id)
+        if stage_is_demo(opp_stage_label(opp, stage_names)):
+            demo_ids.add(opp_id)
 
     sales: set[str] = set()
-    for contact_id in sold_contacts:
-        sold_date = cac.extract_sold_date_ymd(contacts.get(contact_id))
-        if cac.sold_date_in_window(sold_date, start_local, end_local):
-            sales.add(contact_id)
+    for cluster in clusters:
+        ids = {row["contact_id"] for row in cluster}
+        if not ids & sold_contacts:
+            continue
+        if any(
+            cac.sold_date_in_window(cac.extract_sold_date_ymd(contacts.get(contact_id)), start_local, end_local)
+            for contact_id in ids
+        ):
+            sales.add(min(ids))
 
     stage_rows = [
         {"stage": name, "count": count}
         for name, count in sorted(stages.items(), key=lambda item: (-item[1], item[0]))
     ]
     return {
-        "inbound_leads": len(lead_contacts),
-        "lead_contact_ids": sorted(lead_contacts),
-        "fb_quick_form_leads": len(quick_contacts),
+        "inbound_leads": len(clusters),
+        "lead_contact_ids": sorted(set(canonical_ids)),
+        "fb_quick_form_leads": quick_clusters,
         "fb_quick_form_matched": len(quick_matched),
         "opps": len(opp_ids),
         "demos": len(demo_ids),
@@ -410,6 +677,7 @@ def assemble_ads_dashboard(
     goals: dict[str, Any] | None,
     include_quick_form: bool | None = None,
     stage_status: str = "ok",
+    history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
@@ -424,6 +692,7 @@ def assemble_ads_dashboard(
         end_local,
         now_utc,
         include_quick_form=include_quick_form,
+        history=history,
     )
     notes: list[str] = []
     errors: list[str] = []
@@ -806,6 +1075,46 @@ def load_opps_for_contacts(db: Any, contact_ids: list[str]) -> list[dict[str, An
                 opp["id"] = snap.id
             found[cac.compact_str(opp.get("id")) or f"{offset}:{index}"] = opp
     return list(found.values())
+
+
+def load_stage_history(db: Any, opportunity_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Bounded history reads for the already-loaded opportunities. No collection scan."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in opportunity_ids:
+        opp_id = cac.compact_str(raw)
+        if not opp_id or opp_id in seen:
+            continue
+        seen.add(opp_id)
+        ids.append(opp_id)
+    found: dict[str, list[dict[str, Any]]] = {}
+    for offset in range(0, len(ids), CONTACT_IN_CHUNK):
+        chunk = ids[offset : offset + CONTACT_IN_CHUNK]
+        query = db.collection(HISTORY_COLLECTION).where("opportunityId", "in", chunk)
+        for snap in query.stream():
+            row = snap.to_dict() or {}
+            opp_id = cac.compact_str(row.get("opportunityId"))
+            if opp_id:
+                found.setdefault(opp_id, []).append(row)
+    return found
+
+
+def load_pipeline_stage_map(db: Any, pipeline_ids: tuple[str, ...] | list[str]) -> dict[str, str]:
+    """One document get per pipeline. Used for city, Sweeper, and Rehash stage names."""
+    names: dict[str, str] = {}
+    for pipeline_id in pipeline_ids:
+        snap = db.collection(PIPELINE_COLLECTION).document(pipeline_id).get()
+        data = snap.to_dict() if getattr(snap, "exists", False) else None
+        if not isinstance(data, dict):
+            continue
+        for stage in data.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = cac.compact_str(stage.get("id"))
+            stage_name = " ".join(str(stage.get("name") or "").strip().split())
+            if stage_id and stage_name:
+                names[stage_id] = stage_name
+    return names
 
 
 def _get_json(url: str, urlopen: Any) -> dict[str, Any] | None:
@@ -1258,12 +1567,31 @@ def compute_ads_dashboard(
         if cid and is_ad_lead(window_contacts.get(cid), flag)
     ]
     contact_opps = load_opps_for_contacts(db, lead_ids)
+    history_note = None
+    try:
+        history = load_stage_history(db, [_opp_id(opp, "") for opp in contact_opps])
+    except Exception:
+        history = {}
+        history_note = (
+            "Opportunity stage history could not be read, so opps only include "
+            "opportunities currently in Buffalo, Rochester, Syracuse, or Virtual."
+        )
     try:
         stage_names = load_stage_names(db)
         stage_status = "ok"
     except Exception:
         stage_names = {}
         stage_status = "unavailable"
+    try:
+        stage_names = {
+            **stage_names,
+            **load_pipeline_stage_map(
+                db,
+                (*cac.TERRITORY_PIPELINE_IDS, SWEEPER_PIPELINE_ID, REHASH_PIPELINE_ID),
+            ),
+        }
+    except Exception:
+        pass
     try:
         goals = load_goals(db, start_local, end_local)
     except Exception:
@@ -1289,7 +1617,10 @@ def compute_ads_dashboard(
         goals=goals,
         include_quick_form=flag,
         stage_status=stage_status,
+        history=history,
     )
+    if history_note:
+        payload["notes"] = [history_note, *payload.get("notes", [])]
     if index_note:
         payload["notes"] = [index_note, *payload.get("notes", [])]
     if cacheable:

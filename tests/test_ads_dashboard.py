@@ -199,7 +199,7 @@ def warehouse():
     return contacts, pipeline, city, names
 
 
-def assemble(contacts, pipeline, city, names, *, include=None, meta=None, sessions=None, goals=None, now=NOW):
+def assemble(contacts, pipeline, city, names, *, include=None, meta=None, sessions=None, goals=None, now=NOW, history=None):
     start_local, end_local = metric.date_window("2026-10-05", "2026-10-11")
     return metric.assemble_ads_dashboard(
         pipeline_opps=pipeline,
@@ -224,6 +224,7 @@ def assemble(contacts, pipeline, city, names, *, include=None, meta=None, sessio
         or {"status": "unavailable", "reason": "not_configured", "note": "Paid sessions could not be read.", "total": None, "series": None},
         goals=goals or {"status": "missing", "spend": None, "leads": None, "opps": None},
         include_quick_form=include,
+        history=history,
     )
 
 
@@ -267,7 +268,7 @@ class AdsDashboardTests(unittest.TestCase):
         payload = assemble(contacts, pipeline, [], {f"stage-{name}": name for name in ("New Lead", "Call 2", "Call 4", "Lead Locker", "Solar Reviews", "3PL", "blank")})
         self.assertEqual(payload["kpis"]["inbound_leads"]["value"], 2)
         self.assertEqual(sorted(payload["lead_contact_ids"]), ["dup", "edge-in"])
-        self.assertEqual(sum(row["count"] for row in payload["stages"]), 3)
+        self.assertEqual(sum(row["count"] for row in payload["stages"]), 2)
 
     def test_oct_5_11_warehouse_reports_actual_not_the_rounded_target(self):
         contacts, pipeline, city, names = warehouse()
@@ -337,25 +338,114 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(payload["kpis"]["cost_per_lead"]["value"], 270.30)
         self.assertEqual(payload["kpis"]["cost_per_lead"]["tone"], "bad")
 
-    def test_demo_outcome_requires_the_existing_rule(self):
+    def test_demo_comes_from_the_pipeline_stage(self):
         contacts = {"c": contact("c", "inbound")}
         pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
-        names = {"stage-New Lead": "New Lead"}
-        no_show = assemble(contacts, pipeline, [city_opp("city", "c", INSIDE, "No Sit")], names)
-        self.assertEqual(no_show["kpis"]["demos"]["value"], 0)
-        self.assertEqual(no_show["kpis"]["opps"]["value"], 1)
-        showed = assemble(
-            contacts,
-            pipeline,
-            [city_opp("city", "c", INSIDE, metric.cac.SIT_DISPOSITION)],
+        names = {"stage-New Lead": "New Lead", "stage-reschedule": "Reschedule Needed", "stage-demo": "Demo-Negotiating"}
+        reschedule = city_opp("city", "c", INSIDE, metric.cac.SIT_DISPOSITION)
+        waiting = assemble(contacts, pipeline, [reschedule], names)
+        self.assertEqual(waiting["kpis"]["demos"]["value"], 0)
+        self.assertEqual(waiting["kpis"]["opps"]["value"], 1)
+        showed = city_opp("city", "c", INSIDE, "No Sit")
+        showed["pipelineStageId"] = "stage-demo"
+        demo = assemble(contacts, pipeline, [showed], names)
+        self.assertEqual(demo["kpis"]["demos"]["value"], 1)
+        outside = dict(showed)
+        outside["createdAt"] = "2026-10-12T18:00:00.000Z"
+        later = assemble(contacts, pipeline, [outside], names)
+        self.assertEqual(later["kpis"]["opps"]["value"], 0)
+        self.assertEqual(later["kpis"]["demos"]["value"], 0)
+
+    def test_title_phone_and_near_name_dedupe(self):
+        self.assertFalse(metric.is_ad_lead(contact("qf", "Facebook Quick Form", "fb-quick-form"), True))
+        locker = pipeline_opp("locker", "locked", INSIDE, "New Lead")
+        locker["name"] = "Lead Locker Jane"
+        reviews = pipeline_opp("reviews", "solar", INSIDE, "New Lead")
+        reviews["name"] = "Solar Review"
+        kept = pipeline_opp("kept", "kept", INSIDE, "New Lead")
+        same_phone_a = contact("a", "inbound")
+        same_phone_a["phone"] = "+1 (480) 555-1212"
+        same_phone_b = contact("b", "inbound")
+        same_phone_b["phone"] = "4805551212"
+        same_phone_b["firstName"] = "Other"
+        same_phone_b["lastName"] = "Person"
+        phone = assemble(
+            {
+                "locked": contact("locked", "inbound"),
+                "solar": contact("solar", "inbound"),
+                "kept": contact("kept", "inbound"),
+                "a": same_phone_a,
+                "b": same_phone_b,
+            },
+            [
+                locker,
+                reviews,
+                kept,
+                pipeline_opp("oa", "a", INSIDE, "New Lead"),
+                pipeline_opp("ob", "b", INSIDE, "Call 2"),
+            ],
+            [],
+            {"stage-New Lead": "New Lead", "stage-Call 2": "Call 2"},
+        )
+        self.assertEqual(phone["kpis"]["inbound_leads"]["value"], 2)
+        self.assertEqual(sorted(phone["lead_contact_ids"]), ["a", "kept"])
+        self.assertEqual(sum(row["count"] for row in phone["stages"]), 2)
+        madison = contact("IB5lTSmPUjf8QVQKk7t4", "inbound")
+        madison["firstName"] = "Malcolm"
+        madison["lastName"] = "Madison"
+        maddison = contact("I1iqm4WgG6Ryxt4mBCgo", "inbound")
+        maddison["firstName"] = "Malcolm"
+        maddison["lastName"] = "Maddison"
+        first = pipeline_opp("m1", "IB5lTSmPUjf8QVQKk7t4", "2026-10-08T18:00:00.000Z", "New Lead")
+        first["name"] = "Inbound Malcolm Madison"
+        second = pipeline_opp("m2", "I1iqm4WgG6Ryxt4mBCgo", "2026-10-08T18:05:00.000Z", "Call 2")
+        second["name"] = "Malcolm Maddison"
+        names = {"stage-New Lead": "New Lead", "stage-Call 2": "Call 2"}
+        merged = assemble(
+            {"IB5lTSmPUjf8QVQKk7t4": madison, "I1iqm4WgG6Ryxt4mBCgo": maddison},
+            [first, second],
+            [],
             names,
         )
-        self.assertEqual(showed["kpis"]["demos"]["value"], 1)
-        later = city_opp("city", "c", INSIDE, metric.cac.SIT_DISPOSITION)
-        later["appointmentOccurredAt"] = "2026-10-12T18:00:00.000Z"
-        outside = assemble(contacts, pipeline, [later], names)
-        self.assertEqual(outside["kpis"]["opps"]["value"], 1)
-        self.assertEqual(outside["kpis"]["demos"]["value"], 0)
+        self.assertEqual(merged["kpis"]["inbound_leads"]["value"], 1)
+        self.assertEqual(sum(row["count"] for row in merged["stages"]), 1)
+        apart = dict(second)
+        apart["id"] = "m3"
+        apart["createdAt"] = "2026-10-08T18:20:00.000Z"
+        split = assemble(
+            {"IB5lTSmPUjf8QVQKk7t4": madison, "I1iqm4WgG6Ryxt4mBCgo": maddison},
+            [first, apart],
+            [],
+            names,
+        )
+        self.assertEqual(split["kpis"]["inbound_leads"]["value"], 2)
+
+    def test_history_keeps_an_opp_moved_to_sweeper(self):
+        contacts = {"c": contact("c", "inbound")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        moved = city_opp("moved", "c", INSIDE, "No Sit")
+        moved["pipelineId"] = metric.SWEEPER_PIPELINE_ID
+        names = {"stage-New Lead": "New Lead", "stage-reschedule": "Reschedule Needed", "stage-demo": "Demo-Negotiating"}
+        without = assemble(contacts, pipeline, [moved], names)
+        self.assertEqual(without["kpis"]["opps"]["value"], 0)
+        with_history = assemble(
+            contacts,
+            pipeline,
+            [moved],
+            names,
+            history={"moved": [{"opportunityId": "moved", "pipelineName": "Virtual"}]},
+        )
+        self.assertEqual(with_history["kpis"]["opps"]["value"], 1)
+        self.assertEqual(with_history["kpis"]["demos"]["value"], 0)
+        moved["pipelineStageId"] = "stage-demo"
+        demo = assemble(
+            contacts,
+            pipeline,
+            [moved],
+            names,
+            history={"moved": [{"pipelineId": VIRTUAL}]},
+        )
+        self.assertEqual(demo["kpis"]["demos"]["value"], 1)
 
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]
@@ -444,6 +534,8 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertNotIn('db.collection("ghl_opportunities_v2").stream()', METRIC_SRC)
         self.assertNotIn('db.collection("ghl_contacts_v2").stream()', METRIC_SRC)
         self.assertNotIn('db.collection("ghl_pipelines_v2").stream()', METRIC_SRC)
+        self.assertNotIn('db.collection("ghl_opportunity_stage_history_v1").stream()', METRIC_SRC)
+        self.assertIn('.where("opportunityId", "in", chunk)', METRIC_SRC)
         self.assertIn("db.get_all(", METRIC_SRC)
         self.assertIn('.where("pipelineId", "==", LEAD_PIPELINE_ID)', METRIC_SRC)
         self.assertIn('.where("createdAt", ">=", start_iso)', METRIC_SRC)

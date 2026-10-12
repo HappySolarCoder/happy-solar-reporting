@@ -578,6 +578,8 @@ def build_inbound_source_row(
         "unit_cost": None,
         "cost_per_lead": compute_cost_per_lead(spend, leads),
         "opp_count": leads,
+        "leads": leads,
+        "nr_leads": leads,
         "refunded_excluded_count": 0,
         "spend": spend,
         "spend_status": "ok" if ok else "unavailable",
@@ -626,6 +628,38 @@ def inbound_sales_contact_ids(
 ) -> set[str]:
     sold = sold_contacts_in_window(contacts_map, candidate_ids, start_local, end_local)
     return {cid for cid in sold if contact_is_inbound(contacts_map.get(cid))}
+
+
+def meta_spend_from_ads_dashboard(
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    token: str | None = None,
+    account_id: str | None = None,
+) -> MetaSpendResult:
+    """Same Phoenix spend read as the Ads Dashboard, including its hourly rebucket."""
+    since = start_local.date().isoformat()
+    until = since
+    if end_local > start_local:
+        until = (end_local - timedelta(days=1)).date().isoformat()
+    if inbound_window_is_empty(start_local, end_local):
+        return empty_inbound_spend()
+    ads = _ads_dashboard()
+    meta = ads.fetch_meta_for_window(start_local, end_local, token=token, account_id=account_id)
+    if meta.get("status") == "ok" and meta.get("spend") is not None:
+        return MetaSpendResult(
+            spend=float(meta["spend"]),
+            spend_status="ok",
+            account_id=account_id,
+            since=since,
+            until=until,
+        )
+    return unavailable_meta_spend(
+        str(meta.get("reason") or "unavailable"),
+        account_id=account_id,
+        since=since,
+        until=until,
+    )
 
 
 def month_spend_result(
@@ -1071,17 +1105,42 @@ def named_fill_in_window(fill: dict[str, Any], start_local: datetime, end_local:
     return start_ymd <= day[:10] < end_ymd
 
 
+def _metrics_exclusion_reason():
+    """Host filter from api/metrics/website_funnel.py.
+
+    A bare `import website_funnel` can bind the page module, which has no
+    exclusion_reason. That let preview hosts count as live fills.
+    """
+    cached = getattr(_metrics_exclusion_reason, "fn", None)
+    if cached is not None:
+        return cached
+    import importlib.util
+
+    path = METRICS_DIR / "website_funnel.py"
+    spec = importlib.util.spec_from_file_location("inbound_cac_metrics_website_funnel", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    fn = getattr(module, "exclusion_reason", None)
+    _metrics_exclusion_reason.fn = fn
+    return fn
+
+
 def named_fill_host_excluded(fill: dict[str, Any]) -> bool:
     """Drop preview/internal hosts when the fill carries host/page_location."""
     host = fill.get("host") or fill.get("host_name") or fill.get("hostName")
     page_location = fill.get("page_location") or fill.get("pageLocation") or fill.get("url")
     if not host and not page_location:
         return False
+    exclusion_reason = _metrics_exclusion_reason()
+    if exclusion_reason is None:
+        return False
     try:
-        from website_funnel import exclusion_reason
+        return bool(exclusion_reason(host_name=host, page_location=page_location))
     except Exception:
         return False
-    return bool(exclusion_reason(host_name=host, page_location=page_location))
 
 
 def inbound_named_fill_is_live(fill: dict[str, Any]) -> bool:
@@ -1583,9 +1642,11 @@ def assemble_inbound_cac(
             if use_ads:
                 label = f"{year}-{chart_month:02d}"
                 cohort = (ad_monthly or {}).get(label) or {}
-                phoenix_start, phoenix_end, _, _ = month_window(
-                    year, chart_month, INBOUND_ROW_TIMEZONE
-                )
+                if cohort.get("window_start") and cohort.get("window_end"):
+                    phoenix_start = datetime.fromisoformat(str(cohort["window_start"]))
+                    phoenix_end = datetime.fromisoformat(str(cohort["window_end"]))
+                else:
+                    phoenix_start, phoenix_end = inbound_chart_month_window(year, chart_month, now)
                 m_leads = int(cohort.get("inbound_leads") or 0)
                 m_sales = int(cohort.get("sales") or 0)
                 m_fills = count_inbound_named_fills(named_fills, phoenix_start, phoenix_end)
@@ -1894,6 +1955,28 @@ def _ads_dashboard():
     return ads_dashboard
 
 
+def phoenix_today_start(now: datetime) -> datetime:
+    """Today 00:00 America/Phoenix. The inbound window ends here, so yesterday is the last included day."""
+    tz = ZoneInfo(INBOUND_ROW_TIMEZONE)
+    phoenix_now = now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz)
+    today = phoenix_now.date()
+    return datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=tz)
+
+
+def cap_inbound_through_yesterday(
+    start_local: datetime,
+    end_local: datetime,
+    now: datetime,
+) -> tuple[datetime, datetime]:
+    """Keep the floor clamp. Do not count today, so spend and CAC stay still during the day."""
+    cap = phoenix_today_start(now)
+    if end_local <= cap:
+        return start_local, end_local
+    if start_local >= cap:
+        return cap, cap
+    return start_local, cap
+
+
 def inbound_row_window(
     *,
     start: str | None,
@@ -1917,7 +2000,15 @@ def inbound_row_window(
     else:
         start_local, end_local, _, _ = month_window(year, month, tz_name)
     start_local, end_local = clamp_inbound_window(start_local, end_local, tz_name)
+    start_local, end_local = cap_inbound_through_yesterday(start_local, end_local, now)
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
+
+
+def inbound_chart_month_window(year: int, month: int, now: datetime) -> tuple[datetime, datetime]:
+    """One Phoenix month, floored, and cut off at the end of yesterday."""
+    start_local, end_local, _, _ = month_window(year, month, INBOUND_ROW_TIMEZONE)
+    start_local, end_local = clamp_inbound_window(start_local, end_local, INBOUND_ROW_TIMEZONE)
+    return cap_inbound_through_yesterday(start_local, end_local, now)
 
 
 def load_ads_lead_inputs(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
@@ -2047,15 +2138,15 @@ def compute_inbound_cac(
         load_start, load_end, _, _ = ytd_window(year, INBOUND_ROW_TIMEZONE, phoenix_now)
     ads_inputs = load_ads_lead_inputs(db, load_start, load_end)
     ad_cohort = ads_cohort_for_window(ads_inputs, row_start, row_end, now_utc)
+    month_windows: dict[str, tuple[datetime, datetime]] = {}
     ad_monthly = None
     if not (start and end):
         ad_monthly = {}
         for chart_month in ytd_months(year, now.astimezone(ZoneInfo(INBOUND_ROW_TIMEZONE))):
-            month_start, month_end, _, _ = month_window(year, chart_month, INBOUND_ROW_TIMEZONE)
-            month_start, month_end = clamp_inbound_window(
-                month_start, month_end, INBOUND_ROW_TIMEZONE
-            )
-            ad_monthly[f"{year}-{chart_month:02d}"] = ads_cohort_for_window(
+            label = f"{year}-{chart_month:02d}"
+            month_start, month_end = inbound_chart_month_window(year, chart_month, now)
+            month_windows[label] = (month_start, month_end)
+            ad_monthly[label] = ads_cohort_for_window(
                 ads_inputs, month_start, month_end, now_utc
             )
     named_fills = fetch_inbound_named_fills(db, load_start, load_end)
@@ -2068,14 +2159,19 @@ def compute_inbound_cac(
         inbound_spend = unavailable_meta_spend(cred_reason)
         inbound_monthly_spend = None
     else:
-        inbound_spend = fetch_meta_ads_spend(
+        inbound_spend = meta_spend_from_ads_dashboard(
             row_start, row_end, token=token, account_id=account_id
         )
         inbound_monthly_spend = None
         if not (start and end) and inbound_spend.spend_status == "ok":
-            inbound_monthly_spend = fetch_meta_ads_spend_by_month(
-                load_start, load_end, token=token, account_id=account_id
-            )
+            inbound_monthly_spend = {}
+            for label, (month_start, month_end) in month_windows.items():
+                if inbound_window_is_empty(month_start, month_end):
+                    inbound_monthly_spend[label] = empty_inbound_spend()
+                else:
+                    inbound_monthly_spend[label] = meta_spend_from_ads_dashboard(
+                        month_start, month_end, token=token, account_id=account_id
+                    )
 
     return assemble_inbound_cac(
         raws,

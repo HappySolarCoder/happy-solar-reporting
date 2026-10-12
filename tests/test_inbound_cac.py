@@ -1290,8 +1290,8 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
             start=None, end=None, year=2026, month=None, now=now
         )
         self.assertEqual(start, datetime(2026, 8, 1, 0, 0, tzinfo=phoenix))
+        self.assertEqual(end, datetime(2026, 10, 12, 0, 0, tzinfo=phoenix))
         self.assertEqual(metric.INBOUND_WINDOW_FLOOR, "2026-08-01")
-        self.assertGreater(end, start)
 
         october_start, october_end, _, _ = metric.inbound_row_window(
             start="2026-10-05", end="2026-10-11", year=2026, month=None, now=now
@@ -1482,6 +1482,23 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         self.assertEqual(inbound_kpi["opps_pct"], 0.5)
 
     def test_leads_come_from_named_fills_not_opp_count_and_exclude_tests(self):
+        # The page module is also named website_funnel and has no host filter.
+        # Preview fills must still be excluded. This count is named fills, not
+        # city opps, so stage history and the 10-minute deleted-opp rule do not apply.
+        import types
+
+        poisoned = types.ModuleType("website_funnel")
+        previous = sys.modules.get("website_funnel")
+        sys.modules["website_funnel"] = poisoned
+        try:
+            self._assert_named_fills_exclude_preview_and_tests()
+        finally:
+            if previous is None:
+                sys.modules.pop("website_funnel", None)
+            else:
+                sys.modules["website_funnel"] = previous
+
+    def _assert_named_fills_exclude_preview_and_tests(self):
         now = datetime(2026, 9, 17, 11, 0, tzinfo=NY)
         contacts_map = {
             "c-in": self._cf("Inbound", "2026-09-08"),
@@ -1517,6 +1534,8 @@ class InboundWindowFloorAndNamedFillsTests(unittest.TestCase):
         inbound = {row["source"]: row for row in payload["rows"]}["Inbound"]
         inbound_kpi = {row["source"]: row for row in payload["performance_kpis"]["rows"]}["Inbound"]
         self.assertEqual(inbound["opp_count"], 3)
+        self.assertEqual(inbound["leads"], 3)
+        self.assertEqual(inbound["nr_leads"], 3)
         self.assertNotEqual(inbound["opp_count"], 2)
         self.assertEqual(inbound_kpi["nr_leads"], 3)
         self.assertEqual(inbound_kpi["opps_created"], 2)
@@ -1809,6 +1828,8 @@ class InboundAdsCohortTests(unittest.TestCase):
         )
         inbound_row = {row["source"]: row for row in payload["rows"]}["Inbound"]
         self.assertEqual(inbound_row["opp_count"], 2)
+        self.assertEqual(inbound_row["leads"], 2)
+        self.assertEqual(inbound_row["nr_leads"], 2)
         self.assertEqual(inbound_row["sales"], 1)
         self.assertEqual(inbound_row["website_form_fills"], 2)
         self.assertEqual(inbound_row["fb_quick_form_leads"], 1)

@@ -96,7 +96,7 @@ test("Company Overview keeps the quick date preset buttons", async ({ page }) =>
   const errors = watch(page);
   await page.goto("/api/company_overview");
   await assertClear(page, errors);
-  for (const label of ["Today", "Yesterday", "This week", "Last week", "MTD", "Last month", "Last 30", "YTD"]) {
+  for (const label of ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "Last 30", "YTD"]) {
     await expect(page.locator("#filterHost .date-preset", { hasText: new RegExp("^" + label + "$") })).toHaveCount(1);
   }
   await page.locator('#filterHost [data-preset="lastmonth"]').click();
@@ -104,3 +104,12 @@ test("Company Overview keeps the quick date preset buttons", async ({ page }) =>
   await expect(page.locator("#ocStart")).toHaveValue(/-01$/);
   await expect(page.locator('#filterHost [data-preset="lastmonth"]')).toHaveAttribute("aria-pressed", "true");
 });
+
+// Goals and FMA are not served by the local stub server; they are covered by the unit test.
+for (const path of ["/api/morning_brief"]) {
+  test(`${path} shows the shared quick date buttons`, async ({ page }) => {
+    await page.goto(path);
+    await expect(page.locator(".date-preset")).toHaveCount(8);
+    await expect(page.locator('.date-preset[data-preset="mtd"]')).toHaveText("This month");
+  });
+}

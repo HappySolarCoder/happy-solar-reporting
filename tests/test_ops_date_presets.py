@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NAV = (ROOT / "api" / "dashboard_nav.py").read_text(encoding="utf-8")
 OPS = (ROOT / "api" / "ops_overview_script.txt").read_text(encoding="utf-8")
-LABELS = ["Today", "Yesterday", "This week", "Last week", "MTD", "Last month", "Last 30", "YTD"]
+LABELS = ["Today", "Yesterday", "This week", "Last week", "This month", "Last month", "Last 30", "YTD"]
 
 
 class DatePresetsTest(unittest.TestCase):
@@ -29,6 +29,29 @@ class DatePresetsTest(unittest.TestCase):
         self.assertIn("#filterHost [data-preset]", OPS)
         for label in LABELS:
             self.assertIn('"' + label + '"', OPS, label)
+
+
+
+GOALS = (ROOT / "api" / "goals_dashboard.py").read_text(encoding="utf-8")
+THEME = (ROOT / "api" / "ops_theme.css").read_text(encoding="utf-8")
+
+
+class EveryDashboardTest(unittest.TestCase):
+    def test_own_dates_pages_still_get_presets(self):
+        self.assertNotIn("(ownDates ? '' : window.hsOpsPresetButtons", NAV)
+        self.assertIn("'+window.hsOpsPresetButtons(f)+'", NAV)
+
+    def test_goals_native_bar_has_presets(self):
+        self.assertIn("window.hsOpsPresetButtons(f)", GOALS)
+        self.assertIn("[data-preset]", GOALS)
+
+    def test_mtd_is_labeled_this_month(self):
+        self.assertNotIn("label: 'MTD'", NAV)
+        self.assertNotIn('label: "MTD"', OPS)
+
+    def test_calendar_icon_high_contrast(self):
+        self.assertIn("::-webkit-calendar-picker-indicator", NAV)
+        self.assertIn("::-webkit-calendar-picker-indicator", THEME)
 
 
 if __name__ == "__main__":

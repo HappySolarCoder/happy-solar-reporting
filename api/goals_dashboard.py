@@ -85,7 +85,7 @@ def render_html() -> str:
     function renderFilters() {{
       const f = filters();
       document.getElementById("periodLabel").textContent = f.start + " – " + f.end + " America/New_York";
-      document.getElementById("filterHost").innerHTML = '<div class="global-filterbar"><div class="filter-controls"><label>From<input id="gStart" type="date" value="'+f.start+'"></label><label>To<input id="gEnd" type="date" value="'+f.end+'"></label><label>Territory<select id="gTerritory">'+["All","Buffalo","Rochester","Syracuse","Virtual"].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="gSource">'+["All","Doors","Self gen","Sweeper","Inbound","3PL"].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="gReset">Reset filters</button></div></div>';
+      document.getElementById("filterHost").innerHTML = '<div class="global-filterbar"><div class="filter-controls"><label>From<input id="gStart" type="date" value="'+f.start+'"></label><label>To<input id="gEnd" type="date" value="'+f.end+'"></label><label>Territory<select id="gTerritory">'+["All","Buffalo","Rochester","Syracuse","Virtual"].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="gSource">'+["All","Doors","Self gen","Sweeper","Inbound","3PL"].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="gReset">Reset filters</button></div>'+(window.hsOpsPresetButtons ? window.hsOpsPresetButtons(f) : '')+'</div>';
       function apply() {{
         const today = nyToday();
         const next = {{ start: document.getElementById("gStart").value || today.slice(0,8)+"01", end: document.getElementById("gEnd").value || today, territory: document.getElementById("gTerritory").value, source: document.getElementById("gSource").value }};
@@ -98,6 +98,7 @@ def render_html() -> str:
         load();
       }}
       ["gStart","gEnd","gTerritory","gSource"].forEach(function(id) {{ document.getElementById(id).addEventListener("change", apply); }});
+      document.querySelectorAll("#filterHost [data-preset]").forEach(function(b) {{ b.addEventListener("click", function() {{ const r = window.hsOpsPresetRange(b.getAttribute("data-preset")); document.getElementById("gStart").value = r.start; document.getElementById("gEnd").value = r.end; apply(); renderFilters(); }}); }});
       document.getElementById("gReset").addEventListener("click", function() {{
         const today = nyToday();
         if (window.hsOpsWriteFilters) window.hsOpsWriteFilters({{ start: today.slice(0,8)+"01", end: today, territory: "All", source: "All" }});

@@ -199,7 +199,7 @@
     { id: "yesterday", label: "Yesterday" },
     { id: "thisweek", label: "This week" },
     { id: "lastweek", label: "Last week" },
-    { id: "mtd", label: "MTD" },
+    { id: "mtd", label: "This month" },
     { id: "lastmonth", label: "Last month" },
     { id: "last30", label: "Last 30" },
     { id: "ytd", label: "YTD" },

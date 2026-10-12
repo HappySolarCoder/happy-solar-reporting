@@ -596,7 +596,7 @@ class AdsDashboardTests(unittest.TestCase):
         payload = assemble(contacts, pipeline, [sold], names)
         self.assertEqual(payload["kpis"]["opps"]["value"], 1)
         self.assertEqual(payload["kpis"]["demos"]["value"], 1)
-        self.assertTrue(metric.stage_is_demo("One Legger"))
+        self.assertFalse(metric.stage_is_demo("One Legger"))
         self.assertTrue(metric.stage_is_demo("Demo-Not Interested"))
         self.assertFalse(metric.stage_is_demo("Sale Cancelled"))
         self.assertFalse(metric.stage_is_demo("Reschedule Needed"))

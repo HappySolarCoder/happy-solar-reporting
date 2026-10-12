@@ -64,6 +64,7 @@ from fma_demo_credit import (
     make_demo_candidate,
     same_appointment_instant,
     select_fma_demos,
+    sit_earns_demo_credit,
 )
 from sweeper_rehash_attribution import (
     attributed_last_name,
@@ -1083,8 +1084,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if ran_matches:
             by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
             by_lead[lead] = by_lead.get(lead, 0) + 1
-        # Closer and opportunity sits follow each disposition. FMA demos do not.
-        if ran_matches and dispo == "Sit":
+        # Closer and opportunity sits follow each demo disposition. One Legger is not a demo.
+        earns_demo = dispo != "Sit" or sit_earns_demo_credit(
+            stage_history.get(opp_id) or [],
+            current_stage_name(opp, stage_names),
+        )
+        if ran_matches and dispo == "Sit" and earns_demo:
             if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
                 add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
                 remember_closer(normalize_person_display(closer, empty="unassigned"), closer_id, closer_email)
@@ -1253,10 +1258,14 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         by_lead[lead] = by_lead.get(lead, 0) + 1
         outcome = event.outcome or "Ran"
-        if outcome == "Sit" and closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
+        inferred_earns_demo = outcome == "Sit" and sit_earns_demo_credit(
+            stage_history.get(opp_id) or [],
+            current_stage_name(opp, stage_names),
+        )
+        if inferred_earns_demo and closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
             add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
             remember_closer(normalize_person_display(closer, empty="unassigned"), closer_id, closer_email)
-        if outcome == "Sit":
+        if inferred_earns_demo:
             sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
             sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
         matching.append(
@@ -1320,7 +1329,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "second demo counts only when Sweeper/Rehash Last Name "
             "is that FMA's own last name and the contact is dispositioned again "
             "after the sweep. A reset by someone else does not add a demo. "
-            "Closer and opportunity sits count each Sit disposition."
+            "One Legger is not a demo. Demos are Demo-* stages or Sold. "
+            "Closer and opportunity sits follow that same demo rule."
         ),
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),

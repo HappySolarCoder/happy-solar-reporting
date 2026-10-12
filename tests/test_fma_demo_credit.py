@@ -15,6 +15,7 @@ if str(METRICS) not in sys.path:
 
 from fma_demo_credit import (  # noqa: E402
     inferred_appointments,
+    is_buffer_dispo_stage,
     is_demo_stage,
     make_demo_candidate,
     map_dispo_appointments,
@@ -49,10 +50,20 @@ def _one(**kwargs):
 
 
 class DemoStageTests(unittest.TestCase):
-    def test_demo_stages_are_demo_star_one_legger_or_sold(self):
-        for name in ("Demo-Negotiating", "Demo - Not Interested", "DEMO NO SALE", "One Legger", "Sold", "Sold Pending"):
+    def test_demo_stages_are_demo_star_or_sold(self):
+        for name in ("Demo-Negotiating", "Demo - Not Interested", "DEMO NO SALE", "Sold", "Sold Pending"):
             self.assertTrue(is_demo_stage(name), name)
-        for name in ("New Appointment", "No Show", "Rescheduled", "Sale Cancelled", "Sale Canceled", "Negotiating", ""):
+        for name in (
+            "One Legger",
+            "one-legger",
+            "New Appointment",
+            "No Show",
+            "Rescheduled",
+            "Sale Cancelled",
+            "Sale Canceled",
+            "Negotiating",
+            "",
+        ):
             self.assertFalse(is_demo_stage(name), name)
 
     def test_last_name_match_is_case_insensitive(self):
@@ -249,7 +260,7 @@ class CreditTests(unittest.TestCase):
         dispo = datetime(2026, 9, 20, 15, 0, tzinfo=timezone.utc)
         old = dispo - timedelta(days=4)
         demos = _one(dispo_at=dispo, appointment_times=[old], history=[
-            {"pipelineName": "Buffalo", "toStageName": "One Legger", "effectiveAt": dispo},
+            {"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": dispo},
         ])
         self.assertEqual(demos[0].counted_at, dispo)
         self.assertEqual(demos[0].date_source, "dispo")
@@ -534,6 +545,105 @@ class CreditTests(unittest.TestCase):
         demos = _one(appointment_times=[later])
         self.assertEqual(demos[0].counted_at, T_DEMO)
         self.assertEqual(demos[0].date_source, "dispo")
+
+    def test_one_legger_stays_in_the_buffer_and_is_not_a_demo(self):
+        self.assertTrue(is_buffer_dispo_stage("One Legger", "Buffalo"))
+        dispo = datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc)
+        appointment = datetime(2026, 9, 2, 15, 0, tzinfo=timezone.utc)
+        history = [
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "One Legger",
+                "effectiveAt": dispo,
+                "lastStageChangeAt": dispo,
+            }
+        ]
+        candidate = make_demo_candidate(
+            {"dispositionDate": dispo, "dispositionValue": "Sit", "appointmentStartTime": appointment},
+            contact_id="c",
+            opportunity_id="only-one-legger",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="One Legger",
+            history=history,
+            appointment_rows=[{"eventId": "appt-1", "startTime": appointment, "contactId": "c"}],
+        )
+        self.assertIsNone(candidate)
+        self.assertEqual(
+            select_fma_demos(
+                [
+                    {
+                        "contact_id": "c",
+                        "opportunity_id": "only-one-legger",
+                        "setter": "Hill",
+                        "sweeper": "",
+                        "pipeline_name": "Buffalo",
+                        "stage_name": "One Legger",
+                        "dispo_at": dispo,
+                        "history": history,
+                    }
+                ]
+            ),
+            [],
+        )
+
+    def test_one_legger_then_demo_negotiating_credits_the_second_appointment(self):
+        first = datetime(2026, 9, 2, 15, 0, tzinfo=timezone.utc)
+        one_legger = datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc)
+        second = datetime(2026, 9, 6, 15, 0, tzinfo=timezone.utc)
+        demo = datetime(2026, 9, 6, 18, 0, tzinfo=timezone.utc)
+        history = [
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "One Legger",
+                "effectiveAt": one_legger,
+                "lastStageChangeAt": one_legger,
+            },
+            {
+                "pipelineName": "Buffalo",
+                "toStageName": "Demo-Negotiating",
+                "effectiveAt": demo,
+                "lastStageChangeAt": demo,
+            },
+        ]
+        rows = [
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-1", "startTime": first, "contactId": "c"},
+            {"source": "ghl-firestore-sync-v2", "eventId": "appt-2", "startTime": second, "contactId": "c"},
+        ]
+        candidate = make_demo_candidate(
+            {"dispositionDate": demo, "dispositionValue": "Sit"},
+            contact_id="c",
+            opportunity_id="second-appointment",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=history,
+            appointment_rows=rows,
+        )
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, second)
+        self.assertNotEqual(demos[0].counted_at, first)
+        self.assertEqual(demos[0].last_name, "Hill")
+        self.assertEqual(demos[0].date_source, "appointment_history")
+
+    def test_unclassified_sit_still_counts(self):
+        candidate = make_demo_candidate(
+            {"dispositionDate": T_DEMO, "appointmentStartTime": T_APPT, "dispositionValue": "Sit"},
+            contact_id="c",
+            opportunity_id="unclassified",
+            setter="Hill",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="",
+            history=[],
+        )
+        self.assertIsNotNone(candidate)
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].last_name, "Hill")
 
 
 if __name__ == "__main__":

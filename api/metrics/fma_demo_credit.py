@@ -30,6 +30,11 @@ Name is that FMA's own last name and a later demo disposition is at or
 after the sweep. A sweep or rehash by someone else, including a duplicate
 opportunity created from a reset, does not add a demo.
 
+One Legger is a disposition in the buffer, so it can claim an appointment.
+It is not a demo. Demos are Demo-* stages and Sold. One Legger followed
+later by Demo-Negotiating is one demo, dated to the appointment mapped
+to that later disposition.
+
 Ran and created counts stay on ``attributed_last_name``.
 """
 
@@ -39,6 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from demo_stage import stage_is_demo, stage_is_one_legger
 from sit_timestamp import as_aware_utc
 from sweeper_rehash_attribution import compact_text, is_blank_last_name
 
@@ -110,15 +116,32 @@ def is_sweep_stage(value: Any) -> bool:
 
 
 def is_demo_stage(value: Any) -> bool:
-    """Demo-* stage, One Legger, or Sold. Sale cancelled is not a demo."""
-    name = normalize_label(value)
-    if not name:
+    """A Demo-* stage or Sold is a demo. One Legger is not. Sale cancelled is not."""
+    return stage_is_demo(value)
+
+
+def sit_earns_demo_credit(history: list[dict] | None, stage_name: Any = "") -> bool:
+    """True when this sit reached a Demo-* or Sold stage.
+
+    One Legger alone does not. A sit with no stage name and no history
+    still counts, so an unclassified sit is not dropped.
+    """
+    saw_demo = is_demo_stage(stage_name)
+    saw_one_legger = stage_is_one_legger(stage_name)
+    for row in history or []:
+        if not isinstance(row, dict):
+            continue
+        for key in ("toStageName", "fromStageName"):
+            label = row.get(key)
+            if is_demo_stage(label):
+                saw_demo = True
+            if stage_is_one_legger(label):
+                saw_one_legger = True
+    if saw_demo:
+        return True
+    if saw_one_legger:
         return False
-    if name.startswith("demo"):
-        return True
-    if name == "one legger":
-        return True
-    return name == "sold" or name.startswith("sold ")
+    return True
 
 
 def names_match(setter: Any, sweeper: Any) -> bool:
@@ -352,8 +375,9 @@ def _phrase_match(configured: Any, actual: Any) -> bool:
 def is_buffer_dispo_stage(stage_name: Any, pipeline_name: Any = "") -> bool:
     """True for a disposition the 3-day buffer assigns to an appointment.
 
-    Matches the sync: Demo, Sit, No Sit, Sold, Rescheduled, No Show, and the
-    rest of that list. New Appointment, DQ, and Sweeper/Rehash pipelines are
+    Matches the sync: Demo, Sit, No Sit, Sold, Rescheduled, No Show, One
+    Legger, and the rest of that list. One Legger claims an appointment and
+    is not a demo. New Appointment, DQ, and Sweeper/Rehash pipelines are
     not dispositions.
     """
     name = _phrase_label(stage_name)
@@ -665,6 +689,8 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
         dispo_at = candidate.get("dispo_at")
         if not isinstance(dispo_at, datetime):
             continue
+        if not sit_earns_demo_credit(candidate.get("history"), candidate.get("stage_name")):
+            continue
         contact_id = compact_text(candidate.get("contact_id"))
         opportunity_id = compact_text(candidate.get("opportunity_id")) or contact_id
         key = contact_id or f"opp:{opportunity_id}"
@@ -744,7 +770,13 @@ def make_demo_candidate(
     history: list[dict] | None = None,
     appointment_rows: list[dict] | None = None,
 ) -> dict | None:
-    """One Sit opportunity prepared for ``select_fma_demos``. None without a dispo time."""
+    """One Sit opportunity prepared for ``select_fma_demos``.
+
+    None without a disposition time, and None when the only demo-like
+    stage is One Legger.
+    """
+    if not sit_earns_demo_credit(history, stage_name):
+        return None
     opp = opportunity or {}
     dispo_at = dispo_timestamp(history, opp, stage_name)
     if dispo_at is None:

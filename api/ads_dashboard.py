@@ -379,7 +379,8 @@ class handler(BaseHTTPRequestHandler):
             payload = metric.unavailable_payload(str(exc))
             status = 400
             cache = "no-store"
-        except Exception:
+        except Exception as exc:
+            metric._log_read_error(exc)
             payload = metric.unavailable_payload("Ads Dashboard could not be read.")
             status = 200
             cache = "no-store"

@@ -480,6 +480,76 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertIn(("pipelineId", "==", PIPELINE), filters)
         self.assertIn(("createdAt", ">=", "2026-10-05T07:00:00.000Z"), filters)
         self.assertIn(("createdAt", "<", "2026-10-12T07:00:00.000Z"), filters)
+
+    def test_missing_index_falls_back_to_created_at_range(self):
+        class RaisingQuery(Query):
+            def where(self, field, op, value):
+                return RaisingQuery(self.db, self.name, self.filters + [(field, op, value)])
+
+            def stream(self):
+                self.db.streams.append((self.name, list(self.filters)))
+                if any(field == "pipelineId" for field, _op, _value in self.filters):
+                    raise RuntimeError("The query requires an index. You can create it here: https://example.test/token")
+                return [
+                    snap
+                    for snap in self.db.rows.get(self.name, [])
+                    if _matches(snap, self.filters)
+                ]
+
+        class RaisingCollection(Collection):
+            def where(self, field, op, value):
+                return RaisingQuery(self.db, self.name, [(field, op, value)])
+
+        class RaisingDB(FakeDB):
+            def collection(self, name):
+                return RaisingCollection(self, name)
+
+        def _matches(snap, filters):
+            data = snap.to_dict()
+            for field, op, value in filters:
+                if field == "limit":
+                    continue
+                current = data.get(field)
+                if op == ">=" and not (current >= value):
+                    return False
+                if op == "<" and not (current < value):
+                    return False
+                if op == "==" and current != value:
+                    return False
+            return True
+
+        db = RaisingDB()
+        other = pipeline_opp("other", "z", INSIDE, "New Lead")
+        other["pipelineId"] = "other-pipeline"
+        db.rows["ghl_opportunities_v2"] = [
+            Snap(pipeline_opp("in", "c", INSIDE, "New Lead")),
+            Snap(pipeline_opp("out", "d", "2026-10-04T12:00:00.000Z", "New Lead")),
+            Snap(other),
+        ]
+        start_local, end_local = metric.date_window("2026-10-05", "2026-10-11")
+        loaded = metric.load_pipeline_opps(db, start_local, end_local)
+        self.assertEqual([opp["id"] for opp in loaded], ["in"])
+        self.assertEqual(metric._PIPELINE_READ_NOTE, metric.INDEX_FALLBACK_NOTE)
+        self.assertEqual(len(db.streams), 2)
+        self.assertNotIn("pipelineId", [field for field, _op, _value in db.streams[1][1]])
+
+        class OtherErrorQuery(RaisingQuery):
+            def where(self, field, op, value):
+                return OtherErrorQuery(self.db, self.name, self.filters + [(field, op, value)])
+
+            def stream(self):
+                raise RuntimeError("permission denied")
+
+        class OtherCollection(RaisingCollection):
+            def where(self, field, op, value):
+                return OtherErrorQuery(self.db, self.name, [(field, op, value)])
+
+        class OtherDB(RaisingDB):
+            def collection(self, name):
+                return OtherCollection(self, name)
+
+        with self.assertRaises(RuntimeError):
+            metric.load_pipeline_opps(OtherDB(), start_local, end_local)
         ids = [f"contact-{index}" for index in range(31)]
         metric.load_opps_for_contacts(db, ids)
         chunks = [

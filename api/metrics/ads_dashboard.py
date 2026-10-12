@@ -71,6 +71,11 @@ NA = "N/A"
 
 _STAGE_NAMES: dict[str, str] | None = None
 _RESPONSE_CACHE: dict[tuple, tuple[float, dict]] = {}
+_PIPELINE_READ_NOTE: str | None = None
+INDEX_FALLBACK_NOTE = (
+    "The pipelineId and createdAt index is not built yet, so this read used "
+    "the createdAt range and kept the Inbound/Lead Locker pipeline in memory."
+)
 
 
 def _load_paid_social():
@@ -97,8 +102,9 @@ TERRITORY_PIPELINE_IDS = cac.TERRITORY_PIPELINE_IDS
 
 
 def reset_caches() -> None:
-    global _STAGE_NAMES
+    global _STAGE_NAMES, _PIPELINE_READ_NOTE
     _STAGE_NAMES = None
+    _PIPELINE_READ_NOTE = None
     _RESPONSE_CACHE.clear()
 
 
@@ -688,20 +694,62 @@ def load_stage_names(db: Any) -> dict[str, str]:
     return names
 
 
+def _missing_composite_index(exc: BaseException) -> bool:
+    if type(exc).__name__ == "FailedPrecondition":
+        return True
+    return "requires an index" in str(exc).lower()
+
+
+def _log_read_error(exc: BaseException) -> None:
+    """Log a read failure without printing tokens or request URLs."""
+    text = " ".join(str(exc).split())
+    marker = text.lower().find("access_token=")
+    if marker >= 0:
+        text = text[:marker] + "access_token=redacted"
+    for scheme in ("https://", "http://"):
+        if scheme in text:
+            text = text.split(scheme, 1)[0].rstrip()
+            break
+    text = text[:180]
+    sys.stderr.write(f"ads_dashboard {type(exc).__name__}: {text}\n")
+
+
 def load_pipeline_opps(db: Any, start_local: datetime, end_local: datetime) -> list[dict[str, Any]]:
+    """Inbound pipeline created in the Phoenix window.
+
+    Prefer pipelineId + createdAt. If that composite index is not built, fall
+    back to the createdAt range and keep this pipeline in memory. Never scan
+    the collection with no bound.
+    """
+    global _PIPELINE_READ_NOTE
     start_iso = created_at_bound(start_local)
     end_iso = created_at_bound(end_local)
-    query = (
-        db.collection(OPP_COLLECTION)
-        .where("pipelineId", "==", LEAD_PIPELINE_ID)
-        .where("createdAt", ">=", start_iso)
-        .where("createdAt", "<", end_iso)
-    )
+    _PIPELINE_READ_NOTE = None
+    try:
+        snaps = list(
+            db.collection(OPP_COLLECTION)
+            .where("pipelineId", "==", LEAD_PIPELINE_ID)
+            .where("createdAt", ">=", start_iso)
+            .where("createdAt", "<", end_iso)
+            .stream()
+        )
+    except Exception as exc:
+        if not _missing_composite_index(exc):
+            raise
+        _PIPELINE_READ_NOTE = INDEX_FALLBACK_NOTE
+        snaps = list(
+            db.collection(OPP_COLLECTION)
+            .where("createdAt", ">=", start_iso)
+            .where("createdAt", "<", end_iso)
+            .stream()
+        )
     loaded: list[dict[str, Any]] = []
-    for snap in query.stream():
+    for snap in snaps:
         opp = snap.to_dict() or {}
         if not cac.compact_str(opp.get("id")):
             opp["id"] = snap.id
+        if cac.compact_str(opp.get("pipelineId")) != LEAD_PIPELINE_ID:
+            continue
         created = cac.parse_iso_dt(opp.get("createdAt"))
         if _in_window(created, start_local, end_local):
             loaded.append(opp)
@@ -1202,6 +1250,7 @@ def compute_ads_dashboard(
         if cached is not None:
             return cached
     pipeline_opps = load_pipeline_opps(db, start_local, end_local)
+    index_note = _PIPELINE_READ_NOTE
     window_contacts = load_contacts(db, [_contact_id(opp) for opp in pipeline_opps])
     lead_ids = [
         cid
@@ -1241,6 +1290,8 @@ def compute_ads_dashboard(
         include_quick_form=flag,
         stage_status=stage_status,
     )
+    if index_note:
+        payload["notes"] = [index_note, *payload.get("notes", [])]
     if cacheable:
         _cache_put(cache_key, payload)
     return payload
@@ -1264,7 +1315,8 @@ class handler(BaseHTTPRequestHandler):
             payload = unavailable_payload(str(exc))
             status = 400
             cache = "no-store"
-        except Exception:
+        except Exception as exc:
+            _log_read_error(exc)
             payload = unavailable_payload("Ads Dashboard could not be read.")
             status = 200
             cache = "no-store"

@@ -870,6 +870,8 @@ def _legacy_nav_css() -> str:
     .date-presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
     .date-preset { font-size:10px; padding:5px 10px; background:#0c3045; border:1px solid #36657a; color:#cfe6f2; border-radius:6px; cursor:pointer; }
     .date-preset.active { background:#123e52; border-color:#26d9eb; color:#26d9eb; }
+    input[type=date] { color-scheme: dark; }
+    input[type=date]::-webkit-calendar-picker-indicator { filter: invert(1) sepia(1) saturate(6) hue-rotate(140deg) brightness(1.5); opacity: 1; cursor: pointer; width: 16px; height: 16px; }
     .oc-injected-filters .global-filterbar,
     .oc-injected-filters.global-filterbar {
       background: #0a2438;
@@ -1432,7 +1434,7 @@ def render_dashboard_nav(current: str) -> str:
             window.hsOpsDatePresets = [
               {{ id: 'today', label: 'Today' }}, {{ id: 'yesterday', label: 'Yesterday' }},
               {{ id: 'thisweek', label: 'This week' }}, {{ id: 'lastweek', label: 'Last week' }},
-              {{ id: 'mtd', label: 'MTD' }}, {{ id: 'lastmonth', label: 'Last month' }},
+              {{ id: 'mtd', label: 'This month' }}, {{ id: 'lastmonth', label: 'Last month' }},
               {{ id: 'last30', label: 'Last 30' }}, {{ id: 'ytd', label: 'YTD' }}
             ];
             window.hsOpsPresetRange = function(id) {{
@@ -1509,7 +1511,7 @@ def render_dashboard_nav(current: str) -> str:
             var dateControls = ownDates
               ? '<input id="ocStart" type="hidden" value="'+f.start+'"><input id="ocEnd" type="hidden" value="'+f.end+'">'
               : '<label>Dates from<input id="ocStart" type="date" aria-label="Start date" value="'+f.start+'"></label><label>Dates to<input id="ocEnd" type="date" aria-label="End date" value="'+f.end+'"></label>';
-            bar.innerHTML = '<div class="filter-controls">'+dateControls+'<label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div>'+(ownDates ? '' : window.hsOpsPresetButtons(f))+'<div class="filter-chips" id="ocChips"></div>';
+            bar.innerHTML = '<div class="filter-controls">'+dateControls+'<label>Territory<select id="ocTerritory" aria-label="Territory">'+['All','Buffalo','Rochester','Syracuse','Virtual'].map(function(x){{return '<option'+(f.territory===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><label>Lead source<select id="ocSource" aria-label="Lead source">'+['All','Doors','Self gen','Sweeper','Inbound','3PL'].map(function(x){{return '<option'+(f.source===x?' selected':'')+'>'+x+'</option>';}}).join('')+'</select></label><button type="button" class="filter-reset" id="ocReset">Reset filters</button></div>'+window.hsOpsPresetButtons(f)+'<div class="filter-chips" id="ocChips"></div>';
             host.insertBefore(bar, host.firstChild);
             function chips() {{
               var cur = window.hsOpsReadFilters();
@@ -1517,7 +1519,7 @@ def render_dashboard_nav(current: str) -> str:
               if (cur.territory !== 'All') html += '<button type="button" data-k="territory">'+cur.territory+' <span>×</span></button>';
               if (cur.source !== 'All') html += '<button type="button" data-k="source">'+cur.source+' <span>×</span></button>';
               html += ownDates
-                ? '<span>This page sets its own dates below, so the shared date filter is hidden here. Territory and lead source apply to cards that have no filter of their own.</span>'
+                ? '<span>Quick dates above also set the date range on this page. Territory and lead source apply to cards that have no filter of their own.</span>'
                 : '<span>Filters apply to metric requests. Pages with their own date control still show that control.</span>';
               document.getElementById('ocChips').innerHTML = html;
             }}

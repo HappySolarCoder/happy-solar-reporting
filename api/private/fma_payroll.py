@@ -23,7 +23,14 @@ for _path in (str(METRICS_DIR), str(PRIVATE_DIR)):
         sys.path.insert(0, _path)
 
 import demo_rate
-from sweeper_rehash_attribution import attributed_last_name, sweeper_rehash_last_name
+from fma_demo_credit import (
+    current_stage_name,
+    fma_demo_credit,
+    load_stage_history,
+    load_stage_names,
+    names_match,
+)
+from sweeper_rehash_attribution import sweeper_rehash_last_name
 from fma_payroll_logic import (
     LEAD_GEN_SOURCE_CF,
     SCHEDULING_MANAGER_CF,
@@ -184,6 +191,27 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
     contacts = demo_rate.load_contacts_by_ids(db, contact_ids)
     users = load_users_by_ids(db, user_ids)
 
+    history_ids: list[str] = []
+    history_pipeline_ids: list[str] = []
+    for snap, opp in opps:
+        contact = contacts.get(compact(opp.get("contactId"))) or {}
+        setter = resolve_setter_last_name(
+            [
+                _cf_text(contact, SETTER_LAST_NAME_CF),
+                _cf_text(opp, SETTER_LAST_NAME_CF, opportunity=True),
+            ],
+            [
+                _cf_text(contact, SETTER_NAME_CF),
+                _cf_text(opp, SETTER_NAME_CF, opportunity=True),
+            ],
+        )
+        sweeper_last = sweeper_rehash_last_name(contact, opp)
+        if sweeper_last and not names_match(setter, sweeper_last):
+            history_ids.append(compact(opp.get("id") or getattr(snap, "id", "")))
+            history_pipeline_ids.extend(demo_rate.pipeline_id_keys(opp.get("pipelineId")))
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    stage_names = load_stage_names(db, history_pipeline_ids) if history_ids else {}
+
     sits: list[dict[str, Any]] = []
     for snap, opp in opps:
         pname = demo_rate.resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
@@ -210,12 +238,22 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
             ],
         )
         lead = _cf_text(contact, LEAD_GEN_SOURCE_CF)
-        # Scheduling manager stays the contact field. Only the FMA setter
-        # moves, and only when the sit's ET date is on or after 2026-09-24.
+        # Scheduling manager stays the contact field. Demo credit follows
+        # fma_demo_credit: the original sit stays with the FMA, and a demo
+        # after the sweep moves only when the last name differs.
         manager = _cf_text(contact, SCHEDULING_MANAGER_CF)
         sweeper_last = sweeper_rehash_last_name(contact, opp)
-        setter = attributed_last_name(setter, lead, sweeper_last, local_dt.date())
         opp_id = compact(opp.get("id") or getattr(snap, "id", ""))
+        setter = fma_demo_credit(
+            setter,
+            sweeper_last,
+            pipeline_name=pname,
+            stage_name=current_stage_name(opp, stage_names),
+            stage_changed_at=opp.get("lastStageChangeAt"),
+            created_at=opp.get("createdAt"),
+            demo_at=local_dt,
+            history=stage_history.get(opp_id) or [],
+        ).last_name
         opp_url, contact_url = _ghl_urls(opp, contact, opp_id, contact_id)
         sits.append(
             {

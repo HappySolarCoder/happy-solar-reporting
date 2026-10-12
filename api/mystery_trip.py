@@ -9,7 +9,7 @@ contest graphic; the middle Self-Gen column is left out on purpose.
 Read-only. Numbers come from the canonical metric endpoints, fetched in the
 browser the same way the Scottsdale incentive page does it:
 - /api/metrics/fma_weekly_review  FMA roster (name + setter last name)
-- /api/metrics/demo_rate          per-setter demos (Sweeper/Rehash credit applied)
+- /api/metrics/demo_rate          per-setter demos (original sit stays with the FMA)
 - /api/metrics/sales              sales by setter and by owner (sold date)
 - /api/metrics/sales_cancellations cancellation rate by owner
 - /api/metrics/bloom_goals        monthly demo and sales goals set in Bloom
@@ -353,7 +353,7 @@ __DASHBOARD_NAV_HTML__
       <div class="mt-panel">
         <h2>How we count</h2>
         <ul>
-          <li><b>Demos</b> are the same count as the Demo % dashboards: appointments marked Demo, credited to the setter (Sweeper/Rehash credit included), counted by the Steak Dinner deadline.</li>
+          <li><b>Demos</b> are the same count as the Demo % dashboards: the FMA keeps the original appointment. A later sweeper or rehash demo counts for Sweeper/Rehash Last Name only when that name is different. Counted by the Steak Dinner deadline.</li>
           <li><b>Stipend requirement</b> is your monthly demo goal in Bloom. If no goal is set, it is the standard 15 demos.</li>
           <li><b>FMA sales</b> are sales credited to you as the setter, by sold date. <b>Closer sales</b> are credited to the opportunity owner, by sold date.</li>
           <li><b>Cancellation rate</b> is sales you closed that month that are now cancelled, divided by sales you closed that month. A later cancellation can still change a month.</li>

@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By last name. On or after Thu Sep 24, 2026 (ET), rehash or a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
+          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). A demo stays with the FMA when the original appointment sat, and counts for Sweeper/Rehash Last Name after the sweep only when that name is different. Stage history timestamps decide which came first.</div>
         </div>
         <div class="tablewrap">
           <table>

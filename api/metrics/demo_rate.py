@@ -52,6 +52,13 @@ if str(METRICS_DIR) not in sys.path:
 
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
+from fma_demo_credit import (
+    current_stage_name,
+    fma_demo_credit,
+    load_stage_history,
+    load_stage_names,
+    names_match,
+)
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
@@ -910,6 +917,23 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
     except Exception:
         closer_directory = {}
 
+    # Stage history is only needed when a different Sweeper/Rehash Last Name
+    # might take a demo that happened after the sweep.
+    history_ids: list[str] = []
+    history_pipeline_ids: list[str] = []
+    for snap in opp_snaps:
+        opp = snap.to_dict() or {}
+        contact = contacts_map.get(str(opp.get("contactId") or "").strip()) or {}
+        setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
+        setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        raw_setter = setter_opp if setter_opp not in (None, "") else setter_contact
+        sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
+        if sweeper_last and not names_match(raw_setter, sweeper_last):
+            history_ids.append(str(opp.get("id") or snap.id))
+            history_pipeline_ids.extend(pipeline_id_keys(opp.get("pipelineId")))
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    stage_names = load_stage_names(db, history_pipeline_ids) if history_ids else {}
+
     def remember_closer(label: str, uid: str, email: str) -> None:
         key = label.casefold()
         profile = owner_profiles.get(key)
@@ -945,13 +969,27 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         setter = setter_opp if setter_opp not in (None, "") else setter_contact
         lead = normalize_lead_source(contact_custom_field(contact, c.lead_gen_source_contact_cf_id))
         sweeper_last = sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id)
-        # Same ET business date payroll uses for Thu–Wed week membership
-        # (frozen sit timestamp localized to America/New_York). Sweeper credit
-        # starts 2026-09-24. Earlier sits stay with the setter, including the
-        # breakdown commissions and the Scottsdale incentive read.
+        # Ran still follows the Thu Sep 24, 2026 ET cutoff. Demo credit does
+        # not: the original appointment stays with the FMA when it sat, and a
+        # later sweeper/rehash demo moves only when the last name differs.
         appointment_date = local_dt.date()
-        credited = attributed_last_name(setter, lead, sweeper_last, appointment_date)
-        setter_s = normalize_person_display(credited, empty="none")
+        ran_credited = attributed_last_name(setter, lead, sweeper_last, appointment_date)
+        ran_name = normalize_person_display(ran_credited, empty="none")
+        opp_id = str(opp.get("id") or snap.id)
+        demo_decision = None
+        demo_name = ran_name
+        if dispo == "Sit":
+            demo_decision = fma_demo_credit(
+                setter,
+                sweeper_last,
+                pipeline_name=pname,
+                stage_name=current_stage_name(opp, stage_names),
+                stage_changed_at=opp.get("lastStageChangeAt"),
+                created_at=opp.get("createdAt"),
+                demo_at=local_dt,
+                history=stage_history.get(opp_id) or [],
+            )
+            demo_name = normalize_person_display(demo_decision.last_name, empty="none")
 
         # Apply optional filters. pipeline=sweeper matches Sweeper and Rehash.
         if not pipeline_in_scope(
@@ -960,33 +998,43 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             sweeper=truthy_flag(filters.get("sweeper")),
         ):
             continue
-        if filters.get("setter") and setter_s.lower() != str(filters["setter"]).strip().lower():
+        setter_filter = str(filters.get("setter") or "").strip().lower()
+        ran_matches = (not setter_filter) or ran_name.lower() == setter_filter
+        demo_matches = dispo == "Sit" and ((not setter_filter) or demo_name.lower() == setter_filter)
+        if not ran_matches and not demo_matches:
             continue
         if not lead_source_matches(filters.get("lead_source"), lead, sweeper_last, appointment_date):
             continue
 
-        ran += 1
-        if dispo == "Sit":
+        if ran_matches:
+            ran += 1
+        if demo_matches:
             sit += 1
 
-        setter_s = add_casefold_count(ran_by_setter, setter_labels, setter_s, empty="none")
-        if dispo == "Sit":
-            add_casefold_count(sit_by_setter, setter_labels, setter_s, empty="none")
+        if ran_matches:
+            ran_name = add_casefold_count(ran_by_setter, setter_labels, ran_name, empty="none")
+        if demo_matches:
+            demo_name = add_casefold_count(sit_by_setter, setter_labels, demo_name, empty="none")
         closer, closer_id, closer_email = resolve_closer(opp, closer_directory)
         if closer and closer.casefold() not in {"unassigned", "none", "unknown"}:
-            closer_label = add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
-            remember_closer(closer_label, closer_id, closer_email)
-            if dispo == "Sit":
+            if ran_matches:
+                closer_label = add_casefold_count(ran_by_owner, owner_labels, closer, empty="unassigned")
+                remember_closer(closer_label, closer_id, closer_email)
+            if demo_matches:
+                if not ran_matches:
+                    closer_label = normalize_person_display(closer, empty="unassigned")
+                    remember_closer(closer_label, closer_id, closer_email)
                 add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
-        by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
-        by_lead[lead] = by_lead.get(lead, 0) + 1
-        if dispo == "Sit":
+        if ran_matches:
+            by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
+            by_lead[lead] = by_lead.get(lead, 0) + 1
+        if demo_matches:
             sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
             sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
 
         matching.append(
             {
-                "opportunityId": str(opp.get("id") or snap.id),
+                "opportunityId": opp_id,
                 "pipeline": pname,
                 "disposition": dispo,
                 "frozenAppointmentOccurredAt": local_dt.isoformat(),
@@ -998,7 +1046,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 ),
                 "contactFirstName": contact.get("firstName"),
                 "contactLastName": contact.get("lastName"),
-                "setter": setter_s,
+                "setter": ran_name,
+                "demoCreditLastName": demo_name if dispo == "Sit" else None,
+                "demoCreditReason": demo_decision.reason if demo_decision else None,
                 "lead_source": lead,
                 "sweeperRehashLastName": sweeper_last,
                 "closer": closer or None,
@@ -1029,7 +1079,11 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "Demos / Ran. Window = first-write-wins "
             "min(appointmentOccurredAt, dispositionDate). "
             "GYGpLKBPfMpiBqyU2ogQ / dispositionValue for a demo or no demo. "
-            "Follow-up is not a second demo."
+            "Follow-up is not a second demo. "
+            "FMA demo credit keeps the original appointment when it sat. "
+            "A demo after a sweep or rehash counts for Sweeper/Rehash Last Name "
+            "only when that name differs from the FMA. Stage history timestamps "
+            "decide the order."
         ),
         "breakdowns": {
             "ran_by_setter_last_name": finalize_casefold_counts(ran_by_setter, setter_labels),

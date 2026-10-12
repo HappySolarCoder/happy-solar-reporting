@@ -24,11 +24,27 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+QA_DIR = Path(__file__).resolve().parent
+METRICS_DIR = QA_DIR.parent / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from fma_demo_credit import (  # noqa: E402
+    current_stage_name,
+    fma_demo_credit,
+    load_stage_history,
+    load_stage_names,
+    names_match,
+)
+from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -182,6 +198,7 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
     rows: list[dict[str, Any]] = []
     ran_by_setter: dict[str, int] = {}
     sit_by_setter: dict[str, int] = {}
+    pending_sits: list[dict[str, Any]] = []
 
     scanned = 0
     for snap in q.stream():
@@ -207,31 +224,62 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
         contact = contact_lookup(db, c, cid)
         setter = contact_custom_field(contact, c.setter_cf_id)
         setter_s = str(setter).strip() if setter not in (None, "") else "none"
+        sweeper_last = sweeper_rehash_last_name(contact, opp)
 
         ran_by_setter[setter_s] = ran_by_setter.get(setter_s, 0) + 1
-        if dispo == "Sit":
-            sit_by_setter[setter_s] = sit_by_setter.get(setter_s, 0) + 1
 
         occ = opp.get(c.time_field)
         occ_iso = occ.isoformat() if hasattr(occ, "isoformat") else str(occ)
 
         contact_last = (contact.get("lastName") if isinstance(contact, dict) else None)
+        opp_id = str(opp.get("id") or snap.id)
 
-        rows.append(
-            {
-                "opportunityId": str(opp.get("id") or snap.id),
-                "contactId": cid,
-                "contactLastName": contact_last,
-                "setterLastName": setter_s,
-                "pipeline": pname,
-                "dispositionValue": dispo,
-                "appointmentOccurredAt": occ_iso,
-            }
+        row = {
+            "opportunityId": opp_id,
+            "contactId": cid,
+            "contactLastName": contact_last,
+            "setterLastName": setter_s,
+            "pipeline": pname,
+            "dispositionValue": dispo,
+            "appointmentOccurredAt": occ_iso,
+        }
+        rows.append(row)
+        if dispo == "Sit":
+            pending_sits.append(
+                {
+                    "row": row,
+                    "setter": setter_s,
+                    "sweeper": sweeper_last,
+                    "pipeline": pname,
+                    "pipeline_id": pid,
+                    "opp": opp,
+                    "demo_at": occ,
+                    "needs_history": bool(sweeper_last) and not names_match(setter_s, sweeper_last),
+                }
+            )
+
+    history_ids = [item["row"]["opportunityId"] for item in pending_sits if item["needs_history"]]
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    stage_names = load_stage_names(db, [item["pipeline_id"] for item in pending_sits if item["needs_history"]]) if history_ids else {}
+    for item in pending_sits:
+        credit = fma_demo_credit(
+            item["setter"],
+            item["sweeper"],
+            pipeline_name=item["pipeline"],
+            stage_name=current_stage_name(item["opp"], stage_names),
+            stage_changed_at=item["opp"].get("lastStageChangeAt"),
+            created_at=item["opp"].get("createdAt"),
+            demo_at=item["demo_at"],
+            history=stage_history.get(item["row"]["opportunityId"]) or [],
         )
+        demo_name = str(credit.last_name).strip() or "none"
+        item["row"]["demoCreditLastName"] = demo_name
+        sit_by_setter[demo_name] = sit_by_setter.get(demo_name, 0) + 1
 
-    # Compute demo% by setter
+    # Compute demo% by setter. A moved demo can belong to a name with no ran row.
     demo_pct_by_setter: dict[str, float] = {}
-    for setter, ran in ran_by_setter.items():
+    for setter in set(ran_by_setter) | set(sit_by_setter):
+        ran = ran_by_setter.get(setter, 0)
         sit = sit_by_setter.get(setter, 0)
         demo_pct_by_setter[setter] = round((sit / ran) * 100, 1) if ran else 0.0
 

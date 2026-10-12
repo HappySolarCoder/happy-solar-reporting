@@ -774,7 +774,7 @@ __DASHBOARD_NAV_HTML__
           <div>
             <div class="card-title">GHL — Demo Rate by Setter</div>
             <div class="scopeNote scopeNoteInline"><span class="scopeTag">Table dates</span><strong id="setterScopeMeta">Current month to date</strong><span>Set with Start and End below. The page dates above do not change this table.</span></div>
-            <div class="meta">Opps Ran / Demos / Demo % (Demos / Ran). On or after Thu Sep 24, 2026 (ET), a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
+            <div class="meta">Opps Ran / Demos / Demo % (Demos / Ran). Ran moves to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). A demo stays with the FMA when the original appointment sat. A demo after the sweep or rehash counts for that name only when it is not the FMA's last name. A matching last name keeps the credit. Stage history timestamps decide which came first.</div>
           </div>
         </div>
 

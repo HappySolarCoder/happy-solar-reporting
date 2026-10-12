@@ -364,7 +364,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Demo Notes</div>
         <div class="meta">
           Demos are marked-demo outcomes only, using the canonical demo metric appointment window semantics in
-          <code>America/New_York</code>. A filled Sweeper/Rehash Last Name replaces the setter only when the demo date is on or after 2026-09-24. Earlier demos in this window stay with the original setter.
+          <code>America/New_York</code>. An FMA keeps the original appointment's demo when it sat. A demo after the sweep or rehash does not count for them unless Sweeper/Rehash Last Name matches their last name. Stage history timestamps decide which came first.
         </div>
         <div class="meta">
           Breakdown source: <code>sit_by_setter_last_name</code>.
@@ -485,7 +485,7 @@ __DASHBOARD_NAV_HTML__
           'Zach Maecker',
           1
         );
-        // Per-sit cutoff lives in demo_rate (SWEEPER_ATTRIBUTION_START 2026-09-24).
+        // Demo credit lives in demo_rate via fma_demo_credit (original sit stays with the FMA).
         const demoEntries = addManualCount(
           filteredEntries((demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {}, true),
           'Emerson',

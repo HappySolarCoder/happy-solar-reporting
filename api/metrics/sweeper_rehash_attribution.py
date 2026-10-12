@@ -10,8 +10,11 @@ The same id is read on the opportunity when the contact value is empty.
 Credit starts with the pay week that began Thursday 2026-09-24
 (America/New_York). Pay weeks are Thursday through Wednesday, the same
 business dates private payroll uses. An earlier appointment stays with
-the original setter on dashboards, commissions, the Scottsdale incentive,
-and payroll.
+the original setter for created and ran counts.
+
+FMA demo credit does not use this cutoff. See fma_demo_credit: the
+original appointment stays with the FMA when it sat, and a demo after
+the sweep or rehash moves only when Sweeper/Rehash Last Name differs.
 """
 
 from __future__ import annotations

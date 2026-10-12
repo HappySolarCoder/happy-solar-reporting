@@ -39,7 +39,7 @@ THEME = (ROOT / "api" / "ops_theme.css").read_text(encoding="utf-8")
 class EveryDashboardTest(unittest.TestCase):
     def test_own_dates_pages_still_get_presets(self):
         self.assertNotIn("(ownDates ? '' : window.hsOpsPresetButtons", NAV)
-        self.assertIn("'+window.hsOpsPresetButtons(f)+'", NAV)
+        self.assertIn("window.hsOpsPresetButtons(ownDates && ", NAV)
 
     def test_goals_native_bar_has_presets(self):
         self.assertIn("window.hsOpsPresetButtons(f)", GOALS)

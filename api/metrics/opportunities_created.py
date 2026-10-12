@@ -44,6 +44,7 @@ if str(METRICS_DIR) not in sys.path:
 
 from ghl_user_names import load_ghl_user_names
 from pipeline_scope import pipeline_in_scope, truthy_flag
+from lead_gen_source import inbound_source_label
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
@@ -397,8 +398,9 @@ def normalize_channel(v: Any) -> str:
         norm = v.strip()
         if norm.lower() in {"crm ui", "hand", "", "none", "null", "n/a"}:
             return "none"
-        return norm
-    return str(v)
+        return inbound_source_label(norm) or norm
+    labeled = inbound_source_label(v)
+    return labeled or str(v)
 
 
 def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None, pipeline: str | None = None, sweeper: bool = False) -> dict[str, Any]:

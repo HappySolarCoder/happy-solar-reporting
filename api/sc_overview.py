@@ -38,6 +38,12 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 from dashboard_nav import dashboard_nav_css, render_dashboard_loader
 
+METRICS_DIR = API_DIR / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
+
+from lead_gen_source import is_inbound_lead_source
+
 TZ = ZoneInfo("America/New_York")
 
 OWNER_NAME_OVERRIDES = {
@@ -251,7 +257,7 @@ def normalize_lead_source(value: Any) -> str:
         return "Phones"
     if low in {"3pl", "3p", "threepl"}:
         return "3PL"
-    if low in {"inbound", "3pl/inbound", "3pl / inbound"}:
+    if is_inbound_lead_source(text) or low in {"3pl/inbound", "3pl / inbound"}:
         return "Inbound"
     return text
 

@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "ghl_opportunities_v2",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "pipelineId", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -59,6 +59,11 @@ class ChannelGoalsTests(unittest.TestCase):
         raws = [raw("1"), raw("2", refunded=True), raw("3", bucket=None), raw("4"), raw("5", when=datetime(2026, 9, 30, tzinfo=NY)), raw("6", bucket=None)]
         sources = {"3": "Inbound", "4": "Facebook Quick Form", "1": "3PL", "6": "Doors"}
         self.assertEqual(cg.split_leads(raws, sources, s, e), {"Inbound": 2, "3PL": 1})
+        sources["7"] = "FB Quick Form"
+        raws.append(raw("7", bucket=None))
+        self.assertEqual(cg.split_leads(raws, sources, s, e), {"Inbound": 3, "3PL": 1})
+        self.assertIsNone(cg.self_gen_reason("FB Quick Form", "", "Anyone"))
+        self.assertEqual(cg.self_gen_reason("Facebook Quick Form", "Frazier", "Allen Frazier"), "override")
 
     def test_overview_has_channel_goals_section(self):
         import company_overview

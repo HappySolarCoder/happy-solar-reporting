@@ -225,6 +225,8 @@ def render_panel() -> str:
       phones: 'phones',
       virtual: 'phones',
       inbound: 'inbound',
+      'facebook quick form': 'inbound',
+      'fb quick form': 'inbound',
       '3pl': '3pl',
       '3 pl': '3pl'
     }};

@@ -46,6 +46,8 @@ from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+from lead_gen_source import inbound_source_label
+
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
 SETTER_LAST_NAME_FALLBACK_FIELD_ID = "Xhy6k4xfHRJ6s5IbfA5x"
@@ -195,7 +197,7 @@ def normalize_channel(value: Any) -> str:
         return "Doors"
     if low in {"3pl", "3p", "threepl"}:
         return "3PL"
-    return text
+    return inbound_source_label(text) or text
 
 
 def ymd_range_or_default(qs: dict[str, list[str]]) -> tuple[str, str]:

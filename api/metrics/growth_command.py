@@ -18,9 +18,10 @@ Field mapping, live adapter:
   visits. Instant Form and 3PL are not counted. If either read fails,
   the stage stays null. A successful read with nobody abandoning is zero.
 - Leads: pipeline 7nSEgeoBYXZiIS7x41Jy, Lead Gen Source
-  hd5QqHEOVSsPom5bJ32P strips to Inbound. Blank, 3PL, and Doors do not.
+  hd5QqHEOVSsPom5bJ32P counts as Inbound (Inbound or a Facebook Quick Form
+  variant). Blank, 3PL, and Doors do not.
 - Demos: Buffalo, Rochester, Syracuse, or Virtual opportunity with Lead
-  Gen Source Inbound and the existing demo outcome in dispositionValue,
+  Gen Source counting as Inbound and the existing demo outcome in dispositionValue,
   dated by appointmentOccurredAt. Not limited to the lead contacts.
   3PL/Inbound pipeline opportunities are never demos.
 - Sold: contact sold date P9oBjgbZjJdeE0OkBj9T, those contacts.

@@ -21,9 +21,17 @@ is that FMA's own last name.
 from __future__ import annotations
 
 import re
+import sys
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+_METRICS_DIR = Path(__file__).resolve().parent
+if str(_METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICS_DIR))
+
+from lead_gen_source import is_inbound_lead_source
 
 # Confirmed contact custom field "Sweeper/Rehash Last Name".
 SWEEPER_REHASH_LAST_NAME_FIELD_ID = "HWfjOp8MvE6soxBAL75f"
@@ -176,6 +184,8 @@ def lead_source_matches(
     sales-rep self-gen dashboard. A missing date does not widen the filter.
     """
     if requested is None or not str(requested).strip():
+        return True
+    if is_inbound_lead_source(requested) and is_inbound_lead_source(lead_source):
         return True
     if str(lead_source).strip().casefold() == str(requested).strip().casefold():
         return True

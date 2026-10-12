@@ -284,6 +284,50 @@ class CreditTests(unittest.TestCase):
         self.assertEqual(demos[0].date_source, "appointment_history")
         self.assertEqual(demos[0].last_name, "Cornell-DeAngelis")
 
+    def test_no_sit_then_inferred_sit_is_dated_on_the_estimated_second_appointment(self):
+        first = datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc)
+        second = datetime(2026, 9, 4, 20, 20, tzinfo=timezone.utc)
+        opp = {
+            "appointmentOccurredAt": first,
+            "appointmentStartTime": first,
+            "dispositionDate": second,
+            "dispositionValue": "Sit",
+        }
+        rows = [
+            {
+                "source": "ghl-firestore-sync-v2",
+                "startTime": first,
+                "dispositionValue": "No Sit",
+                "contactId": "c",
+                "opportunityId": "o",
+            },
+            {
+                "source": "inferred_from_dispo",
+                "startTime": second,
+                "dispositionValue": "Sit",
+                "contactId": "c",
+                "opportunityId": "o",
+            },
+        ]
+        candidate = make_demo_candidate(
+            opp,
+            contact_id="c",
+            opportunity_id="o",
+            setter="Dole",
+            sweeper="",
+            pipeline_name="Buffalo",
+            stage_name="Demo-Negotiating",
+            history=[{"pipelineName": "Buffalo", "toStageName": "Demo-Negotiating", "effectiveAt": second}],
+            appointment_rows=rows,
+        )
+        self.assertEqual(candidate["inferred_times"], [second])
+        demos = select_fma_demos([candidate])
+        self.assertEqual(len(demos), 1)
+        self.assertEqual(demos[0].counted_at, second)
+        self.assertNotEqual(demos[0].counted_at, first)
+        self.assertEqual(demos[0].date_source, "appointment_history")
+        self.assertEqual(demos[0].last_name, "Dole")
+
     def test_appointment_after_the_dispo_does_not_move_the_date(self):
         later = T_DEMO + timedelta(days=2)
         demos = _one(appointment_times=[later])

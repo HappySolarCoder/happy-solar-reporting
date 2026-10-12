@@ -353,7 +353,7 @@ __DASHBOARD_NAV_HTML__
       <div class="mt-panel">
         <h2>How we count</h2>
         <ul>
-          <li><b>Demos</b> are the same count as the Demo % dashboards: one per contact, dated to the nearest past appointment within 3 days before the disposition, or the disposition date when that appointment is missing. Another one counts only when Sweeper/Rehash Last Name is that FMA's own. An inferred re-disposition counts as an appointment ran and can set the date. It does not add a demo. Counted by the Steak Dinner deadline.</li>
+          <li><b>Demos</b> are the same count as the Demo % dashboards: one per contact, dated to the nearest past appointment within 3 days before the disposition, or the disposition date when that appointment is missing. Another one counts only when Sweeper/Rehash Last Name is that FMA's own. An inferred re-disposition counts as an appointment ran. Its estimated time is the disposition timestamp, and that time dates the one demo ahead of an earlier appointment. It does not add a demo. Counted by the Steak Dinner deadline.</li>
           <li><b>Stipend requirement</b> is your monthly demo goal in Bloom. If no goal is set, it is the standard 15 demos.</li>
           <li><b>FMA sales</b> are sales credited to you as the setter, by sold date. <b>Closer sales</b> are credited to the opportunity owner, by sold date.</li>
           <li><b>Cancellation rate</b> is sales you closed that month that are now cancelled, divided by sales you closed that month. A later cancellation can still change a month.</li>

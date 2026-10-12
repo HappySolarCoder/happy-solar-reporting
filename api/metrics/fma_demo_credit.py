@@ -15,9 +15,13 @@ appointmentOccurredAt, then to the disposition time.
 
 Rows with ``source`` ``inferred_from_dispo`` are real appointments. The
 sync writes one when a rep re-dispositions an opportunity (a two-touch or
-a reschedule) without booking a new GHL appointment. They date a demo and
-count as appointments ran. They do not add an FMA demo. Closer and
-opportunity metrics may still count each appointment or disposition.
+a reschedule) without booking a new GHL appointment. The estimated
+appointment time on that row is the disposition timestamp. When the first
+appointment was a No Sit and a later inferred appointment was
+dispositioned as a Sit, the one FMA demo is dated to that second
+estimated time. Inferred rows also count as appointments ran. They do
+not add an FMA demo. Closer and opportunity metrics may still count each
+appointment or disposition.
 
 A second demo on the same contact counts only when Sweeper/Rehash Last
 Name is that FMA's own last name and a later demo disposition is at or
@@ -333,13 +337,33 @@ def resolve_appointment_instants(
     return [], "dispo"
 
 
-def counted_demo_time(dispo_at: datetime, appointment_times: list[datetime]) -> tuple[datetime, bool]:
+def counted_demo_time(
+    dispo_at: datetime,
+    appointment_times: list[datetime],
+    inferred_times: list[datetime] | None = None,
+) -> tuple[datetime, bool]:
     """Nearest past appointment within 3 days, otherwise the disposition.
+
+    An ``inferred_from_dispo`` appointment's estimated time is the
+    disposition timestamp. When that estimated time is present, it dates
+    the demo ahead of an earlier appointment in the window, such as a
+    No Sit that still has a calendar event.
 
     The bool is true when an appointment was used.
     """
+    estimated = [
+        moment
+        for moment in (inferred_times or [])
+        if isinstance(moment, datetime) and same_appointment_instant(moment, dispo_at)
+    ]
+    if estimated:
+        return estimated[-1], True
     window_start = dispo_at - APPOINTMENT_LOOKBACK
-    eligible = [moment for moment in appointment_times if window_start <= moment <= dispo_at]
+    eligible = [
+        moment
+        for moment in appointment_times
+        if isinstance(moment, datetime) and window_start <= moment <= dispo_at
+    ]
     if not eligible:
         return dispo_at, False
     return max(eligible), True
@@ -392,7 +416,10 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
 
     Each candidate needs contact_id, opportunity_id, setter, sweeper,
     pipeline_name, dispo_at, and appointment_times. history, stage_name,
-    created_at, stage_changed_at, and appointment_source are optional.
+    created_at, stage_changed_at, appointment_source, and inferred_times
+    are optional. inferred_times are estimated times from
+    ``inferred_from_dispo`` rows. A time that matches the disposition
+    dates the demo ahead of an earlier appointment.
     """
     grouped: dict[str, list[dict]] = {}
     for candidate in candidates or []:
@@ -434,7 +461,12 @@ def select_fma_demos(candidates: list[dict] | None) -> list[FmaDemo]:
             else:
                 continue
             times = [moment for moment in (candidate.get("appointment_times") or []) if isinstance(moment, datetime)]
-            counted_at, used_appointment = counted_demo_time(candidate["dispo_at"], times)
+            inferred_times = [
+                moment for moment in (candidate.get("inferred_times") or []) if isinstance(moment, datetime)
+            ]
+            counted_at, used_appointment = counted_demo_time(
+                candidate["dispo_at"], times, inferred_times
+            )
             if used_appointment:
                 date_source = compact_text(candidate.get("appointment_source")) or "opportunity_appointment"
             else:
@@ -471,6 +503,7 @@ def make_demo_candidate(
     if dispo_at is None:
         return None
     times, source = resolve_appointment_instants(appointment_rows, opp)
+    inferred_times = [item.start_at for item in inferred_appointments(appointment_rows)]
     return {
         "contact_id": compact_text(contact_id),
         "opportunity_id": compact_text(opportunity_id),
@@ -484,6 +517,7 @@ def make_demo_candidate(
         "dispo_at": dispo_at,
         "appointment_times": times,
         "appointment_source": source,
+        "inferred_times": inferred_times,
     }
 
 

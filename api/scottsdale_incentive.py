@@ -364,7 +364,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Demo Notes</div>
         <div class="meta">
           Demos are marked-demo outcomes only, using the canonical demo metric appointment window semantics in
-          <code>America/New_York</code>. An FMA gets one demo per contact. It is dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo. An inferred re-disposition counts as an appointment ran and does not add an FMA demo.
+          <code>America/New_York</code>. An FMA gets one demo per contact. It is dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo. An inferred re-disposition counts as an appointment ran. Its estimated time is the disposition timestamp, and that time dates the one demo ahead of an earlier appointment. It does not add an FMA demo.
         </div>
         <div class="meta">
           Breakdown source: <code>sit_by_setter_last_name</code>.

@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact, dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. An inferred re-disposition counts as an appointment ran and does not add an FMA demo.</div>
+          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact, dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. An inferred re-disposition counts as an appointment ran. Its estimated time is the disposition timestamp, and that time dates the one demo ahead of an earlier appointment. It does not add an FMA demo.</div>
         </div>
         <div class="tablewrap">
           <table>

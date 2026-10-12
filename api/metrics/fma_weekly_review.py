@@ -726,8 +726,9 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                 "the appointment is missing. A second demo counts only when "
                 "Sweeper/Rehash Last Name is that FMA's own last name and the contact "
                 "is dispositioned again after the sweep. An inferred re-disposition "
-                "counts as an appointment ran and can date the demo. It does not "
-                "add another demo."
+                "counts as an appointment ran. Its estimated time is the "
+                "disposition timestamp, and that time dates the one demo ahead of "
+                "an earlier appointment. It does not add another demo."
             ),
             "sales": "Canonical sales by setter last name using sold-date window.",
         },

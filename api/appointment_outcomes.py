@@ -76,6 +76,17 @@ def get_db() -> firestore.Client:
     return firestore.Client(project="gemini-assistant-bot", database="happy-solar")
 
 
+def outcome_window_raw(qs: dict) -> tuple[str, str]:
+    """Top-filter start/end wins when both are present. Otherwise the page form dates."""
+    top_start = (qs.get("start", [""])[0] or "").strip()
+    top_end = (qs.get("end", [""])[0] or "").strip()
+    start_raw = (qs.get("start_date", [""])[0] or "").strip()
+    end_raw = (qs.get("end_date", [""])[0] or "").strip()
+    if top_start and top_end:
+        return top_start, top_end
+    return start_raw, end_raw
+
+
 def parse_ymd(s: str) -> datetime | None:
     try:
         return datetime.strptime((s or "").strip(), "%Y-%m-%d")
@@ -398,6 +409,39 @@ __DASHBOARD_NAV_HTML__
         if (view) view.value = 'upcoming';
       }});
     }}
+    (function () {{
+      var form = document.querySelector('form.filters');
+      if (form) {{
+        form.addEventListener('submit', function () {{
+          var startEl = document.getElementById('start_date');
+          var endEl = document.getElementById('end_date');
+          var start = startEl ? startEl.value : '';
+          var end = endEl ? endEl.value : '';
+          if (!start || !end || !window.hsOpsWriteFilters) return;
+          var cur = window.hsOpsReadFilters ? window.hsOpsReadFilters() : {{}};
+          window.hsOpsWriteFilters({{
+            start: start,
+            end: end,
+            territory: cur.territory || 'All',
+            source: cur.source || 'All'
+          }});
+        }});
+      }}
+      var ocStart = document.getElementById('ocStart');
+      var ocEnd = document.getElementById('ocEnd');
+      var pageStart = document.getElementById('start_date');
+      var pageEnd = document.getElementById('end_date');
+      if (!ocStart || !ocEnd || !pageStart || !pageEnd) return;
+      if ((ocStart.getAttribute('type') || '') === 'hidden') return;
+      if (!ocStart.value || !ocEnd.value) return;
+      if (ocStart.value === pageStart.value && ocEnd.value === pageEnd.value) return;
+      var url = new URL(window.location.href);
+      url.searchParams.set('start', ocStart.value);
+      url.searchParams.set('end', ocEnd.value);
+      url.searchParams.set('start_date', ocStart.value);
+      url.searchParams.set('end_date', ocEnd.value);
+      window.location.replace(url.toString());
+    }})();
   </script>
 </body>
 </html>
@@ -415,8 +459,7 @@ class handler(BaseHTTPRequestHandler):
         yday = today_local - timedelta(days=1)
         now_utc = datetime.now(timezone.utc)
 
-        start_raw = (qs.get("start_date", [""])[0] or "").strip()
-        end_raw = (qs.get("end_date", [""])[0] or "").strip()
+        start_raw, end_raw = outcome_window_raw(qs)
         selected_view = (qs.get("view", ["outcomes"])[0] or "outcomes").strip().lower()
         if selected_view not in {"outcomes", "upcoming", "all"}:
             selected_view = "outcomes"

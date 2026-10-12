@@ -2,7 +2,7 @@
    Lifecycle: 150ms show delay, request generations, cancellation, no minimum display time. */
 (function (root) {
   var SHOW_DELAY_MS = 150;
-  var REQUEST_TIMEOUT_MS = 25000;
+  var REQUEST_TIMEOUT_MS = 90000;
   var layer = null;
   var freshness = null;
   var current = null;
@@ -73,7 +73,7 @@
     var support = committed
       ? "Your previous view is still available.<br>Try refreshing the data again."
       : "We couldn’t load this view. Try again.";
-    return '<div class="loading-card"><div class="loading-brand">HAPPY SOLAR <span>/</span> OPERATIONS CONTROL</div><div class="loading-error-icon" aria-hidden="true">!</div><h2 id="loadingTitle">We couldn’t refresh this view</h2><p id="loadingErrorStatus" role="status" aria-live="polite">' + support + '</p><div class="loading-error-actions"><button type="button" class="primary" id="loadingRetry">Try again</button><button type="button" id="loadingBack">Back to dashboard</button></div></div>';
+    return '<div class="loading-card"><div class="loading-brand">HAPPY SOLAR <span>/</span> OPERATIONS CONTROL</div><div class="loading-error-icon" aria-hidden="true">!</div><h2 id="loadingTitle">We couldn’t refresh this view</h2><p id="loadingErrorStatus" role="status" aria-live="polite">' + support + '</p><div class="loading-error-actions"><button type="button" class="primary" id="loadingRetry">Try again</button><button type="button" id="loadingChangeDates">Change dates</button><button type="button" id="loadingBack">Back to dashboard</button></div></div>';
   }
 
   function ensureLayer() {
@@ -95,16 +95,41 @@
     return document.getElementById("main") || document.querySelector("main");
   }
 
+  function containsDateOrFilter(el) {
+    if (!el) return false;
+    var cls = typeof el.className === "string" ? el.className : "";
+    if (/(^|\s)(global-filterbar|filters|filter-controls|oc-injected-filters)(\s|$)/.test(cls)) return true;
+    if (el.id === "filterHost") return true;
+    if (typeof el.querySelector !== "function") return false;
+    try {
+      return !!el.querySelector("input[type='date'], input[type='month'], input[type='week'], .global-filterbar, .filters, .filter-controls");
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function blockedNodes() {
+    var nodes = document.querySelectorAll(".workspace, #sidebar, #overlay, .wrap, .goose-open, .goose-panel");
+    var out = [];
+    Array.prototype.forEach.call(nodes, function (el) {
+      if (!containsDateOrFilter(el)) {
+        out.push(el);
+        return;
+      }
+      Array.prototype.forEach.call(el.children || [], function (child) {
+        if (!containsDateOrFilter(child)) out.push(child);
+      });
+    });
+    return out;
+  }
+
   function setBlocked(value) {
     var node = ensureLayer();
     if (value) {
       if (blocked.length) return;
-      blocked = Array.prototype.map.call(
-        document.querySelectorAll(".workspace, #sidebar, #overlay, .wrap, .goose-open, .goose-panel"),
-        function (el) {
-          return { el: el, inert: el.inert };
-        }
-      );
+      blocked = Array.prototype.map.call(blockedNodes(), function (el) {
+        return { el: el, inert: el.inert };
+      });
       blocked.forEach(function (item) {
         item.el.inert = true;
       });
@@ -313,6 +338,12 @@
         backToDashboard();
       });
     }
+    var changeDatesButton = node.querySelector("#loadingChangeDates");
+    if (changeDatesButton) {
+      changeDatesButton.addEventListener("click", function () {
+        changeDates();
+      });
+    }
     if (!committed) clearLoadingPlaceholders();
     if (retry) retry.focus();
     else node.focus();
@@ -390,17 +421,9 @@
     if (previous && !previous.settled) {
       previous.stale = true;
       clearShowTimer(previous);
-      try {
-        previous.controller.abort();
-      } catch (error) {
-        /* already aborted */
-      }
+      abortSilently(previous.controller);
     }
-    try {
-      if (sideAbort) sideAbort.abort();
-    } catch (error) {
-      /* already aborted */
-    }
+    abortSilently(sideAbort);
     sideAbort = new AbortController();
     if (!preserving && previous && previous.settled && layer && !layer.hidden) hideOverlay({ restoreFocus: false });
     if (preserving) showLoading();
@@ -424,6 +447,15 @@
     };
     current = gen;
     return gen;
+  }
+
+  function abortSilently(controller) {
+    if (!controller) return;
+    try {
+      controller.abort(new DOMException("superseded", "AbortError"));
+    } catch (error) {
+      /* already aborted */
+    }
   }
 
   function mergeSignal(gen, init, timeoutSignal) {
@@ -513,6 +545,32 @@
     recomputeFailed(gen);
   }
 
+  function timeoutIsInline(gen, req) {
+    if (!gen || !req || req.optional) return true;
+    classify(gen);
+    if (!req.opening || !req.primary) return true;
+    var primaries = (gen.requests || []).filter(function (item) {
+      return item.opening && !item.optional && item.primary;
+    });
+    return primaries.length > 1 && primaries[0] !== req;
+  }
+
+  function markFresh(message) {
+    var chip = ensureFreshness();
+    chip.hidden = false;
+    chip.className = "hs-freshness";
+    chip.textContent = message;
+    return chip;
+  }
+
+  function showInline(message) {
+    var chip = ensureFreshness();
+    chip.hidden = false;
+    chip.className = "hs-freshness is-error";
+    chip.textContent = message;
+    return chip;
+  }
+
   function track(originalFetch, input, init, optional) {
     var gen = current;
     var timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
@@ -560,13 +618,19 @@
         return guardBody(response, gen);
       })
       .catch(function (error) {
-        var aborted = gen.stale || (gen.controller && gen.controller.signal.aborted);
         var timedOut = timeoutSignal.aborted || (error && error.name === "TimeoutError");
-        if (!aborted && timedOut) {
-          markRequestFailure(gen, req, "timeout " + requestUrl(input));
-        } else if (!aborted && !(error && error.name === "AbortError")) {
-          markRequestFailure(gen, req, (error && error.name ? error.name : "error") + " " + requestUrl(input));
+        var aborted = !timedOut && (
+          gen.stale ||
+          (gen.controller && gen.controller.signal.aborted) ||
+          (error && error.name === "AbortError")
+        );
+        if (!gen.stale && timedOut) {
+          if (timeoutIsInline(gen, req)) showInline("This section timed out");
+          else markRequestFailure(gen, req, "timeout " + requestUrl(input));
+          return;
         }
+        if (aborted) return;
+        markRequestFailure(gen, req, (error && error.name ? error.name : "error") + " " + requestUrl(input));
         throw error;
       })
       .finally(function () {
@@ -600,17 +664,26 @@
   }
 
   function runBackground(originalFetch, input, init) {
-    var chip = ensureFreshness();
-    chip.hidden = false;
-    chip.textContent = "Updating";
+    markFresh("Updating");
+    var timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    var nextInit = Object.assign({}, init);
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+      nextInit.signal = nextInit.signal ? AbortSignal.any([timeoutSignal, nextInit.signal]) : timeoutSignal;
+    }
     return Promise.resolve()
       .then(function () {
-        return originalFetch(input, init);
+        return originalFetch(input, nextInit);
       })
-      .finally(function () {
-        if (!freshness) return;
-        freshness.hidden = false;
-        freshness.textContent = "Updated";
+      .then(function (response) {
+        if (response && response.ok === false) showInline("Couldn't update this section");
+        else markFresh("Updated");
+        return response;
+      })
+      .catch(function (error) {
+        var timedOut = timeoutSignal.aborted || (error && error.name === "TimeoutError");
+        showInline(timedOut ? "This section timed out" : "Couldn't update this section");
+        if (error && (error.name === "AbortError" || error.name === "TimeoutError" || timedOut)) return;
+        throw error;
       });
   }
 
@@ -656,6 +729,32 @@
     if (committed) restoreCheckpoint();
     else clearLoadingPlaceholders();
     hideOverlay();
+  }
+
+  function focusDateInput() {
+    var input = null;
+    try {
+      input = document.querySelector("input[type='date'], input[type='month'], input[type='week'], #ocStart, #startDate, #start_date");
+    } catch (error) {
+      input = null;
+    }
+    if (input && input.focus) {
+      try {
+        input.focus();
+      } catch (error) {
+        /* the filter may already be gone */
+      }
+    }
+  }
+
+  function changeDates() {
+    if (current && !current.settled) {
+      current.stale = true;
+      clearShowTimer(current);
+      abortSilently(current.controller);
+    }
+    hideOverlay();
+    focusDateInput();
   }
 
   function buttonsInLayer() {
@@ -738,11 +837,7 @@
       if (current && !current.settled) {
         current.stale = true;
         clearShowTimer(current);
-        try {
-          current.controller.abort();
-        } catch (error) {
-          /* ignore */
-        }
+        abortSilently(current.controller);
       }
       hideOverlay({ restoreFocus: false });
     });
@@ -754,14 +849,11 @@
   }
 
   function background(task) {
-    var chip = ensureFreshness();
-    chip.hidden = false;
-    chip.textContent = "Updating";
+    markFresh("Updating");
     return Promise.resolve()
       .then(task)
       .finally(function () {
-        chip.hidden = false;
-        chip.textContent = "Updated";
+        markFresh("Updated");
       });
   }
 

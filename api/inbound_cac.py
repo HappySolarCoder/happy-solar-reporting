@@ -445,9 +445,11 @@ function drawCacChart(chart) {
   el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="240" role="img" aria-label="Inbound CAC monthly chart">' + grid + paths + xlabels + '</svg>';
 }
 async function load() {
+  try {
   var q = query();
   document.getElementById('jsonLink').href = '/api/metrics/inbound_cac?' + q;
   var res = await fetch('/api/metrics/inbound_cac?' + q);
+  if (!res) return;
   var data = await res.json();
   if (!res.ok) {
     document.getElementById('leadLockerCac').textContent = 'Error';
@@ -552,6 +554,10 @@ async function load() {
   renderTable(document.getElementById('cacTable'), data.rows || [], overall);
   renderKpiTable(document.getElementById('kpiTable'), data.performance_kpis || {});
   drawCacChart(data.chart || {});
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) return;
+    throw err;
+  }
 }
 document.getElementById('apply').addEventListener('click', function() {
   usePageRange = false;

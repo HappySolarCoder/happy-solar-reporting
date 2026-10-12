@@ -448,7 +448,10 @@ class WebsiteTrafficHtmlTests(unittest.TestCase):
 class WebsiteTrafficIsolationTests(unittest.TestCase):
     def test_not_on_warm_cache_or_vercel_cron(self):
         self.assertNotIn("website_traffic", WARM_SRC)
-        self.assertNotIn("website_traffic", VERCEL_TEXT)
+        vercel = json.loads(VERCEL_TEXT)
+        routed = json.dumps({"rewrites": vercel.get("rewrites"), "crons": vercel.get("crons")})
+        self.assertNotIn("website_traffic", routed)
+        self.assertGreaterEqual(int((vercel.get("functions") or {}).get("api/website_traffic.py", {}).get("maxDuration") or 0), 90)
         self.assertIn("Meta is not wired", PAGE_SRC)
         self.assertIn("do_not_invent_meta_spend", METRIC_SRC)
         self.assertNotIn(".stream(", inspect.getsource(traffic.read_daily_docs))

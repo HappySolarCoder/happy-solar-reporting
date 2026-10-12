@@ -42,6 +42,10 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
+from query_result_cache import QueryCache, ttl_seconds
+
+_POWERLINE_CACHE = QueryCache()
+
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 
@@ -701,10 +705,16 @@ class handler(BaseHTTPRequestHandler):
             start_local, end_local_excl, start_q, end_q, year, month = resolve_window(qs)
 
             if (qs.get("format", ["html"])[0] or "html").lower() == "json":
-                payload = build_payload(start_local, end_local_excl)
+                cache_key = f"start={start_q}&end={end_q}"
+                payload = _POWERLINE_CACHE.get(cache_key)
+                cache_hit = payload is not None
+                if payload is None:
+                    payload = build_payload(start_local, end_local_excl)
+                    _POWERLINE_CACHE.put(cache_key, payload, ttl_seconds(end_q))
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("X-Query-Cache", "hit" if cache_hit else "miss")
                 self.send_header("Cache-Control", "public, s-maxage=300, stale-while-revalidate=1800")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

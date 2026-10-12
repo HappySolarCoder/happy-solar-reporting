@@ -1584,10 +1584,12 @@ function paintKpi(id, text, status) {
   el.className = 'kpi status-' + (status || 'unknown');
 }
 async function load() {
+  try {
   var q = query();
   document.getElementById('jsonLink').href = '/api/website_funnel?' + q;
   var banner = document.getElementById('statusBanner');
   var res = await fetch('/api/website_funnel?' + q);
+  if (!res) return;
   var data = await res.json();
   if (!res.ok) {
     banner.classList.remove('hidden');
@@ -1679,6 +1681,10 @@ async function load() {
     }},
     {key: 'forms_over_total', label: 'forms completed / total site visits', color: '#2196F3'}
   ], {kind: 'pct', empty: 'No running conversion yet. Calculator or total visits must be greater than zero.'});
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) return;
+    throw err;
+  }
 }
 function runningFromDays(days) {
   var cumForms = 0, cumTotal = 0, cumWny = 0, cumCalc = 0;

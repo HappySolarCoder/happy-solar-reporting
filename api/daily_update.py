@@ -428,7 +428,14 @@ __DASHBOARD_NAV_HTML__
   }
 
   async function fetchJson(u) {
-    const res = await fetch(u);
+    let res;
+    try {
+      res = await fetch(u);
+    } catch (error) {
+      if (error && (error.name === 'AbortError' || error.name === 'TimeoutError')) return null;
+      throw error;
+    }
+    if (!res) return null;
     if (!res.ok) throw new Error(`${u} → ${res.status}`);
     return await res.json();
   }
@@ -468,6 +475,7 @@ __DASHBOARD_NAV_HTML__
         fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
       ]);
+      if (!sales || !opps || !oppsDoors || !oppsSelf || !opps3pl || !oppsInbound || !oppsVirtual || !knocks) return;
 
       document.getElementById('kpiSales').textContent = numberFmt(sales.result);
       document.getElementById('kpiOpps').textContent = numberFmt(opps.result);

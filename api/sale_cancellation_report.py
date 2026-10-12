@@ -184,7 +184,9 @@ function query() {
   return params.toString();
 }
 async function load() {
+  try {
   var res = await fetch('/api/metrics/sales_cancellations?' + query());
+  if (!res) return;
   var data = await res.json();
   document.getElementById('soldDateTotal').textContent = fmtNum(data.kpis.sold_date_total);
   document.getElementById('cancelledSales').textContent = fmtNum(data.kpis.cancelled_sales);
@@ -200,6 +202,10 @@ async function load() {
   renderBars(document.getElementById('sourceBars'), data.tables.by_lead_source, 'cancelled', 'var(--slate)', false);
   renderTable(document.getElementById('ownerTable'), ['Sales Rep', 'Sold-Date Total', 'Cancelled', 'Cancellation %', 'Not Cancelled'], data.tables.by_owner, 'owner');
   renderTable(document.getElementById('detailTable'), ['Contact', 'Rep', 'Setter', 'Pipeline', 'Lead Source', 'Sold Date', 'Last Stage Change'], data.tables.cancelled_detail, 'detail');
+  } catch (error) {
+    if (error && error.name === 'AbortError') return;
+    throw error;
+  }
 }
 document.getElementById('apply').addEventListener('click', load);
 document.getElementById('clearRange').addEventListener('click', function() { startDate.value = ''; endDate.value = ''; load(); });

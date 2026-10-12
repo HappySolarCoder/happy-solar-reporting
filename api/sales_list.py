@@ -449,8 +449,10 @@ async function saveNote(area) {
   return saveField(area);
 }
 async function load() {
+  try {
   document.getElementById('jsonLink').href = '/api/metrics/sales_list?' + viewQuery();
   var res = await fetch('/api/metrics/sales_list?' + query());
+  if (!res) return;
   var data = await res.json();
   if (!res.ok) {
     document.getElementById('result').textContent = 'Error';
@@ -480,6 +482,10 @@ async function load() {
   setOptions(salespersonSel, people, keep);
   defaultSalesperson = keep;
   renderVisible();
+  } catch (error) {
+    if (error && error.name === 'AbortError') return;
+    throw error;
+  }
 }
 document.getElementById('apply').addEventListener('click', load);
 document.getElementById('sortBtn').addEventListener('click', function() {

@@ -161,11 +161,23 @@ class RestoreConfigTests(unittest.TestCase):
             "includeFiles"
         )
         self.assertEqual(include, "api/**")
-        vercel_text = (ROOT / "vercel.json").read_text()
-        self.assertNotIn("web_funnel", vercel_text)
-        self.assertNotIn("website_funnel", vercel_text)
-        self.assertNotIn("website_funnel_yesterday", vercel_text)
-        self.assertNotIn("inbound_cac", vercel_text)
+        # These names stay off rewrites and crons. Function maxDuration entries
+        # are allowed so the slow dashboards are not killed at the default limit.
+        routed = json.dumps({"rewrites": VERCEL.get("rewrites"), "crons": VERCEL.get("crons")})
+        self.assertNotIn("web_funnel", routed)
+        self.assertNotIn("website_funnel", routed)
+        self.assertNotIn("website_funnel_yesterday", routed)
+        self.assertNotIn("inbound_cac", routed)
+        functions = VERCEL.get("functions") or {}
+        for key in (
+            "api/index.py",
+            "api/metrics/inbound_cac.py",
+            "api/powerline_dashboard.py",
+            "api/metrics/raydar_doors_knocked.py",
+            "api/metrics/kixie_calls_summary.py",
+            "api/website_traffic.py",
+        ):
+            self.assertGreaterEqual(int((functions.get(key) or {}).get("maxDuration") or 0), 90, key)
 
 
 class FunnelHandlerShapeTests(unittest.TestCase):

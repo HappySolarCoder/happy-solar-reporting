@@ -762,6 +762,7 @@ __DASHBOARD_NAV_HTML__
   });
 
   async function load() {
+    try {
     const y = yearSel.value;
     const m = monthSel.value;
 
@@ -783,6 +784,7 @@ __DASHBOARD_NAV_HTML__
       fetch(salesUrl),
       fetch(ranUrl)
     ]);
+    if (!salesRes || !ranRes) return;
 
     if (!salesRes.ok) {
       document.getElementById('totalSales').textContent = 'ERR';
@@ -803,6 +805,7 @@ __DASHBOARD_NAV_HTML__
       fetch(`/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`),
       fetch(`/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`)
     ]);
+    if (!ownerSalesRes || !ownerRanRes) return;
 
     const ownerSalesData = ownerSalesRes.ok ? await ownerSalesRes.json() : { breakdowns: {} };
     const ownerRanData = ownerRanRes.ok ? await ownerRanRes.json() : { breakdowns: {} };
@@ -862,6 +865,7 @@ __DASHBOARD_NAV_HTML__
       fetch(`/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
       fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=${encodeURIComponent('Self Gen')}`)
     ]);
+    if (!sgCreatedRes || !sgDemoRes) return;
 
     const sgCreated = sgCreatedRes.ok ? await sgCreatedRes.json() : null;
     const sgDemo = sgDemoRes.ok ? await sgDemoRes.json() : null;
@@ -891,6 +895,10 @@ __DASHBOARD_NAV_HTML__
     }
     if (!sgHtml) sgHtml = '<tr><td colspan="4" class="skeleton">No Self Gen data</td></tr>';
     document.getElementById('selfGenRows').innerHTML = sgHtml;
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+      throw error;
+    }
   }
 
   const years = [];

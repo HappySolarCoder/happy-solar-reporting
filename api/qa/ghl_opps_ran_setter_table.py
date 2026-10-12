@@ -39,10 +39,12 @@ if str(METRICS_DIR) not in sys.path:
 
 from fma_demo_credit import (  # noqa: E402
     current_stage_name,
-    fma_demo_credit,
+    load_appointment_history,
+    load_opportunities_by_contact,
     load_stage_history,
     load_stage_names,
-    names_match,
+    make_demo_candidate,
+    select_fma_demos,
 )
 from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 
@@ -258,23 +260,70 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
                 }
             )
 
-    history_ids = [item["row"]["opportunityId"] for item in pending_sits if item["needs_history"]]
+    contact_ids = [item["row"]["contactId"] for item in pending_sits]
+    known_ids = {item["row"]["opportunityId"] for item in pending_sits}
+    for extra in load_opportunities_by_contact(db, contact_ids):
+        extra_id = str(extra.get("id") or "")
+        if not extra_id or extra_id in known_ids:
+            continue
+        if extra.get(c.disposition_field) != "Sit":
+            continue
+        known_ids.add(extra_id)
+        pid = str(extra.get("pipelineId") or "")
+        pname = (pipe_names.get(pid) or "").strip() or pid
+        cid = str(extra.get("contactId") or "")
+        contact = contact_lookup(db, c, cid)
+        setter = contact_custom_field(contact, c.setter_cf_id)
+        setter_s = str(setter).strip() if setter not in (None, "") else "none"
+        pending_sits.append(
+            {
+                "row": {"opportunityId": extra_id, "contactId": cid},
+                "setter": setter_s,
+                "sweeper": sweeper_rehash_last_name(contact, extra),
+                "pipeline": pname,
+                "pipeline_id": pid,
+                "opp": extra,
+                "in_table": False,
+            }
+        )
+    history_ids = [item["row"]["opportunityId"] for item in pending_sits]
     stage_history = load_stage_history(db, history_ids) if history_ids else {}
-    stage_names = load_stage_names(db, [item["pipeline_id"] for item in pending_sits if item["needs_history"]]) if history_ids else {}
+    stage_names = load_stage_names(db, [item["pipeline_id"] for item in pending_sits]) if history_ids else {}
+    appointment_history = load_appointment_history(db, [item["row"]["contactId"] for item in pending_sits])
+    candidates = []
+    item_by_opp = {}
     for item in pending_sits:
-        credit = fma_demo_credit(
-            item["setter"],
-            item["sweeper"],
+        opp_id = item["row"]["opportunityId"]
+        item_by_opp[opp_id] = item
+        candidate = make_demo_candidate(
+            item["opp"],
+            contact_id=item["row"]["contactId"],
+            opportunity_id=opp_id,
+            setter=item["setter"],
+            sweeper=item["sweeper"],
             pipeline_name=item["pipeline"],
             stage_name=current_stage_name(item["opp"], stage_names),
-            stage_changed_at=item["opp"].get("lastStageChangeAt"),
-            created_at=item["opp"].get("createdAt"),
-            demo_at=item["demo_at"],
-            history=stage_history.get(item["row"]["opportunityId"]) or [],
+            history=stage_history.get(opp_id) or [],
+            appointment_rows=appointment_history.get(item["row"]["contactId"]) or [],
         )
-        demo_name = str(credit.last_name).strip() or "none"
-        item["row"]["demoCreditLastName"] = demo_name
+        if candidate:
+            candidates.append(candidate)
+    for demo in select_fma_demos(candidates):
+        try:
+            from zoneinfo import ZoneInfo
+
+            counted_local = demo.counted_at.astimezone(ZoneInfo(c.timezone))
+        except Exception:
+            continue
+        if not (start_local <= counted_local < end_local):
+            continue
+        demo_name = str(demo.last_name).strip() or "none"
         sit_by_setter[demo_name] = sit_by_setter.get(demo_name, 0) + 1
+        item = item_by_opp.get(demo.opportunity_id)
+        if item and "setterLastName" in item["row"]:
+            item["row"]["demoCreditLastName"] = demo_name
+            item["row"]["demoCountedAt"] = counted_local.isoformat()
+            item["row"]["countsAsDemo"] = True
 
     # Compute demo% by setter. A moved demo can belong to a name with no ran row.
     demo_pct_by_setter: dict[str, float] = {}

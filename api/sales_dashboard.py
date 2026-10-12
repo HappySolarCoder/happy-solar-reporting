@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). A demo stays with the FMA when the original appointment sat, and counts for Sweeper/Rehash Last Name after the sweep only when that name is different. Stage history timestamps decide which came first.</div>
+          <div class="meta">By last name. Created and ran appointments move to a filled Sweeper/Rehash Last Name on or after Thu Sep 24, 2026 (ET). An FMA gets one demo per contact, dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep.</div>
         </div>
         <div class="tablewrap">
           <table>

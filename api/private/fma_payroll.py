@@ -9,7 +9,7 @@ scheduling-manager payout. Sit membership is demo_rate's shared helpers.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -25,10 +25,12 @@ for _path in (str(METRICS_DIR), str(PRIVATE_DIR)):
 import demo_rate
 from fma_demo_credit import (
     current_stage_name,
-    fma_demo_credit,
+    load_appointment_history,
+    load_opportunities_by_contact,
     load_stage_history,
     load_stage_names,
-    names_match,
+    make_demo_candidate,
+    select_fma_demos,
 )
 from sweeper_rehash_attribution import sweeper_rehash_last_name
 from fma_payroll_logic import (
@@ -36,6 +38,7 @@ from fma_payroll_logic import (
     SCHEDULING_MANAGER_CF,
     SETTER_LAST_NAME_CF,
     SETTER_NAME_CF,
+    NY,
     build_payroll_payload,
     compact,
     is_blank_token,
@@ -170,7 +173,12 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
     now_utc = datetime.now(timezone.utc)
-    snaps = demo_rate.load_demo_rate_snaps(db, contract, start_utc, end_utc)
+    snaps = demo_rate.load_demo_rate_snaps(
+        db,
+        contract,
+        start_utc - timedelta(days=3),
+        end_utc + timedelta(days=3),
+    )
 
     contact_ids = []
     pipeline_ids = []
@@ -187,46 +195,44 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
         if uid:
             user_ids.append(uid)
 
+    opp_by_id: dict[str, dict] = {}
+    for snap, opp in opps:
+        opp_id = compact(opp.get("id") or getattr(snap, "id", ""))
+        opp["id"] = opp_id
+        opp_by_id[opp_id] = opp
+    for extra in load_opportunities_by_contact(db, contact_ids):
+        extra_id = compact(extra.get("id"))
+        if extra_id and extra_id not in opp_by_id:
+            opp_by_id[extra_id] = extra
+            pipeline_ids.extend(demo_rate.pipeline_id_keys(extra.get("pipelineId")))
+            uid = _assigned_user_id(extra)
+            if uid:
+                user_ids.append(uid)
+
     pipelines = demo_rate.pipeline_name_lookup(db, pipeline_ids)
     contacts = demo_rate.load_contacts_by_ids(db, contact_ids)
     users = load_users_by_ids(db, user_ids)
 
     history_ids: list[str] = []
     history_pipeline_ids: list[str] = []
-    for snap, opp in opps:
-        contact = contacts.get(compact(opp.get("contactId"))) or {}
-        setter = resolve_setter_last_name(
-            [
-                _cf_text(contact, SETTER_LAST_NAME_CF),
-                _cf_text(opp, SETTER_LAST_NAME_CF, opportunity=True),
-            ],
-            [
-                _cf_text(contact, SETTER_NAME_CF),
-                _cf_text(opp, SETTER_NAME_CF, opportunity=True),
-            ],
-        )
-        sweeper_last = sweeper_rehash_last_name(contact, opp)
-        if sweeper_last and not names_match(setter, sweeper_last):
-            history_ids.append(compact(opp.get("id") or getattr(snap, "id", "")))
-            history_pipeline_ids.extend(demo_rate.pipeline_id_keys(opp.get("pipelineId")))
-    stage_history = load_stage_history(db, history_ids) if history_ids else {}
-    stage_names = load_stage_names(db, history_pipeline_ids) if history_ids else {}
-
-    sits: list[dict[str, Any]] = []
-    for snap, opp in opps:
+    sit_opps: list[dict] = []
+    for opp in opp_by_id.values():
         pname = demo_rate.resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         if not demo_rate.pipeline_in_demo_scope(pname.lower(), contract):
             continue
-        windowed = demo_rate.frozen_disposition_local(opp, contract, start_local, end_local, now_utc)
-        if not windowed:
+        if opp.get(contract.disposition_value_field) != "Sit":
             continue
-        local_dt, dispo = windowed
-        if dispo != "Sit":
-            continue
+        sit_opps.append(opp)
+        history_ids.append(compact(opp.get("id")))
+        history_pipeline_ids.extend(demo_rate.pipeline_id_keys(opp.get("pipelineId")))
+    stage_history = load_stage_history(db, history_ids) if history_ids else {}
+    stage_names = load_stage_names(db, history_pipeline_ids) if history_ids else {}
+    appointment_history = load_appointment_history(db, contact_ids)
 
+    candidates = []
+    for opp in sit_opps:
         contact_id = compact(opp.get("contactId"))
         contact = contacts.get(contact_id) or {}
-        user = users.get(_assigned_user_id(opp)) or None
         setter = resolve_setter_last_name(
             [
                 _cf_text(contact, SETTER_LAST_NAME_CF),
@@ -237,34 +243,53 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
                 _cf_text(opp, SETTER_NAME_CF, opportunity=True),
             ],
         )
-        lead = _cf_text(contact, LEAD_GEN_SOURCE_CF)
-        # Scheduling manager stays the contact field. Demo credit follows
-        # fma_demo_credit: the original sit stays with the FMA, and a demo
-        # after the sweep moves only when the last name differs.
-        manager = _cf_text(contact, SCHEDULING_MANAGER_CF)
         sweeper_last = sweeper_rehash_last_name(contact, opp)
-        opp_id = compact(opp.get("id") or getattr(snap, "id", ""))
-        setter = fma_demo_credit(
-            setter,
-            sweeper_last,
+        pname = demo_rate.resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
+        opp_id = compact(opp.get("id"))
+        candidate = make_demo_candidate(
+            opp,
+            contact_id=contact_id,
+            opportunity_id=opp_id,
+            setter=setter,
+            sweeper=sweeper_last,
             pipeline_name=pname,
             stage_name=current_stage_name(opp, stage_names),
-            stage_changed_at=opp.get("lastStageChangeAt"),
-            created_at=opp.get("createdAt"),
-            demo_at=local_dt,
             history=stage_history.get(opp_id) or [],
-        ).last_name
-        opp_url, contact_url = _ghl_urls(opp, contact, opp_id, contact_id)
+            appointment_rows=appointment_history.get(contact_id) or [],
+        )
+        if candidate:
+            candidates.append(candidate)
+
+    sits: list[dict[str, Any]] = []
+    for demo in select_fma_demos(candidates):
+        try:
+            counted_local = demo.counted_at.astimezone(NY)
+        except Exception:
+            continue
+        if not (start_local <= counted_local < end_local):
+            continue
+        if counted_local.astimezone(timezone.utc) > now_utc:
+            continue
+        opp = opp_by_id.get(demo.opportunity_id) or {}
+        pname = demo_rate.resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
+        contact_id = compact(opp.get("contactId") or demo.contact_id)
+        contact = contacts.get(contact_id) or {}
+        user = users.get(_assigned_user_id(opp)) or None
+        lead = _cf_text(contact, LEAD_GEN_SOURCE_CF)
+        # Scheduling manager stays the contact field. The FMA is select_fma_demos.
+        # Week membership is counted_at. Ran still uses frozen_disposition_local.
+        manager = _cf_text(contact, SCHEDULING_MANAGER_CF)
+        opp_url, contact_url = _ghl_urls(opp, contact, demo.opportunity_id, contact_id)
         sits.append(
             {
-                "opportunity_id": opp_id,
+                "opportunity_id": demo.opportunity_id,
                 "contact_id": contact_id,
                 "customer_name": _customer_name(contact, opp),
-                "sat_date": local_dt.date().isoformat(),
+                "sat_date": counted_local.date().isoformat(),
                 "pipeline": pname,
                 "lead_source": lead,
                 "owner_name": _owner_name(user, opp),
-                "setter_last_name": setter,
+                "setter_last_name": demo.last_name,
                 "scheduling_manager": manager,
                 "ghl_opportunity_url": opp_url,
                 "ghl_contact_url": contact_url,

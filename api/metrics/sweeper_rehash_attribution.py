@@ -12,9 +12,10 @@ Credit starts with the pay week that began Thursday 2026-09-24
 business dates private payroll uses. An earlier appointment stays with
 the original setter for created and ran counts.
 
-FMA demo credit does not use this cutoff. See fma_demo_credit: the
-original appointment stays with the FMA when it sat, and a demo after
-the sweep or rehash moves only when Sweeper/Rehash Last Name differs.
+FMA demo credit does not use this cutoff. See fma_demo_credit:
+one demo per contact, dated from stage history and the nearest
+appointment. A second demo counts only when Sweeper/Rehash Last Name
+is that FMA's own last name.
 """
 
 from __future__ import annotations

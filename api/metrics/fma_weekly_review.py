@@ -33,9 +33,10 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from fma_demo_credit import (  # noqa: E402
-    fma_demo_credit,
+    load_appointment_history,
     load_stage_history,
-    names_match,
+    make_demo_candidate,
+    select_fma_demos,
 )
 from sweeper_rehash_attribution import sweeper_rehash_last_name  # noqa: E402
 
@@ -474,7 +475,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         bump_person(person, date_key_local(ts), "knocks", 1)
 
     # GHL opp-derived metrics
-    pending_demos: list[dict[str, Any]] = []
+    sit_candidates: list[dict[str, Any]] = []
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
         pipeline_id = compact_str(opp.get("pipelineId"))
@@ -487,6 +488,20 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         setter_last = resolve_setter_last_name(opp, contact)
         setter_key = normalize_last_name(setter_last)
         person = person_by_setter_last.get(setter_key)
+        disposition_for_demo = normalize_disposition(opp.get("dispositionValue"))
+        if disposition_for_demo == "Sit":
+            stage_id_for_demo = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+            sit_candidates.append(
+                {
+                    "opp": opp,
+                    "contact": contact,
+                    "setter_last": setter_last,
+                    "pipeline_name": pipeline_name,
+                    "stage_name": compact_str(stage_names.get(stage_id_for_demo) or stage_id_for_demo),
+                    "opportunity_id": compact_str(opp.get("id") or snap.id),
+                    "contact_id": contact_id,
+                }
+            )
         if not person:
             continue
 
@@ -513,7 +528,6 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                     or get_custom_field_value(opp.get("customFields") or [], DISPOSITION_NOTES_FIELD_ID)
                 )
                 opp_id = compact_str(opp.get("id") or snap.id)
-                sweeper_last = sweeper_rehash_last_name(contact, opp)
                 row = {
                     "person_key": person["person_key"],
                     "display_name": person["display_name"],
@@ -528,21 +542,6 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
                     "disposition_notes": notes,
                     "is_sale_stage": stage_id in SOLD_STAGE_IDS,
                 }
-                if disposition == "Sit":
-                    pending_demos.append(
-                        {
-                            "row": row,
-                            "setter_last": setter_last,
-                            "sweeper_last": sweeper_last,
-                            "pipeline_name": pipeline_name,
-                            "stage_name": compact_str(stage_names.get(stage_id) or stage_id),
-                            "stage_changed_at": opp.get("lastStageChangeAt"),
-                            "created_at": opp.get("createdAt"),
-                            "demo_at": occurred_at,
-                            "day": occurred_local.date().isoformat(),
-                            "needs_history": bool(sweeper_last) and not names_match(setter_last, sweeper_last),
-                        }
-                    )
                 ran_appointments.append(row)
 
         sale_stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
@@ -561,27 +560,43 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
             continue
         bump_person(person, sold_local.date().isoformat(), "sales", 1)
 
-    history_ids = [item["row"]["opportunity_id"] for item in pending_demos if item["needs_history"]]
+    history_ids = [item["opportunity_id"] for item in sit_candidates]
     stage_history = load_stage_history(db, history_ids) if history_ids else {}
-    for item in pending_demos:
-        row = item["row"]
-        credit = fma_demo_credit(
-            item["setter_last"],
-            item["sweeper_last"],
+    appointment_history = load_appointment_history(db, [item["contact_id"] for item in sit_candidates])
+    demo_candidates = []
+    for item in sit_candidates:
+        opp = item["opp"]
+        contact = item["contact"] or {}
+        candidate = make_demo_candidate(
+            opp,
+            contact_id=item["contact_id"],
+            opportunity_id=item["opportunity_id"],
+            setter=item["setter_last"],
+            sweeper=sweeper_rehash_last_name(contact, opp),
             pipeline_name=item["pipeline_name"],
             stage_name=item["stage_name"],
-            stage_changed_at=item["stage_changed_at"],
-            created_at=item["created_at"],
-            demo_at=item["demo_at"],
-            history=stage_history.get(row["opportunity_id"]) or [],
+            history=stage_history.get(item["opportunity_id"]) or [],
+            appointment_rows=appointment_history.get(item["contact_id"]) or [],
         )
-        credited = person_by_setter_last.get(normalize_last_name(credit.last_name))
+        if candidate:
+            demo_candidates.append(candidate)
+    rows_by_opp = {row["opportunity_id"]: row for row in ran_appointments}
+    for demo in select_fma_demos(demo_candidates):
+        counted_local = demo.counted_at.astimezone(TZ)
+        if not (start_local <= counted_local < end_local):
+            continue
+        credited = person_by_setter_last.get(normalize_last_name(demo.last_name))
+        day_key = counted_local.date().isoformat()
         if credited:
-            bump_person(credited, item["day"], "sit", 1)
-            bump_person(credited, item["day"], "demos", 1)
+            bump_person(credited, day_key, "sit", 1)
+            bump_person(credited, day_key, "demos", 1)
+        row = rows_by_opp.get(demo.opportunity_id)
+        if row is None:
+            continue
+        if credited:
             row["person_key"] = credited["person_key"]
             row["display_name"] = credited["display_name"]
-        row["setter_last_name"] = credit.last_name or row["setter_last_name"]
+        row["setter_last_name"] = demo.last_name or row["setter_last_name"]
 
     roster_people.sort(key=lambda row: (-row["metrics"]["knocks"], -row["metrics"]["appointments"], row["display_name"].lower()))
     ran_appointments.sort(key=lambda row: row["appointment_occurred_at"], reverse=True)
@@ -658,10 +673,11 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
             "knocks": "Raydar dispositioned leads that count as door knocks (actor attribution matches current FMA dashboard logic).",
             "appointments": "GHL opportunities created by setter last name, pipeline_scope=all, excluding inbound/lead locker.",
             "demos": (
-                "GHL opportunities ran with disposition Sit. The original appointment "
-                "stays with the FMA when it sat. A demo after a sweep or rehash counts "
-                "for Sweeper/Rehash Last Name only when that name differs. Stage history "
-                "timestamps decide the order."
+                "One demo per contact. Dated to the nearest past appointment within "
+                "3 days before the stage-history disposition, or that disposition when "
+                "the appointment is missing. A second demo counts only when "
+                "Sweeper/Rehash Last Name is that FMA's own last name and the contact "
+                "is dispositioned again after the sweep."
             ),
             "sales": "Canonical sales by setter last name using sold-date window.",
         },

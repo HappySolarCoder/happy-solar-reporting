@@ -397,7 +397,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title">Metric Notes</div>
         <div class="meta">
           Demo commission is based on demo outcomes from <code>/api/metrics/demo_rate</code>.
-          An FMA keeps the original appointment's demo when it sat. A demo after the sweep or rehash does not count for them unless Sweeper/Rehash Last Name matches their last name. Stage history timestamps decide which came first.
+          An FMA gets one demo per contact. It is dated to the nearest past appointment within 3 days before the stage history disposition, or the disposition date when that appointment is missing. A second demo counts only when Sweeper/Rehash Last Name is their own last name and the contact is dispositioned again after the sweep. A reset by someone else does not add a demo.
           Sales commission is based on canonical Sales counts from <code>/api/metrics/sales</code>.
         </div>
       </div>
@@ -622,7 +622,7 @@ __DASHBOARD_NAV_HTML__
           fetchJson('/api/metrics/bloom_goals?period=' + encodeURIComponent(monthStr)).catch(() => null)
         ]);
 
-        // Demo credit lives in demo_rate via fma_demo_credit (original sit stays with the FMA).
+        // Demo credit lives in demo_rate via select_fma_demos (one demo per contact).
         // This page does not reassign setters itself, so payroll reads the same sit credit.
         const demoBySetter = (demoData && demoData.breakdowns && demoData.breakdowns.sit_by_setter_last_name) || {};
         const salesBySetter = (salesData && salesData.breakdowns && salesData.breakdowns.sales_by_setter_last_name) || {};

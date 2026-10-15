@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "api"
@@ -153,6 +154,67 @@ class OverviewContractTests(unittest.TestCase):
         self.assertIn(SOLD_DATE_FIELD_ID, SALES_CANCELLATIONS_SRC)
         self.assertNotIn("completed_sale_count", SALES_SRC)
         self.assertNotIn("is_completed_sale_outcome_bucket", SALES_SRC)
+
+    def test_page_is_open_and_renders_shared_sales_nav(self):
+        self.assertNotIn("def _check_auth", SC_OVERVIEW_SRC)
+        self.assertNotIn("def _unauthorized", SC_OVERVIEW_SRC)
+        self.assertNotIn("SETTINGS_PASSWORD", SC_OVERVIEW_SRC)
+        self.assertIn('render_dashboard_nav("sc_overview")', SC_OVERVIEW_SRC)
+        settings = (API / "settings.py").read_text(encoding="utf-8")
+        self.assertIn("def _check_auth", settings)
+        self.assertIn("SETTINGS_PASSWORD", settings)
+
+    def test_get_returns_html_and_json_without_basic_auth(self):
+        class _Body:
+            def __init__(self):
+                self.buf = bytearray()
+
+            def write(self, data):
+                self.buf.extend(data)
+
+        class _Request:
+            def __init__(self, path):
+                self.path = path
+                self.headers = {}
+                self.wfile = _Body()
+                self.status = None
+                self.sent = []
+
+            def send_response(self, code):
+                self.status = code
+
+            def send_header(self, key, value):
+                self.sent.append((key, value))
+
+            def end_headers(self):
+                return None
+
+        payload = {"owner_options": [], "totals": {"sales": 36}}
+        with patch.object(sc_overview, "get_db", return_value=object()), patch.object(
+            sc_overview, "build_payload", return_value=payload
+        ):
+            html_req = _Request("/api/sc_overview")
+            sc_overview.handler.do_GET(html_req)
+            self.assertEqual(html_req.status, 200)
+            self.assertNotIn("WWW-Authenticate", [key for key, _value in html_req.sent])
+            self.assertIn(
+                ("Content-Type", "text/html; charset=utf-8"),
+                html_req.sent,
+            )
+            html = html_req.wfile.buf.decode("utf-8")
+            self.assertIn('class="navlink active" href="/api/sc_overview"', html)
+            self.assertIn("Solar Consultant Overview", html)
+            self.assertIn(
+                'class="oc-embed-link active" href="/api/sc_overview" aria-current="page"',
+                html,
+            )
+            self.assertIn('id="hsDashboardLoader"', html)
+
+            json_req = _Request("/api/sc_overview?format=json")
+            sc_overview.handler.do_GET(json_req)
+            self.assertEqual(json_req.status, 200)
+            self.assertIn(("Content-Type", "application/json"), json_req.sent)
+            self.assertEqual(json.loads(json_req.wfile.buf.decode("utf-8")), payload)
 
     def test_owner_is_assigned_to_and_occurred_at_is_not_recomputed(self):
         self.assertIn('owner = compact_str(opp.get("assignedTo"))', SC_OVERVIEW_SRC)

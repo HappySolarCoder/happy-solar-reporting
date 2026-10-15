@@ -964,6 +964,7 @@ NAV_GROUPS = (
         "SALES",
         (
             ("sales_dashboard", "Sales Dashboard", "/api/sales_dashboard"),
+            ("sc_overview", "Solar Consultant Overview", "/api/sc_overview"),
             ("sales_list", "Sales List", "/api/sales_list"),
             ("rep_daily_recap", "Rep Daily Recap", "/api/rep_daily_recap"),
             ("missing_dispos", "Missing Dispositions", "/api/missing_dispos"),
@@ -1036,6 +1037,7 @@ EMBED_MENUS = (
         "sales",
         (
             "sales_dashboard",
+            "sc_overview",
             "sales_list",
             "rep_daily_recap",
             "missing_dispos",

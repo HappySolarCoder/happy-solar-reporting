@@ -2,7 +2,7 @@
 
 """Vercel Python function: /api/sc_overview
 
-SC Overview (admin-only)
+SC Overview
 
 Purpose:
 - Evaluate sales rep performance with completed appointment outcomes and sales.
@@ -18,7 +18,6 @@ Canonical metric alignment:
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -36,7 +35,7 @@ if str(API_DIR) not in sys.path:
 
 from google.cloud import firestore
 from google.oauth2 import service_account
-from dashboard_nav import dashboard_nav_css, render_dashboard_loader
+from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 
 METRICS_DIR = API_DIR / "metrics"
 if str(METRICS_DIR) not in sys.path:
@@ -76,30 +75,6 @@ class RepRosterEntry:
     display_name: str
     team: str
     person_key: str
-
-
-def _unauthorized(h: BaseHTTPRequestHandler):
-    h.send_response(401)
-    h.send_header('WWW-Authenticate', 'Basic realm="Happy Solar Settings"')
-    h.send_header('Content-Type', 'text/plain; charset=utf-8')
-    h.end_headers()
-    h.wfile.write(b'Unauthorized')
-
-
-def _check_auth(h: BaseHTTPRequestHandler) -> bool:
-    pw = os.environ.get("SETTINGS_PASSWORD")
-    if not pw:
-        return False
-
-    auth = h.headers.get("Authorization") or ""
-    if not auth.startswith("Basic "):
-        return False
-    try:
-        raw = base64.b64decode(auth.split(" ", 1)[1]).decode("utf-8")
-        _user, pwd = raw.split(":", 1)
-        return pwd == pw
-    except Exception:
-        return False
 
 
 def compact_str(value: Any) -> str:
@@ -1035,7 +1010,7 @@ def render_html(
     touch_end: str,
 ) -> str:
     loader_css = dashboard_nav_css()
-    loader_html = render_dashboard_loader()
+    nav_html = render_dashboard_nav("sc_overview")
     year_options = "".join(
         f'<option value="{y}"{" selected" if y == year else ""}>{y}</option>'
         for y in range(year - 2, year + 2)
@@ -1362,7 +1337,7 @@ def render_html(
   </style>
 </head>
 <body>
-  {loader_html}
+  {nav_html}
   <div class="wrap">
     <div class="hero">
       <div>
@@ -1892,9 +1867,6 @@ def render_html(
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if not _check_auth(self):
-            return _unauthorized(self)
-
         try:
             qs = parse_qs(urlparse(self.path).query)
             now = datetime.now(TZ)

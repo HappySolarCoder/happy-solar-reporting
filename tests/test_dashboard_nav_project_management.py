@@ -63,6 +63,26 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn("Project Hub", hub_html)
         self.assertIn("Hold / Cancelled", hold_html)
 
+    def test_sales_menu_includes_sc_overview(self):
+        html = render_dashboard_nav("sc_overview")
+        sales_items = next(items for label, items in nav.NAV_GROUPS if label == "SALES")
+        sales_keys = next(keys for label, _slug, keys in nav.EMBED_MENUS if label == "Sales")
+        self.assertIn(
+            ("sc_overview", "Solar Consultant Overview", "/api/sc_overview"),
+            sales_items,
+        )
+        self.assertIn("sc_overview", sales_keys)
+        self.assertIn('class="navlink active" href="/api/sc_overview"', html)
+        self.assertIn("Solar Consultant Overview", html)
+        self.assertIn('aria-current="true"', _group_button(html, "Sales"))
+        self.assertNotIn('aria-current="true"', _group_button(html, "Company"))
+        self.assertIn(
+            'class="oc-embed-link active" href="/api/sc_overview" aria-current="page"',
+            html,
+        )
+        self.assertLess(html.find("Sales Dashboard"), html.find("Solar Consultant Overview"))
+        self.assertLess(html.find("Solar Consultant Overview"), html.find("Sales List"))
+
     def test_sidebar_links_beat_legacy_navbtn_pills(self):
         css = nav.dashboard_nav_css()
         override = css.find("#sidebar a.navlink {")

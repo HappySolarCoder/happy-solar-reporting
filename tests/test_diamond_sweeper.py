@@ -179,6 +179,172 @@ class DiamondComputeTests(unittest.TestCase):
         )
 
 
+class PipelineStageTests(unittest.TestCase):
+    def test_stage_name_uses_directory_then_denormalized_name(self):
+        self.assertEqual(
+            metrics.pipeline_stage_name(
+                {"pipelineStageName": "Reschedule Needed", "pipelineStageId": "stage-demo"}
+            ),
+            "Reschedule Needed",
+        )
+        self.assertEqual(
+            metrics.pipeline_stage_name(
+                {"pipelineStageId": "stage-demo"},
+                {"stage-demo": "Demo-Negotiating"},
+            ),
+            "Demo-Negotiating",
+        )
+        self.assertEqual(metrics.pipeline_stage_name({"stageName": "Sold"}), "Sold")
+        self.assertEqual(metrics.pipeline_stage_name({"pipelineStageId": "stage-sold"}), "")
+
+    def test_rows_copy_stage_and_sit_still_counts_the_demo(self):
+        created = {
+            "sample_rows": [
+                {
+                    "opportunityId": "o1",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Rehash",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-resched",
+                    "pipelineStageName": "Reschedule Needed",
+                    "createdAt": "2026-10-02",
+                }
+            ]
+        }
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "d1",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipeline": "Buffalo",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-neg",
+                    "pipelineStageName": "Demo-Negotiating",
+                    "frozenAppointmentOccurredAt": "2026-10-03",
+                },
+                {
+                    "opportunityId": "d2",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "No Sit",
+                    "pipelineStageName": "Sold",
+                },
+            ]
+        }
+        created_out = metrics.created_rows(created)
+        self.assertEqual(created_out[0]["pipelineStage"], "Reschedule Needed")
+        self.assertEqual(created_out[0]["pipelineStageId"], "stage-resched")
+        demo_out = metrics.demo_rows(demo)
+        self.assertEqual(demo_out[0]["pipelineStage"], "Demo-Negotiating")
+        self.assertEqual(demo_out[0]["disposition"], "Sit")
+        self.assertEqual(demo_out[1]["pipelineStage"], "Sold")
+        self.assertEqual(demo_out[1]["disposition"], "No Sit")
+        self.assertEqual(metrics.ran_and_demos(demo), (2, 1))
+
+    def test_fill_looks_up_a_blank_stage_and_skips_named_rows(self):
+        named = {
+            "opportunityId": "n",
+            "pipelineId": "pipe-1",
+            "pipelineStageId": "stage-sold",
+            "pipelineStageName": "Sold",
+            "pipelineStage": "Sold",
+        }
+        blank = {
+            "opportunityId": "b",
+            "pipelineId": "pipe-1",
+            "pipelineStageId": "stage-neg",
+            "pipelineStage": "",
+        }
+        with mock.patch(
+            "sold_date_gaps.load_pipelines_by_ids",
+            return_value=({}, {"stage-neg": "Demo-Negotiating"}),
+        ) as lookup:
+            metrics.fill_pipeline_stages(object(), [named, blank])
+        lookup.assert_called_once()
+        self.assertEqual(lookup.call_args.args[1], ["pipe-1"])
+        self.assertEqual(blank["pipelineStage"], "Demo-Negotiating")
+        self.assertEqual(named["pipelineStage"], "Sold")
+
+    def test_fill_skips_lookup_when_every_row_already_has_a_name(self):
+        row = {"pipelineId": "pipe-1", "pipelineStageId": "stage-sold", "pipelineStageName": "Sold"}
+        with mock.patch("sold_date_gaps.load_pipelines_by_ids") as lookup:
+            metrics.fill_pipeline_stages(object(), [row])
+        lookup.assert_not_called()
+        self.assertEqual(row.get("pipelineStage"), None)
+        self.assertEqual(metrics.pipeline_stage_name(row), "Sold")
+
+    def test_lookup_failure_leaves_the_stage_blank(self):
+        row = {
+            "opportunityId": "b",
+            "pipelineId": "pipe-1",
+            "pipelineStageId": "stage-neg",
+            "disposition": "Sit",
+            "pipelineStage": "",
+        }
+        with mock.patch("sold_date_gaps.load_pipelines_by_ids", side_effect=RuntimeError("firestore down")):
+            metrics.fill_pipeline_stages(object(), [row])
+        self.assertEqual(row.get("pipelineStage") or "", "")
+        self.assertEqual(row["disposition"], "Sit")
+
+    def test_compute_fills_stage_without_changing_demo_rate(self):
+        created = {
+            "window_start_local": "s",
+            "window_end_local": "e",
+            "sample_rows": [
+                {
+                    "opportunityId": "o1",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Rehash",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-resched",
+                    "createdAt": "2026-10-02",
+                }
+            ],
+        }
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "d1",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-neg",
+                    "frozenAppointmentOccurredAt": "2026-10-03",
+                }
+            ]
+        }
+        with (
+            mock.patch("opportunities_created.compute", return_value=created),
+            mock.patch("demo_rate.build_payload", return_value=demo),
+            mock.patch("sales.compute_sales", return_value={}),
+            mock.patch(
+                "sold_date_gaps.load_pipelines_by_ids",
+                return_value=(
+                    {},
+                    {"stage-resched": "Reschedule Needed", "stage-neg": "Demo-Negotiating"},
+                ),
+            ),
+        ):
+            out = metrics.compute_diamond_sweeper(
+                object(), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+        self.assertEqual(out["demos"], 1)
+        self.assertEqual(out["ran"], 1)
+        self.assertEqual(out["demo_pct"], 100.0)
+        self.assertEqual(out["created_rows"][0]["pipelineStage"], "Reschedule Needed")
+        self.assertEqual(out["demo_rows"][0]["pipelineStage"], "Demo-Negotiating")
+        self.assertEqual(out["demo_rows"][0]["disposition"], "Sit")
+        self.assertIn("ghl_pipelines_v2", out["contract"]["collections"])
+        self.assertIn("pipelineStageId", out["contract"]["pipeline_stage"])
+
+    def test_source_payloads_expose_stage_fields(self):
+        demo = (ROOT / "api/metrics/demo_rate.py").read_text(encoding="utf-8")
+        created = (ROOT / "api/metrics/opportunities_created.py").read_text(encoding="utf-8")
+        for src in (demo, created):
+            self.assertIn('"pipelineStageId"', src)
+            self.assertIn('"pipelineStageName"', src)
+
+
 class DiamondPageTests(unittest.TestCase):
     def test_page_is_open_and_wired(self):
         html = page.render_html()
@@ -193,6 +359,11 @@ class DiamondPageTests(unittest.TestCase):
         self.assertIn("America/New_York", html)
         self.assertIn("Demos / appointments ran", html)
         self.assertIn("Sales / appointments ran", html)
+        self.assertGreaterEqual(html.count("Pipeline stage"), 2)
+        self.assertIn("Demo rate", html)
+        self.assertIn("function outcomeLabel", html)
+        self.assertIn("row.pipelineStage", html)
+        self.assertIn("ghl_pipelines_v2", html)
         self.assertIn("ghl_opportunities_v2", html)
         self.assertIn("ghl_contacts_v2", html)
         self.assertIn(FIELD, html)

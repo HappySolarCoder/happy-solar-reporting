@@ -51,6 +51,9 @@ def appointment_rows(created_payload: dict[str, Any], last_name: str) -> list[di
                 "contactId": row.get("contactId"),
                 "pipeline": row.get("pipeline"),
                 "createdAt": row.get("createdAt"),
+                "pipelineId": row.get("pipelineId"),
+                "pipelineStageId": row.get("pipelineStageId"),
+                "pipelineStageName": row.get("pipelineStageName") or row.get("pipelineStage"),
             }
         )
     return rows

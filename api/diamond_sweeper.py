@@ -59,7 +59,7 @@ def render_html() -> str:
         <div class="panel-head"><h2>How these numbers are counted</h2></div>
         <div class="panel-body">
           <p class="chart-note">Opps created are opportunities created in the selected dates on a contact whose Sweeper/Rehash Last Name is Diamond. That is the appointment-set credit for this sweeper. Demos are appointments in that window marked as a demo on a contact with the same name. Demo % is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Both rates match Company Overview Sweeper/Rehash and are blank when no appointments ran. Setter last name alone does not count.</p>
-          <p class="chart-note">Source: Firestore <code>ghl_opportunities_v2</code> and <code>ghl_contacts_v2</code> from the GoHighLevel sync. Sweeper/Rehash Last Name is contact custom field HWfjOp8MvE6soxBAL75f, then the same field on the opportunity. Appointments use opportunities created across pipelines. Ran and demos use the demo rate metric (one outcome per opportunity, so a follow-up is not a second demo). Sales use the locked sales grain, one contact each, filtered to this name.</p>
+          <p class="chart-note">Source: Firestore <code>ghl_opportunities_v2</code> and <code>ghl_contacts_v2</code> from the GoHighLevel sync. Sweeper/Rehash Last Name is contact custom field HWfjOp8MvE6soxBAL75f, then the same field on the opportunity. Appointments use opportunities created across pipelines. Ran and demos use the demo rate metric (one outcome per opportunity, so a follow-up is not a second demo). Sales use the locked sales grain, one contact each, filtered to this name. Pipeline stage is the GoHighLevel opportunity stage (for example Reschedule Needed, Demo-Negotiating, Sold), from <code>ghl_pipelines_v2</code>. It is separate from the Demo / No demo flag.</p>
         </div>
       </section>
       <div class="grid equal" style="margin-top:18px">
@@ -162,16 +162,16 @@ def render_html() -> str:
       document.getElementById("createdMeta").textContent = created.length + " opportunities";
       document.getElementById("demoMeta").textContent = demos.length + " ran";
       document.getElementById("createdTable").innerHTML = table(
-        ["Opportunity", "Pipeline", "Created"],
+        ["Opportunity", "Pipeline", "Pipeline stage", "Created"],
         created.slice(0, 200).map(function (row) {
-          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(row.createdAt || "—") + "</td></tr>";
+          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.createdAt || "—") + "</td></tr>";
         }).join(""),
         "No Diamond opportunities created in this range."
       );
       document.getElementById("demoTable").innerHTML = table(
-        ["Opportunity", "Pipeline", "Outcome", "Appointment"],
+        ["Opportunity", "Pipeline", "Demo rate", "Pipeline stage", "Appointment"],
         demos.slice(0, 200).map(function (row) {
-          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(outcomeLabel(row.disposition)) + "</td><td>" + esc(row.occurredAt || "—") + "</td></tr>";
+          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(outcomeLabel(row.disposition)) + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.occurredAt || "—") + "</td></tr>";
         }).join(""),
         "No Diamond appointments ran in this range."
       );

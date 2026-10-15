@@ -1005,6 +1005,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "lead_source": lead,
                 "sweeperRehashLastName": sweeper_last,
                 "closer": closer or None,
+                # GHL pipeline stage (appointment outcome). Sit/No Sit above is unchanged.
+                "pipelineId": compact_str(opp.get("pipelineId")) or None,
+                "pipelineStageId": compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId")) or None,
+                "pipelineStageName": compact_str(opp.get("pipelineStageName") or opp.get("stageName")) or None,
             }
         )
 

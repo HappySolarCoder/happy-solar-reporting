@@ -91,9 +91,38 @@ def share_percent(numerator: int, denominator: int) -> float | None:
     return round((numerator / denominator) * 100, 1)
 
 
+def compact_stage(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def pipeline_stage_name(record: dict | None, stage_names: dict[str, str] | None = None) -> str:
+    """GHL pipeline stage name. Sit / No Sit is a separate demo-rate flag.
+
+    Prefer a name already on the row, then the pipeline stage directory,
+    then pipelineStageName / stageName copied from the opportunity.
+    """
+    if not isinstance(record, dict):
+        return ""
+    names = stage_names or {}
+    stage_id = compact_stage(record.get("pipelineStageId") or record.get("pipelineStageUId"))
+    for candidate in (
+        record.get("pipelineStage"),
+        names.get(stage_id) if stage_id else None,
+        record.get("pipelineStageName"),
+        record.get("stageName"),
+    ):
+        text = compact_stage(candidate)
+        if text:
+            return text
+    return ""
+
+
 def created_rows(created_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) -> list[dict[str, Any]]:
     """Distinct opportunities_created rows for this Sweeper/Rehash Last Name."""
-    return appointment_rows(created_payload, last_name)
+    rows = appointment_rows(created_payload, last_name)
+    for row in rows:
+        row["pipelineStage"] = pipeline_stage_name(row)
+    return rows
 
 
 def demo_rows(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) -> list[dict[str, Any]]:
@@ -116,12 +145,48 @@ def demo_rows(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) 
             {
                 "opportunityId": opp_id,
                 "pipeline": row.get("pipeline"),
+                "pipelineId": row.get("pipelineId"),
+                "pipelineStageId": row.get("pipelineStageId"),
+                "pipelineStageName": row.get("pipelineStageName"),
+                "pipelineStage": pipeline_stage_name(row),
                 "disposition": row.get("disposition"),
                 "occurredAt": row.get("frozenAppointmentOccurredAt"),
                 "setter": row.get("setter"),
             }
         )
     return rows
+
+
+def fill_pipeline_stages(db, rows: list[dict[str, Any]]) -> None:
+    """Fill a blank pipeline stage from ghl_pipelines_v2.stages when the id is known.
+
+    Uses sold_date_gaps.load_pipelines_by_ids. A lookup failure leaves the
+    name blank and does not change demo-rate counts.
+    """
+    pending = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and not pipeline_stage_name(row)
+        and compact_stage(row.get("pipelineStageId"))
+        and compact_stage(row.get("pipelineId"))
+    ]
+    if not pending:
+        return
+    try:
+        from sold_date_gaps import load_pipelines_by_ids
+
+        _pipeline_names, stage_names = load_pipelines_by_ids(
+            db, [row.get("pipelineId") for row in pending]
+        )
+    except Exception:
+        return
+    if not isinstance(stage_names, dict):
+        return
+    for row in pending:
+        name = pipeline_stage_name(row, stage_names)
+        if name:
+            row["pipelineStage"] = name
 
 
 def ran_and_demos(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) -> tuple[int, int]:
@@ -201,6 +266,7 @@ def compute_diamond_sweeper(
 
     appointments = created_rows(created, last_name)
     outcomes = demo_rows(demo_payload, last_name)
+    fill_pipeline_stages(db, appointments + outcomes)
     ran = len(outcomes)
     demos = sum(1 for row in outcomes if row.get("disposition") == "Sit")
     metrics = summarize(
@@ -235,6 +301,11 @@ def compute_diamond_sweeper(
             ),
             "ran": "demo_rate rows in the window with that name, distinct opportunity id",
             "demos": "those ran rows whose disposition is Sit",
+            "pipeline_stage": (
+                "ghl_opportunities_v2.pipelineStageId -> ghl_pipelines_v2.stages[].name, "
+                "or pipelineStageName / stageName already on the opportunity. "
+                "Displayed beside Sit / No Sit. It does not change demo rate or Opp2Prelim."
+            ),
             "demo_pct": "demos / appointments ran (Company Overview Sweeper/Rehash). Blank when ran is 0",
             "opp2prelim": "locked sales grain filtered to this name / appointments ran. Blank when ran is 0",
             "sales": "Locked Sales grain (sales.py), distinct contact, filtered by the field",

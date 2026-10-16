@@ -45,6 +45,7 @@ if str(METRICS_DIR) not in sys.path:
 from ghl_user_names import load_ghl_user_names
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from lead_gen_source import inbound_source_label
+from leadgen_bucket import BUCKETS, leadgen_bucket
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
@@ -487,6 +488,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     by_setter: dict[str, int] = {}
     setter_labels: dict[str, str] = {}
     by_lead: dict[str, int] = {}
+    by_bucket: dict[str, int] = {b: 0 for b in BUCKETS}
+    by_bucket_setter: dict[str, dict[str, int]] = {b: {} for b in BUCKETS}
+    bucket_setter_labels: dict[str, dict[str, str]] = {b: {} for b in BUCKETS}
 
     for doc in opp_snaps:
         opp = doc.to_dict() or {}
@@ -543,6 +547,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         if not lead_source_matches(lead_source_norm, lead_norm, sweeper_last, appointment_date):
             continue
 
+        bucket = leadgen_bucket(lead_norm, sweeper_last, pname)
+        # Bucket table: credited name, or the sweeper when the field is filled.
+        bucket_name = sweeper_last if sweeper_last else setter_norm
+
         # record once, keyed so result always matches list
         matching_rows[opp_id] = {
             "opportunityId": opp_id,
@@ -564,11 +572,19 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "pipelineId": compact_str(opp.get("pipelineId")) or None,
             "pipelineStageId": compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId")) or None,
             "pipelineStageName": compact_str(opp.get("pipelineStageName") or opp.get("stageName")) or None,
+            "leadGenBucket": bucket,
         }
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         setter_norm = add_casefold_count(by_setter, setter_labels, setter_norm, empty="none")
         by_lead[lead_norm] = by_lead.get(lead_norm, 0) + 1
+        by_bucket[bucket] += 1
+        add_casefold_count(
+            by_bucket_setter[bucket],
+            bucket_setter_labels[bucket],
+            normalize_person_display(bucket_name, empty="none"),
+            empty="none",
+        )
 
     fill_missing_user_names(db, user_names, (r.get("ownerId") for r in matching_rows.values()))
     by_owner = {}
@@ -627,6 +643,11 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "created_by_owner": finalize_casefold_counts(by_owner, owner_labels),
             "created_by_setter_last_name": finalize_casefold_counts(by_setter, setter_labels),
             "created_by_lead_gen_source": {k: v for k, v in sorted(by_lead.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            # Daily dashboard Lead Generation buckets. Exactly one per opp; sums to result.
+            "created_by_leadgen_bucket": dict(by_bucket),
+            "created_by_leadgen_bucket_setter": {
+                b: finalize_casefold_counts(by_bucket_setter[b], bucket_setter_labels[b]) for b in BUCKETS
+            },
         },
         "sample_rows": sorted(list(matching_rows.values()), key=lambda r: (r.get("createdAt") or "")),
         "generated_at": datetime.utcnow().isoformat() + "Z",

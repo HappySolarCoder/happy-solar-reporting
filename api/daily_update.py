@@ -249,6 +249,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card accent-opps kpi-card-center">
         <div class="kpi-label">Opportunities Created</div>
         <div class="kpi" id="kpiOpps">—</div>
+        <div class="kpi-label" id="kpiOppsOther" style="display:none"></div>
       </div>
       <div class="card accent-opps kpi-card-center">
         <div class="kpi-label">Door Opportunities</div>
@@ -263,7 +264,7 @@ __DASHBOARD_NAV_HTML__
         <div class="kpi" id="kpiOpps3pl">—</div>
       </div>
       <div class="card accent-opps kpi-card-center">
-        <div class="kpi-label">Virtual Opportunities</div>
+        <div class="kpi-label">Sweeper/Rehash/Virtual Opportunities</div>
         <div class="kpi" id="kpiOppsVirtual">—</div>
       </div>
     </div>
@@ -282,7 +283,7 @@ __DASHBOARD_NAV_HTML__
         <div id="tblOpps3plSetter"></div>
       </div>
       <div class="card span-3 accent-opps">
-        <div class="card-title opps">Virtual Opps Created</div>
+        <div class="card-title opps">Sweeper/Rehash/Virtual Opps Created</div>
         <div id="tblOppsVirtualSetter"></div>
       </div>
     </div>
@@ -465,50 +466,40 @@ __DASHBOARD_NAV_HTML__
       .catch((powerlineErr) => ({ powerlineErr }));
 
     try {
-      const [sales, opps, oppsDoors, oppsSelf, opps3pl, oppsInbound, oppsVirtual, knocks] = await Promise.all([
+      const [sales, opps, knocks] = await Promise.all([
         fetchJson(`/api/metrics/sales?${q}`),
         fetchJson(`/api/metrics/opportunities_created?${q}`),
-        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Doors')}`),
-        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
-        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('3PL')}`),
-        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Inbound')}`),
-        fetchJson(`/api/metrics/opportunities_created?${q}&pipeline_scope=all&lead_source=${encodeURIComponent('Phones')}`),
         fetchJson(`/api/metrics/raydar_doors_knocked?${q}`),
       ]);
-      if (!sales || !opps || !oppsDoors || !oppsSelf || !opps3pl || !oppsInbound || !oppsVirtual || !knocks) return;
+      if (!sales || !opps || !knocks) return;
 
       document.getElementById('kpiSales').textContent = numberFmt(sales.result);
       document.getElementById('kpiOpps').textContent = numberFmt(opps.result);
 
-      const oppLead = (opps && opps.breakdowns && opps.breakdowns.created_by_lead_gen_source) ? opps.breakdowns.created_by_lead_gen_source : {};
-      const leadVal = (keys) => {
-        let n = 0;
-        for (const [k,v] of Object.entries(oppLead || {})) {
-          const kn = String(k || '').trim().toLowerCase();
-          if (keys.includes(kn)) n += Number(v || 0);
-        }
-        return n;
-      };
-      document.getElementById('kpiOppsDoors').textContent = numberFmt(leadVal(['doors']));
-      document.getElementById('kpiOppsSelfGen').textContent = numberFmt(leadVal(['self gen','selfgen']));
-      document.getElementById('kpiOpps3pl').textContent = numberFmt(leadVal(['3pl','inbound']));
-      document.getElementById('kpiOppsVirtual').textContent = numberFmt(leadVal(['phones','virtual']));
+      // One bucket per opp (server side) so the boxes add up to Opportunities Created.
+      const buckets = opps?.breakdowns?.created_by_leadgen_bucket || {};
+      const bucketSetters = opps?.breakdowns?.created_by_leadgen_bucket_setter || {};
+      const bucketVal = (k) => Number(buckets[k] || 0);
+      document.getElementById('kpiOppsDoors').textContent = numberFmt(bucketVal('Doors'));
+      document.getElementById('kpiOppsSelfGen').textContent = numberFmt(bucketVal('Self Gen'));
+      document.getElementById('kpiOpps3pl').textContent = numberFmt(bucketVal('3PL/Inbound'));
+      document.getElementById('kpiOppsVirtual').textContent = numberFmt(bucketVal('Sweeper/Rehash/Virtual'));
+      const otherEl = document.getElementById('kpiOppsOther');
+      if (bucketVal('Other') > 0) {
+        otherEl.textContent = `incl. ${numberFmt(bucketVal('Other'))} with no lead gen source`;
+        otherEl.style.display = '';
+      } else {
+        otherEl.style.display = 'none';
+      }
 
       renderKVTable('tblSalesOwner', sales?.breakdowns?.sales_by_owner || {}, 'Sales');
       renderKVTable('tblSalesSetter', sales?.breakdowns?.sales_by_setter_last_name || {}, 'Sales');
       renderKVTable('tblSalesLead', sales?.breakdowns?.sales_by_lead_gen_source || {}, 'Sales');
 
-      renderKVTable('tblOppsDoorsSetter', oppsDoors?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
-      renderKVTable('tblOppsSelfSetter', oppsSelf?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
-      renderKVTable(
-        'tblOpps3plSetter',
-        mergeCountMaps(
-          opps3pl?.breakdowns?.created_by_setter_last_name || {},
-          oppsInbound?.breakdowns?.created_by_setter_last_name || {},
-        ),
-        'Opps'
-      );
-      renderKVTable('tblOppsVirtualSetter', oppsVirtual?.breakdowns?.created_by_setter_last_name || {}, 'Opps');
+      renderKVTable('tblOppsDoorsSetter', bucketSetters['Doors'] || {}, 'Opps');
+      renderKVTable('tblOppsSelfSetter', bucketSetters['Self Gen'] || {}, 'Opps');
+      renderKVTable('tblOpps3plSetter', bucketSetters['3PL/Inbound'] || {}, 'Opps');
+      renderKVTable('tblOppsVirtualSetter', bucketSetters['Sweeper/Rehash/Virtual'] || {}, 'Opps');
 
       // Match FMA schema: use knocks_by_actor and map actor id -> Raydar user name.
       const knocksByActor = (knocks && knocks.breakdowns && knocks.breakdowns.knocks_by_actor) ? knocks.breakdowns.knocks_by_actor : {};

@@ -25,6 +25,8 @@ Extended outputs used by FMS Dashboard:
 - breakdowns.knocks_by_claimed_by
 - breakdowns.appointments_set_total / ..._by_claimed_by
 - breakdowns.convos_total / ..._by_claimed_by
+- breakdowns.time_on_doors_by_actor (first knock to last knock, per actor)
+- time_on_doors (named rows for the Daily Dashboard)
 - top_knockers / top_appt_setters / top_convo_knockers
 
 Convos definition (per Evan): dispositions that indicate we talked to homeowner.
@@ -51,6 +53,7 @@ if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
 from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
+from time_on_doors import knock_actor_id, observe_door_knock, time_on_doors_by_actor, time_on_doors_table
 
 _RAYDAR_CACHE = QueryCache()
 
@@ -334,6 +337,9 @@ def build_payload(
     by_actor: dict[str, int] = {}
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
+    # Counted knocks only. Month knock adjustments change knocks_by_actor and
+    # do not invent first/last timestamps.
+    door_spans: dict[str, dict[str, Any]] = {}
 
     streamed = 0
     dispo = disposition_map(db)
@@ -364,15 +370,7 @@ def build_payload(
         at = d.get("assignedTo")
 
         # Primary actor attribution (per dev schema): dispositionHistory[0].userId, fallback claimedBy
-        actor = None
-        try:
-            hist0 = (d.get("dispositionHistory") or [None])[0]
-            if isinstance(hist0, dict):
-                actor = hist0.get("userId")
-        except Exception:
-            actor = None
-        if actor in (None, ""):
-            actor = cb
+        actor = knock_actor_id(d)
 
         # Disposition key:
         # - Raydar leads usually store the disposition under `status` (e.g. "not-home", "appointment")
@@ -408,6 +406,7 @@ def build_payload(
         if actor not in (None, ""):
             k = str(actor)
             by_actor[k] = by_actor.get(k, 0) + 1
+            observe_door_knock(door_spans, k, d.get(MetricContract.time_field))
 
         # Keep these breakdowns for debugging / reconciliation
         if cb not in (None, ""):
@@ -428,6 +427,7 @@ def build_payload(
 
     result = sum(int(v) for v in by_actor.values())
     count_method = "SUM(knocks_by_actor)" + (" + manual_month_adjustments" if applied_adjustments else "")
+    time_by_actor = time_on_doors_by_actor(door_spans)
 
     docs = list(q.limit(25).stream())
     users = user_name_map(db)
@@ -485,6 +485,7 @@ def build_payload(
             "collection": MetricContract.leads_collection,
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
             "inclusion": "dispositionedAt is non-null (enforced by >= start)",
+            "time_on_doors": "last dispositionedAt minus first dispositionedAt among countsAsDoorKnock leads, per actor",
         },
         "adjustments": {
             "month_key": adjustment_month_key,
@@ -499,7 +500,9 @@ def build_payload(
             "appointments_set_by_actor": appts_by_claimed,
             "convos_total": convos_total,
             "convos_by_actor": convos_by_claimed,
+            "time_on_doors_by_actor": time_by_actor,
         },
+        "time_on_doors": time_on_doors_table(time_by_actor, users),
         "users": users,
         "top_knockers": [            {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
             for uid, cnt in sorted(by_actor.items(), key=lambda kv: (-kv[1], kv[0]))[:10]

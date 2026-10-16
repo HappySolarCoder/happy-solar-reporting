@@ -7,7 +7,7 @@ Daily Update dashboard for morning meetings.
 Uses existing metric APIs with date-only window (America/New_York):
 - /api/metrics/sales
 - /api/metrics/opportunities_created
-- /api/metrics/raydar_doors_knocked
+- /api/metrics/raydar_doors_knocked (includes FMA time on doors)
 - /api/powerline_dashboard
 """
 
@@ -294,6 +294,11 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title raydar">Door Knocks by Raydar User</div>
         <div id="tblKnocks"></div>
       </div>
+      <div class="card span-6 accent-raydar">
+        <div class="card-title raydar">FMA Time on Doors</div>
+        <div class="kpi-sub">First door knocked to last door knocked</div>
+        <div id="tblTimeOnDoors"></div>
+      </div>
       <div class="card span-6 accent-powerline">
         <div class="card-title powerline">Powerline Calls by User</div>
         <div id="tblPowerline"></div>
@@ -383,6 +388,39 @@ __DASHBOARD_NAV_HTML__
         <thead><tr><th>Name</th><th class=\"num\">${valueLabel}</th></tr></thead>
         <tbody>
           ${rows.map(([k,v]) => `<tr><td>${k || '—'}</td><td class=\"num\">${numberFmt(v)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function formatDoorDuration(seconds) {
+    const n = Number(seconds);
+    if (!Number.isFinite(n)) return '—';
+    const total = Math.max(0, Math.floor(n));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  }
+
+  function renderTimeOnDoorsTable(containerId, rows) {
+    const el = document.getElementById(containerId);
+    // Server sorts by time on doors descending, then knocks, then name.
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) {
+      el.innerHTML = `<div class=\"muted\" style=\"margin-top:8px\">No rows</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th class=\"num\">Time on doors</th>
+            <th class=\"num\">Knocks</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map((r) => `<tr><td>${r?.name || '—'}</td><td class=\"num\">${r?.duration || formatDoorDuration(r?.seconds)}</td><td class=\"num\">${numberFmt(r?.knocks)}</td></tr>`).join('')}
         </tbody>
       </table>
     `;
@@ -516,6 +554,7 @@ __DASHBOARD_NAV_HTML__
         knocksByName[name] = (knocksByName[name] || 0) + Number(v || 0);
       }
       renderKVTable('tblKnocks', knocksByName, 'Knocks');
+      renderTimeOnDoorsTable('tblTimeOnDoors', knocks?.time_on_doors || []);
 
       const { powerline, powerlineErr } = await powerlinePromise;
       if (powerlineErr) {

@@ -235,6 +235,14 @@ class AdsDashboardTests(unittest.TestCase):
     def test_constant_and_phoenix_window(self):
         self.assertTrue(metric.INCLUDE_FB_QUICK_FORM)
         self.assertEqual(metric.TIMEZONE_NAME, "America/Phoenix")
+        self.assertEqual(metric.COST_PER_LEAD_GOAL, 25)
+        self.assertEqual(metric.COST_PER_OPP_GOAL, 100)
+        self.assertEqual(metric.COST_PER_DEMO_GOAL, 300)
+        self.assertEqual(metric.COST_PER_SALE_GOAL, 600)
+        on_goal = metric.cost_block(100, 1, metric.COST_PER_OPP_GOAL, "$100")
+        over_goal = metric.cost_block(100.01, 1, metric.COST_PER_OPP_GOAL, "$100")
+        self.assertEqual(on_goal["tone"], "good")
+        self.assertEqual(over_goal["tone"], "bad")
         start_local, end_local = metric.date_window("2026-10-05", "2026-10-11")
         self.assertEqual(start_local.isoformat(), "2026-10-05T00:00:00-07:00")
         self.assertEqual(end_local.isoformat(), "2026-10-12T00:00:00-07:00")
@@ -284,10 +292,17 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(payload["kpis"]["sales"]["value"], 0)
         self.assertEqual(cpl, 24.57)
         self.assertEqual(payload["kpis"]["cost_per_opp"]["value"], 270.30)
+        self.assertEqual(payload["kpis"]["cost_per_opp"]["goal"], 100)
+        self.assertEqual(payload["kpis"]["cost_per_opp"]["goal_display"], "$100")
+        self.assertEqual(payload["kpis"]["cost_per_opp"]["tone"], "bad")
+        self.assertEqual(payload["kpis"]["cost_per_demo"]["goal"], 300)
         self.assertEqual(payload["kpis"]["cost_per_demo"]["display"], "N/A")
+        self.assertEqual(payload["kpis"]["cost_per_sale"]["goal"], 600)
         self.assertEqual(payload["kpis"]["cost_per_sale"]["display"], "N/A")
         self.assertEqual(payload["kpis"]["cost_per_lead"]["tone"], "good")
         self.assertEqual(payload["kpis"]["spend"]["goal_display"], "no goal")
+        self.assertEqual(payload["kpis"]["demos"]["goal_display"], "no goal")
+        self.assertEqual(payload["kpis"]["sales"]["goal_display"], "no goal")
         # Charles's Phoenix expectation is about 12 leads and $22.53. The warehouse
         # list is 11 inbound contacts, so the gap is reported instead of overwritten.
         self.assertEqual(leads - 12, -1)
@@ -299,7 +314,15 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertNotIn("$22.53", html)
         self.assertIn(">N/A<", html)
         self.assertIn("no goal", html)
+        self.assertIn(">Goal $25<", html)
+        self.assertIn(">Goal $100<", html)
+        self.assertIn(">Goal $300<", html)
+        self.assertIn(">Goal $600<", html)
+        self.assertLess(html.index("Cost/lead"), html.index("Cost/opp"))
+        self.assertLess(html.index("Cost/opp"), html.index("Cost/demo"))
+        self.assertLess(html.index("Cost/demo"), html.index("Cost/sale"))
         self.assertIn('class="number positive"', html)
+        self.assertIn('class="number negative"', html)
         self.assertIsNone(WORD.search(html))
         self.assertIn("America/Phoenix", html)
         self.assertIn("G-V02RZFR4SZ", html)
@@ -820,8 +843,47 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(goal["status"], "ok")
         self.assertEqual(goal["spend"], 400)
         self.assertEqual(goal["leads"], 20)
+        self.assertIsNone(goal["demos"])
         absent = metric.goals_from_doc({"goals": {"setter:jane": {"sales_goal": 3}}}, "2026-10")
         self.assertEqual(absent["status"], "missing")
+        october = metric.goals_from_doc(
+            {
+                "goals": {
+                    "ads_dashboard": {
+                        "budget": "1800",
+                        "leads": 30,
+                        "opps": 10,
+                        "demos": 6,
+                        "sales": 3,
+                        "cost_per_lead": 25,
+                        "cost_per_opp": 100,
+                        "cost_per_demo": 300,
+                        "cost_per_sale": 600,
+                    }
+                }
+            },
+            "2026-10",
+        )
+        self.assertEqual(october["status"], "ok")
+        self.assertEqual(october["spend"], 1800)
+        self.assertEqual(october["leads"], 30)
+        self.assertEqual(october["opps"], 10)
+        self.assertEqual(october["demos"], 6)
+        self.assertEqual(october["sales"], 3)
+        contacts, pipeline, city, names = warehouse()
+        shown = assemble(contacts, pipeline, city, names, goals=october)
+        self.assertEqual(shown["kpis"]["spend"]["goal_display"], "$1,800.00")
+        self.assertEqual(shown["kpis"]["inbound_leads"]["goal"], 30)
+        self.assertEqual(shown["kpis"]["opps"]["goal"], 10)
+        self.assertEqual(shown["kpis"]["demos"]["goal"], 6)
+        self.assertEqual(shown["kpis"]["sales"]["goal"], 3)
+        goal_html = page.render_html(shown)
+        self.assertIn(">Goal $1,800.00<", goal_html)
+        self.assertIn(">Goal 30<", goal_html)
+        self.assertIn(">Goal 10<", goal_html)
+        self.assertIn(">Goal 6<", goal_html)
+        self.assertIn(">Goal 3<", goal_html)
+        self.assertIn(">Goal $100<", goal_html)
 
     def test_nav_and_routes(self):
         html = nav.render_dashboard_nav("ads_dashboard")

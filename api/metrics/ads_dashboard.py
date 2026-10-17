@@ -41,9 +41,11 @@ INCLUDE_FB_QUICK_FORM = True
 FB_QUICK_FORM_TAG = "fb-quick-form"
 FB_QUICK_FORM_SOURCE = "facebook quick form"
 INBOUND_SOURCE = "inbound"
+# Evan, 2026-10-17. These cost goals stay on the card when the month doc is missing.
 COST_PER_LEAD_GOAL = 25
-COST_PER_DEMO_GOAL = 50
-COST_PER_SALE_GOAL = 200
+COST_PER_OPP_GOAL = 100
+COST_PER_DEMO_GOAL = 300
+COST_PER_SALE_GOAL = 600
 CONTACT_IN_CHUNK = 30
 CONTACT_GET_ALL_CHUNK = 300
 CACHE_TTL_SECONDS = 600
@@ -59,6 +61,8 @@ DELETED_OPP_WINDOW = timedelta(minutes=10)
 CONTACT_COLLECTION = "ghl_contacts_v2"
 PIPELINE_COLLECTION = "ghl_pipelines_v2"
 GOALS_COLLECTION = "goals_monthly_v1"
+# Company keys only. Person goals in this collection are ignored.
+# scripts/seed_ads_dashboard_goals.py writes 2026-10.
 PAID_CHANNEL_GROUPS = frozenset({"paid social", "paid search"})
 COMPANY_GOAL_KEYS = (
     "ads_dashboard",
@@ -69,9 +73,11 @@ COMPANY_GOAL_KEYS = (
     "company",
 )
 GOAL_METRIC_NAMES = {
-    "spend": frozenset({"spend", "spend_goal", "ad_spend"}),
-    "leads": frozenset({"leads", "leads_goal", "inbound_leads"}),
-    "opps": frozenset({"opps", "opps_goal", "opportunities"}),
+    "spend": ("spend", "spend_goal", "ad_spend", "budget"),
+    "leads": ("leads", "leads_goal", "inbound_leads"),
+    "opps": ("opps", "opps_goal", "opportunities"),
+    "demos": ("demos", "demos_goal"),
+    "sales": ("sales", "sales_goal"),
 }
 HOURLY_BREAKDOWN = "hourly_stats_aggregated_by_advertiser_time_zone"
 DASH = "\u2014"
@@ -695,6 +701,10 @@ def _blank_number(reason: str) -> dict[str, Any]:
     return {"value": None, "display": DASH, "reason": reason}
 
 
+def money_goal_label(goal: int) -> str:
+    return f"${int(goal):,}"
+
+
 def cost_block(spend: float | None, count: int | None, goal: float | None, goal_display: str) -> dict[str, Any]:
     if spend is None or count is None:
         block = _blank_number("missing")
@@ -793,7 +803,14 @@ def assemble_ads_dashboard(
 
     meta = meta or {"status": "unavailable", "reason": "missing", "spend": None, "clicks": None, "impressions": None}
     sessions = sessions or {"status": "unavailable", "reason": "missing", "total": None, "series": None}
-    goals = goals or {"status": "missing", "spend": None, "leads": None, "opps": None}
+    goals = goals or {
+        "status": "missing",
+        "spend": None,
+        "leads": None,
+        "opps": None,
+        "demos": None,
+        "sales": None,
+    }
 
     spend = meta.get("spend") if meta.get("status") == "ok" else None
     clicks = meta.get("clicks") if meta.get("status") == "ok" else None
@@ -812,6 +829,8 @@ def assemble_ads_dashboard(
     spend_goal = goals.get("spend") if goal_status == "ok" else None
     lead_goal = goals.get("leads") if goal_status == "ok" else None
     opp_goal = goals.get("opps") if goal_status == "ok" else None
+    demo_goal = goals.get("demos") if goal_status == "ok" else None
+    sale_goal = goals.get("sales") if goal_status == "ok" else None
     spend_kpi = {
         "value": spend,
         "display": money_display(spend) if meta.get("status") == "ok" else DASH,
@@ -823,10 +842,8 @@ def assemble_ads_dashboard(
     leads_kpi = _volume_kpi(counts["inbound_leads"], goal_status, lead_goal)
     leads_kpi["detail"] = f"of which FB Quick Form: {counts['fb_quick_form_leads']}"
     opps_kpi = _volume_kpi(counts["opps"], goal_status, opp_goal)
-    demos_kpi = _volume_kpi(counts["demos"], "missing", None)
-    demos_kpi["goal_display"] = "no goal"
-    sales_kpi = _volume_kpi(counts["sales"], "missing", None)
-    sales_kpi["goal_display"] = "no goal"
+    demos_kpi = _volume_kpi(counts["demos"], goal_status, demo_goal)
+    sales_kpi = _volume_kpi(counts["sales"], goal_status, sale_goal)
 
     days = psf.window_dates(start_local, end_local)
     series = sessions.get("series") if sessions.get("status") == "ok" else None
@@ -854,13 +871,21 @@ def assemble_ads_dashboard(
         "kpis": {
             "spend": spend_kpi,
             "inbound_leads": leads_kpi,
-            "cost_per_lead": cost_block(spend, counts["inbound_leads"], COST_PER_LEAD_GOAL, "$25"),
+            "cost_per_lead": cost_block(
+                spend, counts["inbound_leads"], COST_PER_LEAD_GOAL, money_goal_label(COST_PER_LEAD_GOAL)
+            ),
             "opps": opps_kpi,
-            "cost_per_opp": cost_block(spend, counts["opps"], None, "no goal"),
+            "cost_per_opp": cost_block(
+                spend, counts["opps"], COST_PER_OPP_GOAL, money_goal_label(COST_PER_OPP_GOAL)
+            ),
             "demos": demos_kpi,
-            "cost_per_demo": cost_block(spend, counts["demos"], COST_PER_DEMO_GOAL, "$50"),
+            "cost_per_demo": cost_block(
+                spend, counts["demos"], COST_PER_DEMO_GOAL, money_goal_label(COST_PER_DEMO_GOAL)
+            ),
             "sales": sales_kpi,
-            "cost_per_sale": cost_block(spend, counts["sales"], COST_PER_SALE_GOAL, "$200"),
+            "cost_per_sale": cost_block(
+                spend, counts["sales"], COST_PER_SALE_GOAL, money_goal_label(COST_PER_SALE_GOAL)
+            ),
         },
         "stages": counts["stages"],
         "stage_status": stage_status,
@@ -978,10 +1003,29 @@ def _number(value: Any) -> float | int | None:
     return number
 
 
+def _goal_result(
+    status: str,
+    month: str | None,
+    note: str | None,
+    found: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    found = found or {}
+    return {
+        "status": status,
+        "month": month,
+        "spend": found.get("spend"),
+        "leads": found.get("leads"),
+        "opps": found.get("opps"),
+        "demos": found.get("demos"),
+        "sales": found.get("sales"),
+        "note": note,
+    }
+
+
 def goals_from_doc(data: dict[str, Any] | None, month: str) -> dict[str, Any]:
     goals = (data or {}).get("goals") if isinstance(data, dict) else None
     if not isinstance(goals, dict):
-        return {"status": "missing", "month": month, "spend": None, "leads": None, "opps": None, "note": None}
+        return _goal_result("missing", month, None)
     folded = {_fold(key): value for key, value in goals.items() if isinstance(value, dict)}
     found: dict[str, Any] = {}
     for person in COMPANY_GOAL_KEYS:
@@ -997,40 +1041,19 @@ def goals_from_doc(data: dict[str, Any] | None, month: str) -> dict[str, Any]:
                     found[slot] = _number(metric_fold[name])
                     break
     if not found:
-        return {"status": "missing", "month": month, "spend": None, "leads": None, "opps": None, "note": None}
-    return {
-        "status": "ok",
-        "month": month,
-        "spend": found.get("spend"),
-        "leads": found.get("leads"),
-        "opps": found.get("opps"),
-        "note": None,
-    }
+        return _goal_result("missing", month, None)
+    return _goal_result("ok", month, None, found)
 
 
 def load_goals(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
     months = month_keys(start_local, end_local)
     if len(months) != 1:
-        return {
-            "status": "missing",
-            "month": None,
-            "spend": None,
-            "leads": None,
-            "opps": None,
-            "note": "no goal",
-        }
+        return _goal_result("missing", None, "no goal")
     month = months[0]
     try:
         snap = db.collection(GOALS_COLLECTION).document(month).get()
     except Exception:
-        return {
-            "status": "unavailable",
-            "month": month,
-            "spend": None,
-            "leads": None,
-            "opps": None,
-            "note": "Monthly goals could not be read.",
-        }
+        return _goal_result("unavailable", month, "Monthly goals could not be read.")
     data = snap.to_dict() if getattr(snap, "exists", False) else {}
     return goals_from_doc(data, month)
 
@@ -1725,7 +1748,7 @@ def compute_ads_dashboard(
     try:
         goals = load_goals(db, start_local, end_local)
     except Exception:
-        goals = {"status": "unavailable", "note": "Monthly goals could not be read.", "spend": None, "leads": None, "opps": None}
+        goals = _goal_result("unavailable", None, "Monthly goals could not be read.")
     if meta_fetcher:
         meta = meta_fetcher(start_local, end_local)
     else:

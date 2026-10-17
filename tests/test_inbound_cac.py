@@ -1846,6 +1846,10 @@ class InboundAdsCohortTests(unittest.TestCase):
         self.assertEqual(kpi["website_form_fills"], 2)
         self.assertEqual(payload["debug"]["inbound_lead_basis"], "ads_dashboard")
         self.assertIn("Ads Dashboard", payload["count_method"])
+        sits_contract = payload["contract"]["inbound_meta_spend"]["sits"]
+        self.assertIn("A One Legger is not a demo.", sits_contract)
+        self.assertIn("Sale Cancelled", sits_contract)
+        self.assertNotIn("One Legger, or Sold", sits_contract)
         page_html = page.render_html(2026)
         self.assertIn("leadSubline", page_html)
         self.assertIn("website_form_fills", page_html)

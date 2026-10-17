@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -41,9 +42,11 @@ INCLUDE_FB_QUICK_FORM = True
 FB_QUICK_FORM_TAG = "fb-quick-form"
 FB_QUICK_FORM_SOURCE = "facebook quick form"
 INBOUND_SOURCE = "inbound"
+# Evan, 2026-10-17. These cost goals stay on the card when the month doc is missing.
 COST_PER_LEAD_GOAL = 25
-COST_PER_DEMO_GOAL = 50
-COST_PER_SALE_GOAL = 200
+COST_PER_OPP_GOAL = 100
+COST_PER_DEMO_GOAL = 300
+COST_PER_SALE_GOAL = 600
 CONTACT_IN_CHUNK = 30
 CONTACT_GET_ALL_CHUNK = 300
 CACHE_TTL_SECONDS = 600
@@ -59,6 +62,8 @@ DELETED_OPP_WINDOW = timedelta(minutes=10)
 CONTACT_COLLECTION = "ghl_contacts_v2"
 PIPELINE_COLLECTION = "ghl_pipelines_v2"
 GOALS_COLLECTION = "goals_monthly_v1"
+# Company keys only. Person goals in this collection are ignored.
+# scripts/seed_ads_dashboard_goals.py writes 2026-10.
 PAID_CHANNEL_GROUPS = frozenset({"paid social", "paid search"})
 COMPANY_GOAL_KEYS = (
     "ads_dashboard",
@@ -69,9 +74,15 @@ COMPANY_GOAL_KEYS = (
     "company",
 )
 GOAL_METRIC_NAMES = {
-    "spend": frozenset({"spend", "spend_goal", "ad_spend"}),
-    "leads": frozenset({"leads", "leads_goal", "inbound_leads"}),
-    "opps": frozenset({"opps", "opps_goal", "opportunities"}),
+    "spend": ("spend", "spend_goal", "ad_spend", "budget"),
+    "leads": ("leads", "leads_goal", "inbound_leads"),
+    "opps": ("opps", "opps_goal", "opportunities"),
+    "demos": ("demos", "demos_goal"),
+    "sales": ("sales", "sales_goal"),
+    "cost_per_lead": ("cost_per_lead",),
+    "cost_per_opp": ("cost_per_opp",),
+    "cost_per_demo": ("cost_per_demo",),
+    "cost_per_sale": ("cost_per_sale",),
 }
 HOURLY_BREAKDOWN = "hourly_stats_aggregated_by_advertiser_time_zone"
 DASH = "\u2014"
@@ -232,21 +243,80 @@ def _contact_id(opp: dict[str, Any]) -> str:
     return cac.compact_str(opp.get("contactId"))
 
 
-def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage, One Legger, or Sold is a demo."""
+def _stage_fold(stage_name: Any) -> str:
     folded = _fold(stage_name).replace("-", " ").replace("/", " ")
-    folded = " ".join(folded.split())
-    if not folded:
+    return " ".join(folded.split())
+
+
+def _is_sold_name(folded: str) -> bool:
+    return folded == "sold" or folded.startswith("sold ")
+
+
+def _is_sale_cancelled_name(folded: str) -> bool:
+    return folded in {"sale cancelled", "sale canceled"} or folded.startswith(
+        ("sale cancelled ", "sale canceled ")
+    )
+
+
+def stage_is_demo(stage_name: Any) -> bool:
+    """A Demo-* stage, Sold, or Sale Cancelled is a demo. A One Legger is not a demo.
+
+    Sale Cancelled matches Sold. One opportunity is one demo: a Sale Cancelled
+    stage on an opportunity that already sat a Demo does not add a second demo.
+    Across city opportunities the count is one demo per contact, unless that
+    contact's Sweeper/Rehash Last Name is filled.
+    """
+    folded = _stage_fold(stage_name)
+    if not folded or "one legger" in folded:
         return False
-    if folded == "sold" or folded.startswith("sold "):
-        return True
-    if "one legger" in folded:
+    if _is_sold_name(folded) or _is_sale_cancelled_name(folded):
         return True
     return folded == "demo" or folded.startswith("demo ")
 
 
 def _sold_stage_ids() -> set[str]:
+    """Buffalo, Syracuse, Rochester, and Virtual Sold and Sale Cancelled stage ids.
+
+    Sales are these eight ids only, then one sale per deduped lead when Contact
+    Sold Date is in the window. A stage named Sold or Sale Cancelled does not
+    count. The four Sale Cancelled ids are already in this set.
+    """
     return set(cac.SalesMetricContract().stage_ids)
+
+
+def _sweeper_rehash_filled(contact: dict[str, Any] | None) -> bool:
+    """True when the contact Sweeper/Rehash Last Name field is non-empty."""
+    from sweeper_rehash_attribution import sweeper_rehash_last_name
+
+    return bool(sweeper_rehash_last_name(contact, None))
+
+
+def _count_demos_per_lead(
+    events: list[tuple[str, datetime, str]],
+    contacts: dict[str, dict],
+) -> int:
+    """At most one demo per contact across inbound city opportunities.
+
+    A later demo opportunity counts as another demo only when that contact's
+    Sweeper/Rehash Last Name is non-empty. Sold, Sale Cancelled, and every
+    Demo-* stage use this rule. One Legger is not a demo and is not passed in.
+    """
+    by_contact: dict[str, list[tuple[datetime, str]]] = {}
+    seen: set[str] = set()
+    for contact_id, created, opp_id in events:
+        if not contact_id or not opp_id or opp_id in seen:
+            continue
+        seen.add(opp_id)
+        by_contact.setdefault(contact_id, []).append((created, opp_id))
+    total = 0
+    for contact_id, rows in by_contact.items():
+        if not rows:
+            continue
+        if len(rows) == 1 or not _sweeper_rehash_filled(contacts.get(contact_id)):
+            total += 1
+            continue
+        total += len(rows)
+    return total
 
 
 def _digits(value: Any) -> str:
@@ -609,7 +679,7 @@ def classify_window(
         canonical_ids.append(earliest["contact_id"])
 
     opp_ids: set[str] = set()
-    demo_ids: set[str] = set()
+    demo_events: list[tuple[str, datetime, str]] = []
     sold_ids = _sold_stage_ids()
     sold_contacts: set[str] = set()
     seen_city: set[str] = set()
@@ -621,7 +691,10 @@ def classify_window(
         if opp_id in seen_city:
             continue
         seen_city.add(opp_id)
-        if cac.compact_str(opp.get(cac.STAGE_FIELD)) in sold_ids:
+        stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
+        # Eight locked stage ids only. A stage named Sold or Sale Cancelled
+        # is not a sale, on any pipeline.
+        if stage_id in sold_ids:
             sold_contacts.add(contact_id)
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
@@ -630,7 +703,7 @@ def classify_window(
             continue
         opp_ids.add(opp_id)
         if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
-            demo_ids.add(opp_id)
+            demo_events.append((contact_id, created, opp_id))
 
     other_created: dict[str, list[datetime]] = {}
     for opp in list(contact_opps) + list(pipeline_opps):
@@ -661,8 +734,9 @@ def classify_window(
         other_created.setdefault(contact_id, []).append(created)
         opp_ids.add(opp_id)
         if _history_has_city_demo(history_rows, stage_names):
-            demo_ids.add(opp_id)
+            demo_events.append((contact_id, created, opp_id))
 
+    # One sale per deduped lead. Sale Cancelled is already one of the eight ids.
     sales: set[str] = set()
     for cluster in clusters:
         ids = {row["contact_id"] for row in cluster}
@@ -684,7 +758,7 @@ def classify_window(
         "fb_quick_form_leads": quick_clusters,
         "fb_quick_form_matched": len(quick_matched),
         "opps": len(opp_ids),
-        "demos": len(demo_ids),
+        "demos": _count_demos_per_lead(demo_events, contacts),
         "sales": len(sales),
         "stages": stage_rows,
         "include_fb_quick_form": include_quick_form,
@@ -693,6 +767,54 @@ def classify_window(
 
 def _blank_number(reason: str) -> dict[str, Any]:
     return {"value": None, "display": DASH, "reason": reason}
+
+
+def money_goal_label(goal: float | int) -> str:
+    number = float(goal)
+    if number.is_integer():
+        return f"${int(number):,}"
+    return f"${number:,.2f}"
+
+
+COST_GOAL_KEYS = frozenset({"cost_per_lead", "cost_per_opp", "cost_per_demo", "cost_per_sale"})
+
+
+def _usable_cost_goal(value: Any) -> float | int | None:
+    """A positive finite cost goal. Zero, negative, NaN, inf, and junk are missing."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        try:
+            number = float(str(value).replace(",", "").replace("$", "").strip())
+        except (TypeError, ValueError):
+            return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def cost_goal_value(goals: dict[str, Any] | None, key: str) -> float | int:
+    """Month-doc cost goal, or the standing constant when that field is unusable.
+
+    Missing, zero, negative, NaN, infinite, and non-numeric values fall back
+    to $25 / $100 / $300 / $600.
+    """
+    fallback = {
+        "cost_per_lead": COST_PER_LEAD_GOAL,
+        "cost_per_opp": COST_PER_OPP_GOAL,
+        "cost_per_demo": COST_PER_DEMO_GOAL,
+        "cost_per_sale": COST_PER_SALE_GOAL,
+    }[key]
+    if not isinstance(goals, dict):
+        return fallback
+    value = _usable_cost_goal(goals.get(key))
+    if value is None:
+        return fallback
+    return value
 
 
 def cost_block(spend: float | None, count: int | None, goal: float | None, goal_display: str) -> dict[str, Any]:
@@ -793,7 +915,14 @@ def assemble_ads_dashboard(
 
     meta = meta or {"status": "unavailable", "reason": "missing", "spend": None, "clicks": None, "impressions": None}
     sessions = sessions or {"status": "unavailable", "reason": "missing", "total": None, "series": None}
-    goals = goals or {"status": "missing", "spend": None, "leads": None, "opps": None}
+    goals = goals or {
+        "status": "missing",
+        "spend": None,
+        "leads": None,
+        "opps": None,
+        "demos": None,
+        "sales": None,
+    }
 
     spend = meta.get("spend") if meta.get("status") == "ok" else None
     clicks = meta.get("clicks") if meta.get("status") == "ok" else None
@@ -812,6 +941,8 @@ def assemble_ads_dashboard(
     spend_goal = goals.get("spend") if goal_status == "ok" else None
     lead_goal = goals.get("leads") if goal_status == "ok" else None
     opp_goal = goals.get("opps") if goal_status == "ok" else None
+    demo_goal = goals.get("demos") if goal_status == "ok" else None
+    sale_goal = goals.get("sales") if goal_status == "ok" else None
     spend_kpi = {
         "value": spend,
         "display": money_display(spend) if meta.get("status") == "ok" else DASH,
@@ -823,10 +954,12 @@ def assemble_ads_dashboard(
     leads_kpi = _volume_kpi(counts["inbound_leads"], goal_status, lead_goal)
     leads_kpi["detail"] = f"of which FB Quick Form: {counts['fb_quick_form_leads']}"
     opps_kpi = _volume_kpi(counts["opps"], goal_status, opp_goal)
-    demos_kpi = _volume_kpi(counts["demos"], "missing", None)
-    demos_kpi["goal_display"] = "no goal"
-    sales_kpi = _volume_kpi(counts["sales"], "missing", None)
-    sales_kpi["goal_display"] = "no goal"
+    demos_kpi = _volume_kpi(counts["demos"], goal_status, demo_goal)
+    sales_kpi = _volume_kpi(counts["sales"], goal_status, sale_goal)
+    lead_cost_goal = cost_goal_value(goals, "cost_per_lead")
+    opp_cost_goal = cost_goal_value(goals, "cost_per_opp")
+    demo_cost_goal = cost_goal_value(goals, "cost_per_demo")
+    sale_cost_goal = cost_goal_value(goals, "cost_per_sale")
 
     days = psf.window_dates(start_local, end_local)
     series = sessions.get("series") if sessions.get("status") == "ok" else None
@@ -854,13 +987,21 @@ def assemble_ads_dashboard(
         "kpis": {
             "spend": spend_kpi,
             "inbound_leads": leads_kpi,
-            "cost_per_lead": cost_block(spend, counts["inbound_leads"], COST_PER_LEAD_GOAL, "$25"),
+            "cost_per_lead": cost_block(
+                spend, counts["inbound_leads"], lead_cost_goal, money_goal_label(lead_cost_goal)
+            ),
             "opps": opps_kpi,
-            "cost_per_opp": cost_block(spend, counts["opps"], None, "no goal"),
+            "cost_per_opp": cost_block(
+                spend, counts["opps"], opp_cost_goal, money_goal_label(opp_cost_goal)
+            ),
             "demos": demos_kpi,
-            "cost_per_demo": cost_block(spend, counts["demos"], COST_PER_DEMO_GOAL, "$50"),
+            "cost_per_demo": cost_block(
+                spend, counts["demos"], demo_cost_goal, money_goal_label(demo_cost_goal)
+            ),
             "sales": sales_kpi,
-            "cost_per_sale": cost_block(spend, counts["sales"], COST_PER_SALE_GOAL, "$200"),
+            "cost_per_sale": cost_block(
+                spend, counts["sales"], sale_cost_goal, money_goal_label(sale_cost_goal)
+            ),
         },
         "stages": counts["stages"],
         "stage_status": stage_status,
@@ -978,10 +1119,33 @@ def _number(value: Any) -> float | int | None:
     return number
 
 
+def _goal_result(
+    status: str,
+    month: str | None,
+    note: str | None,
+    found: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    found = found or {}
+    return {
+        "status": status,
+        "month": month,
+        "spend": found.get("spend"),
+        "leads": found.get("leads"),
+        "opps": found.get("opps"),
+        "demos": found.get("demos"),
+        "sales": found.get("sales"),
+        "cost_per_lead": found.get("cost_per_lead"),
+        "cost_per_opp": found.get("cost_per_opp"),
+        "cost_per_demo": found.get("cost_per_demo"),
+        "cost_per_sale": found.get("cost_per_sale"),
+        "note": note,
+    }
+
+
 def goals_from_doc(data: dict[str, Any] | None, month: str) -> dict[str, Any]:
     goals = (data or {}).get("goals") if isinstance(data, dict) else None
     if not isinstance(goals, dict):
-        return {"status": "missing", "month": month, "spend": None, "leads": None, "opps": None, "note": None}
+        return _goal_result("missing", month, None)
     folded = {_fold(key): value for key, value in goals.items() if isinstance(value, dict)}
     found: dict[str, Any] = {}
     for person in COMPANY_GOAL_KEYS:
@@ -994,43 +1158,26 @@ def goals_from_doc(data: dict[str, Any] | None, month: str) -> dict[str, Any]:
                 continue
             for name in names:
                 if name in metric_fold:
-                    found[slot] = _number(metric_fold[name])
+                    raw = metric_fold[name]
+                    if slot in COST_GOAL_KEYS:
+                        found[slot] = _usable_cost_goal(raw)
+                    else:
+                        found[slot] = _number(raw)
                     break
     if not found:
-        return {"status": "missing", "month": month, "spend": None, "leads": None, "opps": None, "note": None}
-    return {
-        "status": "ok",
-        "month": month,
-        "spend": found.get("spend"),
-        "leads": found.get("leads"),
-        "opps": found.get("opps"),
-        "note": None,
-    }
+        return _goal_result("missing", month, None)
+    return _goal_result("ok", month, None, found)
 
 
 def load_goals(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
     months = month_keys(start_local, end_local)
     if len(months) != 1:
-        return {
-            "status": "missing",
-            "month": None,
-            "spend": None,
-            "leads": None,
-            "opps": None,
-            "note": "no goal",
-        }
+        return _goal_result("missing", None, "no goal")
     month = months[0]
     try:
         snap = db.collection(GOALS_COLLECTION).document(month).get()
     except Exception:
-        return {
-            "status": "unavailable",
-            "month": month,
-            "spend": None,
-            "leads": None,
-            "opps": None,
-            "note": "Monthly goals could not be read.",
-        }
+        return _goal_result("unavailable", month, "Monthly goals could not be read.")
     data = snap.to_dict() if getattr(snap, "exists", False) else {}
     return goals_from_doc(data, month)
 
@@ -1725,7 +1872,7 @@ def compute_ads_dashboard(
     try:
         goals = load_goals(db, start_local, end_local)
     except Exception:
-        goals = {"status": "unavailable", "note": "Monthly goals could not be read.", "spend": None, "leads": None, "opps": None}
+        goals = _goal_result("unavailable", None, "Monthly goals could not be read.")
     if meta_fetcher:
         meta = meta_fetcher(start_local, end_local)
     else:

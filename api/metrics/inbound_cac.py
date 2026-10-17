@@ -1895,16 +1895,20 @@ def assemble_inbound_cac(
                     "unavailable; never invented $0 CPL). Not $45/$70"
                 ),
                 "sits": (
-                    "Ads Dashboard demos for that lead set: a Demo stage, One Legger, "
-                    "or Sold on the current city stage or in city-pipeline history."
+                    "Ads Dashboard demos for that lead set: a Demo stage, Sold, or "
+                    "Sale Cancelled on the current city stage or in city-pipeline "
+                    "history. At most one demo per contact. A later city demo counts "
+                    "only when that contact's Sweeper/Rehash Last Name is filled. "
+                    "A One Legger is not a demo."
                     if use_ads
                     else
                     "territory Sit + appointmentOccurredAt in the clamped Inbound "
                     "window + CF=Inbound (same sit rules as LL/SR KPI sits)"
                 ),
                 "sales": (
-                    "Ads Dashboard sales for that lead set: Sold or Sale Cancelled "
-                    "plus Contact Sold Date in the Phoenix window."
+                    "Ads Dashboard sales for that lead set: the eight locked Sold "
+                    "and Sale Cancelled stage ids, deduped per lead, plus Contact "
+                    "Sold Date in the Phoenix window. A stage name is not a sale."
                     if use_ads
                     else
                     "COUNT_DISTINCT contactId Sold/Sale Cancelled + Contact Sold Date "

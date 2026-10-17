@@ -12,13 +12,15 @@ Raydar leads, users, and knocks it already loads. It does not start another
 collection scan.
 
 A record is test data when any of these is true:
-- isTestAccount is true, or testData is true (including testData.isTestAccount)
-- team == "TEST"
-- id, leadId, territoryId, or userId starts with "TEST-appreview-"
-- source == "test-appreview"
+- isTestAccount or testData is true, including nested testData.isTestAccount
+  and testData.testData. True, "true", 1, "1", and "yes" count (case-insensitive).
+- team is "test" ignoring case and whitespace
+- id, leadId, territoryId, territory, or userId starts with "TEST-appreview-"
+- source is "test-appreview" ignoring case and whitespace
 
 Knocks by that setter drop too: a lead is excluded when the lead itself
-matches, or when a related user id is a test user. Setter averages and
+matches, or when a related user id (userId, claimedBy, assignedTo, setterId,
+or dispositionHistory[].userId) is a test user. Setter averages and
 leaderboards leave that setter out of the denominator.
 """
 
@@ -30,16 +32,25 @@ TEST_ID_PREFIX = "TEST-appreview-"
 TEST_SOURCE = "test-appreview"
 TEST_TEAM = "TEST"
 
-_ID_FIELDS = ("id", "leadId", "territoryId", "userId")
-_RELATED_USER_FIELDS = ("userId", "claimedBy", "assignedTo")
+_ID_FIELDS = ("id", "leadId", "territoryId", "userId", "territory")
+_RELATED_USER_FIELDS = ("userId", "claimedBy", "assignedTo", "setterId")
+_TRUE_FLAG_STRINGS = frozenset({"true", "1", "yes"})
 
 
 def _flag_is_true(value: Any) -> bool:
     if value is True:
         return True
-    if isinstance(value, str) and value.strip().lower() == "true":
+    if type(value) is int and value == 1:
+        return True
+    if isinstance(value, str) and value.strip().casefold() in _TRUE_FLAG_STRINGS:
         return True
     return False
+
+
+def _compact_label(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(value.split()).casefold()
 
 
 def _text(value: Any) -> str:
@@ -80,8 +91,7 @@ def is_raydar_test_record(record: Any, doc_id: Any = None) -> bool:
     ):
         return True
 
-    team = data.get("team")
-    if isinstance(team, str) and team.strip() == TEST_TEAM:
+    if _compact_label(data.get("team")) == _compact_label(TEST_TEAM):
         return True
 
     if has_test_id_prefix(doc_id):
@@ -90,8 +100,7 @@ def is_raydar_test_record(record: Any, doc_id: Any = None) -> bool:
         if has_test_id_prefix(data.get(field)):
             return True
 
-    source = data.get("source")
-    if isinstance(source, str) and source.strip() == TEST_SOURCE:
+    if _compact_label(data.get("source")) == _compact_label(TEST_SOURCE):
         return True
     return False
 

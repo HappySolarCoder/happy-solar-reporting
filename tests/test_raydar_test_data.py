@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 import types
@@ -90,7 +91,20 @@ class Db:
 
 REAL_USER = "real-setter"
 TEST_USER = "app-review-setter"
+APP_REVIEW_UID = "ayuRSQAI8Tckd7HfFCr96rdBd633"
+PROBE_ROLES = ("admin", "closer", "deactivated", "manager", "setter")
 WHEN = datetime(2026, 10, 1, 15, 0, tzinfo=timezone.utc)
+USER_OR_LEAD_COLLECTIONS = frozenset({"raydar_users_v1", "raydar_leads_v1"})
+FILTER_CALLS = frozenset({"is_raydar_test_record", "is_excluded_raydar_record"})
+RAYDAR_READERS = (
+    "api/metrics/fma_weekly_review.py",
+    "api/metrics/raydar_doors_knocked.py",
+    "api/metrics/raydar_user_roles.py",
+    "api/raydar/leads.py",
+    "api/raydar/stats.py",
+    "api/rep_daily_recap.py",
+    "api/settings_api.py",
+)
 
 
 def _doors_db(leads: list[Snap], users: list[Snap]) -> Db:
@@ -189,6 +203,104 @@ class RaydarTestRecordTests(unittest.TestCase):
         self.assertEqual(average_knocks_per_setter(rows, {TEST_USER}), 10.0)
         self.assertEqual(len([row for row in rows if not setter_excluded_from_metrics(row, {TEST_USER})]), 1)
 
+    def test_setter_id_of_app_review_user_is_excluded(self):
+        lead = {
+            "id": "live-lead",
+            "source": "doors",
+            "team": "Buffalo",
+            "claimedBy": REAL_USER,
+            "setterId": APP_REVIEW_UID,
+        }
+        self.assertFalse(is_raydar_test_record(lead))
+        self.assertTrue(
+            is_excluded_raydar_record(lead, doc_id="live-lead", test_user_ids={APP_REVIEW_UID})
+        )
+
+    def test_territory_field_excludes_app_review_user(self):
+        user = {"name": "App Review TEST", "territory": "TEST-appreview-territory"}
+        self.assertTrue(is_raydar_test_record(user))
+        self.assertTrue(is_excluded_raydar_record(user))
+
+    def test_loose_team_source_and_numeric_flags_are_excluded(self):
+        self.assertTrue(is_raydar_test_record({"team": "test"}))
+        self.assertTrue(is_raydar_test_record({"team": " Test "}))
+        self.assertTrue(is_raydar_test_record({"source": "Test-AppReview"}))
+        self.assertTrue(is_raydar_test_record({"source": " test-appreview "}))
+        self.assertTrue(is_raydar_test_record({"testData": 1}))
+        self.assertTrue(is_raydar_test_record({"testData": "1"}))
+        self.assertTrue(is_raydar_test_record({"isTestAccount": "yes"}))
+        self.assertTrue(is_raydar_test_record({"isTestAccount": "YES"}))
+        self.assertTrue(is_raydar_test_record({"isTestAccount": 1}))
+        self.assertTrue(is_raydar_test_record({"isTestAccount": "true"}))
+        self.assertTrue(is_raydar_test_record({"testData": {"isTestAccount": "yes"}}))
+        self.assertTrue(is_raydar_test_record({"testData": {"testData": 1}}))
+        self.assertTrue(is_raydar_test_record({"testData": {"testData": "1"}}))
+
+    def test_real_lead_testing_team_and_false_flags_stay(self):
+        real_lead = {
+            "id": "lead-100",
+            "leadId": "lead-100",
+            "setterId": REAL_USER,
+            "claimedBy": REAL_USER,
+            "team": "Buffalo",
+            "source": "doors",
+            "territory": "buffalo-1",
+            "isTestAccount": False,
+            "testData": None,
+        }
+        self.assertFalse(is_raydar_test_record(real_lead))
+        self.assertFalse(
+            is_excluded_raydar_record(real_lead, doc_id="lead-100", test_user_ids={APP_REVIEW_UID})
+        )
+        self.assertFalse(is_raydar_test_record({"team": "Testing", "name": "Testing crew"}))
+        self.assertFalse(is_raydar_test_record({"testData": False}))
+        self.assertFalse(is_raydar_test_record({"testData": 0}))
+        self.assertFalse(is_raydar_test_record({"testData": None}))
+        self.assertFalse(is_raydar_test_record({"isTestAccount": False}))
+        self.assertFalse(is_raydar_test_record({"isTestAccount": 0}))
+        self.assertFalse(is_raydar_test_record({"isTestAccount": "no"}))
+        self.assertFalse(is_raydar_test_record({"testData": {"isTestAccount": False, "testData": 0}}))
+
+    def test_six_test_users_leave_the_average(self):
+        rows = [
+            {"display_name": "Sam", "raydar_user_id": REAL_USER, "knocks": 20, "team": "Buffalo"},
+            {
+                "display_name": "App Review TEST",
+                "raydar_user_id": APP_REVIEW_UID,
+                "userId": APP_REVIEW_UID,
+                "knocks": 8,
+                "team": " test ",
+                "isTestAccount": "yes",
+                "testData": True,
+                "role": "setter",
+            },
+        ]
+        probe_flags = (
+            {"testData": 1},
+            {"testData": "1"},
+            {"isTestAccount": True, "testData": True},
+            {"team": "Test", "testData": {"isTestAccount": "yes"}},
+            {"team": "TEST", "isTestAccount": 1, "testData": {"testData": "1"}},
+        )
+        test_ids = {APP_REVIEW_UID}
+        for role, flags in zip(PROBE_ROLES, probe_flags):
+            uid = f"TEST-probe-{role}"
+            test_ids.add(uid)
+            rows.append(
+                {
+                    "display_name": uid,
+                    "raydar_user_id": uid,
+                    "userId": uid,
+                    "knocks": 4,
+                    "role": role,
+                    **flags,
+                }
+            )
+        self.assertEqual(len(test_ids), 6)
+        kept = [row for row in rows if not setter_excluded_from_metrics(row, test_ids)]
+        self.assertEqual([row["display_name"] for row in kept], ["Sam"])
+        self.assertEqual(average_knocks_per_setter(rows, test_ids), 20.0)
+
 
 class DoorsKnockedFilterTests(unittest.TestCase):
     def test_test_setter_knocks_leave_totals_and_leaderboard(self):
@@ -267,6 +379,97 @@ class WeeklyReviewDenominatorTests(unittest.TestCase):
             [{"raydar_user_id": person["raydar_user_id"], "knocks": person["knocks"]} for person in people]
         )
         self.assertEqual(averaged, 1.0)
+
+
+def _bound_collection_names(tree: ast.AST) -> set[str]:
+    """Names whose value is raydar_users_v1 or raydar_leads_v1."""
+
+    bound: set[str] = set()
+
+    def take(target: ast.AST, value: ast.AST | None) -> None:
+        if not isinstance(value, ast.Constant) or value.value not in USER_OR_LEAD_COLLECTIONS:
+            return
+        if isinstance(target, ast.Name):
+            bound.add(target.id)
+        elif isinstance(target, ast.Attribute):
+            bound.add(target.attr)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                take(target, node.value)
+        elif isinstance(node, ast.AnnAssign):
+            take(node.target, node.value)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            positional = list(args.posonlyargs) + list(args.args)
+            defaults = list(args.defaults)
+            for arg, default in zip(positional[-len(defaults):], defaults):
+                take(ast.Name(id=arg.arg, ctx=ast.Load()), default)
+            for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+                take(ast.Name(id=arg.arg, ctx=ast.Load()), default)
+    return bound
+
+
+def _call_name(func: ast.AST) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _reads_raydar_users_or_leads(tree: ast.AST) -> bool:
+    """True when the file queries raydar_users_v1 or raydar_leads_v1.
+
+    raydar_dispositions_v1 is the disposition-type catalog. Reading that list
+    does not count.
+    """
+
+    bound = _bound_collection_names(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if _call_name(node.func) != "collection":
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and arg.value in USER_OR_LEAD_COLLECTIONS:
+            return True
+        if isinstance(arg, ast.Name) and arg.id in bound:
+            return True
+        if isinstance(arg, ast.Attribute) and arg.attr in bound:
+            return True
+    return False
+
+
+def _calls_test_filter(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node.func) in FILTER_CALLS:
+            return True
+    return False
+
+
+class RaydarReaderGuardTests(unittest.TestCase):
+    def test_disposition_list_is_exempt(self):
+        source = 'def load(db):\n    return list(db.collection("raydar_dispositions_v1").stream())\n'
+        self.assertFalse(_reads_raydar_users_or_leads(ast.parse(source)))
+
+    def test_every_user_or_lead_reader_filters_test_data(self):
+        readers: list[str] = []
+        missing: list[str] = []
+        for path in sorted(API.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            if not _reads_raydar_users_or_leads(tree):
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            readers.append(relative)
+            if not _calls_test_filter(tree):
+                missing.append(relative)
+        self.assertEqual(missing, [])
+        for expected in RAYDAR_READERS:
+            self.assertIn(expected, readers)
+        self.assertNotIn("api/time_on_doors.py", readers)
+        self.assertNotIn("api/fma_dashboard.py", readers)
 
 
 if __name__ == "__main__":

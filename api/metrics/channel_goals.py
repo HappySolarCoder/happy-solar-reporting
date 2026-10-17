@@ -40,7 +40,11 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import inbound_source_label, is_inbound_lead_source
-from sweeper_rehash_attribution import is_blank_last_name, sweeper_rehash_last_name
+from sweeper_rehash_attribution import (
+    is_blank_last_name,
+    sweeper_ran_and_demos,
+    sweeper_rehash_last_name,
+)
 
 NY = ZoneInfo("America/New_York")
 
@@ -108,6 +112,8 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         if not oid or oid in seen:
             continue
         seen.add(oid)
+        if filled(row.get("sweeperRehashLastName")):
+            continue
         reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"))
         if reason:
             bump(reason, "appointments", row.get("leadGenSource"))
@@ -119,6 +125,8 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         if oid in seen:
             continue
         seen.add(oid)
+        if filled(row.get("sweeperRehashLastName")):
+            continue
         reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"))
         if reason:
             bump(reason, "ran", row.get("lead_source"))
@@ -151,19 +159,12 @@ def sweeper_created(created_payload: dict[str, Any]) -> int:
 
 
 def sweeper_ran(demo_payload: dict[str, Any]) -> tuple[int, int]:
-    ran = demos = 0
-    seen: set[str] = set()
-    for row in demo_payload.get("rows") or []:
-        if not isinstance(row, dict) or not filled(row.get("sweeperRehashLastName")):
-            continue
-        key = str(row.get("opportunityId") or "")
-        if key in seen:
-            continue
-        seen.add(key)
-        ran += 1
-        if row.get("disposition") == "Sit":
-            demos += 1
-    return ran, demos
+    """Ran and demos for any pipeline whose Sweeper/Rehash Last Name is filled.
+
+    One Legger is ran and not a demo. A later Virtual (or other) sit is not
+    dropped because the contact already had an FMA sit.
+    """
+    return sweeper_ran_and_demos(demo_payload.get("rows") or [])
 
 
 def split_leads(raws: list, sources: dict[str, str], start_local, end_local) -> dict[str, int]:
@@ -235,7 +236,8 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         setter = primary
         if not setter or (setter.casefold() in sales_mod.INVALID_PRIMARY_SETTERS and fallback):
             setter = fallback or setter
-        reason = self_gen_reason(lead, setter, salesperson)
+        named = filled(sweeper_rehash_last_name(contact, opp))
+        reason = None if named else self_gen_reason(lead, setter, salesperson)
         label = str(lead).strip() if lead is not None else ""
         if label.casefold() in {"crm ui", "hand", "", "none", "null", "n/a"}:
             label = "none"

@@ -491,6 +491,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     by_bucket: dict[str, int] = {b: 0 for b in BUCKETS}
     by_bucket_setter: dict[str, dict[str, int]] = {b: {} for b in BUCKETS}
     bucket_setter_labels: dict[str, dict[str, str]] = {b: {} for b in BUCKETS}
+    sweeper_rehash_appointments = 0
 
     for doc in opp_snaps:
         opp = doc.to_dict() or {}
@@ -586,6 +587,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             empty="none",
         )
 
+    sweeper_rehash_appointments = sum(
+        1 for row in matching_rows.values() if row.get("sweeperRehashLastName")
+    )
+
     fill_missing_user_names(db, user_names, (r.get("ownerId") for r in matching_rows.values()))
     by_owner = {}
     owner_labels = {}
@@ -648,6 +653,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "created_by_leadgen_bucket_setter": {
                 b: finalize_casefold_counts(by_bucket_setter[b], bucket_setter_labels[b]) for b in BUCKETS
             },
+            # Filled Sweeper/Rehash Last Name, any pipeline. Distinct opportunity id.
+            "sweeper_rehash_appointments": sweeper_rehash_appointments,
         },
         "sample_rows": sorted(list(matching_rows.values()), key=lambda r: (r.get("createdAt") or "")),
         "generated_at": datetime.utcnow().isoformat() + "Z",

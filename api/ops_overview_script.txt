@@ -60,6 +60,13 @@
     });
     return total;
   }
+  function sweeperCredit(data) {
+    const createdB = ((data.created || {}).breakdowns) || {};
+    const demoB = ((data.demo || {}).breakdowns) || {};
+    const salesB = ((data.sales || {}).breakdowns) || {};
+    if (createdB.sweeper_rehash_appointments == null && demoB.sweeper_rehash_ran == null && salesB.sweeper_rehash_sales == null) return null;
+    return pack(createdB.sweeper_rehash_appointments, demoB.sweeper_rehash_ran, demoB.sweeper_rehash_demos, salesB.sweeper_rehash_sales);
+  }
   function rateText(num, den) {
     if (num == null || den == null || Number.isNaN(Number(num)) || Number.isNaN(Number(den))) return "—";
     if (!Number(den)) return "—";
@@ -159,7 +166,9 @@
     }
     const f = pageFilters || filters();
     if (f.territory !== "All") params.set("pipeline", f.territory);
-    if (name === "Sweeper" || f.source === "Sweeper") params.set("sweeper", "1");
+    if (name === "Sweeper") {
+      // Sweeper credit is the contact field in any pipeline, read from breakdowns.
+    } else if (f.source === "Sweeper") params.set("sweeper", "1");
     else if (name === "Doors") params.set("lead_source", "Doors");
     else if (name === "Self gen") params.set("lead_source", "Self Gen");
     else if (name === "Inbound") params.set("lead_source", "Inbound");
@@ -350,7 +359,7 @@
       const base = pack(sumKeys(createdLead, keys), sumKeys(ranLead, keys), sumKeys(sitLead, keys), sumKeys(salesLead, keys));
       return data === snapshot ? minusMoved(base, keys) : base;
     }
-    const sweeper = pack(sumSweeper(createdPipe), sumSweeper(ranPipe), sumSweeper(sitPipe), sumSweeper(salesPipe));
+    const sweeper = sweeperCredit(data) || pack(sumSweeper(createdPipe), sumSweeper(ranPipe), sumSweeper(sitPipe), sumSweeper(salesPipe));
     return {
       Company: company,
       Doors: leadPack(DOOR_KEYS),
@@ -455,7 +464,7 @@
     paintBloom();
     const asOf = (data.sales && (data.sales.generated_at || data.sales.window_end_local)) || "";
     setText("asOf", "Live metrics" + (asOf ? " · as of " + asOf : ""));
-    const note = ["Sweeper counts the Sweeper and Rehash pipelines. It is not the Phones lead source.",
+    const note = ["Sweeper/Rehash counts contacts with Sweeper/Rehash Last Name filled, in any pipeline including Virtual. It is not the Rehash pipeline total.",
       "Doors, Self Gen, Inbound and 3PL are lead-source buckets. A Sweeper pipeline opportunity can also carry a lead source, so the six funnels are not a partition of the company total.",
       "Demo % is demos divided by opportunities ran. Opp2Prelim is sales divided by opportunities ran."];
     if (broken.length) note.unshift("Missing: " + broken.join(", ") + ". Those figures stay blank.");
@@ -722,7 +731,8 @@
     }
     if (!response || !response.ok) return { month: month.label, missing: true };
     const payload = await response.json();
-    const stats = channelsFrom(payload.data || {}).Company;
+    const channels = channelsFrom(payload.data || {});
+    const stats = name === "Sweeper" ? (channels.Sweeper || pack(null, null, null, null)) : channels.Company;
     return { month: month.label, partial: month.partial, asOf: month.asOf, created: stats.created, ran: stats.ran, demos: stats.demos, sales: stats.sales };
   }
   function historyLines(rows, mode) {
@@ -826,7 +836,7 @@
   }
   async function openRecords(name) {
     const params = metricQuery({ format: "json", pipeline_scope: "all" });
-    if (name === "Sweeper") { params.set("sweeper", "1"); params.delete("lead_source"); }
+    if (name === "Sweeper") { params.delete("sweeper"); params.delete("lead_source"); }
     else if (name === "Doors") params.set("lead_source", "Doors");
     else if (name === "Self gen") params.set("lead_source", "Self Gen");
     else if (name === "Inbound") params.set("lead_source", "Inbound");
@@ -837,9 +847,26 @@
     const created = createdRes.ok ? await createdRes.json() : null;
     const demo = demoRes.ok ? await demoRes.json() : null;
     const sales = salesRes.ok ? await salesRes.json() : null;
-    const createdRows = (created && created.sample_rows) || [];
-    const demoRows = (demo && (demo.rows || demo.sample_rows)) || [];
-    const salesRows = (sales && sales.sample_rows) || [];
+    function namedSweeper(row) {
+      const text = String((row && (row.sweeperRehashLastName || "")) || "").trim().toLowerCase();
+      return !!text && ["none", "null", "n/a", "na", "unknown", "unassigned", "-", "—"].indexOf(text) < 0;
+    }
+    function sweeperOutcome(row) {
+      const stage = String((row && (row.pipelineStageName || row.stageName || "")) || "").toLowerCase().replace(/[-/]/g, " ");
+      if (stage.indexOf("one legger") >= 0) return "No demo";
+      if (stage === "sold" || stage.indexOf("sold ") === 0 || stage === "demo" || stage.indexOf("demo ") === 0) return "Demo";
+      if (row && row.disposition === "Sit") return "Demo";
+      if (row && row.disposition === "No Sit") return "No demo";
+      return (row && row.disposition) || "—";
+    }
+    let createdRows = (created && created.sample_rows) || [];
+    let demoRows = (demo && (demo.rows || demo.sample_rows)) || [];
+    let salesRows = (sales && sales.sample_rows) || [];
+    if (name === "Sweeper") {
+      createdRows = createdRows.filter(namedSweeper);
+      demoRows = demoRows.filter(namedSweeper);
+      salesRows = salesRows.filter(namedSweeper);
+    }
     function table(headers, rows) {
       return '<div class="tablewrap"><table><thead><tr>' + headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
         (rows.length ? rows.slice(0, 200).map(function (row) { return "<tr>" + row.map(function (cell) { return "<td>" + esc(cell) + "</td>"; }).join("") + "</tr>"; }).join("") : '<tr><td colspan="' + headers.length + '">No rows returned.</td></tr>') +
@@ -851,7 +878,7 @@
         return [row.opportunityId, row.pipeline, row.leadGenSource, row.setterLastName];
       })) +
       "<h3>Ran and demos</h3>" + table(["Opportunity", "Pipeline", "Lead source", "Outcome"], demoRows.slice(0, 200).map(function (row) {
-        return [row.opportunityId, row.pipeline, row.lead_source, row.disposition === "Sit" ? "Demo" : row.disposition];
+        return [row.opportunityId, row.pipeline, row.lead_source, sweeperOutcome(row)];
       })) +
       "<h3>Sales</h3>" + table(["Opportunity", "Pipeline", "Sold date", "Last name"], salesRows.map(function (row) {
         return [row.opportunityId, row.pipelineName, row.dateSold, row.lastName_contact];

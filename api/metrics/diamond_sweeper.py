@@ -35,7 +35,12 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from sweeper_credit import appointment_rows, same_name
-from sweeper_rehash_attribution import SWEEPER_REHASH_LAST_NAME_FIELD_ID, sweeper_rehash_last_name
+from sweeper_rehash_attribution import (
+    SWEEPER_REHASH_LAST_NAME_FIELD_ID,
+    sweeper_counts_as_ran,
+    sweeper_is_demo,
+    sweeper_rehash_last_name,
+)
 
 NY = ZoneInfo("America/New_York")
 DIAMOND_LAST_NAME = "Diamond"
@@ -141,15 +146,20 @@ def demo_rows(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) 
         if not opp_id or opp_id in seen:
             continue
         seen.add(opp_id)
+        stage = pipeline_stage_name(row)
+        if not sweeper_counts_as_ran(row.get("disposition"), stage):
+            continue
         rows.append(
             {
                 "opportunityId": opp_id,
+                "contactId": row.get("contactId"),
                 "pipeline": row.get("pipeline"),
                 "pipelineId": row.get("pipelineId"),
                 "pipelineStageId": row.get("pipelineStageId"),
                 "pipelineStageName": row.get("pipelineStageName"),
-                "pipelineStage": pipeline_stage_name(row),
+                "pipelineStage": stage,
                 "disposition": row.get("disposition"),
+                "countsAsDemo": sweeper_is_demo(row.get("disposition"), stage),
                 "occurredAt": row.get("frozenAppointmentOccurredAt"),
                 "setter": row.get("setter"),
             }
@@ -190,8 +200,13 @@ def fill_pipeline_stages(db, rows: list[dict[str, Any]]) -> None:
 
 
 def ran_and_demos(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) -> tuple[int, int]:
+    """Any pipeline. One Legger is ran and not a demo. Sold and Demo-* count.
+
+    A later row is kept when the contact already has an earlier sit. FMA
+    dedupe does not hide the sweeper demo.
+    """
     rows = demo_rows(demo_payload, last_name)
-    demos = sum(1 for row in rows if row.get("disposition") == "Sit")
+    demos = sum(1 for row in rows if row.get("countsAsDemo"))
     return len(rows), demos
 
 
@@ -267,8 +282,11 @@ def compute_diamond_sweeper(
     appointments = created_rows(created, last_name)
     outcomes = demo_rows(demo_payload, last_name)
     fill_pipeline_stages(db, appointments + outcomes)
+    for row in outcomes:
+        # Stage directory can reveal Demo-* / Sold / One Legger after the first pass.
+        row["countsAsDemo"] = sweeper_is_demo(row.get("disposition"), pipeline_stage_name(row))
     ran = len(outcomes)
-    demos = sum(1 for row in outcomes if row.get("disposition") == "Sit")
+    demos = sum(1 for row in outcomes if row.get("countsAsDemo"))
     metrics = summarize(
         opps_created=len(appointments),
         ran=ran,
@@ -300,7 +318,11 @@ def compute_diamond_sweeper(
                 "whose Sweeper/Rehash Last Name equals Diamond (case-insensitive)"
             ),
             "ran": "demo_rate rows in the window with that name, distinct opportunity id",
-            "demos": "those ran rows whose disposition is Sit",
+            "demos": (
+                "those ran rows that are a demo: Appointment Outcome Sit, a Demo-* stage, "
+                "or Sold. One Legger is not a demo. Virtual and other pipelines count. "
+                "An earlier FMA sit on the contact does not drop the later sweeper demo."
+            ),
             "pipeline_stage": (
                 "ghl_opportunities_v2.pipelineStageId -> ghl_pipelines_v2.stages[].name, "
                 "or pipelineStageName / stageName already on the opportunity. "

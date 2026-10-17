@@ -239,7 +239,9 @@ class PipelineStageTests(unittest.TestCase):
         self.assertEqual(demo_out[0]["disposition"], "Sit")
         self.assertEqual(demo_out[1]["pipelineStage"], "Sold")
         self.assertEqual(demo_out[1]["disposition"], "No Sit")
-        self.assertEqual(metrics.ran_and_demos(demo), (2, 1))
+        # Sold implies a demo even when Appointment Outcome is No Sit.
+        self.assertEqual(metrics.ran_and_demos(demo), (2, 2))
+        self.assertTrue(demo_out[1]["countsAsDemo"])
 
     def test_fill_looks_up_a_blank_stage_and_skips_named_rows(self):
         named = {
@@ -386,6 +388,153 @@ class DiamondPageTests(unittest.TestCase):
         self.assertEqual(index.dispatch_file("diamond_sweeper"), API / "diamond_sweeper.py")
         self.assertEqual(index.dispatch_route("/api/metrics/diamond_sweeper"), "metrics/diamond_sweeper")
         self.assertEqual(index.dispatch_file("metrics/diamond_sweeper"), METRICS / "diamond_sweeper.py")
+
+
+class SweeperFunnelRuleTests(unittest.TestCase):
+    """Evan's rules: any pipeline, the next dispositioned opp, FMA dedupe, One Legger."""
+
+    def test_virtual_pipeline_sit_is_a_sweeper_demo(self):
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "virtual-sit",
+                    "contactId": "c-jeff",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipeline": "Virtual",
+                    "pipelineStageName": "Demo-Negotiating",
+                }
+            ]
+        }
+        self.assertEqual(metrics.ran_and_demos(demo), (1, 1))
+        row = metrics.demo_rows(demo)[0]
+        self.assertEqual(row["pipeline"], "Virtual")
+        self.assertTrue(row["countsAsDemo"])
+
+    def test_next_dispositioned_opp_after_the_name_is_filled(self):
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "before-field",
+                    "contactId": "c-next",
+                    "sweeperRehashLastName": None,
+                    "disposition": "Sit",
+                    "pipeline": "Sweeper",
+                    "pipelineStageName": "Reset",
+                    "setter": "Hill",
+                },
+                {
+                    "opportunityId": "after-field",
+                    "contactId": "c-next",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipeline": "Buffalo",
+                    "pipelineStageName": "Demo-Negotiating",
+                },
+            ]
+        }
+        self.assertEqual(metrics.ran_and_demos(demo), (1, 1))
+        self.assertEqual([row["opportunityId"] for row in metrics.demo_rows(demo)], ["after-field"])
+
+    def test_earlier_fma_sit_does_not_hide_the_later_sweeper_demo(self):
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "fma-sit",
+                    "contactId": "c-same",
+                    "sweeperRehashLastName": "",
+                    "disposition": "Sit",
+                    "pipeline": "Sweeper",
+                    "pipelineStageName": "Reset",
+                    "setter": "Breen",
+                },
+                {
+                    "opportunityId": "sweeper-sit",
+                    "contactId": "c-same",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipeline": "Virtual",
+                    "pipelineStageName": "Demo-Negotiating",
+                },
+            ]
+        }
+        self.assertEqual(metrics.ran_and_demos(demo), (1, 1))
+        kept = metrics.demo_rows(demo)
+        self.assertEqual(kept[0]["opportunityId"], "sweeper-sit")
+        self.assertEqual(kept[0]["contactId"], "c-same")
+        self.assertTrue(kept[0]["countsAsDemo"])
+
+    def test_one_legger_is_ran_and_not_a_demo(self):
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "leg",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipeline": "Virtual",
+                    "pipelineStageName": "One Legger",
+                },
+                {
+                    "opportunityId": "fresh",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": None,
+                    "pipeline": "Rochester",
+                    "pipelineStageName": "New Appointment",
+                },
+            ]
+        }
+        self.assertEqual(metrics.ran_and_demos(demo), (1, 0))
+        row = metrics.demo_rows(demo)[0]
+        self.assertEqual(row["opportunityId"], "leg")
+        self.assertFalse(row["countsAsDemo"])
+
+    def test_stage_lookup_promotes_sold_and_clears_one_legger(self):
+        demo = {
+            "rows": [
+                {
+                    "opportunityId": "sold-late",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "No Sit",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-sold",
+                },
+                {
+                    "opportunityId": "leg-late",
+                    "sweeperRehashLastName": "Diamond",
+                    "disposition": "Sit",
+                    "pipelineId": "pipe-1",
+                    "pipelineStageId": "stage-leg",
+                },
+            ]
+        }
+        with (
+            mock.patch("opportunities_created.compute", return_value={"sample_rows": [], "window_start_local": "s", "window_end_local": "e"}),
+            mock.patch("demo_rate.build_payload", return_value=demo),
+            mock.patch("sales.compute_sales", return_value={}),
+            mock.patch(
+                "sold_date_gaps.load_pipelines_by_ids",
+                return_value=({}, {"stage-sold": "Sold", "stage-leg": "One Legger"}),
+            ),
+        ):
+            out = metrics.compute_diamond_sweeper(object(), year=2026, month=10, start="2026-10-01", end="2026-10-17")
+        by_id = {row["opportunityId"]: row for row in out["demo_rows"]}
+        self.assertEqual(out["ran"], 2)
+        self.assertEqual(out["demos"], 1)
+        self.assertTrue(by_id["sold-late"]["countsAsDemo"])
+        self.assertEqual(by_id["sold-late"]["pipelineStage"], "Sold")
+        self.assertFalse(by_id["leg-late"]["countsAsDemo"])
+        self.assertEqual(by_id["leg-late"]["pipelineStage"], "One Legger")
+
+    def test_company_overview_reads_lastname_breakdowns(self):
+        script = (API / "ops_overview_script.txt").read_text(encoding="utf-8")
+        self.assertIn("function sweeperCredit", script)
+        self.assertIn("sweeper_rehash_appointments", script)
+        self.assertIn("sweeper_rehash_ran", script)
+        self.assertIn("sweeper_rehash_demos", script)
+        self.assertIn("sweeper_rehash_sales", script)
+        self.assertIn("any pipeline including Virtual", script)
+        self.assertIn("function sweeperOutcome", script)
+        self.assertIn('name === "Sweeper"', script)
 
 
 if __name__ == "__main__":

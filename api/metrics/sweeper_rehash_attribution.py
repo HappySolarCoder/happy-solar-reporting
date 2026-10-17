@@ -144,6 +144,95 @@ def uses_sweeper_rehash_credit(lead_source: Any, sweeper_last_name: Any) -> bool
     return is_rehash_lead_source(lead_source) or not is_blank_last_name(sweeper_last_name)
 
 
+def _stage_folded(stage_name: Any) -> str:
+    text = compact_text(stage_name).casefold().replace("-", " ").replace("/", " ")
+    return " ".join(text.split())
+
+
+def stage_is_one_legger(stage_name: Any) -> bool:
+    """One Legger is a post-appointment stage and is not a demo."""
+    return "one legger" in _stage_folded(stage_name)
+
+
+def stage_implies_demo(stage_name: Any) -> bool:
+    """A Demo-* stage or Sold. One Legger and New Appointment are not demos."""
+    if stage_is_one_legger(stage_name):
+        return False
+    folded = _stage_folded(stage_name)
+    if not folded:
+        return False
+    if folded == "sold" or folded.startswith("sold "):
+        return True
+    return folded == "demo" or folded.startswith("demo ")
+
+
+def sweeper_is_demo(disposition: Any, stage_name: Any) -> bool:
+    """Appointment Outcome Sit, or a Demo-* / Sold stage. One Legger is never a demo.
+
+    GHL writes Sit when the stage is a demo and No Sit otherwise. Sold still
+    counts when the outcome was not written. One Legger overrides a Sit.
+    """
+    if stage_is_one_legger(stage_name):
+        return False
+    if stage_implies_demo(stage_name):
+        return True
+    return compact_text(disposition) == "Sit"
+
+
+def sweeper_counts_as_ran(disposition: Any, stage_name: Any) -> bool:
+    """Sit / No Sit has run. New Appointment has not. One Legger has run."""
+    if compact_text(disposition) in {"Sit", "No Sit"}:
+        return True
+    if stage_is_one_legger(stage_name):
+        return True
+    return stage_implies_demo(stage_name)
+
+
+def sweeper_funnel_rows(
+    rows: list[dict] | None,
+    *,
+    name: str | None = None,
+    name_field: str = "sweeperRehashLastName",
+) -> list[dict]:
+    """Dispositioned sweeper/rehash opportunities, one row per opportunity.
+
+    Any pipeline counts, including Virtual. An earlier FMA sit on the same
+    contact does not drop the later opportunity whose Sweeper/Rehash Last
+    Name is filled. Rows without that name stay with the FMA.
+    """
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        sweeper = compact_text(row.get(name_field))
+        if is_blank_last_name(sweeper):
+            continue
+        if name is not None and sweeper.casefold() != compact_text(name).casefold():
+            continue
+        opp_id = compact_text(row.get("opportunityId"))
+        if opp_id and opp_id in seen:
+            continue
+        stage = row.get("pipelineStage") or row.get("pipelineStageName") or row.get("stageName")
+        if not sweeper_counts_as_ran(row.get("disposition"), stage):
+            continue
+        if opp_id:
+            seen.add(opp_id)
+        kept.append(row)
+    return kept
+
+
+def sweeper_ran_and_demos(rows: list[dict] | None, *, name: str | None = None) -> tuple[int, int]:
+    """(ran, demos) for sweeper_funnel_rows. One Legger is ran and not a demo."""
+    chosen = sweeper_funnel_rows(rows, name=name)
+    demos = 0
+    for row in chosen:
+        stage = row.get("pipelineStage") or row.get("pipelineStageName") or row.get("stageName")
+        if sweeper_is_demo(row.get("disposition"), stage):
+            demos += 1
+    return len(chosen), demos
+
+
 def attributed_last_name(
     setter: Any,
     lead_source: Any,

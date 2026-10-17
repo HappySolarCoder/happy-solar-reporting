@@ -186,8 +186,10 @@ class DashboardWiringTests(unittest.TestCase):
         self.assertIn('sold_date_custom_field_id: str = "P9oBjgbZjJdeE0OkBj9T"', SALES)
         self.assertIn("COUNT_DISTINCT(ghl_opportunities_v2.contactId)", SALES)
         self.assertIn('tz = "America/New_York"', SALES)
-        self.assertNotIn("sweeper_rehash_attribution", SALES)
-        self.assertNotIn("HWfjOp8MvE6soxBAL75f", SALES)
+        # Side breakdown only. The locked result is still distinct contacts.
+        self.assertIn('"result": len(unique_contact_ids)', SALES)
+        self.assertIn('"sweeper_rehash_sales": sweeper_rehash_sales', SALES)
+        self.assertLess(SALES.index("unique_contact_ids.add(cache_key)"), SALES.index("sweeper_rehash_sales += 1"))
 
     def test_rep_daily_recap_still_excludes_sweeper_rehash_pipelines(self):
         self.assertIn("SWEEPER_PIPELINE_ID", RECAP)

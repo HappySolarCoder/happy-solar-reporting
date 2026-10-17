@@ -43,6 +43,7 @@ from google.cloud import firestore
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
+from sweeper_rehash_attribution import sweeper_rehash_last_name
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -290,6 +291,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
     unique_opp_ids: set[str] = set()
     unique_contact_ids: set[str] = set()
     pipeline_counts: dict[str, int] = {}
+    sweeper_rehash_sales = 0
     owner_counts: dict[str, int] = {}
     owner_labels: dict[str, str] = {}
     setter_counts: dict[str, int] = {}
@@ -514,6 +516,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if cache_key in unique_contact_ids:
             continue
         unique_contact_ids.add(cache_key)
+        sweeper_name = sweeper_rehash_last_name(contact, opp)
+        if sweeper_name:
+            sweeper_rehash_sales += 1
 
         # Breakdown by pipeline (human name)
         pname = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
@@ -572,6 +577,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                     "setter_contact": contact.get("setter"),
                     "leadSource_contact": contact.get("leadSource"),
                     "lastName_contact": contact.get("lastName"),
+                    "sweeperRehashLastName": sweeper_rehash_last_name(contact, opp) or None,
                     "customFieldsPreview": [
                         {"id": cf.get("id"), "value": cf.get("value")}
                         for cf in (contact.get("customFields") or [])
@@ -626,7 +632,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
             "sales_by_owner": finalize_casefold_counts(owner_counts, owner_labels),
             "sales_by_setter_last_name": finalize_casefold_counts(setter_counts, setter_labels),
-            "sales_by_lead_gen_source": {k: v for k, v in sorted(lead_source_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0}
+            "sales_by_lead_gen_source": {k: v for k, v in sorted(lead_source_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
+            # Locked grain, then the contact Sweeper/Rehash Last Name. Does not change result.
+            "sweeper_rehash_sales": sweeper_rehash_sales,
         },
         "sample_rows": contrib_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",

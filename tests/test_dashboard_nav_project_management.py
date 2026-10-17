@@ -175,7 +175,8 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         )
         menu_count = html.count('role="menuitem" class="oc-embed-link')
         sidebar_count = sum(len(items) for _label, items in nav.NAV_GROUPS)
-        self.assertEqual(menu_count, sidebar_count)
+        # diamond_opp_list and sales_list are listed under Sales and Proj. Man.
+        self.assertEqual(menu_count, sidebar_count + 2)
         for _label, items in nav.NAV_GROUPS:
             for _key, title, href in items:
                 self.assertIn(
@@ -188,13 +189,15 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
                 self.assertIn(title, html)
         sales_btn = _group_button(html, "Sales")
         company_btn = _group_button(html, "Company")
+        project_btn = _group_button(html, "Proj. Man.")
         self.assertIn('aria-current="true"', sales_btn)
+        self.assertIn('aria-current="true"', project_btn)
         self.assertNotIn('aria-current="true"', company_btn)
         self.assertIn('class="oc-embed-group is-current"', html)
-        self.assertEqual(html.count('class="oc-embed-group is-current"'), 1)
-        self.assertIn(
-            'class="oc-embed-link active" href="/api/sales_list" aria-current="page"',
-            html,
+        self.assertEqual(html.count('class="oc-embed-group is-current"'), 2)
+        self.assertEqual(
+            html.count('class="oc-embed-link active" href="/api/sales_list" aria-current="page"'),
+            2,
         )
         self.assertGreaterEqual(_contrast("#a7bfd2", "#081e31"), 4.5)
         self.assertGreaterEqual(_contrast("#26d9eb", "#081e31"), 4.5)
@@ -202,6 +205,7 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertGreaterEqual(_contrast("#26d9eb", "#123e52"), 4.5)
         self.assertGreaterEqual(_contrast("#ffffff", "#102e46"), 4.5)
         lead = render_dashboard_nav("website_traffic")
+        self.assertEqual(lead.count('class="oc-embed-group is-current"'), 1)
         self.assertIn('aria-current="true"', _group_button(lead, "Lead Gen"))
         self.assertNotIn('aria-current="true"', _group_button(lead, "Sales"))
         self.assertIn(
@@ -238,6 +242,122 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         self.assertIn("window.self!==window.top", css)
         self.assertNotRegex(html, r"\b(sit|sits|sat)\b")
         self.assertNotRegex(css, r"\b(sit|sits|sat)\b")
+
+    def test_project_management_menu_shares_diamond_and_sales_list(self):
+        sales_keys = next(keys for label, _slug, keys in nav.EMBED_MENUS if label == "Sales")
+        pm_keys = next(keys for label, _slug, keys in nav.EMBED_MENUS if label == "Proj. Man.")
+        self.assertEqual(
+            sales_keys,
+            (
+                "sales_dashboard",
+                "sc_overview",
+                "diamond_sweeper",
+                "diamond_opp_list",
+                "sales_list",
+                "rep_daily_recap",
+                "missing_dispos",
+            ),
+        )
+        self.assertEqual(
+            pm_keys,
+            (
+                "project_management_hub",
+                "hold_cancelled",
+                "diamond_opp_list",
+                "sales_list",
+            ),
+        )
+        sidebar_pm = next(items for label, items in nav.NAV_GROUPS if label == "PROJECT MANAGEMENT")
+        self.assertEqual(
+            [key for key, _title, _href in sidebar_pm],
+            ["project_management_hub", "hold_cancelled"],
+        )
+        plan = nav.embed_menu_plan()
+        pm_rows = next(rows for label, _slug, rows in plan if label == "Proj. Man.")
+        sales_rows = next(rows for label, _slug, rows in plan if label == "Sales")
+        self.assertEqual(
+            pm_rows[-2:],
+            (
+                ("diamond_opp_list", "Diamond — Opportunity List", "/api/diamond_opp_list"),
+                ("sales_list", "Sales List", "/api/sales_list"),
+            ),
+        )
+        self.assertIn(("sales_list", "Sales List", "/api/sales_list"), sales_rows)
+        self.assertIn(
+            ("diamond_opp_list", "Diamond — Opportunity List", "/api/diamond_opp_list"),
+            sales_rows,
+        )
+        for current, href in (
+            ("diamond_opp_list", "/api/diamond_opp_list"),
+            ("sales_list", "/api/sales_list"),
+        ):
+            html = render_dashboard_nav(current)
+            row_html = nav.render_embed_section_row(current)
+            active = f'class="oc-embed-link active" href="{href}" aria-current="page"'
+            for rendered in (html, row_html):
+                self.assertEqual(rendered.count('class="oc-embed-group is-current"'), 2)
+                self.assertIn('aria-current="true"', _group_button(rendered, "Sales"))
+                self.assertIn('aria-current="true"', _group_button(rendered, "Proj. Man."))
+                self.assertNotIn('aria-current="true"', _group_button(rendered, "Company"))
+                self.assertNotIn('aria-current="true"', _group_button(rendered, "Lead Gen"))
+                self.assertEqual(rendered.count(active), 2)
+                self.assertIn(active, _menu_html(rendered, "sales"))
+                self.assertIn(active, _menu_html(rendered, "proj-man"))
+                embed_ids = [item for item in _html_ids(rendered) if item.startswith("oc-embed-")]
+                self.assertEqual(embed_ids, [
+                    "oc-embed-btn-company",
+                    "oc-embed-menu-company",
+                    "oc-embed-btn-sales",
+                    "oc-embed-menu-sales",
+                    "oc-embed-btn-lead-gen",
+                    "oc-embed-menu-lead-gen",
+                    "oc-embed-btn-proj-man",
+                    "oc-embed-menu-proj-man",
+                    "oc-embed-btn-contests",
+                    "oc-embed-menu-contests",
+                    "oc-embed-btn-other",
+                    "oc-embed-menu-other",
+                ])
+            self.assertEqual(html.count('id="oc-embed-btn-sales"'), 1)
+            self.assertEqual(html.count('id="oc-embed-menu-sales"'), 1)
+            self.assertEqual(html.count('id="oc-embed-btn-proj-man"'), 1)
+            self.assertEqual(html.count('id="oc-embed-menu-proj-man"'), 1)
+            self.assertEqual(html.count('class="navlink active"'), 1)
+        solo = render_dashboard_nav("hold_cancelled")
+        self.assertEqual(solo.count('class="oc-embed-group is-current"'), 1)
+        self.assertIn('aria-current="true"', _group_button(solo, "Proj. Man."))
+        self.assertNotIn('aria-current="true"', _group_button(solo, "Sales"))
+        self.assertEqual(
+            solo.count(
+                'class="oc-embed-link active" href="'
+                + HOLD_CANCELLED_URL
+                + '" aria-current="page"'
+            ),
+            1,
+        )
+
+
+def _menu_html(html: str, slug: str) -> str:
+    token = f'id="oc-embed-menu-{slug}"'
+    start = html.find(token)
+    if start < 0:
+        raise AssertionError(f"missing menu {slug}")
+    open_end = html.find(">", start)
+    close = html.find("</div>", open_end)
+    return html[open_end + 1:close]
+
+
+def _html_ids(html: str) -> list[str]:
+    ids: list[str] = []
+    needle = 'id="'
+    start = 0
+    while True:
+        idx = html.find(needle, start)
+        if idx < 0:
+            return ids
+        end = html.find('"', idx + len(needle))
+        ids.append(html[idx + len(needle):end])
+        start = end + 1
 
 
 def _group_button(html: str, label: str) -> str:

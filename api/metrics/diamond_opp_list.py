@@ -4,8 +4,11 @@
 
 One Diamond opportunity per row. The population is opportunities_created
 with pipeline_scope=all, then created_rows() from diamond_sweeper: Sweeper/
-Rehash Last Name equals Diamond, case-insensitive. That is the same set as
-the Diamond Sweeper "Opps created" KPI for the same dates.
+Rehash Last Name equals Diamond, case-insensitive. The Sweeper pipeline is
+then dropped in this list only, matched by its GHL pipeline id or the
+resolved pipeline name Sweeper. Rehash, Rochester, Buffalo, Syracuse,
+Virtual, and every other pipeline stay. Diamond Sweeper's own counts are
+unchanged.
 
 Deleted opportunities are not in ghl_opportunities_v2. A deleted opp created
 within 10 minutes of another opp for the same lead is ignored because it is
@@ -44,10 +47,14 @@ from diamond_sweeper import (
     pipeline_stage_name,
     resolve_window,
 )
+from pipeline_scope import normalize_pipeline_name
 
 NY = ZoneInfo("America/New_York")
 ALL_TIME_START = "2025-01-01"
 TITLE = "Diamond — Opportunity List"
+# GHL Sweeper pipeline. Same id as rep_daily_recap / ads_dashboard.
+SWEEPER_PIPELINE_ID = "0VNxqmhbk7FDO64j2pKu"
+SWEEPER_PIPELINE_NAME = "sweeper"
 GHL_OPPORTUNITY_URL = (
     "https://app.gohighlevel.com/v2/location/{location_id}/opportunities/list/{opp_id}?tab=OpportunityDetails"
 )
@@ -317,6 +324,18 @@ def pipeline_label(row: dict | None, opp: dict | None, names: dict[str, str]) ->
     return compact(row.get("pipeline")) if isinstance(row, dict) else ""
 
 
+def is_sweeper_pipeline(row: dict | None, opp: dict | None, names: dict[str, str]) -> bool:
+    """True only for the Sweeper pipeline.
+
+    Match the GHL pipeline id, or the name pipeline_label already resolves
+    (directory name, else the name on the created row). Equality uses
+    normalize_pipeline_name, so "Sweeper" matches and "Sweeper/Rehash" does not.
+    """
+    if pipeline_id_of(row, opp) == SWEEPER_PIPELINE_ID:
+        return True
+    return normalize_pipeline_name(pipeline_label(row, opp, names)) == SWEEPER_PIPELINE_NAME
+
+
 def _sort_key(row: dict[str, Any]) -> tuple[bool, float, str]:
     """Appointment time, latest first. No appointment sorts last."""
     moment = as_datetime(row.get("appointmentAtIso"))
@@ -355,6 +374,15 @@ def compute_diamond_opp_list(
             for row in appointments
         ),
     )
+    appointments = [
+        row
+        for row in appointments
+        if not is_sweeper_pipeline(
+            row,
+            opps.get(str(row.get("opportunityId") or "")),
+            directory_names,
+        )
+    ]
     apply_directory_stages(appointments, stage_names)
     fill_pipeline_stages(db, appointments)
 
@@ -410,6 +438,9 @@ def compute_diamond_opp_list(
             "population": (
                 "created_rows() of opportunities_created.compute pipeline_scope=all. "
                 "Sweeper/Rehash Last Name equals Diamond, case-insensitive. "
+                "The Sweeper pipeline is excluded by GHL pipeline id "
+                f"{SWEEPER_PIPELINE_ID} or by the resolved pipeline name Sweeper. "
+                "Rehash and the other pipelines stay. "
                 "One row per opportunity. Default order is appointment time, latest "
                 "first. Opportunities with no appointment are last. The date "
                 "filter is still the opportunity created date."
@@ -425,7 +456,8 @@ def compute_diamond_opp_list(
                 "the created row when the directory has none."
             ),
             "opps_created": (
-                "len(rows) equals Diamond Sweeper opps_created for the same start and end"
+                "len(rows) is Diamond opportunities in this window except the Sweeper "
+                "pipeline. Diamond Sweeper opps_created still includes that pipeline."
             ),
             "deleted_opps": (
                 "Deleted opportunities are not in ghl_opportunities_v2, so a deleted opp "

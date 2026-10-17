@@ -66,7 +66,7 @@ def render_html() -> str:
         <div>
           <div class="eyebrow">Sales · Sweeper/Rehash</div>
           <h1>Diamond — Opportunity List</h1>
-          <p class="subtitle">One row per opportunity on a contact whose Sweeper/Rehash Last Name is Diamond. Sorted by appointment date and time, latest first. Opportunities with no appointment are at the bottom. The row count matches Diamond Sweeper Opps created for the same dates. <a class="link" href="/api/diamond_sweeper">Diamond Sweeper</a></p>
+          <p class="subtitle">One row per opportunity on a contact whose Sweeper/Rehash Last Name is Diamond. Sorted by appointment date and time, latest first. Opportunities with no appointment are at the bottom. Opportunities on the Sweeper pipeline are left off this list. <a class="link" href="/api/diamond_sweeper">Diamond Sweeper</a></p>
         </div>
       </div>
       <section class="panel">

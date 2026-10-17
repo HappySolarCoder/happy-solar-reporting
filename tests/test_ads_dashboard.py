@@ -662,16 +662,12 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(from_history["kpis"]["demos"]["value"], 0)
 
     def test_sale_cancelled_counts_as_a_demo_and_a_sale(self):
-        self.assertTrue(metric.stage_is_sale("Sale Cancelled"))
-        self.assertTrue(metric.stage_is_sale("Sale Canceled"))
-        self.assertTrue(metric.stage_is_sale("Sold"))
-        self.assertFalse(metric.stage_is_sale("One Legger"))
-        self.assertFalse(metric.stage_is_sale("Demo-Negotiating"))
-        self.assertIn("Sale Cancelled", metric.stage_is_sale.__doc__ or "")
-        self.assertIn("one sale", (metric.stage_is_sale.__doc__ or "").lower())
+        self.assertNotIn("stage_is_sale", METRIC_SRC)
         self.assertIn("Sale Cancelled", metric.stage_is_demo.__doc__ or "")
+        self.assertIn("eight", (metric._sold_stage_ids.__doc__ or "").lower())
         cancelled_id = "adf3106e-d371-47ff-ab9e-6f7f33ecf415"
         sold_id = "7981f111-73f2-4593-9662-6b95d99bf51a"
+        self.assertEqual(len(metric._sold_stage_ids()), 8)
         self.assertIn(cancelled_id, metric._sold_stage_ids())
         self.assertIn(sold_id, metric._sold_stage_ids())
         contacts = {"c": contact("c", "inbound", sold="2026-10-08")}
@@ -694,12 +690,14 @@ class AdsDashboardTests(unittest.TestCase):
         by_name = assemble(contacts, pipeline, [named], names)
         self.assertNotIn("stage-cancelled", metric._sold_stage_ids())
         self.assertEqual(by_name["kpis"]["demos"]["value"], 1)
-        self.assertEqual(by_name["kpis"]["sales"]["value"], 1)
-        self.assertEqual(by_name["kpis"]["cost_per_sale"]["value"], 270.30)
+        self.assertEqual(by_name["kpis"]["sales"]["value"], 0)
+        self.assertIsNone(by_name["kpis"]["cost_per_sale"]["value"])
+        self.assertEqual(by_name["kpis"]["cost_per_sale"]["display"], "N/A")
         sold = city_opp("sold-opp", "c", INSIDE, "No Sit")
         sold["pipelineStageId"] = sold_id
         pair = assemble(contacts, pipeline, [sold, cancelled], names)
         self.assertEqual(pair["kpis"]["opps"]["value"], 2)
+        self.assertEqual(pair["kpis"]["demos"]["value"], 1)
         self.assertEqual(pair["kpis"]["sales"]["value"], 1)
         self.assertEqual(pair["kpis"]["cost_per_sale"]["value"], 270.30)
         outside = {"c": contact("c", "inbound", sold="2026-09-15")}
@@ -739,7 +737,119 @@ class AdsDashboardTests(unittest.TestCase):
         )
         self.assertEqual(payload["kpis"]["opps"]["value"], 1)
         self.assertEqual(payload["kpis"]["demos"]["value"], 1)
-        self.assertEqual(payload["kpis"]["sales"]["value"], 1)
+        self.assertEqual(payload["kpis"]["sales"]["value"], 0)
+
+    def test_demos_count_once_per_lead_unless_sweeper_rehash_is_filled(self):
+        sweeper_field = "HWfjOp8MvE6soxBAL75f"
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        names = {
+            "stage-New Lead": "New Lead",
+            "stage-demo": "Demo-Negotiating",
+            "stage-sold": "Sold",
+            "stage-cancelled": "Sale Cancelled",
+            "stage-leg": "One Legger",
+        }
+
+        def city_pair(second_stage: str):
+            showed = city_opp("demo", "c", "2026-10-08T16:00:00.000Z", "No Sit")
+            showed["pipelineStageId"] = "stage-demo"
+            later = city_opp("later", "c", INSIDE, "No Sit")
+            later["pipelineStageId"] = second_stage
+            return [showed, later]
+
+        plain = {"c": contact("c", "inbound")}
+        sold_pair = assemble(plain, pipeline, city_pair("stage-sold"), names)
+        self.assertEqual(sold_pair["kpis"]["opps"]["value"], 2)
+        self.assertEqual(sold_pair["kpis"]["demos"]["value"], 1)
+        cancelled_pair = assemble(plain, pipeline, city_pair("stage-cancelled"), names)
+        self.assertEqual(cancelled_pair["kpis"]["opps"]["value"], 2)
+        self.assertEqual(cancelled_pair["kpis"]["demos"]["value"], 1)
+        self.assertNotIn("stage-sold", metric._sold_stage_ids())
+        self.assertNotIn("stage-cancelled", metric._sold_stage_ids())
+
+        filled_contact = contact("c", "inbound")
+        filled_contact["customFields"].append({"id": sweeper_field, "value": "Diamond"})
+        filled = assemble({"c": filled_contact}, pipeline, city_pair("stage-sold"), names)
+        self.assertEqual(filled["kpis"]["demos"]["value"], 2)
+        blank_contact = contact("c", "inbound")
+        blank_contact["customFields"].append({"id": sweeper_field, "value": "  "})
+        blank = assemble({"c": blank_contact}, pipeline, city_pair("stage-sold"), names)
+        self.assertEqual(blank["kpis"]["demos"]["value"], 1)
+
+        legger = city_opp("leg", "c", INSIDE, "No Sit")
+        legger["pipelineStageId"] = "stage-leg"
+        only_leg = assemble(plain, pipeline, [legger], names)
+        self.assertEqual(only_leg["kpis"]["opps"]["value"], 1)
+        self.assertEqual(only_leg["kpis"]["demos"]["value"], 0)
+        with_demo = city_pair("stage-leg")
+        still_one = assemble({"c": filled_contact}, pipeline, with_demo, names)
+        self.assertEqual(still_one["kpis"]["opps"]["value"], 2)
+        self.assertEqual(still_one["kpis"]["demos"]["value"], 1)
+
+    def test_october_and_september_two_lead_demos_stay_two(self):
+        """Two different leads stay two demos. Oct 1–16 and September stay at 2."""
+        names = {"stage-New Lead": "New Lead", "stage-demo": "Demo-Negotiating"}
+
+        def counted(created: str, start: str, end: str) -> int:
+            contacts = {
+                "a": contact("a", "inbound"),
+                "b": contact("b", "inbound"),
+            }
+            pipeline = [
+                pipeline_opp("lead-a", "a", created, "New Lead"),
+                pipeline_opp("lead-b", "b", created, "New Lead"),
+            ]
+            first = city_opp("city-a", "a", created, "No Sit")
+            second = city_opp("city-b", "b", created, "No Sit")
+            first["pipelineStageId"] = "stage-demo"
+            second["pipelineStageId"] = "stage-demo"
+            start_local, end_local = metric.date_window(start, end)
+            result = metric.classify_window(
+                pipeline,
+                [first, second],
+                contacts,
+                names,
+                start_local,
+                end_local,
+                NOW.astimezone(timezone.utc),
+            )
+            return result["demos"]
+
+        self.assertEqual(counted("2026-10-08T18:00:00.000Z", "2026-10-01", "2026-10-16"), 2)
+        self.assertEqual(counted("2026-09-15T18:00:00.000Z", "2026-09-01", "2026-09-30"), 2)
+
+    def test_stage_name_sold_or_sale_cancelled_is_not_a_sale(self):
+        self.assertNotIn("stage_is_sale", METRIC_SRC)
+        contacts = {"c": contact("c", "inbound", sold="2026-10-08")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        names = {
+            "stage-New Lead": "New Lead",
+            "unknown-sold": "Sold",
+            "unknown-refund": "Sale Cancelled - refund",
+            "unknown-cancelled": "Sale Cancelled",
+        }
+        sweeper = city_opp("sweeper-sold", "c", INSIDE, "No Sit")
+        sweeper["pipelineId"] = metric.SWEEPER_PIPELINE_ID
+        sweeper["pipelineStageId"] = "unknown-sold"
+        sweeper_sale = assemble(contacts, pipeline, [sweeper], names)
+        self.assertNotIn("unknown-sold", metric._sold_stage_ids())
+        self.assertEqual(sweeper_sale["kpis"]["sales"]["value"], 0)
+        self.assertEqual(sweeper_sale["kpis"]["demos"]["value"], 0)
+
+        locker = city_opp("locker-refund", "c", INSIDE, "No Sit")
+        locker["pipelineId"] = PIPELINE
+        locker["pipelineStageId"] = "unknown-refund"
+        locker_sale = assemble(contacts, pipeline, [locker], names)
+        self.assertEqual(locker_sale["kpis"]["sales"]["value"], 0)
+        self.assertEqual(locker_sale["kpis"]["demos"]["value"], 0)
+
+        city = city_opp("city-cancelled", "c", INSIDE, "No Sit")
+        city["pipelineStageId"] = "unknown-cancelled"
+        city_sale = assemble(contacts, pipeline, [city], names)
+        self.assertNotIn("unknown-cancelled", metric._sold_stage_ids())
+        self.assertEqual(city_sale["kpis"]["sales"]["value"], 0)
+        self.assertEqual(city_sale["kpis"]["demos"]["value"], 1)
+        self.assertEqual(city_sale["kpis"]["opps"]["value"], 1)
 
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]

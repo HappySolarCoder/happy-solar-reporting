@@ -258,26 +258,16 @@ def _is_sale_cancelled_name(folded: str) -> bool:
     )
 
 
-def stage_is_sale(stage_name: Any) -> bool:
-    """Sold or Sale Cancelled is a sale.
-
-    One opportunity counts once. A lead with a Sold opportunity and a Sale
-    Cancelled opportunity is still one sale, the same dedupe as Sold.
-    """
-    folded = _stage_fold(stage_name)
-    if not folded:
-        return False
-    return _is_sold_name(folded) or _is_sale_cancelled_name(folded)
-
-
 def stage_is_demo(stage_name: Any) -> bool:
     """A Demo-* stage, Sold, or Sale Cancelled is a demo. A One Legger is not a demo.
 
     Sale Cancelled matches Sold. One opportunity is one demo: a Sale Cancelled
     stage on an opportunity that already sat a Demo does not add a second demo.
+    Across city opportunities the count is one demo per contact, unless that
+    contact's Sweeper/Rehash Last Name is filled.
     """
     folded = _stage_fold(stage_name)
-    if not folded:
+    if not folded or "one legger" in folded:
         return False
     if _is_sold_name(folded) or _is_sale_cancelled_name(folded):
         return True
@@ -287,10 +277,46 @@ def stage_is_demo(stage_name: Any) -> bool:
 def _sold_stage_ids() -> set[str]:
     """Buffalo, Syracuse, Rochester, and Virtual Sold and Sale Cancelled stage ids.
 
-    Sale Cancelled counts as a sale the same way Sold does: the current city
-    stage, Contact Sold Date in the window, and one sale per deduped lead.
+    Sales are these eight ids only, then one sale per deduped lead when Contact
+    Sold Date is in the window. A stage named Sold or Sale Cancelled does not
+    count. The four Sale Cancelled ids are already in this set.
     """
     return set(cac.SalesMetricContract().stage_ids)
+
+
+def _sweeper_rehash_filled(contact: dict[str, Any] | None) -> bool:
+    """True when the contact Sweeper/Rehash Last Name field is non-empty."""
+    from sweeper_rehash_attribution import sweeper_rehash_last_name
+
+    return bool(sweeper_rehash_last_name(contact, None))
+
+
+def _count_demos_per_lead(
+    events: list[tuple[str, datetime, str]],
+    contacts: dict[str, dict],
+) -> int:
+    """At most one demo per contact across inbound city opportunities.
+
+    A later demo opportunity counts as another demo only when that contact's
+    Sweeper/Rehash Last Name is non-empty. Sold, Sale Cancelled, and every
+    Demo-* stage use this rule. One Legger is not a demo and is not passed in.
+    """
+    by_contact: dict[str, list[tuple[datetime, str]]] = {}
+    seen: set[str] = set()
+    for contact_id, created, opp_id in events:
+        if not contact_id or not opp_id or opp_id in seen:
+            continue
+        seen.add(opp_id)
+        by_contact.setdefault(contact_id, []).append((created, opp_id))
+    total = 0
+    for contact_id, rows in by_contact.items():
+        if not rows:
+            continue
+        if len(rows) == 1 or not _sweeper_rehash_filled(contacts.get(contact_id)):
+            total += 1
+            continue
+        total += len(rows)
+    return total
 
 
 def _digits(value: Any) -> str:
@@ -653,7 +679,7 @@ def classify_window(
         canonical_ids.append(earliest["contact_id"])
 
     opp_ids: set[str] = set()
-    demo_ids: set[str] = set()
+    demo_events: list[tuple[str, datetime, str]] = []
     sold_ids = _sold_stage_ids()
     sold_contacts: set[str] = set()
     seen_city: set[str] = set()
@@ -666,9 +692,9 @@ def classify_window(
             continue
         seen_city.add(opp_id)
         stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
-        # Id or name, once per contact. Sold and Sale Cancelled on this opp
-        # do not become two sales.
-        if stage_id in sold_ids or stage_is_sale(opp_stage_label(opp, stage_names)):
+        # Eight locked stage ids only. A stage named Sold or Sale Cancelled
+        # is not a sale, on any pipeline.
+        if stage_id in sold_ids:
             sold_contacts.add(contact_id)
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
@@ -677,7 +703,7 @@ def classify_window(
             continue
         opp_ids.add(opp_id)
         if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
-            demo_ids.add(opp_id)
+            demo_events.append((contact_id, created, opp_id))
 
     other_created: dict[str, list[datetime]] = {}
     for opp in list(contact_opps) + list(pipeline_opps):
@@ -708,9 +734,9 @@ def classify_window(
         other_created.setdefault(contact_id, []).append(created)
         opp_ids.add(opp_id)
         if _history_has_city_demo(history_rows, stage_names):
-            demo_ids.add(opp_id)
+            demo_events.append((contact_id, created, opp_id))
 
-    # One sale per deduped lead, whether the city stage is Sold or Sale Cancelled.
+    # One sale per deduped lead. Sale Cancelled is already one of the eight ids.
     sales: set[str] = set()
     for cluster in clusters:
         ids = {row["contact_id"] for row in cluster}
@@ -732,7 +758,7 @@ def classify_window(
         "fb_quick_form_leads": quick_clusters,
         "fb_quick_form_matched": len(quick_matched),
         "opps": len(opp_ids),
-        "demos": len(demo_ids),
+        "demos": _count_demos_per_lead(demo_events, contacts),
         "sales": len(sales),
         "stages": stage_rows,
         "include_fb_quick_form": include_quick_form,

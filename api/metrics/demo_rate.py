@@ -56,6 +56,7 @@ from sit_timestamp import frozen_sit_timestamp
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
+    sweeper_is_demo,
     sweeper_rehash_last_name,
 )
 
@@ -656,9 +657,28 @@ def load_contacts_by_ids(db: firestore.Client, contact_ids) -> dict[str, dict]:
     return contacts_map
 
 
-def pipeline_name_lookup(db: firestore.Client, pipeline_ids) -> dict[str, str]:
-    """Bounded ghl_pipelines_v2 get_all for pipelineIds on the already-fetched opp set."""
+def pipeline_name_lookup(
+    db: firestore.Client,
+    pipeline_ids,
+    stage_names: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Bounded ghl_pipelines_v2 get_all for pipelineIds on the already-fetched opp set.
+
+    When ``stage_names`` is passed, stage id → name is filled from the same
+    pipeline documents. Callers use that for One Legger and Demo-* checks.
+    """
     out: dict[str, str] = {}
+
+    def remember_stages(data: dict) -> None:
+        if stage_names is None:
+            return
+        for stage in data.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            sid = compact_str(stage.get("id"))
+            sname = compact_str(stage.get("name"))
+            if sid and sname and sid not in stage_names:
+                stage_names[sid] = sname
     needed: list[str] = []
     seen: set[str] = set()
     for raw in pipeline_ids:
@@ -674,6 +694,7 @@ def pipeline_name_lookup(db: firestore.Client, pipeline_ids) -> dict[str, str]:
                 continue
             d = snap.to_dict() or {}
             remember_pipeline_name(out, d.get("name"), d.get("id"), snap.id)
+            remember_stages(d)
     for pid in needed:
         if any(key in out for key in pipeline_id_keys(pid)):
             name = next(out[key] for key in pipeline_id_keys(pid) if key in out)
@@ -685,6 +706,7 @@ def pipeline_name_lookup(db: firestore.Client, pipeline_ids) -> dict[str, str]:
         if misses:
             d = misses[0].to_dict() or {}
             remember_pipeline_name(out, d.get("name"), d.get("id"), misses[0].id, pid)
+            remember_stages(d)
     return out
 
 
@@ -885,12 +907,16 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if pipeline_id_keys(pid_raw):
             needed_pipeline_ids.extend(pipeline_id_keys(pid_raw))
 
-    pipelines = pipeline_name_lookup(db, needed_pipeline_ids)
+    stage_names: dict[str, str] = {}
+    pipelines = pipeline_name_lookup(db, needed_pipeline_ids, stage_names)
     contacts_map = load_contacts_by_ids(db, needed_contact_ids)
 
     matching = []
     ran = 0
     sit = 0
+    sweeper_ran = 0
+    sweeper_demos = 0
+    seen_sweeper: set[str] = set()
 
     # breakdowns
     ran_by_setter: dict[str, int] = {}
@@ -972,6 +998,23 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         if dispo == "Sit":
             sit += 1
 
+        stage_id = compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId"))
+        stage_label = (
+            compact_str(opp.get("pipelineStageName") or opp.get("stageName"))
+            or (stage_names.get(stage_id) if stage_id else "")
+            or ""
+        )
+        # Sweeper credit follows the contact field in any pipeline. Company
+        # sit/ran above is unchanged. One Legger is not a sweeper demo.
+        # An earlier FMA sit on this contact does not drop this row.
+        if sweeper_last:
+            sweeper_key = str(opp.get("id") or snap.id)
+            if sweeper_key not in seen_sweeper:
+                seen_sweeper.add(sweeper_key)
+                sweeper_ran += 1
+                if sweeper_is_demo(dispo, stage_label):
+                    sweeper_demos += 1
+
         setter_s = add_casefold_count(ran_by_setter, setter_labels, setter_s, empty="none")
         if dispo == "Sit":
             add_casefold_count(sit_by_setter, setter_labels, setter_s, empty="none")
@@ -1005,10 +1048,11 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
                 "lead_source": lead,
                 "sweeperRehashLastName": sweeper_last,
                 "closer": closer or None,
-                # GHL pipeline stage (appointment outcome). Sit/No Sit above is unchanged.
+                "contactId": compact_str(opp.get("contactId")) or None,
+                # GHL pipeline stage. Sit/No Sit above is the company demo flag.
                 "pipelineId": compact_str(opp.get("pipelineId")) or None,
-                "pipelineStageId": compact_str(opp.get("pipelineStageId") or opp.get("pipelineStageUId")) or None,
-                "pipelineStageName": compact_str(opp.get("pipelineStageName") or opp.get("stageName")) or None,
+                "pipelineStageId": stage_id or None,
+                "pipelineStageName": stage_label or None,
             }
         )
 
@@ -1051,6 +1095,9 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "ran_by_lead_gen_source": by_lead,
             "sit_by_lead_gen_source": sit_by_lead,
             "demo_rate_by_lead_gen_source": {k: (round((sit_by_lead.get(k,0)/v)*100,1) if v else 0.0) for k,v in by_lead.items()},
+            # Last-name sweeper credit, any pipeline. Not the Rehash pipeline total.
+            "sweeper_rehash_ran": sweeper_ran,
+            "sweeper_rehash_demos": sweeper_demos,
         },
         "rows": matching,
         "owner_profiles": list(owner_profiles.values()),

@@ -107,6 +107,22 @@ class SelfGenTests(unittest.TestCase):
         assert out["moved_from"] == {"Doors": {"appointments": 1, "ran": 0, "demos": 0, "sales": 1}}
         assert out["from_fallback"] == {"appointments": 1, "ran": 1, "demos": 1, "sales": 0}
 
+    def test_filled_sweeper_name_is_not_self_gen(self):
+        from channel_goals import self_gen_actuals
+
+        created = {"sample_rows": [
+            {"opportunityId": "nix", "leadGenSource": "Self Gen", "setterLastName": "Sauriol", "owner": "Jeff Salas", "sweeperRehashLastName": "Diamond"},
+            {"opportunityId": "plain", "leadGenSource": "Self Gen", "setterLastName": "x", "owner": "Y Z"},
+        ]}
+        demo = {"rows": [
+            {"opportunityId": "nix", "lead_source": "Self Gen", "setter": "Diamond", "closer": "Jeff Salas", "disposition": "Sit", "sweeperRehashLastName": "Diamond", "pipeline": "Syracuse"},
+            {"opportunityId": "plain", "lead_source": "Self Gen", "setter": "x", "closer": "Y Z", "disposition": "Sit"},
+        ]}
+        out = self_gen_actuals(created, demo, {})
+        self.assertEqual(out["appointments"], 1)
+        self.assertEqual(out["ran"], 1)
+        self.assertEqual(out["demos"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

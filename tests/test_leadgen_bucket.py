@@ -8,10 +8,13 @@ class LeadgenBucketTests(unittest.TestCase):
     def test_sweeper_virtual_wins(self):
         self.assertEqual(b("Sweeper", "", "Buffalo"), "Sweeper/Rehash/Virtual")
         self.assertEqual(b("Rehash", "", "Buffalo"), "Sweeper/Rehash/Virtual")
-        self.assertEqual(b("Phones", "", "Virtual"), "Sweeper/Rehash/Virtual")
         self.assertEqual(b("Self Gen", "Diamond", "Buffalo"), "Sweeper/Rehash/Virtual")
         self.assertEqual(b("3PL", "Diamond", "Rochester"), "Sweeper/Rehash/Virtual")
-        self.assertEqual(b("Doors", "", "Rehash"), "Sweeper/Rehash/Virtual")
+        # Pipeline membership and Phones/Virtual source do not put a lead in this bucket.
+        self.assertEqual(b("Phones", "", "Virtual"), "Other")
+        self.assertEqual(b("Doors", "", "Rehash"), "Doors")
+        self.assertEqual(b("3PL", "", "Rehash"), "3PL/Inbound")
+        self.assertEqual(b("Doors", "", "Sweeper"), "Doors")
 
     def test_other_buckets(self):
         self.assertEqual(b("Doors", "", "Buffalo"), "Doors")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Diamond opportunity list: same created-opp population as Diamond Sweeper."""
+"""Diamond opportunity list: Diamond created opps, excluding the Sweeper pipeline."""
 
 from __future__ import annotations
 
@@ -231,6 +231,180 @@ class PopulationTests(unittest.TestCase):
             + "/opportunities/list/o-late?tab=OpportunityDetails",
         )
         self.assertEqual(listing["rows"][0]["phone"], PHONE)
+
+    def test_sweeper_pipeline_is_excluded_from_the_list_only(self):
+        sweeper_id = metrics.SWEEPER_PIPELINE_ID
+        created = {
+            "window_start_local": "2026-10-01T00:00:00-04:00",
+            "window_end_local": "2026-10-16T00:00:00-04:00",
+            "sample_rows": [
+                {
+                    "opportunityId": "by-id",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Stale",
+                    "pipelineId": sweeper_id,
+                    "pipelineStageName": "New Appointment",
+                    "createdAt": "2026-10-02T12:00:00Z",
+                },
+                {
+                    "opportunityId": "id-on-opp",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-02T13:00:00Z",
+                },
+                {
+                    "opportunityId": "by-name",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Sweeper",
+                    "pipelineStageName": "New Appointment",
+                    "createdAt": "2026-10-03T12:00:00Z",
+                },
+                {
+                    "opportunityId": "by-case",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "  SWEEPER  ",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-03T13:00:00Z",
+                },
+                {
+                    "opportunityId": "by-directory",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Old Label",
+                    "pipelineId": "alias-sweep",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-04T12:00:00Z",
+                },
+                {
+                    "opportunityId": "rehash",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Rehash",
+                    "pipelineId": "rehash-id",
+                    "pipelineStageName": "New Appointment",
+                    "createdAt": "2026-10-05T12:00:00Z",
+                },
+                {
+                    "opportunityId": "rochester",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Rochester",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-01T12:00:00Z",
+                },
+                {
+                    "opportunityId": "buffalo",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Buffalo",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-06T12:00:00Z",
+                },
+                {
+                    "opportunityId": "syracuse",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Syracuse",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-07T12:00:00Z",
+                },
+                {
+                    "opportunityId": "virtual",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Virtual",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-08T12:00:00Z",
+                },
+                {
+                    "opportunityId": "slash",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Sweeper/Rehash",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-08T13:00:00Z",
+                },
+                {
+                    "opportunityId": "virtual-sweep",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Virtual/Sweeper",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-08T14:00:00Z",
+                },
+                {
+                    "opportunityId": "team",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Sweeper Team",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-08T15:00:00Z",
+                },
+                {
+                    "opportunityId": "stale-keep",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Sweeper",
+                    "pipelineId": "p-buf",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-08T16:00:00Z",
+                },
+            ],
+        }
+        docs = {
+            ("ghl_opportunities_v2", "id-on-opp"): {"pipelineId": sweeper_id},
+            ("ghl_opportunities_v2", "rochester"): {"appointmentStartTime": "2026-10-10T16:00:00Z"},
+            ("ghl_opportunities_v2", "virtual"): {"appointmentStartTime": "2026-10-09T16:00:00Z"},
+            ("ghl_pipelines_v2", sweeper_id): {"id": sweeper_id, "name": "Not Sweeper", "stages": []},
+            ("ghl_pipelines_v2", "alias-sweep"): {"id": "alias-sweep", "name": "Sweeper", "stages": []},
+            ("ghl_pipelines_v2", "rehash-id"): {"id": "rehash-id", "name": "Rehash", "stages": []},
+            ("ghl_pipelines_v2", "p-buf"): {"id": "p-buf", "name": "Buffalo", "stages": []},
+        }
+        with (
+            mock.patch("opportunities_created.compute", return_value=created),
+            mock.patch("demo_rate.build_payload", return_value={"rows": []}),
+            mock.patch("sales.compute_sales", return_value={}),
+        ):
+            sweeper_out = sweeper.compute_diamond_sweeper(
+                object(), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+            listing = metrics.compute_diamond_opp_list(
+                _Db(docs), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+        self.assertEqual(sweeper_out["opps_created"], 14)
+        self.assertEqual(listing["row_count"], 9)
+        self.assertEqual(len(listing["rows"]), 9)
+        self.assertEqual(
+            [row["opportunityId"] for row in listing["rows"]],
+            [
+                "rochester",
+                "virtual",
+                "buffalo",
+                "rehash",
+                "slash",
+                "stale-keep",
+                "syracuse",
+                "team",
+                "virtual-sweep",
+            ],
+        )
+        self.assertEqual(
+            [row["pipeline"] for row in listing["rows"]],
+            [
+                "Rochester",
+                "Virtual",
+                "Buffalo",
+                "Rehash",
+                "Sweeper/Rehash",
+                "Buffalo",
+                "Syracuse",
+                "Sweeper Team",
+                "Virtual/Sweeper",
+            ],
+        )
+        self.assertEqual(listing["rows"][0]["appointmentAt"], "Oct 10, 2026, 12:00 PM ET")
+        kept = {row["opportunityId"] for row in listing["rows"]}
+        for dropped in ("by-id", "id-on-opp", "by-name", "by-case", "by-directory"):
+            self.assertNotIn(dropped, kept)
+        self.assertIn(sweeper_id, listing["contract"]["population"])
+        sweeper_src = (METRICS / "diamond_sweeper.py").read_text(encoding="utf-8")
+        self.assertNotIn("is_sweeper_pipeline", sweeper_src)
+        self.assertNotIn("SWEEPER_PIPELINE_ID", sweeper_src)
+        recap = (API / "rep_daily_recap.py").read_text(encoding="utf-8")
+        ads = (METRICS / "ads_dashboard.py").read_text(encoding="utf-8")
+        needle = f'SWEEPER_PIPELINE_ID = "{sweeper_id}"'
+        self.assertIn(needle, recap)
+        self.assertIn(needle, ads)
 
     def test_contact_location_is_used_when_the_opportunity_has_none(self):
         created = {
@@ -465,6 +639,46 @@ class RequestTests(unittest.TestCase):
             metrics.handler.do_GET(req)
         return req, db
 
+    def test_every_date_window_drops_the_sweeper_pipeline_from_the_count(self):
+        sweeper_id = metrics.SWEEPER_PIPELINE_ID
+        created = {
+            "sample_rows": [
+                {
+                    "opportunityId": "keep-rehash",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Rehash",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-02T12:00:00Z",
+                },
+                {
+                    "opportunityId": "drop-sweeper",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Sweeper",
+                    "pipelineId": sweeper_id,
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-03T12:00:00Z",
+                },
+            ]
+        }
+        paths = (
+            "/api/metrics/diamond_opp_list",
+            "/api/metrics/diamond_opp_list?start=2026-10-01&end=2026-10-17",
+            "/api/metrics/diamond_opp_list?start=2026-10-06&end=2026-10-10",
+            "/api/metrics/diamond_opp_list?year=2026&month=10",
+        )
+        with (
+            mock.patch("sales.get_db", return_value=_Db({})),
+            mock.patch("opportunities_created.compute", return_value=created),
+        ):
+            for path in paths:
+                req = _Request(path)
+                metrics.handler.do_GET(req)
+                payload = json.loads(req.wfile.buf.decode("utf-8"))
+                self.assertEqual(req.status, 200, path)
+                self.assertEqual(payload["row_count"], 1, path)
+                self.assertEqual(payload["rows"][0]["opportunityId"], "keep-rehash")
+                self.assertEqual(payload["rows"][0]["pipeline"], "Rehash")
+
     def test_unauthenticated_request_does_not_return_phone_numbers(self):
         req, db = self._get("/api/metrics/diamond_opp_list?start=2026-10-01&end=2026-10-15")
         body = req.wfile.buf.decode("utf-8")
@@ -553,6 +767,8 @@ class RequestTests(unittest.TestCase):
         self.assertIn('kind: "date"', html)
         self.assertIn("Sorted by appointment date and time, latest first", html)
         self.assertNotIn("Newest created date first", html)
+        self.assertIn("Opportunities on the Sweeper pipeline are left off this list.", html)
+        self.assertNotIn("row count matches Diamond Sweeper", html)
         self.assertIn('class="navlink active" href="/api/diamond_opp_list"', html)
 
     def test_nav_sits_beside_diamond_sweeper_including_the_embed_menu(self):

@@ -1022,7 +1022,8 @@ NAV_GROUPS = (
 
 
 # Top-row menus for the embedded Data Center. Labels are the visible names.
-# Every NAV_GROUPS dashboard is listed once. The left rail still uses NAV_GROUPS.
+# Every NAV_GROUPS dashboard is listed at least once. A dashboard may appear in
+# more than one menu. The left rail still uses NAV_GROUPS.
 EMBED_MENUS = (
     (
         "Company",
@@ -1066,6 +1067,8 @@ EMBED_MENUS = (
         (
             "project_management_hub",
             "hold_cancelled",
+            "diamond_opp_list",
+            "sales_list",
         ),
     ),
     (
@@ -1090,7 +1093,11 @@ EMBED_MENUS = (
 def embed_menu_plan():
     """Return (label, slug, ((key, title, href), ...)) for the embedded row.
 
-    Raises if a sidebar dashboard is missing, duplicated, or unknown.
+    Every sidebar dashboard is listed at least once. The same dashboard may
+    appear in more than one menu. Menu and button ids come from the slug, so
+    a shared page does not reuse an id. Raises if a sidebar key is duplicated,
+    a menu key is unknown or repeated inside one menu, two menus share a slug,
+    or a sidebar dashboard is missing.
     """
     by_key = {}
     for _label, items in NAV_GROUPS:
@@ -1098,20 +1105,28 @@ def embed_menu_plan():
             if key in by_key:
                 raise RuntimeError(f"duplicate nav key {key}")
             by_key[key] = (title, href)
-    seen: list[str] = []
+    seen: set[str] = set()
+    slugs: set[str] = set()
     plan = []
     for label, slug, keys in EMBED_MENUS:
+        if slug in slugs:
+            raise RuntimeError(f"duplicate embed menu slug {slug}")
+        slugs.add(slug)
         rows = []
+        menu_keys: set[str] = set()
         for key in keys:
             if key not in by_key:
                 raise RuntimeError(f"embed menu key {key} is not a dashboard")
+            if key in menu_keys:
+                raise RuntimeError(f"embed menu {label} repeats {key}")
+            menu_keys.add(key)
             title, href = by_key[key]
             rows.append((key, title, href))
-            seen.append(key)
+            seen.add(key)
         plan.append((label, slug, tuple(rows)))
     missing = [key for key in by_key if key not in seen]
-    if missing or len(seen) != len(set(seen)):
-        raise RuntimeError(f"embed menus must list each dashboard once; missing={missing}")
+    if missing:
+        raise RuntimeError(f"embed menus must list each dashboard; missing={missing}")
     return tuple(plan)
 
 

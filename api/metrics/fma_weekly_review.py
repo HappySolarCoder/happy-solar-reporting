@@ -29,13 +29,21 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 _METRICS_DIR = Path(__file__).resolve().parent
-if str(_METRICS_DIR) not in sys.path:
-    sys.path.insert(0, str(_METRICS_DIR))
+_API_DIR = _METRICS_DIR.parent
+for _path in (_API_DIR, _METRICS_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from google.cloud import firestore
 from google.oauth2 import service_account
 
 from lead_gen_source import inbound_source_label
+from raydar_test_data import (
+    is_excluded_raydar_record,
+    is_raydar_test_record,
+    setter_excluded_from_metrics,
+    user_record_keys,
+)
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
@@ -267,15 +275,29 @@ def build_ghl_user_names(db: firestore.Client) -> dict[str, str]:
     return out
 
 
-def build_raydar_user_names(db: firestore.Client) -> dict[str, str]:
+def build_raydar_user_names(db: firestore.Client) -> tuple[dict[str, str], set[str]]:
+    """Names for real Raydar users, plus ids of the App Review test setter.
+
+    Both come from the user stream this review already runs.
+    """
+
     out: dict[str, str] = {}
+    test_user_ids: set[str] = set()
     for snap in db.collection("raydar_users_v1").stream():
         data = snap.to_dict() or {}
+        keys = user_record_keys(snap.id, data)
+        if is_raydar_test_record(data, doc_id=snap.id):
+            test_user_ids.update(keys)
+            for value in (data.get("id"), data.get("userId"), snap.id):
+                compacted = compact_str(value)
+                if compacted:
+                    test_user_ids.add(compacted)
+            continue
         name = best_person_name(data, fallback=str(data.get("name") or snap.id))
         for key in {compact_str(data.get("id")), compact_str(data.get("userId")), compact_str(snap.id)}:
             if key and name:
                 out[key] = name
-    return out
+    return out, test_user_ids
 
 
 def build_raydar_dispositions(db: firestore.Client) -> dict[str, dict[str, Any]]:
@@ -369,7 +391,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
     contacts = load_lookup_map(db, "ghl_contacts_v2")
     pipeline_names, stage_names = build_pipeline_maps(db)
     ghl_user_names = build_ghl_user_names(db)
-    raydar_user_names = build_raydar_user_names(db)
+    raydar_user_names, test_user_ids = build_raydar_user_names(db)
     raydar_dispositions = build_raydar_dispositions(db)
 
     roster_people: list[dict[str, Any]] = []
@@ -384,6 +406,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         person_key = compact_str(data.get("person_key") or snap.id)
         setter_last = compact_str(data.get("ghl_setter_last_name"))
         raydar_id = compact_str(data.get("raydar_user_id"))
+        if setter_excluded_from_metrics(data, test_user_ids):
+            continue
         display_name = compact_str(data.get("display_name"))
         if not display_name:
             display_name = raydar_user_names.get(raydar_id) or setter_last or person_key
@@ -441,6 +465,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
     )
     for snap in lead_query.stream():
         data = snap.to_dict() or {}
+        if is_excluded_raydar_record(data, doc_id=snap.id, test_user_ids=test_user_ids):
+            continue
         ts = parse_iso_dt(data.get("dispositionedAt"))
         if not ts:
             continue

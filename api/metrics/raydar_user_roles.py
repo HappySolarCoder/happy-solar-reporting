@@ -14,11 +14,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from raydar_test_data import is_raydar_test_record, user_record_keys  # noqa: E402
 
 
 def get_db() -> firestore.Client:
@@ -98,6 +106,8 @@ class Handler(BaseHTTPRequestHandler):
 
             for snap in db.collection("raydar_users_v1").stream():
                 d = snap.to_dict() or {}
+                if is_raydar_test_record(d, doc_id=snap.id):
+                    continue
                 tokens: list[str] = []
                 for f in sampled_fields:
                     if f in d:
@@ -106,11 +116,7 @@ class Handler(BaseHTTPRequestHandler):
                 cats = classify(tokens)
                 name = str(d.get("name") or d.get("displayName") or d.get("fullName") or snap.id)
 
-                keys = {str(snap.id).strip()}
-                if d.get("id"):
-                    keys.add(str(d.get("id")).strip())
-                if d.get("userId"):
-                    keys.add(str(d.get("userId")).strip())
+                keys = user_record_keys(snap.id, d)
 
                 payload = {"name": name, "categories": cats}
                 for k in keys:

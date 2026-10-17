@@ -23,13 +23,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from raydar_test_data import is_excluded_raydar_record, is_raydar_test_record, user_record_keys  # noqa: E402
 
 
 def get_db() -> firestore.Client:
@@ -79,23 +87,31 @@ class handler(BaseHTTPRequestHandler):
         # Get total (approximation via count)
         # For now just return data; client can count
         
+        # Users first, from the same stream this endpoint already runs, so a
+        # knock by the App Review setter can be dropped without another read.
+        users = {}
+        test_user_ids: set[str] = set()
+        for u in db.collection("raydar_users_v1").stream():
+            ud = u.to_dict() or {}
+            keys = user_record_keys(u.id, ud)
+            if is_raydar_test_record(ud, doc_id=u.id):
+                test_user_ids.update(keys)
+                continue
+            users[u.id] = ud.get("name", "Unknown")
+
         # Execute query with limit/offset
         docs = list(coll.limit(limit).offset(offset).stream())
         leads = []
         for doc in docs:
-            d = doc.to_dict()
+            d = doc.to_dict() or {}
+            if is_excluded_raydar_record(d, doc_id=doc.id, test_user_ids=test_user_ids):
+                continue
             # Convert any Timestamp to ISO string
-            for k, v in d.items():
+            for k, v in list(d.items()):
                 if hasattr(v, "isoformat"):
                     d[k] = v.isoformat()
             d["id"] = doc.id
             leads.append(d)
-
-        # Get users map for joining
-        users = {}
-        for u in db.collection("raydar_users_v1").stream():
-            ud = u.to_dict()
-            users[u.id] = ud.get("name", "Unknown")
 
         # Get dispositions map
         dispositions = {}

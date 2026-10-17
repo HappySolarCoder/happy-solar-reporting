@@ -13,8 +13,10 @@ not in that collection. Live opportunities created a few minutes apart both
 stay. This list does not pull deleted opps back in from stage history.
 
 Dates are the opportunity created date in America/New_York. All time uses
-2025-01-01 through today. Phone numbers are omitted unless the request is a
-same-origin dashboard fetch or presents the Settings password.
+2025-01-01 through today. The default row order is appointment time, latest
+first, with opportunities that have no appointment last. Phone numbers are
+omitted unless the request is a same-origin dashboard fetch or presents the
+Settings password.
 """
 
 from __future__ import annotations
@@ -257,8 +259,69 @@ def load_docs_by_ids(db, collection: str, doc_ids) -> dict[str, dict]:
     return found
 
 
-def _sort_key(row: dict[str, Any]) -> tuple[str, str]:
-    return (str(row.get("createdAt") or ""), str(row.get("opportunityId") or ""))
+def appointment_iso(value: Any) -> str:
+    """UTC timestamp for sorting. Blank when the opportunity has no appointment."""
+    moment = as_datetime(value)
+    if moment is None:
+        return ""
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def pipeline_id_of(row: dict | None, opp: dict | None) -> str:
+    pid = compact(row.get("pipelineId")) if isinstance(row, dict) else ""
+    if pid:
+        return pid
+    if isinstance(opp, dict):
+        return compact(opp.get("pipelineId"))
+    return ""
+
+
+def load_pipeline_directory(db, pipeline_ids) -> tuple[dict[str, str], dict[str, str]]:
+    """Pipeline and stage names from ghl_pipelines_v2.
+
+    Uses sold_date_gaps.load_pipelines_by_ids, the same bounded get_all
+    fill_pipeline_stages uses. A lookup failure leaves both maps empty.
+    """
+    try:
+        from sold_date_gaps import load_pipelines_by_ids
+
+        names, stages = load_pipelines_by_ids(db, pipeline_ids)
+    except Exception:
+        return {}, {}
+    clean_names: dict[str, str] = {}
+    if isinstance(names, dict):
+        for key, value in names.items():
+            pid = compact(key)
+            label = compact(value)
+            if pid and label:
+                clean_names[pid] = label
+    return clean_names, stages if isinstance(stages, dict) else {}
+
+
+def apply_directory_stages(rows: list[dict[str, Any]], stage_names: dict[str, str]) -> None:
+    if not stage_names:
+        return
+    for row in rows:
+        if not isinstance(row, dict) or pipeline_stage_name(row):
+            continue
+        name = pipeline_stage_name(row, stage_names)
+        if name:
+            row["pipelineStage"] = name
+
+
+def pipeline_label(row: dict | None, opp: dict | None, names: dict[str, str]) -> str:
+    pid = pipeline_id_of(row, opp)
+    looked = names.get(pid, "") if pid else ""
+    if looked:
+        return looked
+    return compact(row.get("pipeline")) if isinstance(row, dict) else ""
+
+
+def _sort_key(row: dict[str, Any]) -> tuple[bool, float, str]:
+    """Appointment time, latest first. No appointment sorts last."""
+    moment = as_datetime(row.get("appointmentAtIso"))
+    stamp = 0.0 if moment is None else moment.timestamp()
+    return (moment is None, -stamp, str(row.get("opportunityId") or ""))
 
 
 def compute_diamond_opp_list(
@@ -283,9 +346,17 @@ def compute_diamond_opp_list(
         pipeline_scope="all",
     )
     appointments = created_rows(created, last_name)
-    fill_pipeline_stages(db, appointments)
     contacts = load_docs_by_ids(db, CONTACT_COLLECTION, (row.get("contactId") for row in appointments))
     opps = load_docs_by_ids(db, OPP_COLLECTION, (row.get("opportunityId") for row in appointments))
+    directory_names, stage_names = load_pipeline_directory(
+        db,
+        (
+            pipeline_id_of(row, opps.get(str(row.get("opportunityId") or "")))
+            for row in appointments
+        ),
+    )
+    apply_directory_stages(appointments, stage_names)
+    fill_pipeline_stages(db, appointments)
 
     rows: list[dict[str, Any]] = []
     for row in appointments:
@@ -299,14 +370,17 @@ def compute_diamond_opp_list(
             disposition = compact(opp.get("dispositionValue") or opp.get("disposition"))
         if not disposition:
             disposition = compact(row.get("disposition"))
+        moment = appointment_moment(opp)
         item = {
             "opportunityId": opp_id,
             "contactId": contact_id or None,
             "name": person_name(contact, opp),
             "opportunityUrl": opportunity_url(location_id(opp, contact), opp_id),
+            "pipeline": pipeline_label(row, opp, directory_names),
             "pipelineStage": stage,
             "appointmentOutcome": appointment_outcome(stage, disposition),
-            "appointmentAt": format_appointment_et(appointment_moment(opp)),
+            "appointmentAt": format_appointment_et(moment),
+            "appointmentAtIso": appointment_iso(moment),
             "createdAt": row.get("createdAt") or "",
         }
         if disposition:
@@ -314,7 +388,7 @@ def compute_diamond_opp_list(
         if include_phones:
             item["phone"] = contact_phone(contact)
         rows.append(item)
-    rows.sort(key=_sort_key, reverse=True)
+    rows.sort(key=_sort_key)
     return {
         "metric": "diamond_opp_list",
         "title": TITLE,
@@ -336,7 +410,19 @@ def compute_diamond_opp_list(
             "population": (
                 "created_rows() of opportunities_created.compute pipeline_scope=all. "
                 "Sweeper/Rehash Last Name equals Diamond, case-insensitive. "
-                "One row per opportunity. Newest createdAt first."
+                "One row per opportunity. Default order is appointment time, latest "
+                "first. Opportunities with no appointment are last. The date "
+                "filter is still the opportunity created date."
+            ),
+            "sort": (
+                "appointmentAtIso is the real appointment timestamp. "
+                "The page sorts that value, not the ET display string."
+            ),
+            "pipeline": (
+                "ghl_opportunities_v2.pipelineId -> ghl_pipelines_v2.name via "
+                "sold_date_gaps.load_pipelines_by_ids, the same bounded read "
+                "fill_pipeline_stages uses. Falls back to the name already on "
+                "the created row when the directory has none."
             ),
             "opps_created": (
                 "len(rows) equals Diamond Sweeper opps_created for the same start and end"

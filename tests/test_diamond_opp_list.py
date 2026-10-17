@@ -77,6 +77,7 @@ class _Db:
         self.docs = docs
         self.get_all_calls = 0
         self.batch_sizes: list[int] = []
+        self.fetched_collections: list[str] = []
 
     def collection(self, name: str):
         return _Coll(self, name)
@@ -85,6 +86,8 @@ class _Db:
         self.get_all_calls += 1
         refs = list(refs)
         self.batch_sizes.append(len(refs))
+        if refs:
+            self.fetched_collections.append(refs[0].collection)
         snaps = []
         for ref in refs:
             data = self.docs.get((ref.collection, ref.id))
@@ -216,7 +219,11 @@ class PopulationTests(unittest.TestCase):
         self.assertEqual(listing["rows"][0]["appointmentOutcome"], "Demo-Negotiating · Sit")
         self.assertEqual(listing["rows"][0]["disposition"], "Sit")
         self.assertEqual(listing["rows"][0]["appointmentAt"], "Oct 2, 2026, 2:30 PM ET")
+        self.assertEqual(listing["rows"][0]["appointmentAtIso"], "2026-10-02T18:30:00Z")
+        self.assertEqual(listing["rows"][0]["pipeline"], "Virtual")
         self.assertEqual(listing["rows"][1]["appointmentAt"], "")
+        self.assertEqual(listing["rows"][1]["appointmentAtIso"], "")
+        self.assertEqual(listing["rows"][1]["pipeline"], "Rehash")
         self.assertEqual(
             listing["rows"][0]["opportunityUrl"],
             "https://app.gohighlevel.com/v2/location/"
@@ -284,6 +291,126 @@ class PopulationTests(unittest.TestCase):
             )
         self.assertEqual(listing["rows"][0]["pipelineStage"], "Reschedule Needed")
         self.assertEqual(listing["rows"][0]["appointmentOutcome"], "Reschedule Needed")
+
+    def test_default_sort_is_appointment_time_latest_first_not_the_display_string(self):
+        created = {
+            "sample_rows": [
+                {
+                    "opportunityId": "no-appt",
+                    "sweeperRehashLastName": "Diamond",
+                    "createdAt": "2026-10-09T00:00:00Z",
+                    "pipeline": "Rehash",
+                },
+                {
+                    "opportunityId": "nine-am",
+                    "sweeperRehashLastName": "Diamond",
+                    "createdAt": "2026-10-08T00:00:00Z",
+                    "pipelineStageName": "New Appointment",
+                },
+                {
+                    "opportunityId": "ten-am",
+                    "sweeperRehashLastName": "Diamond",
+                    "createdAt": "2026-10-01T00:00:00Z",
+                    "pipelineStageName": "New Appointment",
+                },
+            ]
+        }
+        docs = {
+            ("ghl_opportunities_v2", "nine-am"): {"appointmentStartTime": "2026-10-02T13:00:00Z"},
+            ("ghl_opportunities_v2", "ten-am"): {"appointmentStartTime": "2026-10-02T14:00:00Z"},
+            ("ghl_opportunities_v2", "no-appt"): {},
+        }
+        with (
+            mock.patch("opportunities_created.compute", return_value=created),
+            mock.patch("demo_rate.build_payload", return_value={"rows": []}),
+            mock.patch("sales.compute_sales", return_value={}),
+        ):
+            sweeper_out = sweeper.compute_diamond_sweeper(
+                object(), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+            listing = metrics.compute_diamond_opp_list(
+                _Db(docs), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+        self.assertEqual(listing["row_count"], sweeper_out["opps_created"])
+        self.assertEqual(listing["date_field"], "createdAt")
+        self.assertEqual(
+            [row["opportunityId"] for row in listing["rows"]],
+            ["ten-am", "nine-am", "no-appt"],
+        )
+        self.assertEqual(listing["rows"][0]["appointmentAt"], "Oct 2, 2026, 10:00 AM ET")
+        self.assertEqual(listing["rows"][1]["appointmentAt"], "Oct 2, 2026, 9:00 AM ET")
+        self.assertEqual(listing["rows"][2]["appointmentAt"], "")
+        self.assertGreater(listing["rows"][0]["appointmentAtIso"], listing["rows"][1]["appointmentAtIso"])
+
+    def test_pipeline_name_comes_from_ghl_pipelines_by_id(self):
+        created = {
+            "sample_rows": [
+                {
+                    "opportunityId": "o-dir",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Stale Name",
+                    "pipelineId": "p-buf",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-02T12:00:00Z",
+                },
+                {
+                    "opportunityId": "o-from-opp",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-03T12:00:00Z",
+                },
+                {
+                    "opportunityId": "o-named",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Virtual",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-04T12:00:00Z",
+                },
+            ]
+        }
+        db = _Db(
+            {
+                ("ghl_opportunities_v2", "o-dir"): {"pipelineId": "p-buf", "appointmentStartTime": "2026-10-06T15:00:00Z"},
+                ("ghl_opportunities_v2", "o-from-opp"): {"pipelineId": "p-roc", "appointmentStartTime": "2026-10-05T15:00:00Z"},
+                ("ghl_opportunities_v2", "o-named"): {},
+                ("ghl_pipelines_v2", "p-buf"): {"id": "p-buf", "name": "Buffalo", "stages": [{"id": "s1", "name": "Demo"}]},
+                ("ghl_pipelines_v2", "p-roc"): {"id": "p-roc", "name": "Rochester", "stages": []},
+            }
+        )
+        with mock.patch("opportunities_created.compute", return_value=created):
+            listing = metrics.compute_diamond_opp_list(
+                db, year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+        by_id = {row["opportunityId"]: row for row in listing["rows"]}
+        self.assertEqual(by_id["o-dir"]["pipeline"], "Buffalo")
+        self.assertEqual(by_id["o-from-opp"]["pipeline"], "Rochester")
+        self.assertEqual(by_id["o-named"]["pipeline"], "Virtual")
+        self.assertIn("ghl_pipelines_v2", db.fetched_collections)
+        self.assertEqual(listing["row_count"], 3)
+
+    def test_pipeline_lookup_failure_keeps_the_row_and_the_name_already_on_it(self):
+        created = {
+            "sample_rows": [
+                {
+                    "opportunityId": "o-keep",
+                    "sweeperRehashLastName": "Diamond",
+                    "pipeline": "Virtual",
+                    "pipelineId": "missing-pipe",
+                    "pipelineStageName": "Demo",
+                    "createdAt": "2026-10-02T12:00:00Z",
+                }
+            ]
+        }
+        with (
+            mock.patch("opportunities_created.compute", return_value=created),
+            mock.patch("sold_date_gaps.load_pipelines_by_ids", side_effect=RuntimeError("lookup failed")),
+        ):
+            listing = metrics.compute_diamond_opp_list(
+                _Db({}), year=2026, month=10, start="2026-10-01", end="2026-10-15"
+            )
+        self.assertEqual(listing["row_count"], 1)
+        self.assertEqual(listing["rows"][0]["pipeline"], "Virtual")
+        self.assertEqual(listing["rows"][0]["pipelineStage"], "Demo")
 
     def test_phones_can_be_withheld_from_the_payload(self):
         with mock.patch("opportunities_created.compute", return_value=CREATED):
@@ -408,10 +535,24 @@ class RequestTests(unittest.TestCase):
         self.assertIn("/api/metrics/diamond_opp_list?", html)
         self.assertIn("pipeline_scope", html)
         self.assertIn('data-oc-native-filters="1"', html)
-        self.assertIn(">Name</th>", html)
-        self.assertIn(">Appointment outcome</th>", html)
-        self.assertIn(">Appointment date and time</th>", html)
-        self.assertIn(">Phone</th>", html)
+        self.assertIn('label: "Name"', html)
+        self.assertIn('label: "Pipeline"', html)
+        self.assertIn('label: "Appointment outcome"', html)
+        self.assertIn('label: "Appointment date and time"', html)
+        self.assertIn('label: "Phone"', html)
+        self.assertIn('data-sort="', html)
+        self.assertIn('class="sortable"', html)
+        self.assertIn('class="sort-ind"', html)
+        self.assertIn("▲", html)
+        self.assertIn("▼", html)
+        self.assertIn('aria-sort="', html)
+        self.assertIn("Date.parse", html)
+        self.assertIn("appointmentAtIso", html)
+        self.assertIn('sortKey = "appointment"', html)
+        self.assertIn('sortDir = "desc"', html)
+        self.assertIn('kind: "date"', html)
+        self.assertIn("Sorted by appointment date and time, latest first", html)
+        self.assertNotIn("Newest created date first", html)
         self.assertIn('class="navlink active" href="/api/diamond_opp_list"', html)
 
     def test_nav_sits_beside_diamond_sweeper_including_the_embed_menu(self):

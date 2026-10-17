@@ -29,6 +29,28 @@ def render_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Diamond — Opportunity List</title>
   <style>__NAV_CSS__</style>
+  <style>
+    .list-table { width: 100%; border-collapse: collapse; }
+    .list-table th, .list-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #1b384c; vertical-align: top; }
+    .list-table th { background: #0a2236; white-space: nowrap; }
+    .list-table th.sortable button {
+      appearance: none;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      margin: 0;
+      color: inherit;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .list-table th.sortable button:hover,
+    .list-table th.sortable button:focus-visible { color: #d8ffe8; }
+    .list-table .sort-ind { color: #3ddc84; font-weight: 900; }
+  </style>
 </head>
 <body class="oc-root" data-oc-native-filters="1">
   __NAV_HTML__
@@ -44,7 +66,7 @@ def render_html() -> str:
         <div>
           <div class="eyebrow">Sales · Sweeper/Rehash</div>
           <h1>Diamond — Opportunity List</h1>
-          <p class="subtitle">One row per opportunity on a contact whose Sweeper/Rehash Last Name is Diamond. Newest created date first. The row count matches Diamond Sweeper Opps created for the same dates. <a class="link" href="/api/diamond_sweeper">Diamond Sweeper</a></p>
+          <p class="subtitle">One row per opportunity on a contact whose Sweeper/Rehash Last Name is Diamond. Sorted by appointment date and time, latest first. Opportunities with no appointment are at the bottom. The row count matches Diamond Sweeper Opps created for the same dates. <a class="link" href="/api/diamond_sweeper">Diamond Sweeper</a></p>
         </div>
       </div>
       <section class="panel">
@@ -57,6 +79,16 @@ def render_html() -> str:
   <script>
     const ALL_TIME_START = "2025-01-01";
     let requestToken = 0;
+    let currentRows = [];
+    let sortKey = "appointment";
+    let sortDir = "desc";
+    const COLUMNS = [
+      { key: "name", label: "Name" },
+      { key: "pipeline", label: "Pipeline" },
+      { key: "appointmentOutcome", label: "Appointment outcome" },
+      { key: "appointment", label: "Appointment date and time", kind: "date" },
+      { key: "phone", label: "Phone" }
+    ];
     function esc(value) {
       return String(value == null ? "" : value).replace(/[&<>"]/g, function (ch) {
         return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch];
@@ -131,20 +163,83 @@ def render_html() -> str:
       if (!row.opportunityUrl) return esc(name);
       return '<a href="' + esc(row.opportunityUrl) + '" target="_blank" rel="noopener noreferrer">' + esc(name) + "</a>";
     }
+    function columnRaw(row, key) {
+      if (key === "appointment") {
+        const iso = row.appointmentAtIso || "";
+        if (!iso) return null;
+        const ms = Date.parse(iso);
+        return Number.isNaN(ms) ? null : ms;
+      }
+      if (key === "name") return row.name || "";
+      if (key === "pipeline") return row.pipeline || "";
+      if (key === "appointmentOutcome") return row.appointmentOutcome || "";
+      if (key === "phone") return row.phone || "";
+      return "";
+    }
+    function compareRows(a, b) {
+      const col = COLUMNS.filter(function (item) { return item.key === sortKey; })[0] || COLUMNS[3];
+      const av = columnRaw(a, col.key);
+      const bv = columnRaw(b, col.key);
+      const aEmpty = av == null || av === "";
+      const bEmpty = bv == null || bv === "";
+      if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
+      let cmp = 0;
+      if (!aEmpty) {
+        if (col.kind === "date") cmp = av - bv;
+        else cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+      }
+      if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
+      return String(a.opportunityId || "").localeCompare(String(b.opportunityId || ""));
+    }
+    function headerCell(col) {
+      const active = col.key === sortKey;
+      const arrow = active ? (sortDir === "asc" ? "▲" : "▼") : "";
+      const aria = active ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+      const mark = arrow ? ' <span class="sort-ind" aria-hidden="true">' + arrow + "</span>" : "";
+      return '<th class="sortable" aria-sort="' + aria + '"><button type="button" data-sort="' + esc(col.key) + '">' + esc(col.label) + mark + "</button></th>";
+    }
+    function cellHtml(row, key) {
+      if (key === "name") return nameCell(row);
+      if (key === "appointment") return esc(row.appointmentAt || "");
+      if (key === "pipeline") return esc(row.pipeline || "");
+      if (key === "appointmentOutcome") return esc(row.appointmentOutcome || "—");
+      if (key === "phone") return esc(row.phone || "");
+      return "";
+    }
+    function paintTable() {
+      const rows = currentRows.slice().sort(compareRows);
+      const table = document.getElementById("listTable");
+      if (!rows.length) {
+        table.innerHTML = '<p class="chart-note">No Diamond opportunities created in this range.</p>';
+        return;
+      }
+      const head = COLUMNS.map(headerCell).join("");
+      const body = rows.map(function (row) {
+        return "<tr>" + COLUMNS.map(function (col) { return "<td>" + cellHtml(row, col.key) + "</td>"; }).join("") + "</tr>";
+      }).join("");
+      table.innerHTML = '<table class="list-table"><thead><tr>' + head + "</tr></thead><tbody>" + body + "</tbody></table>";
+      table.querySelectorAll("button[data-sort]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          const key = button.getAttribute("data-sort");
+          if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+          else {
+            sortKey = key;
+            sortDir = key === "appointment" ? "desc" : "asc";
+          }
+          paintTable();
+        });
+      });
+    }
     function paint(payload) {
       const start = payload.start || "";
       const end = payload.end || "";
       document.getElementById("asOf").textContent = (start && end ? start + " – " + end + " · " : "") + "America/New_York";
       const rows = payload.rows || [];
       document.getElementById("listMeta").textContent = String(payload.row_count == null ? rows.length : payload.row_count) + " opportunities";
-      if (!rows.length) {
-        document.getElementById("listTable").innerHTML = '<p class="chart-note">No Diamond opportunities created in this range.</p>';
-        return;
-      }
-      const body = rows.map(function (row) {
-        return "<tr><td>" + nameCell(row) + "</td><td>" + esc(row.appointmentOutcome || "—") + "</td><td>" + esc(row.appointmentAt || "") + "</td><td>" + esc(row.phone || "") + "</td></tr>";
-      }).join("");
-      document.getElementById("listTable").innerHTML = "<table><thead><tr><th>Name</th><th>Appointment outcome</th><th>Appointment date and time</th><th>Phone</th></tr></thead><tbody>" + body + "</tbody></table>";
+      currentRows = rows.slice();
+      sortKey = "appointment";
+      sortDir = "desc";
+      paintTable();
     }
     function showUnavailable() {
       document.getElementById("asOf").textContent = "Unavailable";

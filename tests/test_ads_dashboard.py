@@ -621,7 +621,8 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual(payload["kpis"]["demos"]["value"], 1)
         self.assertFalse(metric.stage_is_demo("One Legger"))
         self.assertTrue(metric.stage_is_demo("Demo-Not Interested"))
-        self.assertFalse(metric.stage_is_demo("Sale Cancelled"))
+        self.assertTrue(metric.stage_is_demo("Sale Cancelled"))
+        self.assertTrue(metric.stage_is_demo("Sale Canceled"))
         self.assertFalse(metric.stage_is_demo("Reschedule Needed"))
 
     def test_one_legger_is_not_a_demo(self):
@@ -659,6 +660,86 @@ class AdsDashboardTests(unittest.TestCase):
         )
         self.assertEqual(from_history["kpis"]["opps"]["value"], 1)
         self.assertEqual(from_history["kpis"]["demos"]["value"], 0)
+
+    def test_sale_cancelled_counts_as_a_demo_and_a_sale(self):
+        self.assertTrue(metric.stage_is_sale("Sale Cancelled"))
+        self.assertTrue(metric.stage_is_sale("Sale Canceled"))
+        self.assertTrue(metric.stage_is_sale("Sold"))
+        self.assertFalse(metric.stage_is_sale("One Legger"))
+        self.assertFalse(metric.stage_is_sale("Demo-Negotiating"))
+        self.assertIn("Sale Cancelled", metric.stage_is_sale.__doc__ or "")
+        self.assertIn("one sale", (metric.stage_is_sale.__doc__ or "").lower())
+        self.assertIn("Sale Cancelled", metric.stage_is_demo.__doc__ or "")
+        cancelled_id = "adf3106e-d371-47ff-ab9e-6f7f33ecf415"
+        sold_id = "7981f111-73f2-4593-9662-6b95d99bf51a"
+        self.assertIn(cancelled_id, metric._sold_stage_ids())
+        self.assertIn(sold_id, metric._sold_stage_ids())
+        contacts = {"c": contact("c", "inbound", sold="2026-10-08")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        names = {
+            "stage-New Lead": "New Lead",
+            cancelled_id: "Sale Cancelled",
+            sold_id: "Sold",
+            "stage-cancelled": "Sale Cancelled",
+        }
+        cancelled = city_opp("cancelled", "c", INSIDE, "No Sit")
+        cancelled["pipelineStageId"] = cancelled_id
+        payload = assemble(contacts, pipeline, [cancelled], names)
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+        self.assertEqual(payload["kpis"]["sales"]["value"], 1)
+        self.assertEqual(payload["kpis"]["cost_per_sale"]["value"], 270.30)
+        named = city_opp("named", "c", INSIDE, "No Sit")
+        named["pipelineStageId"] = "stage-cancelled"
+        by_name = assemble(contacts, pipeline, [named], names)
+        self.assertNotIn("stage-cancelled", metric._sold_stage_ids())
+        self.assertEqual(by_name["kpis"]["demos"]["value"], 1)
+        self.assertEqual(by_name["kpis"]["sales"]["value"], 1)
+        self.assertEqual(by_name["kpis"]["cost_per_sale"]["value"], 270.30)
+        sold = city_opp("sold-opp", "c", INSIDE, "No Sit")
+        sold["pipelineStageId"] = sold_id
+        pair = assemble(contacts, pipeline, [sold, cancelled], names)
+        self.assertEqual(pair["kpis"]["opps"]["value"], 2)
+        self.assertEqual(pair["kpis"]["sales"]["value"], 1)
+        self.assertEqual(pair["kpis"]["cost_per_sale"]["value"], 270.30)
+        outside = {"c": contact("c", "inbound", sold="2026-09-15")}
+        missed = assemble(outside, pipeline, [cancelled], names)
+        self.assertEqual(missed["kpis"]["sales"]["value"], 0)
+        self.assertEqual(missed["kpis"]["demos"]["value"], 1)
+
+    def test_sale_cancelled_after_a_demo_on_the_same_opp_is_one_demo(self):
+        contacts = {"c": contact("c", "inbound", sold="2026-10-08")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]
+        opp = city_opp("moved", "c", INSIDE, "No Sit")
+        opp["pipelineStageId"] = "stage-cancelled"
+        names = {"stage-New Lead": "New Lead", "stage-cancelled": "Sale Cancelled"}
+        payload = assemble(
+            contacts,
+            pipeline,
+            [opp],
+            names,
+            history={
+                "moved": [
+                    {
+                        "opportunityId": "moved",
+                        "contactId": "c",
+                        "pipelineName": "Buffalo",
+                        "toStageName": "Demo-Negotiating",
+                        "effectiveAt": INSIDE,
+                    },
+                    {
+                        "opportunityId": "moved",
+                        "contactId": "c",
+                        "pipelineName": "Buffalo",
+                        "toStageName": "Sale Cancelled",
+                        "effectiveAt": "2026-10-09T17:00:00.000Z",
+                    },
+                ]
+            },
+        )
+        self.assertEqual(payload["kpis"]["opps"]["value"], 1)
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+        self.assertEqual(payload["kpis"]["sales"]["value"], 1)
 
     def test_sales_use_sold_stage_and_sold_date(self):
         sold_stage = sorted(metric._sold_stage_ids())[0]
@@ -971,6 +1052,54 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertIn(">Goal $40<", html)
         self.assertIn(">Goal $90<", html)
         self.assertIn(">Goal $250<", html)
+
+    def test_unusable_cost_goals_fall_back_to_constants(self):
+        contacts, pipeline, city, names = warehouse()
+        cases = (
+            ("zero", 0),
+            ("negative", -5),
+            ("nan", float("nan")),
+            ("infinite", float("inf")),
+            ("non_numeric", "nope"),
+        )
+        for label, bad in cases:
+            parsed = metric.goals_from_doc(
+                {
+                    "goals": {
+                        "ads_dashboard": {
+                            "leads": 30,
+                            "cost_per_lead": bad,
+                            "cost_per_opp": bad,
+                            "cost_per_demo": bad,
+                            "cost_per_sale": bad,
+                        }
+                    }
+                },
+                "2026-10",
+            )
+            self.assertEqual(parsed["leads"], 30, label)
+            for key in ("cost_per_lead", "cost_per_opp", "cost_per_demo", "cost_per_sale"):
+                self.assertIsNone(parsed[key], f"{label} {key}")
+            shown = assemble(contacts, pipeline, city, names, goals=parsed)
+            self.assertEqual(shown["kpis"]["cost_per_lead"]["goal"], 25, label)
+            self.assertEqual(shown["kpis"]["cost_per_opp"]["goal"], 100, label)
+            self.assertEqual(shown["kpis"]["cost_per_demo"]["goal"], 300, label)
+            self.assertEqual(shown["kpis"]["cost_per_sale"]["goal"], 600, label)
+            self.assertEqual(shown["kpis"]["cost_per_lead"]["goal_display"], "$25", label)
+            self.assertEqual(shown["kpis"]["cost_per_opp"]["goal_display"], "$100", label)
+            self.assertEqual(shown["kpis"]["cost_per_demo"]["goal_display"], "$300", label)
+            self.assertEqual(shown["kpis"]["cost_per_sale"]["goal_display"], "$600", label)
+            self.assertNotIn("inf", shown["kpis"]["cost_per_sale"]["goal_display"].lower(), label)
+            raw = {
+                "cost_per_lead": bad,
+                "cost_per_opp": bad,
+                "cost_per_demo": bad,
+                "cost_per_sale": bad,
+            }
+            self.assertEqual(metric.cost_goal_value(raw, "cost_per_lead"), 25, label)
+            self.assertEqual(metric.cost_goal_value(raw, "cost_per_opp"), 100, label)
+            self.assertEqual(metric.cost_goal_value(raw, "cost_per_demo"), 300, label)
+            self.assertEqual(metric.cost_goal_value(raw, "cost_per_sale"), 600, label)
 
     def test_nav_and_routes(self):
         html = nav.render_dashboard_nav("ads_dashboard")

@@ -19,12 +19,15 @@ The write merges goals.ads_dashboard on goals_monthly_v1/2026-10 and leaves
 other people on that month alone. A missing document is created with
 set(merge=True), so an Admin Settings write that lands first is kept.
 A second --apply does not write when the October values already match.
+Cost goals must be positive finite numbers. Zero, negative, NaN, infinite,
+and non-numeric values are refused and nothing is written.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -47,6 +50,12 @@ METRICS: dict[str, int] = {
     "cost_per_demo": 300,
     "cost_per_sale": 600,
 }
+COST_KEYS = (
+    "cost_per_lead",
+    "cost_per_opp",
+    "cost_per_demo",
+    "cost_per_sale",
+)
 _ADMIN_ENV = (
     "SETTINGS_PASSWORD",
     "FIREBASE_SERVICE_ACCOUNT_JSON",
@@ -75,6 +84,36 @@ def _same_number(left: Any, right: Any) -> bool:
         return False
 
 
+class InvalidCostGoal(ValueError):
+    """A cost goal is missing or not a positive finite number."""
+
+
+def _positive_finite_cost(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        try:
+            number = float(str(value).replace(",", "").replace("$", "").strip())
+        except (TypeError, ValueError):
+            return False
+    return math.isfinite(number) and number > 0
+
+
+def invalid_cost_reason(metrics: dict[str, Any] | None = None) -> str | None:
+    """Refuse a write when a cost goal is zero, negative, NaN, infinite, or junk."""
+    source = METRICS if metrics is None else metrics
+    for key in COST_KEYS:
+        if not _positive_finite_cost(source.get(key)):
+            return (
+                "Refusing to write. "
+                + key
+                + " must be a positive finite number. The value is not printed."
+            )
+    return None
+
+
 def metrics_match(data: dict[str, Any] | None, person_key: str = PERSON_KEY) -> bool:
     goals = (data or {}).get("goals") if isinstance(data, dict) else None
     current = goals.get(person_key) if isinstance(goals, dict) else None
@@ -85,6 +124,9 @@ def metrics_match(data: dict[str, Any] | None, person_key: str = PERSON_KEY) -> 
 
 def apply_document(db: Any, now: datetime | None = None) -> str:
     """Create or merge the October doc. Returns created, updated, or unchanged."""
+    reason = invalid_cost_reason()
+    if reason:
+        raise InvalidCostGoal(reason)
     ref = db.collection(COLLECTION).document(MONTH)
     snap = ref.get()
     exists = bool(getattr(snap, "exists", False))
@@ -138,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
         help="write goals_monthly_v1/2026-10 (default is a dry run)",
     )
     args = parser.parse_args(argv)
+    reason = invalid_cost_reason()
+    if reason:
+        print(reason, file=sys.stderr)
+        return 2
     if not args.apply:
         print(json.dumps(planned_document(), indent=2, sort_keys=True))
         print(

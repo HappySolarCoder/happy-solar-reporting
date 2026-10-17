@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -242,18 +243,53 @@ def _contact_id(opp: dict[str, Any]) -> str:
     return cac.compact_str(opp.get("contactId"))
 
 
-def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage or Sold is a demo. A One Legger is not a demo."""
+def _stage_fold(stage_name: Any) -> str:
     folded = _fold(stage_name).replace("-", " ").replace("/", " ")
-    folded = " ".join(folded.split())
+    return " ".join(folded.split())
+
+
+def _is_sold_name(folded: str) -> bool:
+    return folded == "sold" or folded.startswith("sold ")
+
+
+def _is_sale_cancelled_name(folded: str) -> bool:
+    return folded in {"sale cancelled", "sale canceled"} or folded.startswith(
+        ("sale cancelled ", "sale canceled ")
+    )
+
+
+def stage_is_sale(stage_name: Any) -> bool:
+    """Sold or Sale Cancelled is a sale.
+
+    One opportunity counts once. A lead with a Sold opportunity and a Sale
+    Cancelled opportunity is still one sale, the same dedupe as Sold.
+    """
+    folded = _stage_fold(stage_name)
     if not folded:
         return False
-    if folded == "sold" or folded.startswith("sold "):
+    return _is_sold_name(folded) or _is_sale_cancelled_name(folded)
+
+
+def stage_is_demo(stage_name: Any) -> bool:
+    """A Demo-* stage, Sold, or Sale Cancelled is a demo. A One Legger is not a demo.
+
+    Sale Cancelled matches Sold. One opportunity is one demo: a Sale Cancelled
+    stage on an opportunity that already sat a Demo does not add a second demo.
+    """
+    folded = _stage_fold(stage_name)
+    if not folded:
+        return False
+    if _is_sold_name(folded) or _is_sale_cancelled_name(folded):
         return True
     return folded == "demo" or folded.startswith("demo ")
 
 
 def _sold_stage_ids() -> set[str]:
+    """Buffalo, Syracuse, Rochester, and Virtual Sold and Sale Cancelled stage ids.
+
+    Sale Cancelled counts as a sale the same way Sold does: the current city
+    stage, Contact Sold Date in the window, and one sale per deduped lead.
+    """
     return set(cac.SalesMetricContract().stage_ids)
 
 
@@ -629,7 +665,10 @@ def classify_window(
         if opp_id in seen_city:
             continue
         seen_city.add(opp_id)
-        if cac.compact_str(opp.get(cac.STAGE_FIELD)) in sold_ids:
+        stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
+        # Id or name, once per contact. Sold and Sale Cancelled on this opp
+        # do not become two sales.
+        if stage_id in sold_ids or stage_is_sale(opp_stage_label(opp, stage_names)):
             sold_contacts.add(contact_id)
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
@@ -671,6 +710,7 @@ def classify_window(
         if _history_has_city_demo(history_rows, stage_names):
             demo_ids.add(opp_id)
 
+    # One sale per deduped lead, whether the city stage is Sold or Sale Cancelled.
     sales: set[str] = set()
     for cluster in clusters:
         ids = {row["contact_id"] for row in cluster}
@@ -710,8 +750,33 @@ def money_goal_label(goal: float | int) -> str:
     return f"${number:,.2f}"
 
 
+COST_GOAL_KEYS = frozenset({"cost_per_lead", "cost_per_opp", "cost_per_demo", "cost_per_sale"})
+
+
+def _usable_cost_goal(value: Any) -> float | int | None:
+    """A positive finite cost goal. Zero, negative, NaN, inf, and junk are missing."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        try:
+            number = float(str(value).replace(",", "").replace("$", "").strip())
+        except (TypeError, ValueError):
+            return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    if number.is_integer():
+        return int(number)
+    return number
+
+
 def cost_goal_value(goals: dict[str, Any] | None, key: str) -> float | int:
-    """Month-doc cost goal, or the standing constant when that field is absent."""
+    """Month-doc cost goal, or the standing constant when that field is unusable.
+
+    Missing, zero, negative, NaN, infinite, and non-numeric values fall back
+    to $25 / $100 / $300 / $600.
+    """
     fallback = {
         "cost_per_lead": COST_PER_LEAD_GOAL,
         "cost_per_opp": COST_PER_OPP_GOAL,
@@ -720,7 +785,7 @@ def cost_goal_value(goals: dict[str, Any] | None, key: str) -> float | int:
     }[key]
     if not isinstance(goals, dict):
         return fallback
-    value = goals.get(key)
+    value = _usable_cost_goal(goals.get(key))
     if value is None:
         return fallback
     return value
@@ -1067,7 +1132,11 @@ def goals_from_doc(data: dict[str, Any] | None, month: str) -> dict[str, Any]:
                 continue
             for name in names:
                 if name in metric_fold:
-                    found[slot] = _number(metric_fold[name])
+                    raw = metric_fold[name]
+                    if slot in COST_GOAL_KEYS:
+                        found[slot] = _usable_cost_goal(raw)
+                    else:
+                        found[slot] = _number(raw)
                     break
     if not found:
         return _goal_result("missing", month, None)

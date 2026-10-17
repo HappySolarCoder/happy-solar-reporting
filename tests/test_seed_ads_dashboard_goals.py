@@ -227,6 +227,36 @@ class SeedAdsDashboardGoalsTests(unittest.TestCase):
         self.assertNotIn(secret, combined)
         self.assertNotIn("private_key", combined)
 
+    def test_apply_refuses_unusable_cost_goals(self):
+        cases = (
+            ("zero", 0),
+            ("negative", -1),
+            ("nan", float("nan")),
+            ("infinite", float("inf")),
+            ("non_numeric", "abc"),
+        )
+        for label, bad in cases:
+            for key in seed.COST_KEYS:
+                db = FakeDB()
+                with self.subTest(case=label, key=key):
+                    with patch.dict(seed.METRICS, {key: bad}):
+                        with self.assertRaises(seed.InvalidCostGoal):
+                            seed.apply_document(db)
+                        self.assertEqual(db.sets, [])
+                        self.assertEqual(db.updates, [])
+                        self.assertEqual(db.docs, {})
+                        err = io.StringIO()
+                        with patch.object(seed, "get_db", side_effect=AssertionError("connected")):
+                            with redirect_stderr(err):
+                                code = seed.main(["--apply"])
+                        self.assertEqual(code, 2)
+                        message = err.getvalue()
+                        self.assertIn("Refusing to write", message)
+                        self.assertIn(key, message)
+                        self.assertNotIn("private_key", message)
+                        if label == "non_numeric":
+                            self.assertNotIn("abc", message)
+
 
 if __name__ == "__main__":
     unittest.main()

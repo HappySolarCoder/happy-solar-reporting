@@ -24,10 +24,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 
 import base64
+
+_API_DIR = Path(__file__).resolve().parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from raydar_test_data import is_raydar_test_record, setter_excluded_from_metrics, user_record_keys  # noqa: E402
 
 
 def _unauthorized(h: BaseHTTPRequestHandler):
@@ -95,13 +103,25 @@ def write_json(req: BaseHTTPRequestHandler, status: int, payload: dict):
     req.wfile.write(body)
 
 
-def list_raydar_users(db: firestore.Client) -> list[dict[str, str]]:
+def index_raydar_users(db: firestore.Client) -> tuple[list[dict[str, str]], set[str]]:
+    """Raydar user dropdown rows, and App Review test user ids, from one user stream."""
+
     out: list[dict[str, str]] = []
+    test_user_ids: set[str] = set()
     for snap in db.collection("raydar_users_v1").stream():
         d = snap.to_dict() or {}
+        keys = user_record_keys(snap.id, d)
+        if is_raydar_test_record(d, doc_id=snap.id):
+            test_user_ids.update(keys)
+            continue
         out.append({"value": str(snap.id), "label": str(d.get("name") or snap.id)})
     out.sort(key=lambda x: x["label"].lower())
-    return out
+    return out, test_user_ids
+
+
+def list_raydar_users(db: firestore.Client) -> list[dict[str, str]]:
+    options, _test_user_ids = index_raydar_users(db)
+    return options
 
 
 def list_ghl_users(db: firestore.Client) -> list[dict[str, str]]:
@@ -231,8 +251,14 @@ def get_cached_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str
     return values
 
 
-def list_roster(db: firestore.Client) -> list[dict[str, Any]]:
-    raydar_map = {u["value"]: u["label"] for u in list_raydar_users(db)}
+def list_roster(
+    db: firestore.Client,
+    raydar_users: list[dict[str, str]] | None = None,
+    test_user_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    if raydar_users is None or test_user_ids is None:
+        raydar_users, test_user_ids = index_raydar_users(db)
+    raydar_map = {u["value"]: u["label"] for u in raydar_users}
     ghl_map = {u["value"]: u["label"] for u in list_ghl_users(db)}
 
     rows: list[dict[str, Any]] = []
@@ -241,6 +267,8 @@ def list_roster(db: firestore.Client) -> list[dict[str, Any]]:
         pk = str(d.get("person_key") or snap.id)
         ray_id = str(d.get("raydar_user_id") or "")
         ghl_id = str(d.get("ghl_user_id") or "")
+        if setter_excluded_from_metrics({**d, "raydar_user_id": ray_id}, test_user_ids):
+            continue
 
         rows.append(
             {
@@ -444,10 +472,11 @@ class handler(BaseHTTPRequestHandler):
                     now = datetime.now(timezone.utc)
                     month = f"{now.year}-{str(now.month).zfill(2)}"
 
+                raydar_users, test_user_ids = index_raydar_users(db)
                 out = {
-                    "raydar_users": list_raydar_users(db),
+                    "raydar_users": raydar_users,
                     "ghl_users": list_ghl_users(db),
-                    "roster_people": list_roster(db),
+                    "roster_people": list_roster(db, raydar_users, test_user_ids),
                     "goals_for_month": goals_for_month(db, month),
                 }
                 write_json(self, 200, out)

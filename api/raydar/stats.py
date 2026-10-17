@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
 from google.cloud import firestore
+
+_API_DIR = Path(__file__).resolve().parent.parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
+from raydar_test_data import is_excluded_raydar_record, is_raydar_test_record, user_record_keys  # noqa: E402
 
 
 def get_db() -> firestore.Client:
@@ -38,8 +46,22 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode())
             return
 
-        leads_count = sum(1 for _ in db.collection("raydar_leads_v1").stream())
-        users_count = sum(1 for _ in db.collection("raydar_users_v1").stream())
+        test_user_ids: set[str] = set()
+        users_count = 0
+        for snap in db.collection("raydar_users_v1").stream():
+            data = snap.to_dict() or {}
+            if is_raydar_test_record(data, doc_id=snap.id):
+                test_user_ids.update(user_record_keys(snap.id, data))
+                continue
+            users_count += 1
+
+        leads_count = 0
+        for snap in db.collection("raydar_leads_v1").stream():
+            data = snap.to_dict() or {}
+            if is_excluded_raydar_record(data, doc_id=snap.id, test_user_ids=test_user_ids):
+                continue
+            leads_count += 1
+
         dispositions_count = sum(1 for _ in db.collection("raydar_dispositions_v1").stream())
 
         # Get last sync info

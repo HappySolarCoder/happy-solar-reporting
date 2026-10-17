@@ -53,6 +53,11 @@ if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
 from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
+from raydar_test_data import (
+    is_excluded_raydar_record,
+    is_raydar_test_record,
+    user_record_keys,
+)
 from time_on_doors import knock_actor_id, observe_door_knock, time_on_doors_by_actor, time_on_doors_table
 
 _RAYDAR_CACHE = QueryCache()
@@ -211,31 +216,32 @@ def date_range_window(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[datet
     return start_local, end_local_exclusive, start_local.isoformat(), end_local_exclusive.isoformat(), label
 
 
-def user_name_map(db: firestore.Client) -> dict[str, str]:
-    """Map Raydar user ids to display names.
+def user_name_map(db: firestore.Client) -> tuple[dict[str, str], set[str]]:
+    """Map Raydar user ids to display names, and collect App Review test user ids.
 
     Raydar leads often reference users via `dispositionHistory[0].userId`, which may not match
     the Firestore document id. So we index by:
     - doc id
     - d.id
     - d.userId
+
+    Test users stay out of the name map. Their ids still come back so knocks they
+    logged can be dropped from the same user stream.
     """
 
     out: dict[str, str] = {}
+    test_user_ids: set[str] = set()
     for snap in db.collection(MetricContract.users_collection).stream():
         d = snap.to_dict() or {}
+        keys = user_record_keys(snap.id, d)
+        if is_raydar_test_record(d, doc_id=snap.id):
+            test_user_ids.update(keys)
+            continue
         name = str(d.get("name") or d.get("fullName") or d.get("displayName") or snap.id).strip()
-        keys = {str(snap.id).strip()}
-        if d.get("id"):
-            keys.add(str(d.get("id")).strip())
-        if d.get("userId"):
-            keys.add(str(d.get("userId")).strip())
+        for key in keys:
+            out[key] = name
 
-        for k in keys:
-            if k:
-                out[k] = name
-
-    return out
+    return out, test_user_ids
 
 
 def disposition_map(db: firestore.Client) -> dict[str, dict[str, Any]]:
@@ -334,6 +340,8 @@ def build_payload(
         .order_by(MetricContract.time_field)
     )
 
+    users, test_user_ids = user_name_map(db)
+
     by_actor: dict[str, int] = {}
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
@@ -364,8 +372,10 @@ def build_payload(
     convos_by_claimed: dict[str, int] = {}
 
     for snap in q.stream():
-        streamed += 1
         d = snap.to_dict() or {}
+        if is_excluded_raydar_record(d, doc_id=snap.id, test_user_ids=test_user_ids):
+            continue
+        streamed += 1
         cb = d.get("claimedBy")
         at = d.get("assignedTo")
 
@@ -420,7 +430,7 @@ def build_payload(
     manual_knock_adjustments, adjustment_source = load_knock_adjustments(adjustment_month_key)
     applied_adjustments: dict[str, int] = {}
     for uid, delta in manual_knock_adjustments.items():
-        if delta == 0:
+        if delta == 0 or uid in test_user_ids:
             continue
         by_actor[uid] = int(by_actor.get(uid, 0)) + int(delta)
         applied_adjustments[uid] = int(delta)
@@ -430,11 +440,12 @@ def build_payload(
     time_by_actor = time_on_doors_by_actor(door_spans)
 
     docs = list(q.limit(25).stream())
-    users = user_name_map(db)
 
     sample_rows: list[dict[str, Any]] = []
     for snap in docs:
         dd = snap.to_dict() or {}
+        if is_excluded_raydar_record(dd, doc_id=snap.id, test_user_ids=test_user_ids):
+            continue
         ts = dd.get(MetricContract.time_field)
         ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else None
         claimed_by = dd.get("claimedBy")

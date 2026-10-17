@@ -83,6 +83,7 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
+from raydar_test_data import is_excluded_raydar_record, is_raydar_test_record, user_record_keys
 
 METRICS_DIR = API_DIR / "metrics"
 if str(METRICS_DIR) not in sys.path:
@@ -496,15 +497,22 @@ def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     }
 
 
-def load_raydar_user_directory(db: firestore.Client) -> dict[str, dict[str, str]]:
+def load_raydar_user_directory(db: firestore.Client) -> tuple[dict[str, dict[str, str]], set[str]]:
+    """Real Raydar users, plus ids of the App Review test setter from that same stream."""
+
     users: dict[str, dict[str, str]] = {}
+    test_user_ids: set[str] = set()
     for snap in db.collection("raydar_users_v1").stream():
         row = snap.to_dict() or {}
+        keys = user_record_keys(snap.id, row)
+        if is_raydar_test_record(row, doc_id=snap.id):
+            test_user_ids.update(keys)
+            continue
         users[compact_str(snap.id)] = {
             "name": compact_str(row.get("name")) or snap.id,
             "email": normalize_email(row.get("email") or row.get("emailAddress") or row.get("userEmail")),
         }
-    return users
+    return users, test_user_ids
 
 
 def pipeline_name_lookup(db: firestore.Client) -> tuple[dict[str, str], dict[str, str]]:
@@ -1074,7 +1082,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         setter_blocklist=setter_blocklist,
     )
     alias_index = build_owner_alias_index(identities)
-    raydar_users = load_raydar_user_directory(db)
+    raydar_users, test_user_ids = load_raydar_user_directory(db)
     raydar_to_owner = build_raydar_to_owner(identities, raydar_users)
 
     # Powerline calls by agent for the same ET window.
@@ -1116,6 +1124,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     # Raydar door knocks by primary actor for the same ET window.
     for snap in db.collection("raydar_leads_v1").where("dispositionedAt", ">=", start_utc).where("dispositionedAt", "<", end_utc).stream():
         row = snap.to_dict() or {}
+        if is_excluded_raydar_record(row, doc_id=snap.id, test_user_ids=test_user_ids):
+            continue
         actor = None
         hist0 = (row.get("dispositionHistory") or [None])[0]
         if isinstance(hist0, dict):

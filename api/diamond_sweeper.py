@@ -47,6 +47,7 @@ def render_html() -> str:
           <div class="eyebrow">Sales · Sweeper/Rehash</div>
           <h1>Diamond — Sweeper/Rehash</h1>
           <p class="subtitle">Tyler Diamond. Opportunities on contacts whose Sweeper/Rehash Last Name is Diamond. Dates are America/New_York. Territory and lead source filters from other pages do not change these counts.</p>
+          <p class="chart-note"><a class="link" id="oppListLink" href="/api/diamond_opp_list">Diamond — Opportunity List</a></p>
         </div>
       </div>
       <div class="kpis" style="--n:4" id="scorecard" aria-live="polite">
@@ -108,6 +109,11 @@ def render_html() -> str:
         document.getElementById("dEnd").value = today;
         applyDates();
       });
+      const listLink = document.getElementById("oppListLink");
+      if (listLink) {
+        const current = filters();
+        listLink.href = "/api/diamond_opp_list?start=" + encodeURIComponent(current.start) + "&end=" + encodeURIComponent(current.end);
+      }
       host.querySelectorAll("[data-preset]").forEach(function (button) {
         button.addEventListener("click", function () {
           const range = window.hsOpsPresetRange(button.getAttribute("data-preset"));

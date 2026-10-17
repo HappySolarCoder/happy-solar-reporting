@@ -34,6 +34,15 @@ seed = load_module("seed_ads_dashboard_goals", ROOT / "scripts" / "seed_ads_dash
 metric = load_module("ads_dashboard_metric_for_seed", METRICS / "ads_dashboard.py")
 
 
+def _deep_merge(base: dict, incoming: dict) -> None:
+    for key, value in incoming.items():
+        current = base.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            _deep_merge(current, value)
+        else:
+            base[key] = value
+
+
 def _apply_dotted(document: dict, updates: dict) -> None:
     for key, value in updates.items():
         cursor = document
@@ -66,9 +75,14 @@ class Doc:
             return Snap(None, False)
         return Snap(self.store.docs[self.month], True)
 
-    def set(self, data):
+    def set(self, data, merge=False):
         self.store.sets.append(data)
-        self.store.docs[self.month] = json.loads(json.dumps(data))
+        self.store.merges.append(merge)
+        incoming = json.loads(json.dumps(data))
+        if merge and self.month in self.store.docs:
+            _deep_merge(self.store.docs[self.month], incoming)
+        else:
+            self.store.docs[self.month] = incoming
 
     def update(self, data):
         self.store.updates.append(dict(data))
@@ -80,6 +94,7 @@ class FakeDB:
     def __init__(self):
         self.docs: dict[str, dict] = {}
         self.sets: list[dict] = []
+        self.merges: list[bool] = []
         self.updates: list[dict] = []
         self.collections: list[str] = []
 
@@ -119,6 +134,10 @@ class SeedAdsDashboardGoalsTests(unittest.TestCase):
         self.assertEqual(parsed["opps"], 10)
         self.assertEqual(parsed["demos"], 6)
         self.assertEqual(parsed["sales"], 3)
+        self.assertEqual(parsed["cost_per_lead"], 25)
+        self.assertEqual(parsed["cost_per_opp"], 100)
+        self.assertEqual(parsed["cost_per_demo"], 300)
+        self.assertEqual(parsed["cost_per_sale"], 600)
 
     def test_apply_refuses_without_admin_env_and_hides_secrets(self):
         secret = "super-secret-token"
@@ -155,9 +174,36 @@ class SeedAdsDashboardGoalsTests(unittest.TestCase):
         db = FakeDB()
         self.assertEqual(seed.apply_document(db), "created")
         self.assertEqual(len(db.sets), 1)
+        self.assertEqual(db.merges, [True])
         self.assertEqual(db.docs["2026-10"]["goals"]["ads_dashboard"]["opps"], 10)
         self.assertEqual(seed.apply_document(db), "unchanged")
         self.assertEqual(len(db.sets), 1)
+
+    def test_missing_doc_set_merges_with_an_admin_settings_write(self):
+        class RacingDoc(Doc):
+            def get(self):
+                missing = self.month not in self.store.docs
+                snap = Snap(None, False) if missing else Snap(self.store.docs[self.month], True)
+                if missing:
+                    self.store.docs[self.month] = {
+                        "month": self.month,
+                        "note": "from admin",
+                        "goals": {"setter:jane": {"sales_goal": 9}},
+                    }
+                return snap
+
+        class RacingDB(FakeDB):
+            def document(self, month):
+                return RacingDoc(self, month)
+
+        racing = RacingDB()
+        self.assertEqual(seed.apply_document(racing), "created")
+        self.assertEqual(racing.merges, [True])
+        goals = racing.docs["2026-10"]["goals"]
+        self.assertEqual(goals["setter:jane"]["sales_goal"], 9)
+        self.assertEqual(goals["ads_dashboard"]["leads"], 30)
+        self.assertEqual(goals["ads_dashboard"]["cost_per_opp"], 100)
+        self.assertEqual(racing.docs["2026-10"]["note"], "from admin")
 
     def test_apply_writes_through_get_db_without_printing_secrets(self):
         db = FakeDB()

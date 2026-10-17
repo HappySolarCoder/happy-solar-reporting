@@ -78,6 +78,10 @@ GOAL_METRIC_NAMES = {
     "opps": ("opps", "opps_goal", "opportunities"),
     "demos": ("demos", "demos_goal"),
     "sales": ("sales", "sales_goal"),
+    "cost_per_lead": ("cost_per_lead",),
+    "cost_per_opp": ("cost_per_opp",),
+    "cost_per_demo": ("cost_per_demo",),
+    "cost_per_sale": ("cost_per_sale",),
 }
 HOURLY_BREAKDOWN = "hourly_stats_aggregated_by_advertiser_time_zone"
 DASH = "\u2014"
@@ -239,14 +243,12 @@ def _contact_id(opp: dict[str, Any]) -> str:
 
 
 def stage_is_demo(stage_name: Any) -> bool:
-    """A Demo-* stage, One Legger, or Sold is a demo."""
+    """A Demo-* stage or Sold is a demo. A One Legger is not a demo."""
     folded = _fold(stage_name).replace("-", " ").replace("/", " ")
     folded = " ".join(folded.split())
     if not folded:
         return False
     if folded == "sold" or folded.startswith("sold "):
-        return True
-    if "one legger" in folded:
         return True
     return folded == "demo" or folded.startswith("demo ")
 
@@ -701,8 +703,27 @@ def _blank_number(reason: str) -> dict[str, Any]:
     return {"value": None, "display": DASH, "reason": reason}
 
 
-def money_goal_label(goal: int) -> str:
-    return f"${int(goal):,}"
+def money_goal_label(goal: float | int) -> str:
+    number = float(goal)
+    if number.is_integer():
+        return f"${int(number):,}"
+    return f"${number:,.2f}"
+
+
+def cost_goal_value(goals: dict[str, Any] | None, key: str) -> float | int:
+    """Month-doc cost goal, or the standing constant when that field is absent."""
+    fallback = {
+        "cost_per_lead": COST_PER_LEAD_GOAL,
+        "cost_per_opp": COST_PER_OPP_GOAL,
+        "cost_per_demo": COST_PER_DEMO_GOAL,
+        "cost_per_sale": COST_PER_SALE_GOAL,
+    }[key]
+    if not isinstance(goals, dict):
+        return fallback
+    value = goals.get(key)
+    if value is None:
+        return fallback
+    return value
 
 
 def cost_block(spend: float | None, count: int | None, goal: float | None, goal_display: str) -> dict[str, Any]:
@@ -844,6 +865,10 @@ def assemble_ads_dashboard(
     opps_kpi = _volume_kpi(counts["opps"], goal_status, opp_goal)
     demos_kpi = _volume_kpi(counts["demos"], goal_status, demo_goal)
     sales_kpi = _volume_kpi(counts["sales"], goal_status, sale_goal)
+    lead_cost_goal = cost_goal_value(goals, "cost_per_lead")
+    opp_cost_goal = cost_goal_value(goals, "cost_per_opp")
+    demo_cost_goal = cost_goal_value(goals, "cost_per_demo")
+    sale_cost_goal = cost_goal_value(goals, "cost_per_sale")
 
     days = psf.window_dates(start_local, end_local)
     series = sessions.get("series") if sessions.get("status") == "ok" else None
@@ -872,19 +897,19 @@ def assemble_ads_dashboard(
             "spend": spend_kpi,
             "inbound_leads": leads_kpi,
             "cost_per_lead": cost_block(
-                spend, counts["inbound_leads"], COST_PER_LEAD_GOAL, money_goal_label(COST_PER_LEAD_GOAL)
+                spend, counts["inbound_leads"], lead_cost_goal, money_goal_label(lead_cost_goal)
             ),
             "opps": opps_kpi,
             "cost_per_opp": cost_block(
-                spend, counts["opps"], COST_PER_OPP_GOAL, money_goal_label(COST_PER_OPP_GOAL)
+                spend, counts["opps"], opp_cost_goal, money_goal_label(opp_cost_goal)
             ),
             "demos": demos_kpi,
             "cost_per_demo": cost_block(
-                spend, counts["demos"], COST_PER_DEMO_GOAL, money_goal_label(COST_PER_DEMO_GOAL)
+                spend, counts["demos"], demo_cost_goal, money_goal_label(demo_cost_goal)
             ),
             "sales": sales_kpi,
             "cost_per_sale": cost_block(
-                spend, counts["sales"], COST_PER_SALE_GOAL, money_goal_label(COST_PER_SALE_GOAL)
+                spend, counts["sales"], sale_cost_goal, money_goal_label(sale_cost_goal)
             ),
         },
         "stages": counts["stages"],
@@ -1018,6 +1043,10 @@ def _goal_result(
         "opps": found.get("opps"),
         "demos": found.get("demos"),
         "sales": found.get("sales"),
+        "cost_per_lead": found.get("cost_per_lead"),
+        "cost_per_opp": found.get("cost_per_opp"),
+        "cost_per_demo": found.get("cost_per_demo"),
+        "cost_per_sale": found.get("cost_per_sale"),
         "note": note,
     }
 

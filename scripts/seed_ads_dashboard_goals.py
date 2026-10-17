@@ -16,8 +16,9 @@ Firestore admin env (FIREBASE_SERVICE_ACCOUNT_JSON, GCP_PROJECT_ID,
 FIRESTORE_DATABASE_ID). The script never prints those values.
 
 The write merges goals.ads_dashboard on goals_monthly_v1/2026-10 and leaves
-other people on that month alone. A second --apply does not write when the
-October values already match.
+other people on that month alone. A missing document is created with
+set(merge=True), so an Admin Settings write that lands first is kept.
+A second --apply does not write when the October values already match.
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ def apply_document(db: Any, now: datetime | None = None) -> str:
         return "unchanged"
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not exists:
-        ref.set(planned_document(moment))
+        ref.set(planned_document(moment), merge=True)
         return "created"
     updates: dict[str, Any] = {"month": MONTH, "updatedAt": moment.isoformat()}
     for key, value in METRICS.items():

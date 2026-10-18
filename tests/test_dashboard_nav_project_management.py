@@ -9,8 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NAV_PATH = ROOT / "api" / "dashboard_nav.py"
 
-PM_HUB_URL = "https://happy-solar-monday-pm.vercel.app/project-management-hub.html"
-HOLD_CANCELLED_URL = "https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html"
+PM_HUB_URL = "/api/project_management_hub"
+HOLD_CANCELLED_URL = "/api/hold_cancelled"
 
 
 def load_module(name: str, path: Path):
@@ -134,7 +134,9 @@ class DashboardNavProjectManagementTests(unittest.TestCase):
         )
         self.assertIn('class="oc-embed-link" href="/api/sales_dashboard"', html)
         self.assertIn('class="oc-embed-link" href="/api/website_funnel"', html)
-        self.assertIn(f'href="{PM_HUB_URL}" target="_blank"', html)
+        self.assertIn(f'href="{PM_HUB_URL}"', html)
+        self.assertNotIn(f'href="{PM_HUB_URL}" target="_blank"', html)
+        self.assertNotIn(f'href="{HOLD_CANCELLED_URL}" target="_blank"', html)
         self.assertIn(".oc-embed-bar { display: none; }", css)
         self.assertIn("html.oc-embedded .oc-embed-bar {", css)
         self.assertIn("html.oc-embedded #sidebar,", css)

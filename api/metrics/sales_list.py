@@ -6,9 +6,10 @@ JSON grain for the Sales List dashboard (Essential / Momentum / 3rd Roc / All).
 Reuses compute_essential_sales → compute_sales. Does not invent a new sales grain,
 does not change locked stage IDs or the Sold Date field, and does not write to GHL.
 
-Dashboard overlays (notes, email, phone) live in Firestore named DB happy-solar,
-collection sales_list_notes_v1, keyed by contactId. GHL Appointment Notes stay
-read-only. Email/phone fall back to ghl_contacts_v2 until an overlay is saved.
+Dashboard overlays (notes, email, phone, WC, ASI Tyler) live in Firestore
+named DB happy-solar, collection sales_list_notes_v1, keyed by contactId.
+GHL Appointment Notes stay read-only. Email/phone/WC fall back to the sales
+row until an overlay is saved. ASI Tyler is blank until a Yes or No is saved.
 """
 
 from __future__ import annotations
@@ -49,6 +50,8 @@ SEARCH_FIELDS: tuple[str, ...] = (
     "contactId",
     "notes",
     "dashboardNote",
+    "wc",
+    "asiTyler",
 )
 
 INSTALLER_TABS: tuple[tuple[str, str], ...] = (
@@ -98,6 +101,9 @@ INSTALLER_ALIASES: dict[str, frozenset[str]] = {
 # Date sold stays first. Evan: client name 2nd, installer 3rd. Remaining
 # Essential-tab fields keep their prior relative order, plus dashboard notes.
 _ESSENTIAL_LABELS = {key: label for key, label in ESSENTIAL_COLUMNS}
+_EXTRA_LABELS = {"dashboardNote": "Dashboard notes", "asiTyler": "ASI Tyler"}
+ASI_TYLER_VALUES = ("", "Yes", "No")
+WC_MAX_LENGTH = 200
 SALES_LIST_COLUMN_KEYS: tuple[str, ...] = (
     "submissionDate",
     "client",
@@ -106,6 +112,7 @@ SALES_LIST_COLUMN_KEYS: tuple[str, ...] = (
     "salesperson",
     "wc",
     "asi",
+    "asiTyler",
     "esco",
     "cdg",
     "size",
@@ -119,7 +126,7 @@ SALES_LIST_COLUMN_KEYS: tuple[str, ...] = (
     "qp",
 )
 SALES_LIST_COLUMNS: tuple[tuple[str, str], ...] = tuple(
-    (key, "Dashboard notes" if key == "dashboardNote" else _ESSENTIAL_LABELS[key])
+    (key, _EXTRA_LABELS[key] if key in _EXTRA_LABELS else _ESSENTIAL_LABELS[key])
     for key in SALES_LIST_COLUMN_KEYS
 )
 
@@ -396,8 +403,39 @@ def overlay_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def normalize_wc(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        raise ValueError("wc must be text")
+    text = compact_text(value)
+    if len(text) > WC_MAX_LENGTH:
+        raise ValueError("wc must be 200 characters or fewer")
+    return text
+
+
+def normalize_asi_tyler(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        raise ValueError("asiTyler must be Yes, No, or blank")
+    text = compact_text(value)
+    if not text:
+        return ""
+    folded = text.casefold()
+    if folded == "yes":
+        return "Yes"
+    if folded == "no":
+        return "No"
+    raise ValueError("asiTyler must be Yes, No, or blank")
+
+
+def stored_asi_tyler(value: Any) -> str:
+    """Read path: a value that is not Yes/No/blank displays as blank."""
+    try:
+        return normalize_asi_tyler(value)
+    except ValueError:
+        return ""
+
+
 def normalize_overlays(notes_by_contact: dict[str, Any] | None) -> dict[str, dict[str, str]]:
-    """Accept legacy {contactId: note} maps or full {contactId: {note, email, phone}} overlays."""
+    """Accept legacy {contactId: note} maps or full overlay objects."""
     overlays: dict[str, dict[str, str]] = {}
     for raw_id, value in (notes_by_contact or {}).items():
         contact_id = compact_text(raw_id)
@@ -409,6 +447,10 @@ def normalize_overlays(notes_by_contact: dict[str, Any] | None) -> dict[str, dic
                 overlay["email"] = overlay_text(value.get("email"))
             if "phone" in value:
                 overlay["phone"] = overlay_text(value.get("phone"))
+            if "wc" in value:
+                overlay["wc"] = overlay_text(value.get("wc"))
+            if "asiTyler" in value:
+                overlay["asiTyler"] = stored_asi_tyler(value.get("asiTyler"))
             overlays[contact_id] = overlay
         else:
             overlays[contact_id] = {"note": overlay_text(value)}
@@ -437,6 +479,9 @@ def merge_contact_overlays(
             item["email"] = overlay["email"]
         if "phone" in overlay:
             item["phone"] = overlay["phone"]
+        if "wc" in overlay:
+            item["wc"] = overlay["wc"]
+        item["asiTyler"] = overlay.get("asiTyler", item.get("asiTyler") or "")
         merged.append(item)
     return merged
 
@@ -454,6 +499,10 @@ def _overlay_from_snap(snap: Any) -> tuple[str, dict[str, str]] | None:
         overlay["email"] = overlay_text(data.get("email"))
     if "phone" in data:
         overlay["phone"] = overlay_text(data.get("phone"))
+    if "wc" in data:
+        overlay["wc"] = overlay_text(data.get("wc"))
+    if "asiTyler" in data:
+        overlay["asiTyler"] = stored_asi_tyler(data.get("asiTyler"))
     return contact_id, overlay
 
 
@@ -492,12 +541,20 @@ def upsert_sales_list_overlay(
     note: Any = OVERLAY_UNSET,
     email: Any = OVERLAY_UNSET,
     phone: Any = OVERLAY_UNSET,
+    wc: Any = OVERLAY_UNSET,
+    asi_tyler: Any = OVERLAY_UNSET,
 ) -> dict[str, str]:
     cid = compact_text(contact_id)
     if not cid:
         raise ValueError("contactId is required")
-    if note is OVERLAY_UNSET and email is OVERLAY_UNSET and phone is OVERLAY_UNSET:
-        raise ValueError("note, email, or phone is required")
+    if (
+        note is OVERLAY_UNSET
+        and email is OVERLAY_UNSET
+        and phone is OVERLAY_UNSET
+        and wc is OVERLAY_UNSET
+        and asi_tyler is OVERLAY_UNSET
+    ):
+        raise ValueError("note, email, phone, wc, or asiTyler is required")
     payload: dict[str, str] = {
         "contactId": cid,
         "updated_at": datetime.utcnow().isoformat() + "Z",
@@ -508,6 +565,10 @@ def upsert_sales_list_overlay(
         payload["email"] = compact_text(email)
     if phone is not OVERLAY_UNSET:
         payload["phone"] = compact_text(phone)
+    if wc is not OVERLAY_UNSET:
+        payload["wc"] = normalize_wc(wc)
+    if asi_tyler is not OVERLAY_UNSET:
+        payload["asiTyler"] = normalize_asi_tyler(asi_tyler)
     db.collection(NOTES_COLLECTION).document(cid).set(payload, merge=True)
     return dict(payload)
 
@@ -686,7 +747,7 @@ def compute_sales_list(
                 "database": "happy-solar",
                 "key": "contactId",
                 "ghl_writeback": False,
-                "fields": ["note", "email", "phone"],
+                "fields": ["note", "email", "phone", "wc", "asiTyler"],
             },
             "fields": {
                 **((base.get("contract") or {}).get("fields") or {}),
@@ -702,6 +763,14 @@ def compute_sales_list(
                 "phone": (
                     "ghl_contacts_v2.phone, overlaid by "
                     f"firestore {NOTES_COLLECTION}/{{contactId}}.phone when set"
+                ),
+                "wc": (
+                    "essential sales WC, overlaid by "
+                    f"firestore {NOTES_COLLECTION}/{{contactId}}.wc when set"
+                ),
+                "asiTyler": (
+                    f"firestore {NOTES_COLLECTION}/{{contactId}}.asiTyler; "
+                    "Yes, No, or blank"
                 ),
                 "ghlContactUrl": (
                     f"{GHL_APP_ORIGIN}/v2/location/{{locationId}}/contacts/detail/{{contactId}} "

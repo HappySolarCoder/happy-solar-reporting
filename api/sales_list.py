@@ -3,8 +3,8 @@
 """Vercel Python function: /api/sales_list
 
 Sales List dashboard: Essential / Momentum / 3rd Roc / All on the locked
-Sales grain. Dashboard notes, email, and phone persist in Firestore
-sales_list_notes_v1. Data: /api/metrics/sales_list. Overlay write:
+Sales grain. Dashboard notes, email, phone, WC, and ASI Tyler persist in
+Firestore sales_list_notes_v1. Data: /api/metrics/sales_list. Overlay write:
 POST /api/metrics/sales_list_notes.
 """
 
@@ -149,7 +149,7 @@ __DASHBOARD_NAV_CSS__
     <div class="topbar">
       <div>
         <div class="title">Sales List</div>
-        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Defaults to all-time sales and All installers. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes, email, and phone save to Firestore only — GHL appointment notes stay read-only.</div>
+        <div class="subtitle">Live GHL sales board for Essential, Momentum, and 3rd Roc. Defaults to all-time sales and All installers. Grain matches locked Sales / Essential Sales (distinct contact, Sold / Sale Cancelled). Dashboard notes, email, phone, WC, and ASI Tyler save to Firestore only — GHL appointment notes stay read-only.</div>
         <div class="accentline"></div>
 __DASHBOARD_NAV_HTML__
       </div>
@@ -190,7 +190,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-title">Sales list</div>
         <div class="table-toolbar">
-          <div class="meta">Essential-tab columns plus editable email, phone, and Dashboard notes. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
+          <div class="meta">Essential-tab columns plus editable WC, email, phone, ASI Tyler, and Dashboard notes. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
           <div class="filters">
             <div class="filter"><div class="filter-label">Search</div>
               <input type="search" id="searchBox" class="searchbox" placeholder="Name, address, email, phone…" autocomplete="off" />
@@ -297,7 +297,7 @@ function identityBlob(row) {
   return [
     row.client, row.address, row.email, row.phone,
     row.salesperson, row.installer, row.contactId,
-    row.notes, row.dashboardNote
+    row.notes, row.dashboardNote, row.wc, row.asiTyler
   ].join(' ').toLowerCase();
 }
 function rowMatchesSearch(row, q) {
@@ -367,13 +367,27 @@ function renderTable(el, columns, rows) {
             html += esc(r.client);
           }
           html += '</td>';
-        } else if (c.key === 'email' || c.key === 'phone') {
+        } else if (c.key === 'wc' || c.key === 'email' || c.key === 'phone') {
           html += '<td class="dash-edit">';
           if (cid) {
             html += '<input class="dash-field" data-contact="' + esc(cid) + '" data-field="' + esc(c.key) + '" data-original="' + esc(r[c.key]) + '" aria-label="' + esc(c.label) + '" value="' + esc(r[c.key]) + '" />';
             html += '<span class="note-status" data-status-for="' + esc(c.key) + ':' + esc(cid) + '"></span>';
           } else {
             html += esc(r[c.key]);
+          }
+          html += '</td>';
+        } else if (c.key === 'asiTyler') {
+          html += '<td class="dash-edit">';
+          if (cid) {
+            var asi = (r.asiTyler === 'Yes' || r.asiTyler === 'No') ? r.asiTyler : '';
+            html += '<select class="dash-field" data-contact="' + esc(cid) + '" data-field="asiTyler" data-original="' + esc(asi) + '" aria-label="ASI Tyler">';
+            html += '<option value=""' + (asi === '' ? ' selected' : '') + '></option>';
+            html += '<option value="Yes"' + (asi === 'Yes' ? ' selected' : '') + '>Yes</option>';
+            html += '<option value="No"' + (asi === 'No' ? ' selected' : '') + '>No</option>';
+            html += '</select>';
+            html += '<span class="note-status" data-status-for="asiTyler:' + esc(cid) + '"></span>';
+          } else {
+            html += esc(r.asiTyler);
           }
           html += '</td>';
         } else {
@@ -393,8 +407,14 @@ function renderTable(el, columns, rows) {
       renderVisible();
     });
   }
-  el.querySelectorAll('textarea.dash-note, input.dash-field').forEach(function(field) {
-    field.addEventListener('blur', function() { saveField(field); });
+  el.querySelectorAll('textarea.dash-note, input.dash-field, select.dash-field').forEach(function(field) {
+    field.addEventListener('blur', function() {
+      if (field.tagName === 'SELECT') return;
+      saveField(field);
+    });
+    field.addEventListener('change', function() {
+      if (field.tagName === 'SELECT') saveField(field);
+    });
     field.addEventListener('keydown', function(ev) {
       if (ev.key === 'Enter' && field.tagName === 'INPUT') {
         ev.preventDefault();
@@ -438,6 +458,7 @@ async function saveField(el) {
   try { data = await res.json(); } catch (_err) { data = {}; }
   if (!res.ok || data.ok === false) {
     setFieldStatus(contactId, field, data.error || 'Save failed', 'err');
+    if (el.tagName === 'SELECT') el.value = el.getAttribute('data-original') || '';
     return;
   }
   rememberField(contactId, field, next);

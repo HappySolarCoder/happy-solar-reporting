@@ -292,6 +292,94 @@ class NotesMergeUpsertTests(unittest.TestCase):
         self.assertEqual(sales_list.NOTES_COLLECTION, "sales_list_notes_v1")
         self.assertEqual(notes_handler.NOTES_COLLECTION, "sales_list_notes_v1")
 
+    def test_wc_and_asi_tyler_round_trip_in_sales_list_notes(self):
+        db = FakeDb()
+        sales_list.upsert_sales_list_note(db, contact_id="c-ess", note="Keep this")
+        saved = sales_list.upsert_sales_list_overlay(
+            db,
+            contact_id="c-ess",
+            wc="Called",
+            asi_tyler="yes",
+        )
+        self.assertEqual(saved["wc"], "Called")
+        self.assertEqual(saved["asiTyler"], "Yes")
+        self.assertEqual(db.notes["c-ess"]["note"], "Keep this")
+        self.assertNotIn("note", saved)
+        overlays = sales_list.load_overlays_by_contact_ids(db, ["c-ess"])
+        self.assertEqual(overlays["c-ess"]["wc"], "Called")
+        self.assertEqual(overlays["c-ess"]["asiTyler"], "Yes")
+        merged = sales_list.merge_contact_overlays(
+            sample_rows(),
+            {"c-ess": overlays["c-ess"], "c-mom": {"note": "", "wc": "", "asiTyler": "No"}},
+        )
+        by_id = {row["contactId"]: row for row in merged}
+        self.assertEqual(by_id["c-ess"]["wc"], "Called")
+        self.assertEqual(by_id["c-ess"]["asiTyler"], "Yes")
+        self.assertEqual(by_id["c-ess"]["dashboardNote"], "Keep this")
+        self.assertEqual(by_id["c-mom"]["wc"], "")
+        self.assertEqual(by_id["c-mom"]["asiTyler"], "No")
+        self.assertEqual(by_id["c-roc"]["asiTyler"], "")
+        cleared = sales_list.upsert_sales_list_overlay(db, contact_id="c-ess", wc="", asi_tyler="")
+        self.assertEqual(cleared["wc"], "")
+        self.assertEqual(cleared["asiTyler"], "")
+        reloaded = sales_list.load_overlays_by_contact_ids(db, ["c-ess"])["c-ess"]
+        self.assertEqual(reloaded["wc"], "")
+        self.assertEqual(reloaded["asiTyler"], "")
+        self.assertEqual(reloaded["note"], "Keep this")
+
+    def test_asi_tyler_and_wc_are_validated(self):
+        db = FakeDb()
+        with self.assertRaises(ValueError):
+            sales_list.upsert_sales_list_overlay(db, contact_id="c-ess", asi_tyler="Maybe")
+        with self.assertRaises(ValueError):
+            sales_list.upsert_sales_list_overlay(db, contact_id="c-ess", wc="x" * 201)
+        with self.assertRaises(ValueError):
+            sales_list.upsert_sales_list_overlay(db, contact_id="c-ess", asi_tyler={"yes": True})
+        self.assertEqual(db.notes, {})
+        self.assertEqual(sales_list.normalize_asi_tyler(" NO "), "No")
+        self.assertEqual(sales_list.normalize_asi_tyler(""), "")
+        self.assertEqual(sales_list.stored_asi_tyler("maybe"), "")
+
+    def test_notes_post_persists_wc_and_asi_tyler(self):
+        import io
+        import json
+
+        db = FakeDb()
+        original = notes_handler.get_db
+        notes_handler.get_db = lambda: db
+        raw = json.dumps({"contactId": "c-ess", "wc": "WC-1", "asiTyler": "No"}).encode()
+        inst = notes_handler.handler.__new__(notes_handler.handler)
+        inst.headers = {"Content-Length": str(len(raw))}
+        inst.rfile = io.BytesIO(raw)
+        inst.wfile = io.BytesIO()
+        inst.send_response = lambda status: setattr(inst, "status", status)
+        inst.send_header = lambda *_args: None
+        inst.end_headers = lambda: None
+        try:
+            inst._upsert()
+            self.assertEqual(inst.status, 200)
+            self.assertEqual(db.notes["c-ess"]["wc"], "WC-1")
+            self.assertEqual(db.notes["c-ess"]["asiTyler"], "No")
+            body = json.loads(inst.wfile.getvalue().decode())
+            self.assertTrue(body["ok"])
+            self.assertEqual(body["asiTyler"], "No")
+            self.assertFalse(body["ghl_writeback"])
+
+            raw_bad = json.dumps(
+                {"contactId": "c-ess", "asiTyler": "Maybe", "phone": "5550001111"}
+            ).encode()
+            inst.headers = {"Content-Length": str(len(raw_bad))}
+            inst.rfile = io.BytesIO(raw_bad)
+            inst.wfile = io.BytesIO()
+            inst._upsert()
+            self.assertEqual(inst.status, 400)
+            error_body = inst.wfile.getvalue().decode()
+            self.assertNotIn("5550001111", error_body)
+            self.assertIn("asiTyler", error_body)
+            self.assertEqual(db.notes["c-ess"]["asiTyler"], "No")
+        finally:
+            notes_handler.get_db = original
+
 
 class SalesGrainParityTests(unittest.TestCase):
     def _compute(self, **filters):
@@ -377,8 +465,11 @@ class SalesGrainParityTests(unittest.TestCase):
         self.assertEqual(payload["filters"]["salesperson"], "Alex Rivera")
         self.assertIn("dashboardNote", [c["key"] for c in payload["columns"]])
         self.assertEqual([c["key"] for c in payload["columns"][:3]], ["submissionDate", "client", "installer"])
-        self.assertEqual(payload["columns"][13]["key"], "notes")
-        self.assertEqual(payload["columns"][14]["key"], "dashboardNote")
+        self.assertEqual(payload["columns"][14]["key"], "notes")
+        self.assertEqual(payload["columns"][15]["key"], "dashboardNote")
+        keys = [column["key"] for column in payload["columns"]]
+        self.assertEqual(keys[keys.index("asi") + 1], "asiTyler")
+        self.assertEqual(payload["columns"][keys.index("asiTyler")]["label"], "ASI Tyler")
 
     def test_start_end_pass_through_to_compute_sales(self):
         captured = {}
@@ -634,7 +725,9 @@ class ColumnOrderTests(unittest.TestCase):
         self.assertEqual(keys, list(sales_list.SALES_LIST_COLUMN_KEYS))
         self.assertEqual(len(keys), len(set(keys)))
         essential_keys = [key for key, _label in essential.ESSENTIAL_COLUMNS]
-        self.assertEqual(set(keys) - {"dashboardNote"}, set(essential_keys))
+        self.assertEqual(set(keys) - {"dashboardNote", "asiTyler"}, set(essential_keys))
+        self.assertEqual(keys[keys.index("asi") + 1], "asiTyler")
+        self.assertEqual(dict(sales_list.SALES_LIST_COLUMNS)["asiTyler"], "ASI Tyler")
         self.assertEqual(essential_keys[0], "submissionDate")
         self.assertNotEqual(essential_keys[1], "client")
         self.assertNotEqual(essential_keys[2], "installer")
@@ -771,7 +864,11 @@ class NavAndPageTests(unittest.TestCase):
         self.assertIn("renderVisible()", html)
         self.assertIn('id="searchBox"', html)
         self.assertIn('id="sortBtn"', html)
-        self.assertIn("c.key === 'email' || c.key === 'phone'", html)
+        self.assertIn("c.key === 'wc' || c.key === 'email' || c.key === 'phone'", html)
+        self.assertIn("c.key === 'asiTyler'", html)
+        self.assertIn('data-field="asiTyler"', html)
+        self.assertIn(">Yes</option>", html)
+        self.assertIn(">No</option>", html)
         self.assertIn("data-field=\"' + esc(c.key) + '\"", html)
         self.assertIn("saveField(field)", html)
         self.assertIn("Oldest first", html)

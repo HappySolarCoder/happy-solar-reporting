@@ -5,8 +5,10 @@
 Upsert dashboard overlays for the Sales List board. Persists to Firestore
 named DB happy-solar, collection sales_list_notes_v1, keyed by contactId.
 
-Accepts note, email, and/or phone. Omitted fields are left unchanged.
-Does not write back to GHL. Empty values are stored as empty strings.
+Accepts note, email, phone, wc, and/or asiTyler. Omitted fields are left
+unchanged. asiTyler must be Yes, No, or blank. wc is text up to 200
+characters. Does not write back to GHL. Empty values are stored as empty
+strings.
 """
 
 from __future__ import annotations
@@ -60,6 +62,8 @@ def _overlay_payload(contact_id: str, overlay: dict[str, str] | None) -> dict[st
         "note": stored.get("note", ""),
         "email": stored.get("email", ""),
         "phone": stored.get("phone", ""),
+        "wc": stored.get("wc", ""),
+        "asiTyler": stored.get("asiTyler", ""),
     }
 
 
@@ -91,6 +95,10 @@ class handler(BaseHTTPRequestHandler):
                 kwargs["email"] = payload.get("email")
             if "phone" in payload:
                 kwargs["phone"] = payload.get("phone")
+            if "wc" in payload:
+                kwargs["wc"] = payload.get("wc")
+            if "asiTyler" in payload:
+                kwargs["asi_tyler"] = payload.get("asiTyler")
             saved = upsert_sales_list_overlay(get_db(), **kwargs)
             _write_json(
                 self,

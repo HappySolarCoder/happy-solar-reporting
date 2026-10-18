@@ -986,12 +986,12 @@ NAV_GROUPS = (
             (
                 "project_management_hub",
                 "Project Hub",
-                "https://happy-solar-monday-pm.vercel.app/project-management-hub.html",
+                "/api/project_management_hub",
             ),
             (
                 "hold_cancelled",
                 "Hold / Cancelled",
-                "https://happy-solar-monday-pm.vercel.app/happy-slr-hold-cancelled.html",
+                "/api/hold_cancelled",
             ),
         ),
     ),

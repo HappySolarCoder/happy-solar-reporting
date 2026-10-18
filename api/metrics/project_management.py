@@ -12,12 +12,21 @@ Diamond — Opportunity List and Missing Dispositions:
 https://app.gohighlevel.com/v2/location/{locationId}/opportunities/list/{oppId}?tab=OpportunityDetails
 
 A row with an opportunity id uses that URL. A row with only a contact
-id uses the contact page. Anything else stays plain text.
+id uses the contact page. Anything else is matched against the synced
+GoHighLevel collections (ghl_contacts_v2 and ghl_opportunities_v2):
+normalized phone, then email, then customer name. Several opportunities
+on one contact prefer a project or sold stage, then the most recent.
+A contact with no opportunity uses the contact page. Anything still
+unmatched stays plain text.
+
+The lookup is a handful of batched Firestore `in` queries plus one
+pipeline read, cached in memory. It does not read one document per row.
 """
 
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import math
 import os
@@ -49,6 +58,48 @@ ACTIVE_SECTIONS = ("onboarding", "ep_ops", "ep_installation")
 HOLD_SECTION = "hold_cancel"
 CANCELLATION_START_MONTH = "2026-01"
 SNAPSHOT_TTL_SECONDS = 300
+GHL_INDEX_TTL_SECONDS = 900
+FIRESTORE_IN_LIMIT = 30
+MAX_CONTACTS_PER_KEY = 8
+CONTACT_COLLECTION = "ghl_contacts_v2"
+OPP_COLLECTION = "ghl_opportunities_v2"
+PIPELINE_COLLECTION = "ghl_pipelines_v2"
+CONTACT_FIELDS = (
+    "id",
+    "phone",
+    "email",
+    "firstName",
+    "lastName",
+    "contactName",
+    "name",
+    "fullName",
+    "locationId",
+    "dateUpdated",
+    "dateAdded",
+    "additionalPhones",
+    "additionalEmails",
+)
+OPP_FIELDS = (
+    "id",
+    "contactId",
+    "locationId",
+    "name",
+    "pipelineStageId",
+    "pipelineStageName",
+    "stageName",
+    "createdAt",
+    "updatedAt",
+    "lastStatusChangeAt",
+    "lastStageChangeAt",
+)
+_NAME_WORD = re.compile(r"[A-Za-z][A-Za-z']*")
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_PROJECT_STAGE = re.compile(
+    r"sold|sale cancel|project|install|permit|\bpto\b|finaliz|final approval|"
+    r"interconnect|onboarding|site survey|site evaluation|inspection|engineering",
+    re.IGNORECASE,
+)
+_GHL_CACHE: dict[str, Any] = {"at": 0.0, "key": "", "index": None}
 
 LOCATION_KEYS = ("ghlLocationId", "ghl_location_id", "locationId", "location_id")
 OPPORTUNITY_KEYS = (
@@ -160,6 +211,606 @@ def attach_ghl_links(row: dict[str, Any], *, default_location: Any = None) -> di
     item["ghlContactUrl"] = contact_url
     item["phoneHref"] = opportunity_url or contact_url
     return item
+
+
+def phone_key(value: Any) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) < 10:
+        return ""
+    return digits[-10:]
+
+
+def phone_keys(value: Any) -> list[str]:
+    """Last-10 keys for one phone field. Separators keep two numbers apart."""
+    if isinstance(value, dict):
+        return phone_keys(value.get("phone") or value.get("number") or value.get("value"))
+    if isinstance(value, (list, tuple)):
+        found: list[str] = []
+        for item in value:
+            for key in phone_keys(item):
+                if key not in found:
+                    found.append(key)
+        return found
+    keys: list[str] = []
+    for part in re.split(r"[A-Za-z;/|]+", str(value or "")):
+        key = phone_key(part)
+        if key and key not in keys:
+            keys.append(key)
+    if not keys:
+        key = phone_key(value)
+        if key:
+            keys.append(key)
+    return keys
+
+
+def phone_query_values(key: str) -> list[str]:
+    """Formats stored on ghl_contacts_v2.phone. The sync uses +1 and 10 digits."""
+    if len(key) != 10 or not key.isdigit():
+        return []
+    return [f"+1{key}", f"1{key}", key]
+
+
+def email_keys(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        return email_keys(value.get("email") or value.get("address") or value.get("value"))
+    if isinstance(value, (list, tuple)):
+        found: list[str] = []
+        for item in value:
+            for key in email_keys(item):
+                if key not in found:
+                    found.append(key)
+        return found
+    found = []
+    for match in _EMAIL.findall(str(value or "")):
+        key = match.casefold()
+        if key not in found:
+            found.append(key)
+    return found
+
+
+def email_query_values(value: Any) -> list[str]:
+    found: list[str] = []
+    for match in _EMAIL.findall(str(value or "")):
+        for item in (match, match.casefold()):
+            if item not in found:
+                found.append(item)
+    return found
+
+
+def _name_tokens(value: Any) -> list[str]:
+    return _NAME_WORD.findall(compact_text(value))
+
+
+def _split_person_name(value: Any) -> tuple[list[str], list[str]]:
+    text = compact_text(value)
+    if not text:
+        return [], []
+    if "," in text:
+        last_text, _, first_text = text.partition(",")
+        first = _name_tokens(first_text)
+        last = _name_tokens(last_text)
+        if first and last:
+            return first, last
+    tokens = _name_tokens(text)
+    if len(tokens) >= 2:
+        return tokens[:-1], tokens[-1:]
+    return [], []
+
+
+def name_match_keys(value: Any) -> list[str]:
+    """Case-folded first/last keys, including Last, First reversed."""
+    first, last = _split_person_name(value)
+    if not first or not last:
+        return []
+    raw = (
+        " ".join(first + last),
+        " ".join(last + first),
+        f"{first[0]} {last[-1]}",
+        f"{last[-1]} {first[0]}",
+    )
+    keys: list[str] = []
+    for item in raw:
+        key = " ".join(item.casefold().split())
+        if " " not in key or key in keys:
+            continue
+        keys.append(key)
+    return keys
+
+
+def contact_name_keys(contact: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    first = _name_tokens(contact.get("firstName"))
+    last = _name_tokens(contact.get("lastName"))
+    if first and last:
+        keys.extend(name_match_keys(f"{' '.join(last)}, {' '.join(first)}"))
+    for field in ("contactName", "name", "fullName"):
+        keys.extend(name_match_keys(contact.get(field)))
+    found: list[str] = []
+    for key in keys:
+        if key not in found:
+            found.append(key)
+    return found
+
+
+def name_query_values(value: Any) -> list[str]:
+    """Original-case strings to query. GHL contact names are First Last."""
+    first, last = _split_person_name(value)
+    if not first or not last:
+        return []
+    forms = (
+        f"{' '.join(first)} {' '.join(last)}",
+        f"{' '.join(last)}, {' '.join(first)}",
+        f"{first[0]} {last[-1]}",
+        f"{last[-1]}, {first[0]}",
+    )
+    found: list[str] = []
+    for item in forms:
+        text = " ".join(item.split())
+        if text and text not in found:
+            found.append(text)
+    return found
+
+
+def last_name_query_values(value: Any) -> list[str]:
+    _first, last = _split_person_name(value)
+    if not last:
+        return []
+    text = " ".join(last)
+    titled = " ".join(part[:1].upper() + part[1:].lower() for part in last)
+    found: list[str] = []
+    for item in (text, titled):
+        if item and item not in found:
+            found.append(item)
+    return found
+
+
+def timestamp_seconds(value: Any) -> float:
+    if value is None or value == "" or isinstance(value, bool):
+        return 0.0
+    if isinstance(value, datetime):
+        moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return moment.timestamp()
+    if isinstance(value, (int, float)):
+        num = float(value)
+        if num > 10_000_000_000:
+            return num / 1000.0
+        if num > 1_000_000_000:
+            return num
+        return 0.0
+    text = compact_text(value)
+    if not text:
+        return 0.0
+    if text.isdigit():
+        return timestamp_seconds(int(text))
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.timestamp()
+
+
+def project_sold_stage_ids() -> set[str]:
+    """Sold and Sale Cancelled stage ids shared with the sales metric."""
+    try:
+        from sales import SalesMetricContract
+
+        return {compact_text(stage_id) for stage_id in SalesMetricContract().stage_ids if compact_text(stage_id)}
+    except Exception:
+        return set()
+
+
+def stage_is_project_or_sold(stage_id: Any, stage_name: Any, sold_ids: set[str] | None = None) -> bool:
+    stage = compact_text(stage_id)
+    if stage and stage in (sold_ids or set()):
+        return True
+    return bool(_PROJECT_STAGE.search(compact_text(stage_name)))
+
+
+def opp_recency(opp: dict[str, Any]) -> float:
+    return max(
+        timestamp_seconds(opp.get(key))
+        for key in ("updatedAt", "createdAt", "lastStatusChangeAt", "lastStageChangeAt")
+    )
+
+
+def contact_recency(contact: dict[str, Any]) -> float:
+    return max(timestamp_seconds(contact.get(key)) for key in ("dateUpdated", "dateAdded", "updatedAt", "createdAt"))
+
+
+def contact_phone_values(contact: dict[str, Any]) -> list[Any]:
+    values: list[Any] = [contact.get("phone")]
+    extra = contact.get("additionalPhones") or contact.get("additionalPhone") or []
+    if isinstance(extra, dict):
+        extra = list(extra.values())
+    if isinstance(extra, list):
+        values.extend(extra)
+    return values
+
+
+def contact_email_values(contact: dict[str, Any]) -> list[Any]:
+    values: list[Any] = [contact.get("email")]
+    extra = contact.get("additionalEmails") or contact.get("additionalEmail") or []
+    if isinstance(extra, dict):
+        extra = list(extra.values())
+    if isinstance(extra, list):
+        values.extend(extra)
+    return values
+
+
+def empty_ghl_index() -> dict[str, Any]:
+    return {"by_phone": {}, "by_email": {}, "by_name": {}, "contacts": {}, "opps_by_contact": {}}
+
+
+def _append_key(bucket: dict[str, list[str]], key: str, contact_id: str) -> None:
+    if not key or not contact_id:
+        return
+    found = bucket.setdefault(key, [])
+    if contact_id not in found:
+        found.append(contact_id)
+
+
+def build_ghl_link_index(
+    contacts: Iterable[dict[str, Any]],
+    opportunities: Iterable[dict[str, Any]],
+    stage_names: dict[str, str] | None = None,
+    sold_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """In-memory phone, email, and name index. No Firestore reads."""
+    names = stage_names or {}
+    sold = sold_ids if sold_ids is not None else project_sold_stage_ids()
+    index = empty_ghl_index()
+    for contact in contacts:
+        if not isinstance(contact, dict):
+            continue
+        contact_id = compact_text(contact.get("contact_id") or contact.get("id") or contact.get("_doc_id"))
+        if not is_ghl_id(contact_id):
+            continue
+        current = index["contacts"].get(contact_id)
+        recency = contact_recency(contact)
+        if current is None or recency >= current["recency"]:
+            index["contacts"][contact_id] = {
+                "contact_id": contact_id,
+                "location_id": compact_text(contact.get("locationId") or contact.get("location_id")),
+                "recency": recency,
+            }
+        for value in contact_phone_values(contact):
+            for key in phone_keys(value):
+                _append_key(index["by_phone"], key, contact_id)
+        for value in contact_email_values(contact):
+            for key in email_keys(value):
+                _append_key(index["by_email"], key, contact_id)
+        for key in contact_name_keys(contact):
+            _append_key(index["by_name"], key, contact_id)
+    for opp in opportunities:
+        if not isinstance(opp, dict):
+            continue
+        opportunity_id = compact_text(opp.get("opportunity_id") or opp.get("id") or opp.get("_doc_id"))
+        contact_id = compact_text(opp.get("contactId") or opp.get("contact_id"))
+        if not is_ghl_id(opportunity_id) or not is_ghl_id(contact_id):
+            continue
+        stage_id = compact_text(opp.get("pipelineStageId"))
+        stage_name = compact_text(
+            opp.get("pipelineStageName") or opp.get("stageName") or names.get(stage_id)
+        )
+        location_id = compact_text(opp.get("locationId") or opp.get("location_id"))
+        if not location_id:
+            stored = index["contacts"].get(contact_id) or {}
+            location_id = compact_text(stored.get("location_id"))
+        choice = {
+            "opportunity_id": opportunity_id,
+            "contact_id": contact_id,
+            "location_id": location_id,
+            "project_or_sold": stage_is_project_or_sold(stage_id, stage_name, sold),
+            "recency": opp_recency(opp),
+        }
+        bucket = index["opps_by_contact"].setdefault(contact_id, [])
+        if any(item["opportunity_id"] == opportunity_id for item in bucket):
+            continue
+        bucket.append(choice)
+        for key in name_match_keys(opp.get("name")):
+            _append_key(index["by_name"], key, contact_id)
+        if contact_id not in index["contacts"]:
+            index["contacts"][contact_id] = {
+                "contact_id": contact_id,
+                "location_id": location_id,
+                "recency": choice["recency"],
+            }
+    return index
+
+
+def _contact_ids_for(index: dict[str, Any], kind: str, keys: Iterable[str]) -> list[str]:
+    found: list[str] = []
+    buckets = index.get(kind) or {}
+    for key in keys:
+        bucket = buckets.get(key) or []
+        if len(bucket) > MAX_CONTACTS_PER_KEY:
+            continue
+        for contact_id in bucket:
+            if contact_id not in found:
+                found.append(contact_id)
+    return found
+
+
+def best_opportunity(opportunities: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+    choices = [opp for opp in opportunities if isinstance(opp, dict) and opp.get("opportunity_id")]
+    if not choices:
+        return None
+    return max(
+        choices,
+        key=lambda opp: (
+            1 if opp.get("project_or_sold") else 0,
+            float(opp.get("recency") or 0),
+            compact_text(opp.get("opportunity_id")),
+        ),
+    )
+
+
+def resolve_ghl_match(row: dict[str, Any], index: dict[str, Any] | None) -> dict[str, str] | None:
+    """Phone, then email, then name. An earlier tier wins even with no opportunity."""
+    if not isinstance(index, dict):
+        return None
+    tiers = (
+        ("by_phone", phone_keys(row.get("permit_phone"))),
+        ("by_email", email_keys(row.get("permit_email"))),
+        ("by_name", name_match_keys(row.get("display_name"))),
+    )
+    contacts = index.get("contacts") or {}
+    opps_by_contact = index.get("opps_by_contact") or {}
+    for kind, keys in tiers:
+        if not keys:
+            continue
+        contact_ids = _contact_ids_for(index, kind, keys)
+        if not contact_ids:
+            continue
+        choices: list[dict[str, Any]] = []
+        for contact_id in contact_ids:
+            choices.extend(opps_by_contact.get(contact_id) or [])
+        best = best_opportunity(choices)
+        if best is not None:
+            return {
+                "opportunity_id": compact_text(best.get("opportunity_id")),
+                "contact_id": compact_text(best.get("contact_id")),
+                "location_id": compact_text(best.get("location_id")),
+            }
+        stored = [contacts[contact_id] for contact_id in contact_ids if contact_id in contacts]
+        if not stored:
+            continue
+        chosen = max(stored, key=lambda item: (float(item.get("recency") or 0), item.get("contact_id") or ""))
+        return {
+            "opportunity_id": "",
+            "contact_id": compact_text(chosen.get("contact_id")),
+            "location_id": compact_text(chosen.get("location_id")),
+        }
+    return None
+
+
+def apply_ghl_index(
+    row: dict[str, Any],
+    index: dict[str, Any] | None,
+    *,
+    default_location: Any = None,
+) -> dict[str, Any]:
+    if compact_text(row.get("phoneHref")) or not isinstance(index, dict):
+        return row
+    match = resolve_ghl_match(row, index)
+    if not match:
+        return row
+    enriched = dict(row)
+    if match.get("opportunity_id"):
+        enriched["opportunityId"] = match["opportunity_id"]
+    if match.get("contact_id"):
+        enriched["contactId"] = match["contact_id"]
+    if match.get("location_id"):
+        enriched["locationId"] = match["location_id"]
+    return attach_ghl_links(enriched, default_location=default_location)
+
+
+def ghl_link_kind_counts(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+    opportunity = 0
+    contact = 0
+    plain = 0
+    for row in rows:
+        href = compact_text(row.get("phoneHref") if isinstance(row, dict) else "")
+        if "/opportunities/list/" in href:
+            opportunity += 1
+        elif "/contacts/detail/" in href:
+            contact += 1
+        else:
+            plain += 1
+    return {
+        "opportunity": opportunity,
+        "contact": contact,
+        "plain": plain,
+        "rows": opportunity + contact + plain,
+    }
+
+
+def _unique_texts(values: Iterable[Any]) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = compact_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        found.append(text)
+    return found
+
+
+def _chunks(values: Iterable[Any], size: int = FIRESTORE_IN_LIMIT) -> list[list[str]]:
+    clean = _unique_texts(values)
+    return [clean[start : start + size] for start in range(0, len(clean), size)]
+
+
+def _stream_in(db: Any, collection: str, field: str, values: Iterable[Any], fields: Iterable[str]) -> list[Any]:
+    snaps: list[Any] = []
+    columns = list(fields)
+    for batch in _chunks(values):
+        query = db.collection(collection).where(field, "in", batch)
+        select = getattr(query, "select", None)
+        if select is not None:
+            query = select(columns)
+        snaps.extend(query.stream())
+    return snaps
+
+
+def _snap_dict(snap: Any) -> dict[str, Any]:
+    data = snap.to_dict() or {}
+    if not isinstance(data, dict):
+        return {}
+    item = dict(data)
+    item["_doc_id"] = compact_text(getattr(snap, "id", "") or item.get("id"))
+    if not item.get("id"):
+        item["id"] = item["_doc_id"]
+    return item
+
+
+def _stage_names(db: Any) -> dict[str, str]:
+    names: dict[str, str] = {}
+    query = db.collection(PIPELINE_COLLECTION)
+    select = getattr(query, "select", None)
+    if select is not None:
+        query = select(["id", "stages"])
+    for snap in query.stream():
+        data = snap.to_dict() or {}
+        stages = data.get("stages") or []
+        if not isinstance(stages, list):
+            continue
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = compact_text(stage.get("id"))
+            stage_name = compact_text(stage.get("name"))
+            if stage_id and stage_name and stage_id not in names:
+                names[stage_id] = stage_name
+    return names
+
+
+def _lookup_signature(rows: Iterable[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in phone_keys(row.get("permit_phone")):
+            parts.append("p:" + key)
+        for key in email_keys(row.get("permit_email")):
+            parts.append("e:" + key)
+        for key in name_match_keys(row.get("display_name")):
+            parts.append("n:" + key)
+    digest = hashlib.sha1("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+    return digest
+
+
+def query_ghl_link_index(db: Any, rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Batched contact and opportunity reads for the rows that need a link.
+
+    Phone and email run first. Name queries run only for rows those two
+    missed, so a shared last name is not scanned for every project.
+    Opportunities are loaded once, by contact id, in batches of 30.
+    """
+    listed = [row for row in rows if isinstance(row, dict)]
+    phone_values: list[str] = []
+    email_values: list[str] = []
+    for row in listed:
+        for key in phone_keys(row.get("permit_phone")):
+            phone_values.extend(phone_query_values(key))
+        email_values.extend(email_query_values(row.get("permit_email")))
+    contacts: dict[str, dict[str, Any]] = {}
+
+    def absorb(snaps: Iterable[Any]) -> None:
+        for snap in snaps:
+            item = _snap_dict(snap)
+            contact_id = compact_text(item.get("id") or item.get("_doc_id"))
+            if contact_id:
+                contacts[contact_id] = item
+
+    if phone_values:
+        absorb(_stream_in(db, CONTACT_COLLECTION, "phone", phone_values, CONTACT_FIELDS))
+    if email_values:
+        absorb(_stream_in(db, CONTACT_COLLECTION, "email", email_values, CONTACT_FIELDS))
+
+    partial = build_ghl_link_index(contacts.values(), [], sold_ids=set())
+    name_values: list[str] = []
+    last_values: list[str] = []
+    for row in listed:
+        if phone_keys(row.get("permit_phone")) and _contact_ids_for(partial, "by_phone", phone_keys(row.get("permit_phone"))):
+            continue
+        if email_keys(row.get("permit_email")) and _contact_ids_for(partial, "by_email", email_keys(row.get("permit_email"))):
+            continue
+        name_values.extend(name_query_values(row.get("display_name")))
+        last_values.extend(last_name_query_values(row.get("display_name")))
+    if name_values:
+        absorb(_stream_in(db, CONTACT_COLLECTION, "contactName", name_values, CONTACT_FIELDS))
+    if last_values:
+        absorb(_stream_in(db, CONTACT_COLLECTION, "lastName", last_values, CONTACT_FIELDS))
+
+    wanted_names = set()
+    for value in name_values:
+        wanted_names.update(name_match_keys(value))
+    wanted_phones = {key for row in listed for key in phone_keys(row.get("permit_phone"))}
+    wanted_emails = {key for row in listed for key in email_keys(row.get("permit_email"))}
+    relevant: dict[str, dict[str, Any]] = {}
+    for contact_id, contact in contacts.items():
+        phones = {key for value in contact_phone_values(contact) for key in phone_keys(value)}
+        emails = {key for value in contact_email_values(contact) for key in email_keys(value)}
+        names = set(contact_name_keys(contact))
+        if phones & wanted_phones or emails & wanted_emails or names & wanted_names:
+            relevant[contact_id] = contact
+
+    named_opps: list[dict[str, Any]] = []
+    if name_values:
+        for snap in _stream_in(db, OPP_COLLECTION, "name", name_values, OPP_FIELDS):
+            item = _snap_dict(snap)
+            if wanted_names.intersection(name_match_keys(item.get("name"))):
+                named_opps.append(item)
+                contact_id = compact_text(item.get("contactId"))
+                if contact_id and contact_id not in relevant:
+                    relevant[contact_id] = {"id": contact_id, "locationId": item.get("locationId")}
+
+    opportunities: dict[str, dict[str, Any]] = {}
+    for opp in named_opps:
+        opp_id = compact_text(opp.get("id") or opp.get("_doc_id"))
+        if opp_id:
+            opportunities[opp_id] = opp
+    contact_ids = [contact_id for contact_id in relevant if is_ghl_id(contact_id)]
+    if contact_ids:
+        for snap in _stream_in(db, OPP_COLLECTION, "contactId", contact_ids, OPP_FIELDS):
+            item = _snap_dict(snap)
+            opp_id = compact_text(item.get("id") or item.get("_doc_id"))
+            if opp_id:
+                opportunities[opp_id] = item
+    stage_names = _stage_names(db) if relevant or opportunities else {}
+    return build_ghl_link_index(relevant.values(), opportunities.values(), stage_names)
+
+
+def load_ghl_link_index(
+    rows: Iterable[dict[str, Any]],
+    *,
+    db: Any = None,
+    now: float | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    listed = [row for row in rows if isinstance(row, dict)]
+    signature = _lookup_signature(listed)
+    current = time.time() if now is None else now
+    if db is None and not force:
+        cached = _GHL_CACHE.get("index")
+        cached_at = float(_GHL_CACHE.get("at") or 0)
+        if isinstance(cached, dict) and _GHL_CACHE.get("key") == signature and current - cached_at < GHL_INDEX_TTL_SECONDS:
+            return cached
+    own_client = db is None
+    if own_client:
+        from sales import get_db
+
+        db = get_db()
+    index = query_ghl_link_index(db, listed)
+    if own_client:
+        _GHL_CACHE["index"] = index
+        _GHL_CACHE["key"] = signature
+        _GHL_CACHE["at"] = current
+    return index
 
 
 def parse_hub_snapshot(text: str) -> dict[str, Any]:
@@ -582,14 +1233,23 @@ def unique_reps(rows: Iterable[dict[str, Any]]) -> list[str]:
     return [names[key] for key in sorted(names, key=str.casefold)]
 
 
-def build_payload(snapshot: dict[str, Any], *, default_location: Any = None) -> dict[str, Any]:
-    rows = [
-        attach_ghl_links(row, default_location=default_location)
-        for row in snapshot.get("rows") or []
-        if isinstance(row, dict)
-    ]
+def build_payload(
+    snapshot: dict[str, Any],
+    *,
+    default_location: Any = None,
+    ghl_index: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rows = []
+    for row in snapshot.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        linked = attach_ghl_links(row, default_location=default_location)
+        if ghl_index is not None and not compact_text(linked.get("phoneHref")):
+            linked = apply_ghl_index(linked, ghl_index, default_location=default_location)
+        rows.append(linked)
     cards = [card for card in snapshot.get("stage_cards") or [] if isinstance(card, dict)]
     summary = summarize_rows(rows)
+    hold_rows = [row for row in rows if compact_text(row.get("section")) == HOLD_SECTION]
     return {
         "ok": True,
         "metric": "Project Management",
@@ -605,6 +1265,7 @@ def build_payload(snapshot: dict[str, Any], *, default_location: Any = None) -> 
         "reps": unique_reps(rows),
         "ghl_opportunity_url": GHL_OPPORTUNITY_URL,
         "ghl_contact_url": GHL_CONTACT_URL,
+        "hold_ghl_links": ghl_link_kind_counts(hold_rows),
         "rows": rows,
     }
 
@@ -622,16 +1283,26 @@ def load_project_management(
     fetch: Callable[[], str] | None = None,
     now: float | None = None,
     force: bool = False,
+    db: Any = None,
+    ghl_index: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if fetch is None and not force:
+    use_cache = fetch is None and db is None and ghl_index is None and not force
+    if use_cache:
         cached = _CACHE.get("payload")
         stamp = float(_CACHE.get("at") or 0)
         current = time.time() if now is None else now
         if isinstance(cached, dict) and current - stamp < SNAPSHOT_TTL_SECONDS:
             return cached
     text = load_snapshot_text(fetch)
-    payload = build_payload(parse_hub_snapshot(text))
-    if fetch is None:
+    parsed = parse_hub_snapshot(text)
+    index = ghl_index
+    if index is None and (fetch is None or db is not None):
+        try:
+            index = load_ghl_link_index(parsed.get("rows") or [], db=db, now=now, force=force)
+        except Exception:
+            index = None
+    payload = build_payload(parsed, ghl_index=index)
+    if fetch is None and db is None and ghl_index is None:
         _CACHE["payload"] = payload
         _CACHE["at"] = time.time() if now is None else now
     return payload
@@ -640,6 +1311,9 @@ def load_project_management(
 def clear_snapshot_cache() -> None:
     _CACHE["at"] = 0.0
     _CACHE["payload"] = None
+    _GHL_CACHE["at"] = 0.0
+    _GHL_CACHE["key"] = ""
+    _GHL_CACHE["index"] = None
 
 
 def _write_json(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:

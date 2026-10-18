@@ -278,3 +278,224 @@ class PageShellTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["active_jobs"], 2)
         self.assertEqual(payload["summary"]["held_jobs"], 1)
         self.assertEqual(payload["summary"]["median_install_days"], 20)
+
+
+class _Snap:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _Query:
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
+        self.field = None
+        self.values = None
+
+    def where(self, field, op, values):
+        if op != "in":
+            raise AssertionError(op)
+        query = _Query(self.db, self.name)
+        query.field = field
+        query.values = list(values)
+        return query
+
+    def select(self, _fields):
+        return self
+
+    def stream(self):
+        self.db.streams.append((self.name, self.field, len(self.values or [])))
+        docs = self.db.docs.get(self.name) or []
+        if self.field is None:
+            return list(docs)
+        wanted = set(self.values or [])
+        return [snap for snap in docs if snap.to_dict().get(self.field) in wanted]
+
+
+class _DB:
+    def __init__(self, docs):
+        self.docs = docs
+        self.streams = []
+
+    def collection(self, name):
+        return _Query(self, name)
+
+
+class GhlIndexTests(unittest.TestCase):
+    def test_phone_then_email_then_name_and_stage_preference(self):
+        sold = "7981f111-73f2-4593-9662-6b95d99bf51a"
+        contacts = [
+            {
+                "id": "contact-phone",
+                "phone": "+15550100001",
+                "email": "phone@example.com",
+                "firstName": "Ada",
+                "lastName": "Sample",
+                "locationId": "loc-phone",
+            },
+            {
+                "id": "contact-email",
+                "phone": "+15550100002",
+                "email": "email@example.com",
+                "firstName": "Bea",
+                "lastName": "Sample",
+                "locationId": "loc-email",
+            },
+            {
+                "id": "contact-name",
+                "email": "name@example.com",
+                "contactName": "Cy Sample",
+                "locationId": "loc-name",
+            },
+        ]
+        opportunities = [
+            {
+                "id": "opp-new",
+                "contactId": "contact-phone",
+                "locationId": "loc-phone",
+                "pipelineStageName": "New Appointment",
+                "updatedAt": "2026-10-01T00:00:00Z",
+            },
+            {
+                "id": "opp-sold",
+                "contactId": "contact-phone",
+                "locationId": "loc-phone",
+                "pipelineStageId": sold,
+                "updatedAt": "2026-01-01T00:00:00Z",
+            },
+            {
+                "id": "opp-email",
+                "contactId": "contact-email",
+                "locationId": "loc-email",
+                "pipelineStageName": "Install",
+                "updatedAt": "2026-05-01T00:00:00Z",
+            },
+            {
+                "id": "opp-name",
+                "contactId": "contact-name",
+                "locationId": "loc-name",
+                "pipelineStageName": "Project",
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+        ]
+        index = pm.build_ghl_link_index(contacts, opportunities, sold_ids={sold})
+
+        phone_row = pm.apply_ghl_index(
+            {"permit_phone": "1 (555) 010-0001", "permit_email": "email@example.com", "display_name": "Sample, Cy"},
+            index,
+        )
+        self.assertEqual(
+            phone_row["phoneHref"],
+            OPPORTUNITY_URL.format(location_id="loc-phone", opp_id="opp-sold"),
+        )
+        self.assertNotIn("555", phone_row["phoneHref"])
+
+        newer_sold = pm.build_ghl_link_index(
+            contacts[:1],
+            [
+                opportunities[1],
+                {
+                    "id": "opp-sold-new",
+                    "contactId": "contact-phone",
+                    "locationId": "loc-phone",
+                    "pipelineStageName": "Sold",
+                    "updatedAt": "2026-08-01T00:00:00Z",
+                },
+            ],
+            sold_ids={sold},
+        )
+        preferred = pm.apply_ghl_index({"permit_phone": "5550100001"}, newer_sold)
+        self.assertTrue(preferred["phoneHref"].endswith("opp-sold-new?tab=OpportunityDetails"))
+
+        email_row = pm.apply_ghl_index(
+            {"permit_phone": "5550100099", "permit_email": "Email@Example.com", "display_name": "Sample, Cy"},
+            index,
+        )
+        self.assertEqual(
+            email_row["phoneHref"],
+            OPPORTUNITY_URL.format(location_id="loc-email", opp_id="opp-email"),
+        )
+
+        name_row = pm.apply_ghl_index({"display_name": "Sample, Cy", "section": "hold_cancel"}, index)
+        self.assertEqual(
+            name_row["phoneHref"],
+            OPPORTUNITY_URL.format(location_id="loc-name", opp_id="opp-name"),
+        )
+
+        contact_only = pm.build_ghl_link_index(contacts[:1], [], sold_ids=set())
+        linked = pm.apply_ghl_index({"permit_phone": "+1-555-010-0001"}, contact_only, default_location="loc-default")
+        self.assertEqual(
+            linked["phoneHref"],
+            CONTACT_URL.format(location_id="loc-phone", contact_id="contact-phone"),
+        )
+
+        plain = pm.apply_ghl_index(
+            {"display_name": "Nobody Here", "permit_phone": "5550100088", "phoneHref": ""},
+            index,
+        )
+        self.assertEqual(plain["phoneHref"], "")
+
+        kept = pm.build_payload(
+            {"rows": [{"opportunityId": "opp-keep", "locationId": "loc-keep", "permit_phone": "5550100001", "section": "hold_cancel"}]},
+            ghl_index=index,
+        )
+        self.assertEqual(
+            kept["rows"][0]["phoneHref"],
+            OPPORTUNITY_URL.format(location_id="loc-keep", opp_id="opp-keep"),
+        )
+        self.assertEqual(kept["hold_ghl_links"]["opportunity"], 1)
+        self.assertEqual(kept["hold_ghl_links"]["plain"], 0)
+
+    def test_queries_are_batched_and_skip_name_after_a_phone_hit(self):
+        contacts = []
+        rows = []
+        for number in range(31):
+            key = f"555010{number:04d}"
+            contact_id = f"contact-{number}"
+            contacts.append(_Snap(contact_id, {"id": contact_id, "phone": f"+1{key}", "locationId": "loc-batch"}))
+            rows.append({"permit_phone": key, "display_name": f"Person, Number{number}", "section": "hold_cancel"})
+        rows.append({"display_name": "Sample, Only", "section": "hold_cancel", "permit_email": ""})
+        contacts.append(
+            _Snap("contact-name", {"id": "contact-name", "contactName": "Only Sample", "lastName": "Sample", "locationId": "loc-name"})
+        )
+        db = _DB({pm.CONTACT_COLLECTION: contacts, pm.OPP_COLLECTION: [], pm.PIPELINE_COLLECTION: []})
+        index = pm.query_ghl_link_index(db, rows)
+        phone_streams = [call for call in db.streams if call[0] == pm.CONTACT_COLLECTION and call[1] == "phone"]
+        self.assertEqual(len(phone_streams), 4)
+        self.assertTrue(all(size <= 30 for _name, _field, size in phone_streams))
+        self.assertEqual(sum(size for _name, _field, size in phone_streams), 31 * 3)
+        self.assertEqual(
+            [call[1] for call in db.streams if call[0] == pm.CONTACT_COLLECTION and call[1] in {"contactName", "lastName"}],
+            ["contactName", "lastName"],
+        )
+        opp_streams = [call for call in db.streams if call[0] == pm.OPP_COLLECTION and call[1] == "contactId"]
+        self.assertEqual(len(opp_streams), 2)
+        self.assertLess(len(db.streams), 20)
+        linked = pm.apply_ghl_index(rows[0], index, default_location="loc-default")
+        self.assertIn("/contacts/detail/contact-0", linked["phoneHref"])
+        named = pm.apply_ghl_index(rows[-1], index)
+        self.assertIn("/contacts/detail/contact-name", named["phoneHref"])
+
+    def test_index_failure_leaves_the_snapshot_response_generic(self):
+        class Boom:
+            def collection(self, _name):
+                raise RuntimeError("555019999 lookup failed")
+
+        payload = pm.load_project_management(fetch=lambda: SNAPSHOT, db=Boom(), now=10)
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("lookup failed", json.dumps(payload["hold_ghl_links"]))
+        self.assertEqual(payload["rows"][2]["phoneHref"], "")
+
+    def test_cached_index_is_reused(self):
+        pm.clear_snapshot_cache()
+        rows = [{"permit_phone": "5550100001", "display_name": "Sample, Ada"}]
+        cached = {"by_phone": {}, "by_email": {}, "by_name": {}, "contacts": {}, "opps_by_contact": {}}
+        pm._GHL_CACHE["index"] = cached
+        pm._GHL_CACHE["key"] = pm._lookup_signature(rows)
+        pm._GHL_CACHE["at"] = 1000
+        self.assertIs(pm.load_ghl_link_index(rows, now=1200), cached)
+        pm.clear_snapshot_cache()

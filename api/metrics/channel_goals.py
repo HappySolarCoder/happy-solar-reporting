@@ -8,13 +8,14 @@ company_snapshot.
 CHANNEL_GOALS is the single store for these monthly targets (Evan, 2026-10-09).
 Leads are only tracked for 3PL and Inbound.
 
-Actuals served here:
+Actuals served here, for the calendar month, or for an optional
+YYYY-MM-DD start/end (America/New_York, end inclusive) when both are given:
 - Sweeper/Rehash: rows whose contact "Sweeper/Rehash Last Name" (opportunity
   fallback) is filled with any name. Appointments = opportunities_created
   (pipeline_scope=all) rows, sales = locked Sales grain, ran / demos = demo_rate
   rows. Same field reader as sweeper_credit.
 - Leads: new opportunities in the Inbound/Lead Locker pipeline created in the
-  month (America/New_York). Inbound = lead_gen_source.is_inbound_lead_source
+  window (America/New_York). Inbound = lead_gen_source.is_inbound_lead_source
   (Inbound, or a Facebook Quick Form variant such as FB Quick Form). 3PL = the
   remaining NR (non-refunded) Lead Locker / Solar Reviews title-bucket leads
   from inbound_cac.
@@ -204,12 +205,39 @@ def compute_leads(db, start_local, end_local) -> dict[str, int]:
     return split_leads(raws, sources, start_local, end_local)
 
 
-def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
+def parse_date_range(start: str | None, end: str | None) -> tuple[str | None, str | None]:
+    """Optional YYYY-MM-DD window. Both empty keeps the calendar month.
+
+    A span is the number of days from start to end. More than 93 is rejected.
+    """
+    if start is None and end is None:
+        return None, None
+    if not start or not end:
+        raise ValueError("start and end must both be provided")
+    try:
+        start_d = datetime.strptime(start, "%Y-%m-%d").date()
+        end_d = datetime.strptime(end, "%Y-%m-%d").date()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("start and end must be YYYY-MM-DD") from exc
+    if start_d.isoformat() != start or end_d.isoformat() != end:
+        raise ValueError("start and end must be YYYY-MM-DD")
+    if end_d < start_d:
+        raise ValueError("end must be on or after start")
+    if (end_d - start_d).days > 93:
+        raise ValueError("date range cannot exceed 93 days")
+    return start, end
+
+
+def compute_channel_goals(db, *, year: int, month: int, start: str | None = None, end: str | None = None) -> dict[str, Any]:
     import demo_rate
-    from opportunities_created import MetricContract, compute, month_window
+    from opportunities_created import MetricContract, compute, date_range_window, month_window
     from sales import SalesMetricContract, compute_sales
 
-    start_local, end_local, _, _ = month_window(year, month, "America/New_York")
+    start, end = parse_date_range(start, end)
+    if start and end:
+        start_local, end_local, window_start_local, window_end_local = date_range_window(start, end, "America/New_York")
+    else:
+        start_local, end_local, window_start_local, window_end_local = month_window(year, month, "America/New_York")
     import sales as sales_mod
 
     sold: set[str] = set()
@@ -246,9 +274,17 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
             self_sold[str(contact_id)] = (reason, label)
 
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all")
-        f_demo = ex.submit(demo_rate.build_payload, db, year, month, {})
-        f_sales = ex.submit(compute_sales, db, SalesMetricContract(), year=year, month=month, tz="America/New_York", on_sale=on_sale)
+        if start and end:
+            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all", start=start, end=end)
+            f_demo = ex.submit(demo_rate.build_payload, db, year, month, {}, start=start, end=end)
+            f_sales = ex.submit(
+                compute_sales, db, SalesMetricContract(),
+                year=year, month=month, tz="America/New_York", start=start, end=end, on_sale=on_sale,
+            )
+        else:
+            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all")
+            f_demo = ex.submit(demo_rate.build_payload, db, year, month, {})
+            f_sales = ex.submit(compute_sales, db, SalesMetricContract(), year=year, month=month, tz="America/New_York", on_sale=on_sale)
         f_leads = ex.submit(compute_leads, db, start_local, end_local)
         created = f_created.result()
         demo_payload = f_demo.result()
@@ -263,7 +299,11 @@ def compute_channel_goals(db, *, year: int, month: int) -> dict[str, Any]:
         "metric": "channel_goals",
         "year": year,
         "month": month,
+        "start": start,
+        "end": end,
         "timezone": "America/New_York",
+        "window_start_local": window_start_local,
+        "window_end_local": window_end_local,
         "goals": CHANNEL_GOALS,
         "leads_channels": list(LEADS_CHANNELS),
         "leads": leads,
@@ -290,9 +330,12 @@ class handler(BaseHTTPRequestHandler):
             month = int(qs.get("month", [str(now.month)])[0])
             if not (1 <= month <= 12 and 2020 <= year <= 2100):
                 raise ValueError("valid year and month are required")
+            start = (qs.get("start") or [None])[0]
+            end = (qs.get("end") or [None])[0]
+            start, end = parse_date_range(start, end)
             from sales import get_db
 
-            body = json.dumps(compute_channel_goals(get_db(), year=year, month=month)).encode("utf-8")
+            body = json.dumps(compute_channel_goals(get_db(), year=year, month=month, start=start, end=end)).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "public, s-maxage=600, stale-while-revalidate=3600")

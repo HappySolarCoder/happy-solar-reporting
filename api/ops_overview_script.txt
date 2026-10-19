@@ -315,9 +315,14 @@
   function pack(created, ran, demos, sales) {
     return { created: clean(created), ran: clean(ran), demos: clean(demos), sales: clean(sales) };
   }
-  // Self Gen = Lead Gen Source Self Gen, or blank source with setter last name = owner last name.
-  // Served by channel_goals for the company-wide view; filtered views keep the lead-source bucket.
+  // Company-wide Self Gen comes from channel_goals for the selected dates.
+  // Filtered views keep the lead-source bucket. A loading or mismatched payload stays blank.
+  function channelGoalsMatch() {
+    const f = pageFilters || filters();
+    return !!(channelGoals && channelGoals.start === f.start && channelGoals.end === f.end);
+  }
   function selfGenPack() {
+    if (!channelGoalsMatch()) return null;
     const sg = channelGoals && channelGoals.self_gen;
     const f = pageFilters || filters();
     if (!sg || f.territory !== "All" || f.source !== "All") return null;
@@ -325,6 +330,7 @@
   }
   // Overridden deals (setter = owner under another lead source) leave their original channel.
   function minusMoved(stats, keys) {
+    if (!channelGoalsMatch()) return stats;
     const sg = selfGenPack() && channelGoals.self_gen;
     const moved = sg && sg.moved_from;
     if (!moved) return stats;
@@ -359,11 +365,17 @@
       const base = pack(sumKeys(createdLead, keys), sumKeys(ranLead, keys), sumKeys(sitLead, keys), sumKeys(salesLead, keys));
       return data === snapshot ? minusMoved(base, keys) : base;
     }
+    function selfGenStats() {
+      if (data !== snapshot) return leadPack(SELF_KEYS);
+      const f = pageFilters || filters();
+      if (f.territory !== "All" || f.source !== "All") return leadPack(SELF_KEYS);
+      return selfGenPack() || pack(null, null, null, null);
+    }
     const sweeper = sweeperCredit(data) || pack(sumSweeper(createdPipe), sumSweeper(ranPipe), sumSweeper(sitPipe), sumSweeper(salesPipe));
     return {
       Company: company,
       Doors: leadPack(DOOR_KEYS),
-      "Self gen": data === snapshot ? (selfGenPack() || leadPack(SELF_KEYS)) : leadPack(SELF_KEYS),
+      "Self gen": selfGenStats(),
       Sweeper: sweeper,
       Inbound: leadPack(INBOUND_KEYS),
       "3PL": leadPack(THREE_PL_KEYS),
@@ -623,7 +635,7 @@
     const rows = channelGoalRows();
     if (!rows) { host.innerHTML = '<p class="chart-note">Channel goals could not be read.</p>'; return; }
     host.innerHTML = '<div class="table-wrap cg-wrap"><table class="cg-table"><thead><tr><th>Channel</th><th class="num">Sales</th><th class="num">Opp2Prelim</th><th class="num">Appointments</th><th class="num">Leads</th><th class="num">Demo rate</th><th class="num">Demos</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<p class="chart-note">Actual / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form. Self Gen is Lead Gen Source Self Gen, or any deal where the setter last name matches the opportunity owner; those deals leave their original channel.</p>';
+      '<p class="chart-note">Actual for the selected dates / monthly goal. Appointments are opportunities created. Demo rate is demos divided by appointments ran. Opp2Prelim is sales divided by appointments ran. Leads are tracked for 3PL and Inbound only. Sweeper/Rehash counts contacts with a Sweeper/Rehash Last Name filled. Inbound includes Facebook Quick Form. Self Gen is Lead Gen Source Self Gen, or any deal where the setter last name matches the opportunity owner; those deals leave their original channel.</p>';
   }
   async function load() {
     const token = ++requestToken;
@@ -640,7 +652,7 @@
       });
     channelGoals = null;
     const ym = (period || "").split("-");
-    const channelTask = fetch("/api/metrics/channel_goals?year=" + encodeURIComponent(ym[0] || "") + "&month=" + encodeURIComponent(String(Number(ym[1] || 0))), { hsOptional: true })
+    const channelTask = fetch("/api/metrics/channel_goals?year=" + encodeURIComponent(ym[0] || "") + "&month=" + encodeURIComponent(String(Number(ym[1] || 0))) + "&start=" + encodeURIComponent(pageFilters.start) + "&end=" + encodeURIComponent(pageFilters.end), { hsOptional: true })
       .then(function (res) { return res && res.ok ? res.json() : null; })
       .catch(function () { return null; });
     let response;

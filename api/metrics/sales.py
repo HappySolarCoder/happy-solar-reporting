@@ -44,6 +44,7 @@ from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
+    excluded_from_owner_performance,
     excluded_from_self_gen,
     self_gen_count_label,
     sweeper_rehash_last_name,
@@ -276,7 +277,7 @@ def date_range_window_ms(start_ymd: str, end_ymd: str, tz_name: str) -> tuple[in
 
 
 
-def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False, on_sale: Any = None) -> dict[str, Any]:
+def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: int, month: int, tz: str, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False, on_sale: Any = None, exclude_sweeper_rehash: bool = False) -> dict[str, Any]:
     if start and end:
         start_ms, end_ms, start_iso, end_iso = date_range_window_ms(start, end, tz)
     else:
@@ -514,6 +515,9 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         pname_for_filter = pipeline_name_from_id(opp.get("pipelineId")) or str(opp.get("pipelineId") or "unknown")
         if not pipeline_in_scope(pname_for_filter, pipeline=pipeline, sweeper=sweeper):
             continue
+        # Owner Performance only. Default callers, including Diamond Sweeper, keep these rows.
+        if exclude_sweeper_rehash and excluded_from_owner_performance(lead_src, sweeper_name):
+            continue
 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id
         unique_opp_ids.add(str(opp_id))
@@ -635,6 +639,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         },
         "filters": {
             "lead_source": lead_source,
+            "exclude_sweeper_rehash": bool(exclude_sweeper_rehash),
         },
         "breakdowns": {
             "sales_by_pipeline": {k: v for k, v in sorted(pipeline_counts.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -732,13 +737,26 @@ class Handler(BaseHTTPRequestHandler):
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
             pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
             sweeper = truthy_flag(qs.get("sweeper", [""])[0])
+            exclude_sweeper_rehash = truthy_flag(qs.get("exclude_sweeper_rehash", [""])[0])
 
             # MANDATORY: all reporting uses EST (America/New_York). Ignore any incoming tz param.
             tz = "America/New_York"
 
             contract = SalesMetricContract()
             db = get_db()
-            payload = compute_sales(db, contract, year=year, month=month, tz=tz, start=start, end=end, lead_source=lead_source, pipeline=pipeline, sweeper=sweeper)
+            payload = compute_sales(
+                db,
+                contract,
+                year=year,
+                month=month,
+                tz=tz,
+                start=start,
+                end=end,
+                lead_source=lead_source,
+                pipeline=pipeline,
+                sweeper=sweeper,
+                exclude_sweeper_rehash=exclude_sweeper_rehash,
+            )
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

@@ -529,7 +529,7 @@ __DASHBOARD_NAV_HTML__
         <div class="card-header">
           <div>
             <div class="card-title">Owner Performance</div>
-            <div class="meta">Opp2Prelim = Sales / Opps Ran (Opps Ran uses appointmentOccurredAt month window)</div>
+            <div class="meta">Opp2Prelim = Sales / Opps Ran (Opps Ran uses appointmentOccurredAt month window). Each owner is their own row. Sweeper/Rehash opportunities are left off every owner: lead source Sweeper or Rehash, or a filled Sweeper/Rehash Last Name.</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <div class="meta" style="margin-top:0">Lead Gen Source</div>
@@ -642,12 +642,8 @@ __DASHBOARD_NAV_HTML__
     if (!raw0) return '—';
 
     // normalize internal whitespace (handles double spaces, etc.)
+    // Jeff Salas and Ollie Calabrese are different GHL owners. Do not merge them.
     const raw = raw0.replace(/\s+/g, ' ').trim();
-    const low = raw.toLowerCase();
-
-    // Combine owners for dashboard reporting
-    if (low === 'jeff salas' || low === 'ollie calabrese') return 'Ollie Calabrese / Jeff Salas';
-
     return raw;
   }
 
@@ -770,6 +766,8 @@ __DASHBOARD_NAV_HTML__
 
     const salesUrl = `/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`;
     const ranUrl = `/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}`; // now filtered by appointmentOccurredAt
+    // Owner table only. Sales by Pipeline and every other dashboard omit this flag.
+    const ownerSweeperParam = '&exclude_sweeper_rehash=1';
 
     const ownerLeadSel = document.getElementById('ownerLeadSource');
     const ownerLead = ownerLeadSel ? String(ownerLeadSel.value || '') : '';
@@ -802,8 +800,8 @@ __DASHBOARD_NAV_HTML__
 
     // Owner table uses optional Lead Gen Source filter
     const [ownerSalesRes, ownerRanRes] = await Promise.all([
-      fetch(`/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`),
-      fetch(`/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}`)
+      fetch(`/api/metrics/sales?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}${ownerSweeperParam}`),
+      fetch(`/api/metrics/opportunities_ran?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}${ownerLeadParam}${ownerSweeperParam}`)
     ]);
     if (!ownerSalesRes || !ownerRanRes) return;
 

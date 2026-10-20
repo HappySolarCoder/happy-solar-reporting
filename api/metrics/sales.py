@@ -43,7 +43,11 @@ from google.cloud import firestore
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
-from sweeper_rehash_attribution import sweeper_rehash_last_name
+from sweeper_rehash_attribution import (
+    excluded_from_self_gen,
+    self_gen_count_label,
+    sweeper_rehash_last_name,
+)
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -496,8 +500,12 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
                 lead_src = attr.get("sessionSource") or attr.get("medium")
 
         lead_src = normalize_sales_lead_source(lead_src)
+        sweeper_name = sweeper_rehash_last_name(contact, opp)
 
         # Optional lead source filter. Facebook Quick Form matches Inbound.
+        # A filled Sweeper/Rehash Last Name is never Self Gen.
+        if excluded_from_self_gen(lead_source, sweeper_name):
+            continue
         if lead_source is not None and str(lead_source).strip() != "":
             want = normalize_sales_lead_source(lead_source)
             if str(lead_src).strip().lower() != want.lower():
@@ -516,7 +524,6 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if cache_key in unique_contact_ids:
             continue
         unique_contact_ids.add(cache_key)
-        sweeper_name = sweeper_rehash_last_name(contact, opp)
         if sweeper_name:
             sweeper_rehash_sales += 1
 
@@ -559,7 +566,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         setter_bucket = add_casefold_count(setter_counts, setter_labels, setter_name, empty="none")
 
         if lead_src:
-            lead_source_counts[str(lead_src)] = lead_source_counts.get(str(lead_src), 0) + 1
+            lead_tally = self_gen_count_label(lead_src, sweeper_name)
+            lead_source_counts[str(lead_tally)] = lead_source_counts.get(str(lead_tally), 0) + 1
 
         if len(contrib_rows) < 50:
             contrib_rows.append(

@@ -40,6 +40,7 @@ from google.cloud import firestore
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
+from sweeper_rehash_attribution import excluded_from_self_gen, self_gen_count_label, sweeper_rehash_last_name
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -519,6 +520,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         if labeled:
             lead = labeled
 
+        sweeper_last = sweeper_rehash_last_name(contact, opp)
+        if excluded_from_self_gen(lead_source_norm, sweeper_last):
+            continue
         if lead_source_norm and str(lead).strip().lower() != str(lead_source_norm).strip().lower():
             continue
         if not pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper):
@@ -535,7 +539,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         if setter:
             add_casefold_count(by_setter, setter_labels, setter, empty="none")
 
-        by_lead[str(lead)] = by_lead.get(str(lead), 0) + 1
+        lead_tally = self_gen_count_label(lead, sweeper_last)
+        by_lead[str(lead_tally)] = by_lead.get(str(lead_tally), 0) + 1
 
         # Capture matching row keyed by opportunityId so result and list cannot diverge
         last_name = (contact.get("lastName") if isinstance(contact, dict) else None)

@@ -56,6 +56,7 @@ from sit_timestamp import frozen_sit_timestamp
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
+    self_gen_count_label,
     sweeper_is_demo,
     sweeper_rehash_last_name,
 )
@@ -1025,9 +1026,10 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             if dispo == "Sit":
                 add_casefold_count(sit_by_owner, owner_labels, closer, empty="unassigned")
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
-        by_lead[lead] = by_lead.get(lead, 0) + 1
+        lead_tally = self_gen_count_label(lead, sweeper_last)
+        by_lead[lead_tally] = by_lead.get(lead_tally, 0) + 1
         if dispo == "Sit":
-            sit_by_lead[lead] = sit_by_lead.get(lead, 0) + 1
+            sit_by_lead[lead_tally] = sit_by_lead.get(lead_tally, 0) + 1
             sit_by_pipeline[pname] = sit_by_pipeline.get(pname, 0) + 1
 
         matching.append(

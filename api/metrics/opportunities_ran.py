@@ -40,7 +40,12 @@ from google.cloud import firestore
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
-from sweeper_rehash_attribution import excluded_from_self_gen, self_gen_count_label, sweeper_rehash_last_name
+from sweeper_rehash_attribution import (
+    excluded_from_owner_performance,
+    excluded_from_self_gen,
+    self_gen_count_label,
+    sweeper_rehash_last_name,
+)
 
 OWNER_NAME_OVERRIDES = {
     "0fhsjcmlntce0cpjyfhj": "William Breen",
@@ -395,7 +400,7 @@ def user_name_lookup(db: firestore.Client) -> dict[str, str]:
     return m
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline: str | None = None, sweeper: bool = False, exclude_sweeper_rehash: bool = False) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -527,6 +532,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             continue
         if not pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper):
             continue
+        # Owner Performance only. Default callers, including Diamond Sweeper, keep these rows.
+        if exclude_sweeper_rehash and excluded_from_owner_performance(lead, sweeper_last):
+            continue
 
         # distinct count (after all filters)
         distinct_opp_ids.add(opp_id)
@@ -593,7 +601,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "excluded_pipelines": list(c.excluded_pipeline_names),
             "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
-            "filters": {"lead_source": lead_source_norm},
+            "filters": {"lead_source": lead_source_norm, "exclude_sweeper_rehash": bool(exclude_sweeper_rehash)},
         },
         "breakdowns": {
             "ran_by_pipeline": {k: v for k, v in sorted(by_pipeline.items(), key=lambda kv: (-kv[1], kv[0])) if v > 0},
@@ -703,10 +711,22 @@ class Handler(BaseHTTPRequestHandler):
             lead_source = (qs.get("lead_source", [""])[0] or "").strip() or None
             pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
             sweeper = truthy_flag(qs.get("sweeper", [""])[0])
+            exclude_sweeper_rehash = truthy_flag(qs.get("exclude_sweeper_rehash", [""])[0])
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline=pipeline, sweeper=sweeper)
+            payload = compute(
+                db,
+                c,
+                year=year,
+                month=month,
+                start=start,
+                end=end,
+                lead_source=lead_source,
+                pipeline=pipeline,
+                sweeper=sweeper,
+                exclude_sweeper_rehash=exclude_sweeper_rehash,
+            )
 
             if want_json:
                 body = json.dumps(json_safe(payload)).encode("utf-8")

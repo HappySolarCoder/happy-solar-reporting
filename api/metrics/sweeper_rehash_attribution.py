@@ -132,6 +132,27 @@ def is_rehash_lead_source(value: Any) -> bool:
     return compact_text(value).casefold() == "rehash"
 
 
+_SWEEPER_REHASH_LEAD_KEYS = frozenset({"sweeper", "rehash", "sweeper/rehash"})
+
+
+def is_sweeper_rehash_lead_source(value: Any) -> bool:
+    """Lead Gen Source Sweeper, Rehash, or Sweeper/Rehash. Not Phones or Virtual."""
+    key = compact_text(value).casefold().replace(" ", "")
+    return key in _SWEEPER_REHASH_LEAD_KEYS
+
+
+def excluded_from_owner_performance(lead_source: Any, sweeper_last_name: Any) -> bool:
+    """True when Sales Dashboard Owner Performance should omit this opportunity.
+
+    Evan, 2026-10-20: that table is each owner's own ran and sales. A lead
+    source of Sweeper or Rehash, or a filled Sweeper/Rehash Last Name
+    (including a Self Gen cancel reset), is the sweeper's appointment. Blank,
+    none, and n/a do not exclude. The same rule applies to every owner and
+    every date range. It does not change Diamond Sweeper totals.
+    """
+    return is_sweeper_rehash_lead_source(lead_source) or not is_blank_last_name(sweeper_last_name)
+
+
 def is_self_gen_lead_filter(requested: str | None) -> bool:
     if requested is None or not str(requested).strip():
         return False

@@ -42,6 +42,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import is_inbound_lead_source
+from sweeper_rehash_attribution import excluded_from_self_gen, sweeper_rehash_last_name
 
 TZ = ZoneInfo("America/New_York")
 
@@ -245,6 +246,13 @@ def matches_lead_source_filter(selected: str, actual: str) -> bool:
     if wanted == "3PL/Inbound":
         return actual_norm in {"3PL", "Inbound"}
     return actual_norm == wanted
+
+
+def passes_lead_source_filter(selected: str, contact: dict[str, Any] | None, opp: dict[str, Any] | None) -> bool:
+    """Lead-source filter. Self Gen drops a filled Sweeper/Rehash Last Name."""
+    if not matches_lead_source_filter(selected, contact_lead_source(contact)):
+        return False
+    return not excluded_from_self_gen(selected, sweeper_rehash_last_name(contact, opp))
 
 
 def parse_date_ymd(value: str | None) -> tuple[int, int, int] | None:
@@ -731,7 +739,7 @@ def build_payload(
             continue
 
         contact = contacts.get(compact_str(opp.get("contactId")))
-        if not matches_lead_source_filter(selected_lead_source, contact_lead_source(contact)):
+        if not passes_lead_source_filter(selected_lead_source, contact, opp):
             continue
 
         pid = compact_str(opp.get("pipelineId"))
@@ -817,7 +825,7 @@ def build_payload(
 
         contact_id = compact_str(opp.get("contactId"))
         contact = contacts.get(contact_id)
-        if not matches_lead_source_filter(selected_lead_source, contact_lead_source(contact)):
+        if not passes_lead_source_filter(selected_lead_source, contact, opp):
             continue
         if not sold_date_in_window(contact, touch_start_local, touch_end_local):
             continue
@@ -848,7 +856,7 @@ def build_payload(
             continue
 
         contact = contacts.get(compact_str(opp.get("contactId")))
-        if not matches_lead_source_filter(selected_lead_source, contact_lead_source(contact)):
+        if not passes_lead_source_filter(selected_lead_source, contact, opp):
             continue
 
         pid = compact_str(opp.get("pipelineId"))

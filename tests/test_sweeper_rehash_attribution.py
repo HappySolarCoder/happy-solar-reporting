@@ -27,8 +27,10 @@ from sweeper_rehash_attribution import (  # noqa: E402
     SWEEPER_REHASH_LAST_NAME_FIELD_ID,
     appointment_business_date,
     attributed_last_name,
+    excluded_from_self_gen,
     is_rehash_lead_source,
     lead_source_matches,
+    self_gen_count_label,
     sweeper_attribution_in_effect,
     sweeper_rehash_last_name,
 )
@@ -120,15 +122,16 @@ class AttributionTests(unittest.TestCase):
     def test_rehash_with_sweeper_last_name_counts_for_that_person(self):
         self.assertTrue(is_rehash_lead_source("Rehash"))
         self.assertTrue(is_rehash_lead_source(" REHASH "))
-        # Sales-rep self-gen filter and unfiltered FMA appointments.
-        self.assertEqual(_credit("Hill", "Rehash", "Calabrese", "Self Gen"), "Calabrese")
+        # Unfiltered credit still goes to the sweeper. Self Gen does not.
+        self.assertIsNone(_credit("Hill", "Rehash", "Calabrese", "Self Gen"))
         self.assertEqual(_credit("Hill", "rehash", "Calabrese", None), "Calabrese")
         self.assertNotEqual(_credit("Hill", "Rehash", "Calabrese", None), "Hill")
 
     def test_filled_sweeper_last_name_without_rehash_counts_for_that_person(self):
-        self.assertEqual(_credit("Hill", "Doors", "Smith", "Self Gen"), "Smith")
+        self.assertIsNone(_credit("Hill", "Doors", "Smith", "Self Gen"))
         self.assertEqual(_credit("Hill", "Doors", "Smith", None), "Smith")
-        self.assertEqual(_credit("Hill", "Self Gen", "Smith", "Self Gen"), "Smith")
+        self.assertIsNone(_credit("Hill", "Self Gen", "Smith", "Self Gen"))
+        self.assertEqual(self_gen_count_label("Self Gen", "Smith"), "Sweeper")
         self.assertEqual(_credit("Hill", "Phones", "  Nguyen ", None), "Nguyen")
 
     def test_empty_field_and_non_rehash_keeps_setter(self):
@@ -378,10 +381,13 @@ class SurfaceCreditTests(unittest.TestCase):
         before = self._run(AUGUST, sweeper="Calabrese", lead="Doors", lead_filter="Self Gen")
         self.assertEqual(before["dashboard_created"], {})
         self.assertEqual(before["dashboard_sit"], {})
+        # Filled Sweeper/Rehash Last Name stays off the Self Gen filter after the cutoff.
         after = self._run(POST_CUTOFF, sweeper="Calabrese", lead="Doors", lead_filter="Self Gen")
-        self.assertEqual(after["dashboard_created"], {"Calabrese": 1})
-        self.assertEqual(after["dashboard_sit"], {"Calabrese": 1})
-        self.assertEqual(after["commissions"], {"Calabrese": 1})
+        self.assertEqual(after["dashboard_created"], {})
+        self.assertEqual(after["dashboard_sit"], {})
+        self.assertEqual(after["commissions"], {})
+        unfiltered = self._run(POST_CUTOFF, sweeper="Calabrese", lead="Doors")
+        self.assertEqual(unfiltered["dashboard_created"], {"Calabrese": 1})
 
 
 if __name__ == "__main__":

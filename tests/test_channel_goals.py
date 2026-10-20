@@ -91,6 +91,11 @@ class SelfGenTests(unittest.TestCase):
         assert self_gen_reason("Doors", "Meehan", "Zachary Maecker") is None
         assert self_gen_reason(None, "Hill", "Allen Frazier") is None
         assert self_gen_reason(None, "", "unassigned") is None
+        # Filled Sweeper/Rehash Last Name blocks lead source and the setter/owner override.
+        assert self_gen_reason("Self Gen", "Diamond", "Jeff Salas", "Diamond") is None
+        assert self_gen_reason("Doors", "Diamond", "Tyler Diamond", "Diamond") is None
+        assert self_gen_reason("Self Gen", "Frazier", "Allen Frazier", "") == "lead_source"
+        assert self_gen_reason("Self Gen", "Frazier", "Allen Frazier", "none") == "lead_source"
 
 
     def test_self_gen_actuals_split(self):

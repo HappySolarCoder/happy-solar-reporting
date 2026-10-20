@@ -49,6 +49,7 @@ from leadgen_bucket import BUCKETS, leadgen_bucket
 from sweeper_rehash_attribution import (
     attributed_last_name,
     lead_source_matches,
+    self_gen_count_label,
     sweeper_rehash_last_name,
 )
 
@@ -578,7 +579,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
         setter_norm = add_casefold_count(by_setter, setter_labels, setter_norm, empty="none")
-        by_lead[lead_norm] = by_lead.get(lead_norm, 0) + 1
+        lead_tally = self_gen_count_label(lead_norm, sweeper_last)
+        by_lead[lead_tally] = by_lead.get(lead_tally, 0) + 1
         by_bucket[bucket] += 1
         add_casefold_count(
             by_bucket_setter[bucket],
@@ -637,8 +639,10 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
                 "created_by_setter_last_name uses Sweeper/Rehash Last Name when that field "
                 "is non-empty and createdAt in America/New_York is on or after 2026-09-24. "
                 "Earlier dates stay with the setter. Empty field keeps the setter, including "
-                "true self-gen. On or after the cutoff, a Self Gen lead_source filter also "
-                "includes rehash and rows with Sweeper/Rehash Last Name filled."
+                "true self-gen. A Self Gen lead_source filter excludes a filled "
+                "Sweeper/Rehash Last Name, even when Lead Gen Source is Self Gen. "
+                "On or after the cutoff, that filter still includes a Rehash lead "
+                "source whose Sweeper/Rehash Last Name is blank."
             ),
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "pipeline_scope": pipeline_scope_norm, "setter_last_name": setter_filter_norm},

@@ -139,6 +139,29 @@ def is_self_gen_lead_filter(requested: str | None) -> bool:
     return key in _SELF_GEN_FILTER_KEYS
 
 
+def excluded_from_self_gen(requested: str | None, sweeper_last_name: Any) -> bool:
+    """True when this row must not count as Self Gen.
+
+    Evan, 2026-10-16: an opportunity whose Sweeper/Rehash Last Name is filled
+    is sweeper/rehash (including cancel resets), never Self Gen, even when
+    Lead Gen Source is Self Gen. Blank, none, and n/a do not exclude. A
+    request that is not a Self Gen filter does not exclude.
+    """
+    return is_self_gen_lead_filter(requested) and not is_blank_last_name(sweeper_last_name)
+
+
+def self_gen_count_label(lead_source: Any, sweeper_last_name: Any) -> Any:
+    """Lead-source histogram label.
+
+    A filled Sweeper/Rehash Last Name is not tallied under Self Gen. Those
+    rows are tallied as Sweeper. Every other label, including true Self Gen
+    with a blank field, is returned unchanged.
+    """
+    if excluded_from_self_gen(None if lead_source is None else str(lead_source), sweeper_last_name):
+        return "Sweeper"
+    return lead_source
+
+
 def uses_sweeper_rehash_credit(lead_source: Any, sweeper_last_name: Any) -> bool:
     """True when lead source is rehash or Sweeper/Rehash Last Name is filled."""
     return is_rehash_lead_source(lead_source) or not is_blank_last_name(sweeper_last_name)
@@ -261,15 +284,18 @@ def lead_source_matches(
     sweeper_last_name: Any,
     appointment_date: Any = None,
 ) -> bool:
-    """Lead-source equality, plus self-gen inclusion once the cutoff applies.
+    """Lead-source equality.
 
-    Before 2026-09-24 this is exact equality, matching base. On or after the
-    cutoff, a Self Gen filter also matches rehash and any row whose
-    Sweeper/Rehash Last Name is filled, so those appointments show on the
-    sales-rep self-gen dashboard. A missing date does not widen the filter.
+    A Self Gen filter never matches a filled Sweeper/Rehash Last Name,
+    including when Lead Gen Source itself is Self Gen (Evan, 2026-10-16).
+    On or after 2026-09-24, a Self Gen filter still matches a Rehash lead
+    source whose Sweeper/Rehash Last Name is blank. A missing date does not
+    widen the filter. Inbound still matches Facebook Quick Form.
     """
     if requested is None or not str(requested).strip():
         return True
+    if excluded_from_self_gen(requested, sweeper_last_name):
+        return False
     if is_inbound_lead_source(requested) and is_inbound_lead_source(lead_source):
         return True
     if str(lead_source).strip().casefold() == str(requested).strip().casefold():
@@ -277,7 +303,8 @@ def lead_source_matches(
     if (
         sweeper_attribution_in_effect(appointment_date)
         and is_self_gen_lead_filter(requested)
-        and uses_sweeper_rehash_credit(lead_source, sweeper_last_name)
+        and is_rehash_lead_source(lead_source)
+        and is_blank_last_name(sweeper_last_name)
     ):
         return True
     return False

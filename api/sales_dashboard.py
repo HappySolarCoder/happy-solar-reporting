@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By last name. On or after Thu Sep 24, 2026 (ET), rehash or a filled Sweeper/Rehash Last Name counts for that person. Earlier appointments stay on the setter.</div>
+          <div class="meta">By setter last name. Lead Gen Source Self Gen only. A filled Sweeper/Rehash Last Name is not Self Gen, including sweeper, rehash, and cancel resets, so those appointments are left off this card. The 14-appointment Sweeper/Rehash goal stays on Company Overview, not here.</div>
         </div>
         <div class="tablewrap">
           <table>

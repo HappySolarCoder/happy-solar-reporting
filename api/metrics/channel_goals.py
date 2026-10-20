@@ -71,14 +71,20 @@ def owner_last_name(owner: Any) -> str:
     return parts[-1] if parts and parts[-1] not in ("", "unassigned", "none", "unknown") else ""
 
 
-def self_gen_reason(lead_source: Any, setter_last: Any, owner: Any) -> str | None:
+def self_gen_reason(lead_source: Any, setter_last: Any, owner: Any, sweeper_last: Any = None) -> str | None:
     """'lead_source', 'fallback', 'override' or None (Evan, 2026-10-10).
 
     A setter last name equal to the opportunity owner's last name
     (case-insensitive, trimmed) is Self Gen whatever the Lead Gen Source says
     ('fallback' when the source is blank, 'override' when it named another
     channel). Lead Gen Source Self Gen also counts.
+
+    A filled Sweeper/Rehash Last Name is never Self Gen (Evan, 2026-10-16),
+    including when Lead Gen Source is Self Gen or the setter's last name
+    matches the owner. Cancel resets carry that name and stay sweeper/rehash.
     """
+    if not is_blank_last_name(sweeper_last):
+        return None
     lead = _fold(lead_source)
     if lead in SELF_GEN_LEAD_SOURCES:
         return "lead_source"
@@ -113,9 +119,10 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         if not oid or oid in seen:
             continue
         seen.add(oid)
-        if filled(row.get("sweeperRehashLastName")):
+        sweeper_last = row.get("sweeperRehashLastName")
+        if filled(sweeper_last):
             continue
-        reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"))
+        reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"), sweeper_last)
         if reason:
             bump(reason, "appointments", row.get("leadGenSource"))
     seen = set()
@@ -126,9 +133,10 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         if oid in seen:
             continue
         seen.add(oid)
-        if filled(row.get("sweeperRehashLastName")):
+        sweeper_last = row.get("sweeperRehashLastName")
+        if filled(sweeper_last):
             continue
-        reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"))
+        reason = self_gen_reason(row.get("lead_source"), row.get("setter"), row.get("closer"), sweeper_last)
         if reason:
             bump(reason, "ran", row.get("lead_source"))
             if row.get("disposition") == "Sit":
@@ -264,8 +272,7 @@ def compute_channel_goals(db, *, year: int, month: int, start: str | None = None
         setter = primary
         if not setter or (setter.casefold() in sales_mod.INVALID_PRIMARY_SETTERS and fallback):
             setter = fallback or setter
-        named = filled(sweeper_rehash_last_name(contact, opp))
-        reason = None if named else self_gen_reason(lead, setter, salesperson)
+        reason = self_gen_reason(lead, setter, salesperson, sweeper_rehash_last_name(contact, opp))
         label = str(lead).strip() if lead is not None else ""
         if label.casefold() in {"crm ui", "hand", "", "none", "null", "n/a"}:
             label = "none"
@@ -313,7 +320,7 @@ def compute_channel_goals(db, *, year: int, month: int, start: str | None = None
             "sweeper": "Sweeper/Rehash Last Name filled (any name), contact then opportunity",
             "leads_inbound": "Inbound/Lead Locker pipeline opps created in month whose Lead Gen Source counts as Inbound, including Facebook Quick Form and FB Quick Form",
             "leads_3pl": "Remaining non-refunded Lead Locker / Solar Reviews title-bucket opps created in month",
-            "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source",
+            "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source. A filled Sweeper/Rehash Last Name is never Self Gen.",
             "demo_rate": "demos / appointments ran",
             "opp2prelim": "sales / appointments ran",
         },

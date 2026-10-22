@@ -254,6 +254,15 @@ def load_demo_rate_snaps(
             by_id.setdefault(snap.id, snap)
     except Exception:
         pass
+    # Ended appointment cycles of consultant Self Gen rebooks keep their
+    # original month (id {oppId}~cycle{n}; one count per cycle).
+    try:
+        from selfgen_rebooks import prior_cycle_snaps
+
+        for snap in prior_cycle_snaps(db, start_utc, end_utc):
+            by_id.setdefault(snap.id, snap)
+    except Exception:
+        pass
     return list(by_id.values())
 
 

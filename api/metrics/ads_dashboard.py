@@ -35,6 +35,8 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from selfgen_rebooks import rebook_extra_demo  # noqa: E402
+
 TIMEZONE_NAME = "America/Phoenix"
 PHOENIX = ZoneInfo(TIMEZONE_NAME)
 PHOENIX_ZONE_NAMES = frozenset({"america/phoenix", "us/arizona"})
@@ -294,12 +296,18 @@ def _sweeper_rehash_filled(contact: dict[str, Any] | None) -> bool:
 def _count_demos_per_lead(
     events: list[tuple[str, datetime, str]],
     contacts: dict[str, dict],
+    rebook_extra: dict[str, int] | None = None,
 ) -> int:
     """At most one demo per contact across inbound city opportunities.
 
     A later demo opportunity counts as another demo only when that contact's
     Sweeper/Rehash Last Name is non-empty. Sold, Sale Cancelled, and every
     Demo-* stage use this rule. One Legger is not a demo and is not passed in.
+
+    Rebook exemption (Evan, 2026-10-21): a consultant Self Gen rebook opens a
+    new appointment cycle on the same opportunity. When that opportunity sat
+    in the ended cycle and sits again in the new one, ``rebook_extra[opp_id]``
+    adds that second demo.
     """
     by_contact: dict[str, list[tuple[datetime, str]]] = {}
     seen: set[str] = set()
@@ -312,10 +320,11 @@ def _count_demos_per_lead(
     for contact_id, rows in by_contact.items():
         if not rows:
             continue
+        extra = sum((rebook_extra or {}).get(opp_id, 0) for _created, opp_id in rows)
         if len(rows) == 1 or not _sweeper_rehash_filled(contacts.get(contact_id)):
-            total += 1
+            total += 1 + extra
             continue
-        total += len(rows)
+        total += len(rows) + extra
     return total
 
 
@@ -680,6 +689,7 @@ def classify_window(
 
     opp_ids: set[str] = set()
     demo_events: list[tuple[str, datetime, str]] = []
+    rebook_extra: dict[str, int] = {}
     sold_ids = _sold_stage_ids()
     sold_contacts: set[str] = set()
     seen_city: set[str] = set()
@@ -704,6 +714,8 @@ def classify_window(
         opp_ids.add(opp_id)
         if stage_is_demo(opp_stage_label(opp, stage_names)) or _history_has_city_demo(history.get(opp_id), stage_names):
             demo_events.append((contact_id, created, opp_id))
+            if stage_is_demo(opp_stage_label(opp, stage_names)) and rebook_extra_demo(opp):
+                rebook_extra[opp_id] = 1
 
     other_created: dict[str, list[datetime]] = {}
     for opp in list(contact_opps) + list(pipeline_opps):
@@ -758,7 +770,7 @@ def classify_window(
         "fb_quick_form_leads": quick_clusters,
         "fb_quick_form_matched": len(quick_matched),
         "opps": len(opp_ids),
-        "demos": _count_demos_per_lead(demo_events, contacts),
+        "demos": _count_demos_per_lead(demo_events, contacts, rebook_extra),
         "sales": len(sales),
         "stages": stage_rows,
         "include_fb_quick_form": include_quick_form,

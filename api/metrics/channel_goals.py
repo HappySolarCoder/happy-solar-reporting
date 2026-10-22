@@ -102,7 +102,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
     """
     keys = ("appointments", "ran", "demos", "sales")
     out = dict.fromkeys(keys, 0)
-    split = {r: dict.fromkeys(keys, 0) for r in ("lead_source", "fallback", "override")}
+    split = {r: dict.fromkeys(keys, 0) for r in ("lead_source", "fallback", "override", "rebook")}
     moved: dict[str, dict[str, int]] = {}
 
     def bump(reason, key, label):
@@ -112,6 +112,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
             moved.setdefault(str(label), dict.fromkeys(keys, 0))[key] += 1
 
     seen: set[str] = set()
+    credited_contacts: set[str] = set()
     for row in created_payload.get("sample_rows") or []:
         if not isinstance(row, dict):
             continue
@@ -125,6 +126,18 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         reason = self_gen_reason(row.get("leadGenSource"), row.get("setterLastName"), row.get("owner"), sweeper_last)
         if reason:
             bump(reason, "appointments", row.get("leadGenSource"))
+            credited_contacts.add(str(row.get("contactId") or ""))
+    # Consultant Booking Hub rebooks (opportunities_created include_rebooks).
+    # Self Gen only: never in moved_from, so no other channel loses a count.
+    rebook_contacts: set[str] = set()
+    for row in created_payload.get("self_gen_rebooks") or []:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("contactId") or "")
+        if not cid or cid in credited_contacts or cid in rebook_contacts or filled(row.get("sweeperRehashLastName")):
+            continue
+        rebook_contacts.add(cid)
+        bump("rebook", "appointments", row.get("leadGenSource"))
     seen = set()
     for row in demo_payload.get("rows") or []:
         if not isinstance(row, dict):
@@ -148,6 +161,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
         "from_lead_source": split["lead_source"],
         "from_fallback": split["fallback"],
         "from_override": split["override"],
+        "from_rebook": split["rebook"],
         "moved_from": moved,
     }
 
@@ -282,14 +296,14 @@ def compute_channel_goals(db, *, year: int, month: int, start: str | None = None
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         if start and end:
-            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all", start=start, end=end)
+            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all", start=start, end=end, include_rebooks=True)
             f_demo = ex.submit(demo_rate.build_payload, db, year, month, {}, start=start, end=end)
             f_sales = ex.submit(
                 compute_sales, db, SalesMetricContract(),
                 year=year, month=month, tz="America/New_York", start=start, end=end, on_sale=on_sale,
             )
         else:
-            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all")
+            f_created = ex.submit(compute, db, MetricContract(), year=year, month=month, pipeline_scope="all", include_rebooks=True)
             f_demo = ex.submit(demo_rate.build_payload, db, year, month, {})
             f_sales = ex.submit(compute_sales, db, SalesMetricContract(), year=year, month=month, tz="America/New_York", on_sale=on_sale)
         f_leads = ex.submit(compute_leads, db, start_local, end_local)
@@ -320,7 +334,7 @@ def compute_channel_goals(db, *, year: int, month: int, start: str | None = None
             "sweeper": "Sweeper/Rehash Last Name filled (any name), contact then opportunity",
             "leads_inbound": "Inbound/Lead Locker pipeline opps created in month whose Lead Gen Source counts as Inbound, including Facebook Quick Form and FB Quick Form",
             "leads_3pl": "Remaining non-refunded Lead Locker / Solar Reviews title-bucket opps created in month",
-            "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source. A filled Sweeper/Rehash Last Name is never Self Gen.",
+            "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source. A filled Sweeper/Rehash Last Name is never Self Gen. Appointments also add consultant Booking Hub rebooks (opportunities_created self_gen_rebooks, split from_rebook), at most one per contact and never a contact already counted through createdAt.",
             "demo_rate": "demos / appointments ran",
             "opp2prelim": "sales / appointments ran",
         },

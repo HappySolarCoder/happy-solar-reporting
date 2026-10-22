@@ -455,6 +455,16 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         .where(c.appointment_occurred_at_field, "<", end_utc)
         .stream()
     )
+    # Ended appointment cycles of consultant Self Gen rebooks keep their month.
+    try:
+        from selfgen_rebooks import prior_cycle_snaps, as_utc
+
+        for snap in prior_cycle_snaps(db, start_utc, end_utc):
+            occurred = as_utc((snap.to_dict() or {}).get(c.appointment_occurred_at_field))
+            if occurred and start_utc <= occurred < end_utc:
+                opp_snaps.append(snap)
+    except Exception:
+        pass
     scanned = len(opp_snaps)
 
     needed_contact_ids: list[str] = []

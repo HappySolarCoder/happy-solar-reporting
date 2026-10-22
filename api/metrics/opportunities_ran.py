@@ -163,6 +163,12 @@ class MetricContract:
 
 
 def get_db() -> firestore.Client:
+    # Historical reads see each revived opp's frozen cycles (cycle_view.py).
+    try:
+        from cycle_view import cycle_aware as _cycle_aware
+    except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+        from metrics.cycle_view import cycle_aware as _cycle_aware
+
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
     database_id = os.environ.get("FIRESTORE_DATABASE_ID")
@@ -177,7 +183,7 @@ def get_db() -> firestore.Client:
 
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict)
-    return firestore.Client(project=project_id, database=database_id, credentials=creds)
+    return _cycle_aware(firestore.Client(project=project_id, database=database_id, credentials=creds))
 
 
 def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetime, str, str]:
@@ -455,16 +461,6 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         .where(c.appointment_occurred_at_field, "<", end_utc)
         .stream()
     )
-    # Ended appointment cycles of consultant Self Gen rebooks keep their month.
-    try:
-        from selfgen_rebooks import prior_cycle_snaps, as_utc
-
-        for snap in prior_cycle_snaps(db, start_utc, end_utc):
-            occurred = as_utc((snap.to_dict() or {}).get(c.appointment_occurred_at_field))
-            if occurred and start_utc <= occurred < end_utc:
-                opp_snaps.append(snap)
-    except Exception:
-        pass
     scanned = len(opp_snaps)
 
     needed_contact_ids: list[str] = []

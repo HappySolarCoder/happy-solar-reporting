@@ -271,6 +271,18 @@ class RebookCreditTests(unittest.TestCase):
         wk = october(make_db(logs=logs), start="2026-10-26", end="2026-11-01", pipeline_scope="all", include_rebooks=True)
         self.assertEqual(wk["self_gen_rebooks"], [])
 
+    def test_credit_follows_rebooked_by_when_owner_did_not_move(self):
+        # Opp still owned by Allen (prior owner); Zach rebooked it.
+        logs = {"x": log(rebookedByUserId="allen", priorOwnerId="allen")}
+        out = october(make_db(logs=logs), pipeline_scope="all", include_rebooks=True)
+        self.assertEqual(out["self_gen_rebooks"][0]["owner"], "Zachary Maecker")
+        self.assertEqual(out["breakdowns"]["self_gen_rebooks_by_setter_last_name"], {"Maecker": 1})
+        self.assertEqual(sr.roster_spelling("Zach Maecker", ["Allen Frazier"]), "Zach Maecker")
+
+    def test_missing_rebooked_by_uses_owner(self):
+        out = october(make_db(logs={"x": log(rebookedBy=None)}), pipeline_scope="all", include_rebooks=True)
+        self.assertEqual(out["self_gen_rebooks"][0]["owner"], "Zachary Maecker")
+
     def test_recredit_on_own_old_self_gen_counts(self):
         # Zach's May opp was already his own Self Gen; the October rebook still counts.
         out = october(make_db(), pipeline_scope="all", include_rebooks=True)

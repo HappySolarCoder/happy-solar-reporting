@@ -142,6 +142,21 @@ def days_since_last_appointment(log: dict, opp: dict | None, rebook_day: date) -
     return (rebook_day - last.astimezone(NY).date()).days
 
 
+def roster_spelling(name: str, roster_names: Iterable[str]) -> str:
+    """'Zach Maecker' -> 'Zachary Maecker' when exactly one roster name has the
+    same last name and a first name that starts with (or is the start of) it."""
+    first = fold(name).split(" ")[0] if fold(name) else ""
+    want_last = last_name(name)
+    hits = set()
+    for cand in roster_names:
+        parts = fold(cand).split(" ")
+        if len(parts) < 2 or last_name(cand) != want_last:
+            continue
+        if parts[0].startswith(first) or first.startswith(parts[0]):
+            hits.add(compact(cand))
+    return hits.pop() if len(hits) == 1 else name
+
+
 def month_key(day: date) -> str:
     return f"{day.year:04d}-{day.month:02d}"
 
@@ -212,6 +227,7 @@ def load_rebook_credits(
     sweeper_last_name: Callable[[dict | None, dict | None], str],
     bucket_of: Callable[[str], str] | None = None,
     already_credited_contact_ids: set[str] | None = None,
+    roster_names: Iterable[str] | None = None,
 ) -> RebookResult:
     """Eligible rebook credits whose rebook date falls in [start_local, end_local).
 
@@ -266,11 +282,19 @@ def load_rebook_credits(
         if gap is None or gap < MIN_DAYS_SINCE_LAST_APPOINTMENT:
             skip("last_appointment_under_14_days")
             continue
+        # The consultant is Rebooked By (the appointment's assigned user). The
+        # opp owner after the workflow gives the roster spelling when it is the
+        # same person; if the workflow could not move the owner, Rebooked By wins.
         owner_id = compact(log.get("rebookedByUserId"))
-        owner = owner_name(owner_id, compact(log.get("rebookedBy"))) if owner_id else compact(log.get("rebookedBy"))
+        rebooked_by = compact(log.get("rebookedBy"))
+        owner_from_id = owner_name(owner_id, rebooked_by) if owner_id else ""
+        if rebooked_by and last_name(owner_from_id) != last_name(rebooked_by):
+            owner, owner_id = roster_spelling(rebooked_by, roster_names or ()), ""
+        else:
+            owner = owner_from_id or rebooked_by
         setter = compact(log.get("rebookSetterLastName")) or compact(custom_field(contact, SETTER_LAST_NAME_CONTACT_CF_ID))
-        consultant_last = {n for n in (last_name(owner), last_name(log.get("rebookedBy"))) if n}
-        if not setter or fold(setter) not in consultant_last:
+        consultant_last = last_name(owner)
+        if not setter or not consultant_last or fold(setter) != consultant_last:
             skip("setter_not_consultant")
             continue
         pname = pipeline_name(opp.get("pipelineId") or log.get("pipelineId"))

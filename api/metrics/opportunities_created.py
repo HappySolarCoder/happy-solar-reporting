@@ -756,6 +756,7 @@ def add_self_gen_rebooks(
                 sweeper_last_name=lambda contact, opp: sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id),
                 bucket_of=lambda pname: leadgen_bucket("Self Gen", None, pname),
                 already_credited_contact_ids=credited,
+                roster_names=list(user_names.values()),
             )
             rows = [
                 r for r in res.rows

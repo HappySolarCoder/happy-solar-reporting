@@ -226,6 +226,12 @@ def date_window(start_ymd: str, end_ymd: str) -> tuple[datetime, datetime]:
 
 
 def get_db() -> firestore.Client:
+    # Historical reads see each revived opp's frozen cycles (cycle_view.py).
+    try:
+        from cycle_view import cycle_aware as _cycle_aware
+    except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+        from metrics.cycle_view import cycle_aware as _cycle_aware
+
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
     database_id = os.environ.get("FIRESTORE_DATABASE_ID")
@@ -233,7 +239,7 @@ def get_db() -> firestore.Client:
         missing = [k for k in ("FIREBASE_SERVICE_ACCOUNT_JSON", "GCP_PROJECT_ID", "FIRESTORE_DATABASE_ID") if not os.environ.get(k)]
         raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
     creds = service_account.Credentials.from_service_account_info(json.loads(creds_json))
-    return firestore.Client(project=project_id, database=database_id, credentials=creds)
+    return _cycle_aware(firestore.Client(project=project_id, database=database_id, credentials=creds))
 
 
 def load_lookup_map(db: firestore.Client, collection: str) -> dict[str, dict[str, Any]]:

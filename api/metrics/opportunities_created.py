@@ -167,6 +167,12 @@ class MetricContract:
 
 
 def get_db() -> firestore.Client:
+    # Historical reads see each revived opp's frozen cycles (cycle_view.py).
+    try:
+        from cycle_view import cycle_aware as _cycle_aware
+    except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+        from metrics.cycle_view import cycle_aware as _cycle_aware
+
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
     database_id = os.environ.get("FIRESTORE_DATABASE_ID")
@@ -181,7 +187,7 @@ def get_db() -> firestore.Client:
 
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict)
-    return firestore.Client(project=project_id, database=database_id, credentials=creds)
+    return _cycle_aware(firestore.Client(project=project_id, database=database_id, credentials=creds))
 
 
 def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetime, str, str]:
@@ -405,7 +411,7 @@ def normalize_channel(v: Any) -> str:
     return labeled or str(v)
 
 
-def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None, pipeline: str | None = None, sweeper: bool = False) -> dict[str, Any]:
+def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None, pipeline: str | None = None, sweeper: bool = False, include_rebooks: bool = False) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
     else:
@@ -603,7 +609,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         for k in ("ownerId", "assignedToName", "assignedToUserName", "assignedUserName", "ownerName", "assignedToUser"):
             r.pop(k, None)
 
-    return {
+    payload = {
         "metric": c.metric_name,
         "unit": c.unit,
         "year": year,
@@ -663,6 +669,132 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         "sample_rows": sorted(list(matching_rows.values()), key=lambda r: (r.get("createdAt") or "")),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
+    if include_rebooks:
+        add_self_gen_rebooks(
+            payload,
+            db,
+            c,
+            start_local=start_local,
+            end_local=end_local,
+            matching_rows=matching_rows,
+            user_names=user_names,
+            resolve_owner_name=resolve_owner_name,
+            pipe_names=pipe_names,
+            included=included,
+            excluded=excluded,
+            pipeline_scope_norm=pipeline_scope_norm,
+            pipeline=pipeline,
+            sweeper=sweeper,
+            lead_source_norm=lead_source_norm,
+            setter_filter_norm=setter_filter_norm,
+        )
+    return payload
+
+
+def add_self_gen_rebooks(
+    payload: dict[str, Any],
+    db: firestore.Client,
+    c: MetricContract,
+    *,
+    start_local: datetime,
+    end_local: datetime,
+    matching_rows: dict[str, dict[str, Any]],
+    user_names: dict[str, str],
+    resolve_owner_name,
+    pipe_names: dict[str, str],
+    included: set[str],
+    excluded: set[str],
+    pipeline_scope_norm: str,
+    pipeline: str | None,
+    sweeper: bool,
+    lead_source_norm: str | None,
+    setter_filter_norm: str | None,
+) -> None:
+    """Opt-in Self Gen rebook credits, as separate fields.
+
+    ``result``, ``sample_rows`` and the existing breakdowns never change, so
+    company Opportunities Created totals stay createdAt-only.
+    """
+    import selfgen_rebooks as sr
+    from channel_goals import self_gen_reason
+
+    rows: list[dict[str, Any]] = []
+    debug: dict[str, Any] = {}
+    wants_self_gen = lead_source_norm is None or sr.fold(lead_source_norm) in sr.SELF_GEN_LEAD_SOURCES
+    if wants_self_gen:
+        credited = {
+            str(r.get("contactId") or "")
+            for r in matching_rows.values()
+            if self_gen_reason(r.get("leadGenSource"), r.get("setterLastName"), r.get("owner"), r.get("sweeperRehashLastName"))
+        }
+        credited.discard("")
+
+        def pipeline_label(raw_id: Any) -> str:
+            hit = resolve_pipeline_name(pipe_names, raw_id, fallback="")
+            if hit and hit != compact_str(raw_id):
+                return hit
+            extra = pipeline_name_lookup(db, pipeline_id_keys(raw_id))
+            pipe_names.update(extra)
+            return resolve_pipeline_name(pipe_names, raw_id)
+
+        def pipeline_ok(pname: str) -> bool:
+            low = str(pname or "").strip().lower()
+            if low in excluded:
+                return False
+            if pipeline_scope_norm != "all" and included and low not in included:
+                return False
+            return pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper)
+
+        def owner_name(uid: str, fallback: str) -> str:
+            fill_missing_user_names(db, user_names, [uid])
+            name = resolve_owner_name({"assignedToName": fallback}, uid)
+            return fallback if (not name or name.startswith("Unknown User")) and fallback else name
+
+        try:
+            res = sr.load_rebook_credits(
+                db,
+                start_local,
+                end_local,
+                load_contacts=load_contacts_by_ids,
+                owner_name=owner_name,
+                pipeline_name=pipeline_label,
+                pipeline_ok=pipeline_ok,
+                sweeper_last_name=lambda contact, opp: sweeper_rehash_last_name(contact, opp, c.sweeper_rehash_last_name_cf_id),
+                bucket_of=lambda pname: leadgen_bucket("Self Gen", None, pname),
+                already_credited_contact_ids=credited,
+                roster_names=list(user_names.values()),
+            )
+            rows = [
+                r for r in res.rows
+                if not setter_filter_norm or str(r.get("setterLastName") or "").strip().lower() == setter_filter_norm
+            ]
+            debug = {"logs_scanned": res.logs_scanned, "excluded": res.excluded}
+        except Exception as exc:  # never break the dashboards on the opt-in path
+            payload["self_gen_rebooks_error"] = str(exc)[:300]
+            rows = []
+
+    by_setter: dict[str, int] = {}
+    setter_labels: dict[str, str] = {}
+    by_owner: dict[str, int] = {}
+    owner_labels: dict[str, str] = {}
+    for r in rows:
+        add_casefold_count(by_setter, setter_labels, r.get("setterLastName"), empty="none")
+        add_casefold_count(by_owner, owner_labels, r.get("owner"), empty="unassigned")
+        r.pop("ownerId", None)
+    payload["self_gen_rebooks"] = rows
+    payload["self_gen_rebooks_count"] = len(rows)
+    payload["breakdowns"]["self_gen_rebooks_by_setter_last_name"] = finalize_casefold_counts(by_setter, setter_labels)
+    payload["breakdowns"]["self_gen_rebooks_by_owner"] = finalize_casefold_counts(by_owner, owner_labels)
+    payload["debug"]["self_gen_rebooks"] = debug
+    payload["contract"]["self_gen_rebooks"] = (
+        "Opt-in (include_rebooks=1), separate from result and sample_rows. One Self Gen opp per "
+        "consultant Booking Hub rebook in ghl_selfgen_rebooks_v1, dated its rebook date "
+        "(America/New_York): Lead Gen Source Self Gen, blank Sweeper/Rehash Last Name, Rebook "
+        "Setter Last Name equals the consultant's last name, prior stage DQ'ed / No Sit / No Show / "
+        "Cancelled / Needs Rebook (never Sold or Sale Cancelled), 14+ days since the last "
+        "appointment, at most one per contact per calendar month and none when the contact already "
+        "has a Self Gen opp created in the window."
+    )
 
 
 def render_html(payload: dict[str, Any]) -> str:
@@ -737,10 +869,11 @@ class Handler(BaseHTTPRequestHandler):
             setter_last_name = (qs.get("setter_last_name", [""])[0] or "").strip() or None
             pipeline = (qs.get("pipeline", [""])[0] or "").strip() or None
             sweeper = truthy_flag(qs.get("sweeper", [""])[0])
+            include_rebooks = truthy_flag(qs.get("include_rebooks", [""])[0])
 
             c = MetricContract()
             db = get_db()
-            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope, setter_last_name=setter_last_name, pipeline=pipeline, sweeper=sweeper)
+            payload = compute(db, c, year=year, month=month, start=start, end=end, lead_source=lead_source, pipeline_scope=pipeline_scope, setter_last_name=setter_last_name, pipeline=pipeline, sweeper=sweeper, include_rebooks=include_rebooks)
 
             if want_json:
                 body = json.dumps(payload).encode("utf-8")

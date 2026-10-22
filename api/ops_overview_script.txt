@@ -879,6 +879,12 @@
       demoRows = demoRows.filter(namedSweeper);
       salesRows = salesRows.filter(namedSweeper);
     }
+    function oppLabel(id) {
+      // A frozen earlier cycle of a revived opp ({opp}~cycle1) shows as its real GHL id.
+      const text = String(id == null ? "" : id);
+      const m = text.match(/^(.*)~cycle(\d+)$/);
+      return m ? m[1] + " (cycle " + m[2] + ")" : text;
+    }
     function table(headers, rows) {
       return '<div class="tablewrap"><table><thead><tr>' + headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
         (rows.length ? rows.slice(0, 200).map(function (row) { return "<tr>" + row.map(function (cell) { return "<td>" + esc(cell) + "</td>"; }).join("") + "</tr>"; }).join("") : '<tr><td colspan="' + headers.length + '">No rows returned.</td></tr>') +
@@ -887,13 +893,13 @@
     openDrawer(name + " · opportunity records",
       '<p class="chart-note">Created rows are the created population. Demo rows are ran appointments; demos are the numerator and ran is the denominator. Sales rows are the distinct-contact sold grain, capped at the 50 records the sales metric returns.</p>' +
       "<h3>Created</h3>" + table(["Opportunity", "Pipeline", "Lead source", "Setter"], createdRows.slice(0, 200).map(function (row) {
-        return [row.opportunityId, row.pipeline, row.leadGenSource, row.setterLastName];
+        return [oppLabel(row.opportunityId), row.pipeline, row.leadGenSource, row.setterLastName];
       })) +
       "<h3>Ran and demos</h3>" + table(["Opportunity", "Pipeline", "Lead source", "Outcome"], demoRows.slice(0, 200).map(function (row) {
-        return [row.opportunityId, row.pipeline, row.lead_source, sweeperOutcome(row)];
+        return [oppLabel(row.opportunityId), row.pipeline, row.lead_source, sweeperOutcome(row)];
       })) +
       "<h3>Sales</h3>" + table(["Opportunity", "Pipeline", "Sold date", "Last name"], salesRows.map(function (row) {
-        return [row.opportunityId, row.pipelineName, row.dateSold, row.lastName_contact];
+        return [oppLabel(row.opportunityId), row.pipelineName, row.dateSold, row.lastName_contact];
       })) +
       '<p><a class="link" href="/api/sales_list?start=' + encodeURIComponent((pageFilters || filters()).start) + "&end=" + encodeURIComponent((pageFilters || filters()).end) + '">Open Sales List</a></p>');
   }

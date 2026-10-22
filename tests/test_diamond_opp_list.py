@@ -182,6 +182,15 @@ def _docs():
     }
 
 
+class FrozenCycleLinkTests(unittest.TestCase):
+    def test_frozen_cycle_row_links_to_the_real_opp(self):
+        opp = "h0HzaCdAJ5iXujzn6RGF"
+        url = f"https://app.gohighlevel.com/v2/location/{LOCATION}/opportunities/list/{opp}?tab=OpportunityDetails"
+        self.assertEqual(metrics.opportunity_url(LOCATION, f"{opp}~cycle2"), url)
+        self.assertEqual(metrics.opportunity_url(LOCATION, opp), url)
+        self.assertEqual(metrics.opportunity_url(LOCATION, ""), "")
+
+
 class PopulationTests(unittest.TestCase):
     def test_row_count_equals_sweeper_opps_created_for_the_same_range(self):
         seen = {}

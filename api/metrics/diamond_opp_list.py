@@ -224,9 +224,17 @@ def location_id(opp: dict | None, contact: dict | None) -> str:
 
 
 def opportunity_url(loc: str, opp_id: str) -> str:
+    # A frozen cycle row ({opp}~cycle1) links to its real GHL opportunity.
+    opp_id = base_opp_id(opp_id)
     if not loc or not opp_id:
         return ""
     return GHL_OPPORTUNITY_URL.format(location_id=loc, opp_id=opp_id)
+
+
+try:
+    from cycle_view import base_opp_id
+except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+    from metrics.cycle_view import base_opp_id
 
 
 def appointment_outcome(stage: str, disposition: str) -> str:

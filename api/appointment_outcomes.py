@@ -68,12 +68,18 @@ def best_person_name(record, *, fallback: str = "") -> str:
 
 
 def get_db() -> firestore.Client:
+    # Historical reads see each revived opp's frozen cycles (cycle_view.py).
+    try:
+        from cycle_view import cycle_aware as _cycle_aware
+    except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+        from metrics.cycle_view import cycle_aware as _cycle_aware
+
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     if creds_json:
         info = json.loads(creds_json)
         creds = service_account.Credentials.from_service_account_info(info)
-        return firestore.Client(project="gemini-assistant-bot", credentials=creds, database="happy-solar")
-    return firestore.Client(project="gemini-assistant-bot", database="happy-solar")
+        return _cycle_aware(firestore.Client(project="gemini-assistant-bot", credentials=creds, database="happy-solar"))
+    return _cycle_aware(firestore.Client(project="gemini-assistant-bot", database="happy-solar"))
 
 
 def outcome_window_raw(qs: dict) -> tuple[str, str]:

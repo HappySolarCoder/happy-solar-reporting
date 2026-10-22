@@ -563,7 +563,7 @@ __DASHBOARD_NAV_HTML__
       <div class="card span-12">
         <div class="card-header">
           <div class="card-title">Self Gen Opps</div>
-          <div class="meta">By setter last name. Lead Gen Source Self Gen only. A filled Sweeper/Rehash Last Name is not Self Gen, including sweeper, rehash, and cancel resets, so those appointments are left off this card. The 14-appointment Sweeper/Rehash goal stays on Company Overview, not here.</div>
+          <div class="meta">By setter last name. Lead Gen Source Self Gen only. A filled Sweeper/Rehash Last Name is not Self Gen, including sweeper, rehash, and cancel resets, so those appointments are left off this card. The 14-appointment Sweeper/Rehash goal stays on Company Overview, not here. A consultant's Booking Hub rebook of their own dead opp (14+ days since its last appointment) counts once, on the rebook date.</div>
         </div>
         <div class="tablewrap">
           <table>
@@ -860,7 +860,7 @@ __DASHBOARD_NAV_HTML__
 
     // Self Gen Opps by Setter Last Name
     const [sgCreatedRes, sgDemoRes] = await Promise.all([
-      fetch(`/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}`),
+      fetch(`/api/metrics/opportunities_created?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&pipeline_scope=all&lead_source=${encodeURIComponent('Self Gen')}&include_rebooks=1`),
       fetch(`/api/metrics/demo_rate?format=json&year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}${rp}&lead_source=${encodeURIComponent('Self Gen')}`)
     ]);
     if (!sgCreatedRes || !sgDemoRes) return;
@@ -868,7 +868,14 @@ __DASHBOARD_NAV_HTML__
     const sgCreated = sgCreatedRes.ok ? await sgCreatedRes.json() : null;
     const sgDemo = sgDemoRes.ok ? await sgDemoRes.json() : null;
 
-    const createdBySetter = (sgCreated && sgCreated.breakdowns && sgCreated.breakdowns.created_by_setter_last_name) ? sgCreated.breakdowns.created_by_setter_last_name : {};
+    const createdBySetter = Object.assign({}, (sgCreated && sgCreated.breakdowns && sgCreated.breakdowns.created_by_setter_last_name) ? sgCreated.breakdowns.created_by_setter_last_name : {});
+    // Consultant Booking Hub rebooks: one Self Gen opp each, merged case-insensitively.
+    const rebookBySetter = (sgCreated && sgCreated.breakdowns && sgCreated.breakdowns.self_gen_rebooks_by_setter_last_name) ? sgCreated.breakdowns.self_gen_rebooks_by_setter_last_name : {};
+    for (const [name, n] of Object.entries(rebookBySetter)) {
+      const hit = Object.keys(createdBySetter).find((k) => k.toLowerCase() === String(name).toLowerCase());
+      const key = hit || name;
+      createdBySetter[key] = Number(createdBySetter[key] || 0) + Number(n || 0);
+    }
     const ranBySetter = (sgDemo && sgDemo.breakdowns && sgDemo.breakdowns.ran_by_setter_last_name) ? sgDemo.breakdowns.ran_by_setter_last_name : {};
     const sitBySetter = (sgDemo && sgDemo.breakdowns && sgDemo.breakdowns.sit_by_setter_last_name) ? sgDemo.breakdowns.sit_by_setter_last_name : {};
 

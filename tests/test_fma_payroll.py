@@ -398,6 +398,16 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("Set-Cookie", captured["headers"])
 
 
+class FrozenCycleLinkTests(unittest.TestCase):
+    def test_frozen_cycle_row_links_and_shows_the_real_opp(self):
+        loc, opp = "MMKRDviKggXzlcHQTnvZ", "h0HzaCdAJ5iXujzn6RGF"
+        opp_url, _contact_url = payroll_api._ghl_urls({"locationId": loc}, {}, f"{opp}~cycle1", "")
+        self.assertEqual(
+            opp_url,
+            f"https://app.gohighlevel.com/v2/location/{loc}/opportunities/list/{opp}?tab=OpportunityDetails",
+        )
+
+
 class LinkAndQueryTests(unittest.TestCase):
     def test_no_inbound_dashboard_links(self):
         needles = ("/private/fma-payroll", "fma_payroll")

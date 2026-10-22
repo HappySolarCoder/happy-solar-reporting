@@ -175,14 +175,14 @@ def render_html() -> str:
       document.getElementById("createdTable").innerHTML = table(
         ["Opportunity", "Pipeline", "Pipeline stage", "Created"],
         created.slice(0, 200).map(function (row) {
-          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.createdAt || "—") + "</td></tr>";
+          return "<tr><td><code>" + esc(String(row.opportunityId || "").replace(/~cycle[0-9]+$/, "")) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.createdAt || "—") + "</td></tr>";
         }).join(""),
         "No Diamond opportunities created in this range."
       );
       document.getElementById("demoTable").innerHTML = table(
         ["Opportunity", "Pipeline", "Demo rate", "Pipeline stage", "Appointment"],
         demos.slice(0, 200).map(function (row) {
-          return "<tr><td><code>" + esc(row.opportunityId) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(outcomeLabel(row)) + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.occurredAt || "—") + "</td></tr>";
+          return "<tr><td><code>" + esc(String(row.opportunityId || "").replace(/~cycle[0-9]+$/, "")) + "</code></td><td>" + esc(row.pipeline || "—") + "</td><td>" + esc(outcomeLabel(row)) + "</td><td>" + esc(row.pipelineStage || "—") + "</td><td>" + esc(row.occurredAt || "—") + "</td></tr>";
         }).join(""),
         "No Diamond appointments ran in this range."
       );

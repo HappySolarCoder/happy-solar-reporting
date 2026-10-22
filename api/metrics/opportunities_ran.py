@@ -163,6 +163,12 @@ class MetricContract:
 
 
 def get_db() -> firestore.Client:
+    # Historical reads see each revived opp's frozen cycles (cycle_view.py).
+    try:
+        from cycle_view import cycle_aware as _cycle_aware
+    except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+        from metrics.cycle_view import cycle_aware as _cycle_aware
+
     creds_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
     project_id = os.environ.get("GCP_PROJECT_ID")
     database_id = os.environ.get("FIRESTORE_DATABASE_ID")
@@ -177,7 +183,7 @@ def get_db() -> firestore.Client:
 
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(creds_dict)
-    return firestore.Client(project=project_id, database=database_id, credentials=creds)
+    return _cycle_aware(firestore.Client(project=project_id, database=database_id, credentials=creds))
 
 
 def month_window(year: int, month: int, tz_name: str) -> tuple[datetime, datetime, str, str]:

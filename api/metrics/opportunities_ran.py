@@ -158,7 +158,9 @@ class MetricContract:
 
     # breakdown fields (reuse contact custom fields we already identified)
     setter_last_name_contact_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
-    setter_last_name_opportunity_cf_id: str = "Eq4NLTSkJ56KTxbxypuE"
+    # Opportunity "Setter Last Name" (opportunity.setter_last_name). Not the contact field id:
+    # a later booking form overwrites the contact, and must not relabel this opp's month.
+    setter_last_name_opportunity_cf_id: str = "6yC1MxhJn9AkVMbAYAUU"
     lead_gen_source_contact_cf_id: str = "hd5QqHEOVSsPom5bJ32P"
 
 

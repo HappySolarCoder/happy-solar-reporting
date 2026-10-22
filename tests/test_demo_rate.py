@@ -218,7 +218,7 @@ class CloserAttributionTests(unittest.TestCase):
             "dispositionValue": dispo,
             "appointmentOccurredAt": occurred,
             "dispositionDate": occurred,
-            "customFields": [{"id": "Eq4NLTSkJ56KTxbxypuE", "value": setter}],
+            "customFields": [{"id": "6yC1MxhJn9AkVMbAYAUU", "value": setter}],
         }
         if assigned is not None:
             opp["assignedTo"] = assigned

@@ -139,13 +139,20 @@ def is_ghl_id(value: Any) -> bool:
     return bool(text) and all(ch.isalnum() or ch in "-_" for ch in text)
 
 
+try:
+    from cycle_view import base_opp_id
+except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+    from metrics.cycle_view import base_opp_id
+
+
 def ghl_location_id(value: Any = None) -> str:
     return compact_text(value) or compact_text(os.environ.get("GHL_LOCATION_ID")) or DEFAULT_GHL_LOCATION_ID
 
 
 def ghl_opportunity_url(location_id: Any, opportunity_id: Any) -> str:
     loc = compact_text(location_id)
-    opp = compact_text(opportunity_id)
+    # A frozen cycle row ({opp}~cycle1) links to its real GHL opportunity.
+    opp = base_opp_id(compact_text(opportunity_id))
     if not is_ghl_id(loc) or not is_ghl_id(opp):
         return ""
     return GHL_OPPORTUNITY_URL.format(location_id=loc, opp_id=opp)
@@ -190,7 +197,7 @@ def phone_link(row: dict[str, Any]) -> str:
 def attach_ghl_links(row: dict[str, Any], *, default_location: Any = None) -> dict[str, Any]:
     item = dict(row)
     location = pick_field(item, LOCATION_KEYS)
-    opportunity_id = pick_field(item, OPPORTUNITY_KEYS)
+    opportunity_id = base_opp_id(pick_field(item, OPPORTUNITY_KEYS))
     contact_id = pick_field(item, CONTACT_KEYS)
     if not is_ghl_id(opportunity_id):
         opportunity_id = ""

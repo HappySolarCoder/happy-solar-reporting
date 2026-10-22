@@ -107,12 +107,20 @@ def _location_id(opp: dict, contact: dict | None) -> str:
     return ""
 
 
+try:
+    from cycle_view import base_opp_id
+except ImportError:  # pragma: no cover - api/ on sys.path instead of api/metrics/
+    from metrics.cycle_view import base_opp_id
+
+
 def _ghl_urls(opp: dict, contact: dict | None, opp_id: str, contact_id: str) -> tuple[str | None, str | None]:
     loc = _location_id(opp, contact)
     if not loc:
         return None, None
     opp_url = None
     contact_url = None
+    # A frozen cycle row ({opp}~cycle1) links to its real GHL opportunity.
+    opp_id = base_opp_id(opp_id)
     if opp_id:
         opp_url = (
             f"{GHL_APP_ORIGIN}/v2/location/{loc}/opportunities/list/{opp_id}?tab=OpportunityDetails"
@@ -219,7 +227,8 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
         opp_url, contact_url = _ghl_urls(opp, contact, opp_id, contact_id)
         sits.append(
             {
-                "opportunity_id": opp_id,
+                # Shown and linked as the real GHL opp, also for a frozen cycle row.
+                "opportunity_id": base_opp_id(opp_id),
                 "contact_id": contact_id,
                 "customer_name": _customer_name(contact, opp),
                 "sat_date": local_dt.date().isoformat(),

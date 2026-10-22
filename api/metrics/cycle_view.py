@@ -26,6 +26,7 @@ changes nothing.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -47,6 +48,25 @@ def split_cycle_id(doc_id: str) -> tuple[str, int | None]:
         except ValueError:
             pass
     return str(doc_id), None
+
+
+def base_opp_id(value: Any) -> str:
+    """The real GHL opportunity id behind a view row id (``{opp}~cycle{n}`` -> ``{opp}``).
+
+    Use it anywhere an id leaves the view: GHL links, displayed ids, and any
+    "one per opportunity" key. Internal joins (stage history, cycle lookups)
+    keep the pseudo id so each cycle reads its own history.
+    """
+    text = "" if value is None else str(value).strip()
+    return split_cycle_id(text)[0] if text else ""
+
+
+_CYCLE_SUFFIX = re.compile(r"~cycle\d+(?=$|[/?#&])")
+
+
+def strip_cycle_suffix(text: Any) -> str:
+    """Remove ``~cycleN`` from an id or a URL path segment built from one."""
+    return _CYCLE_SUFFIX.sub("", "" if text is None else str(text))
 
 
 def _as_utc(value: Any) -> datetime | None:
@@ -86,6 +106,7 @@ def live_view(data: dict[str, Any] | None) -> dict[str, Any] | None:
     if data is None:
         return None
     out = dict(data)
+    out["ghlOpportunityId"] = base_opp_id(out.get("id")) or None
     out["cycleOriginalCreatedAt"] = out.get(CREATED_FIELD)
     out[CREATED_FIELD] = None
     return out
@@ -163,8 +184,17 @@ class CycleIndex:
             opp = str(d.get("cycleOf") or split_cycle_id(d.get("id") or "")[0] or "")
             if opp:
                 self.by_opp.setdefault(opp, []).append(d)
-        for rows in self.by_opp.values():
+        for opp, rows in self.by_opp.items():
             rows.sort(key=lambda r: int(r.get("cycleNumber") or 0))
+            for i, row in enumerate(rows):
+                row.setdefault("cycleOf", opp)
+                row["ghlOpportunityId"] = opp
+                if i:
+                    # Every frozen copy carries the opp's GHL createdAt. Only the
+                    # first cycle is the creation; a later cycle is a revive, so it
+                    # must not add a second "opp created" in the original month.
+                    row["cycleOriginalCreatedAt"] = row.get(CREATED_FIELD)
+                    row[CREATED_FIELD] = None
 
     def __bool__(self) -> bool:
         return bool(self.by_opp)

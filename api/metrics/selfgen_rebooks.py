@@ -4,8 +4,8 @@
 
 When a solar consultant rebooks their own old appointment through the GHL
 Happy Solar Booking Hub, the GHL workflow "Consultant Self Gen Rebook" revives
-the dead opportunity in place (stage -> New Appointment, owner -> consultant)
-and stamps the opportunity fields Self Gen Rebook Date, Rebooked By, Rebook
+the dead opportunity in place (stage -> New Appointment; GHL cannot move the
+owner, so it stays the old rep) and stamps the opportunity fields Self Gen Rebook Date, Rebooked By, Rebook
 Setter Last Name, Prior Stage and Prior Owner. ghl-firestore-sync-v2 writes one
 permanent doc per (opportunity, rebook date) to ``ghl_selfgen_rebooks_v1`` and
 opens a fresh appointment cycle on the opportunity.
@@ -15,7 +15,9 @@ A log doc earns one Self Gen opp for the consultant, dated its rebook date
 
 - the contact's Lead Gen Source is Self Gen and Sweeper/Rehash Last Name is
   blank (contact and opportunity);
-- the Rebook Setter Last Name equals the rebooking consultant's last name;
+- the Rebook Setter Last Name equals the rebooking consultant's last name. The
+  consultant is Rebooked By (resolved to a GHL user by the sync), then the
+  owner; see ``rebook_consultant``;
 - the prior stage was DQ'ed / DQ'd, No Sit, No Show (incl. No Show/Pre-cancelled),
   Cancelled, or Needs Rebook / Reschedule Needed / Needs Reschedule. Sold and
   Sale Cancelled never qualify. A prior stage that is not a Demo-*, Sold, Sale
@@ -157,6 +159,48 @@ def roster_spelling(name: str, roster_names: Iterable[str]) -> str:
     return hits.pop() if len(hits) == 1 else name
 
 
+REBOOKED_BY_RESOLVED = "rebooked_by_name"
+
+
+def same_person(a: Any, b: Any) -> bool:
+    """Same last name and compatible first names ('Zach' / 'Zachary')."""
+    if not last_name(a) or last_name(a) != last_name(b):
+        return False
+    fa, fb = fold(a).split(" ")[0], fold(b).split(" ")[0]
+    return fa.startswith(fb) or fb.startswith(fa)
+
+
+def rebook_consultant(
+    log: dict, opp: dict | None, owner_name: Callable[[str, str], str], roster_names: Iterable[str]
+) -> tuple[str, str]:
+    """(consultant name, GHL user id) credited for a rebook.
+
+    The workflow cannot move the opp owner, so the consultant is Rebooked By
+    ({{appointment.user.name}}, the Booking Hub appointment's user):
+
+    1. ``rebookedByUserId`` when the sync resolved it from Rebooked By
+       (``rebookedByUserIdSource == "rebooked_by_name"``);
+    2. otherwise Rebooked By itself. A stored id (an owner fallback, or a log
+       written before the sync resolved names) only lends its roster spelling
+       when it is the same person (``same_person``);
+    3. Rebooked By empty: the stored id, then the owner at revive, then the
+       opp's current owner.
+    """
+    uid = compact(log.get("rebookedByUserId"))
+    rebooked_by = compact(log.get("rebookedBy"))
+    if uid and rebooked_by and compact(log.get("rebookedByUserIdSource")) == REBOOKED_BY_RESOLVED:
+        return owner_name(uid, rebooked_by) or rebooked_by, uid
+    if rebooked_by:
+        from_id = owner_name(uid, rebooked_by) if uid else ""
+        if from_id and same_person(from_id, rebooked_by):
+            return from_id, uid
+        return roster_spelling(rebooked_by, roster_names), ""
+    for candidate in (uid, compact(log.get("ownerAtRebook")), compact((opp or {}).get("assignedTo"))):
+        if candidate:
+            return owner_name(candidate, ""), candidate
+    return "", ""
+
+
 def month_key(day: date) -> str:
     return f"{day.year:04d}-{day.month:02d}"
 
@@ -282,16 +326,7 @@ def load_rebook_credits(
         if gap is None or gap < MIN_DAYS_SINCE_LAST_APPOINTMENT:
             skip("last_appointment_under_14_days")
             continue
-        # The consultant is Rebooked By (the appointment's assigned user). The
-        # opp owner after the workflow gives the roster spelling when it is the
-        # same person; if the workflow could not move the owner, Rebooked By wins.
-        owner_id = compact(log.get("rebookedByUserId"))
-        rebooked_by = compact(log.get("rebookedBy"))
-        owner_from_id = owner_name(owner_id, rebooked_by) if owner_id else ""
-        if rebooked_by and last_name(owner_from_id) != last_name(rebooked_by):
-            owner, owner_id = roster_spelling(rebooked_by, roster_names or ()), ""
-        else:
-            owner = owner_from_id or rebooked_by
+        owner, owner_id = rebook_consultant(log, opp, owner_name, roster_names or ())
         setter = compact(log.get("rebookSetterLastName")) or compact(custom_field(contact, SETTER_LAST_NAME_CONTACT_CF_ID))
         consultant_last = last_name(owner)
         if not setter or not consultant_last or fold(setter) != consultant_last:

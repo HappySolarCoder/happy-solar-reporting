@@ -283,6 +283,67 @@ class RebookCreditTests(unittest.TestCase):
         out = october(make_db(logs={"x": log(rebookedBy=None)}), pipeline_scope="all", include_rebooks=True)
         self.assertEqual(out["self_gen_rebooks"][0]["owner"], "Zachary Maecker")
 
+    def _credit(self, **over):
+        out = october(make_db(logs={"x": log(**over)}), pipeline_scope="all", include_rebooks=True)
+        rows = out["self_gen_rebooks"]
+        return (rows[0]["owner"] if rows else None), out
+
+    def test_resolved_rebooked_by_beats_old_owner(self):
+        # Sync resolved Rebooked By to Zach; the opp is still Allen's.
+        db = make_db(logs={"x": log(rebookedByUserId=ZACH_ID, rebookedByUserIdSource="rebooked_by_name",
+                                    ownerAtRebook="allen", priorOwnerId="allen")},
+                     opps=[opp(assignedTo="allen")])
+        out = october(db, pipeline_scope="all", include_rebooks=True)
+        self.assertEqual(out["self_gen_rebooks"][0]["owner"], "Zachary Maecker")
+        self.assertEqual(out["breakdowns"]["self_gen_rebooks_by_owner"], {"Zachary Maecker": 1})
+        self.assertEqual(out["breakdowns"]["self_gen_rebooks_by_setter_last_name"], {"Maecker": 1})
+
+    def test_owner_fallback_id_never_overrides_a_different_rebooked_by(self):
+        # Rebooked By did not match a GHL user, so the sync stored Allen (owner).
+        owner, _ = self._credit(rebookedByUserId="allen", rebookedByUserIdSource="owner_fallback_no_match")
+        self.assertEqual(owner, "Zachary Maecker")
+
+    def test_owner_with_same_last_name_is_not_the_consultant(self):
+        # Rebooked By "Adam Day" did not resolve; the stored owner fallback is Evan Day.
+        db = make_db(logs={"x": log(rebookedBy="Adam Day", rebookedByUserId="evan",
+                                    rebookedByUserIdSource="owner_fallback_no_match", rebookSetterLastName="Day")})
+        db.data["roster_people_v1"]["e"] = {"display_name": "Evan Day", "ghl_user_id": "evan"}
+        out = october(db, pipeline_scope="all", include_rebooks=True)
+        self.assertEqual(out["self_gen_rebooks"][0]["owner"], "Adam Day")
+        self.assertTrue(sr.same_person("Zachary Maecker", "Zach Maecker"))
+        self.assertFalse(sr.same_person("Evan Day", "Adam Day"))
+
+    def test_setter_check_uses_the_consultant_not_the_owner(self):
+        # Setter Frazier, Zach rebooked an Allen-owned opp: setter is not the consultant.
+        owner, out = self._credit(rebookedByUserId=ZACH_ID, rebookedByUserIdSource="rebooked_by_name",
+                                  ownerAtRebook="allen", rebookSetterLastName="Frazier")
+        self.assertIsNone(owner)
+        self.assertEqual(out["debug"]["self_gen_rebooks"]["excluded"], {"setter_not_consultant": 1})
+
+    def test_empty_rebooked_by_falls_back_to_owner_at_rebook_then_opp_owner(self):
+        owner, _ = self._credit(rebookedBy=None, rebookedByUserId=None, ownerAtRebook=ZACH_ID)
+        self.assertEqual(owner, "Zachary Maecker")
+        owner, _ = self._credit(rebookedBy=None, rebookedByUserId=None)  # opp owner is Zach
+        self.assertEqual(owner, "Zachary Maecker")
+
+    def test_empty_rebooked_by_and_other_owner_is_excluded(self):
+        db = make_db(logs={"x": log(rebookedBy=None, rebookedByUserId=None)}, opps=[opp(assignedTo="allen")])
+        out = october(db, pipeline_scope="all", include_rebooks=True)
+        self.assertEqual(out["self_gen_rebooks"], [])
+        self.assertEqual(out["debug"]["self_gen_rebooks"]["excluded"], {"setter_not_consultant": 1})
+
+    def test_legacy_zach_log_is_unchanged(self):
+        # The live log (no rebookedByUserIdSource): Rebooked By Zach Maecker, id = Zach.
+        owner, out = self._credit()
+        self.assertEqual(owner, "Zachary Maecker")
+        self.assertEqual(out["self_gen_rebooks_count"], 1)
+
+    def test_rules_still_apply_to_resolved_consultant(self):
+        resolved = dict(rebookedByUserIdSource="rebooked_by_name", ownerAtRebook="allen")
+        self.assertIsNone(self._credit(daysSinceLastAppointment=13, **resolved)[0])
+        self.assertIsNone(self._credit(priorStageName="Sold", priorStageField="Sold", **resolved)[0])
+        self.assertIsNone(self._credit(priorStageName="Sale Cancelled", priorStageField="Sale Cancelled", **resolved)[0])
+
     def test_recredit_on_own_old_self_gen_counts(self):
         # Zach's May opp was already his own Self Gen; the October rebook still counts.
         out = october(make_db(), pipeline_scope="all", include_rebooks=True)

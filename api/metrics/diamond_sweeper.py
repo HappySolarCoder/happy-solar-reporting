@@ -200,7 +200,7 @@ def fill_pipeline_stages(db, rows: list[dict[str, Any]]) -> None:
 
 
 def ran_and_demos(demo_payload: dict[str, Any], last_name: str = DIAMOND_LAST_NAME) -> tuple[int, int]:
-    """Any pipeline. One Legger is ran and not a demo. Sold and Demo-* count.
+    """Every pipeline except Inbound/Lead Locker. One Legger is ran and not a demo. Sold and Demo-* count.
 
     A later row is kept when the contact already has an earlier sit. FMA
     dedupe does not hide the sweeper demo.

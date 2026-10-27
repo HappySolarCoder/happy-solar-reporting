@@ -663,7 +663,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "created_by_leadgen_bucket_setter": {
                 b: finalize_casefold_counts(by_bucket_setter[b], bucket_setter_labels[b]) for b in BUCKETS
             },
-            # Filled Sweeper/Rehash Last Name, any pipeline. Distinct opportunity id.
+            # Filled Sweeper/Rehash Last Name. Inbound/Lead Locker is excluded even with pipeline_scope=all. Distinct opportunity id.
             "sweeper_rehash_appointments": sweeper_rehash_appointments,
         },
         "sample_rows": sorted(list(matching_rows.values()), key=lambda r: (r.get("createdAt") or "")),

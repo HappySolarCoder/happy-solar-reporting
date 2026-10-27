@@ -1011,7 +1011,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             or (stage_names.get(stage_id) if stage_id else "")
             or ""
         )
-        # Sweeper credit follows the contact field in any pipeline. Company
+        # Sweeper credit follows the contact field on included pipelines, excluding Inbound/Lead Locker. Company
         # sit/ran above is unchanged. One Legger is not a sweeper demo.
         # An earlier FMA sit on this contact does not drop this row.
         if sweeper_last:
@@ -1103,7 +1103,7 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
             "ran_by_lead_gen_source": by_lead,
             "sit_by_lead_gen_source": sit_by_lead,
             "demo_rate_by_lead_gen_source": {k: (round((sit_by_lead.get(k,0)/v)*100,1) if v else 0.0) for k,v in by_lead.items()},
-            # Last-name sweeper credit, any pipeline. Not the Rehash pipeline total.
+            # Last-name sweeper credit on included pipelines, excluding Inbound/Lead Locker. Not the Rehash pipeline total.
             "sweeper_rehash_ran": sweeper_ran,
             "sweeper_rehash_demos": sweeper_demos,
         },

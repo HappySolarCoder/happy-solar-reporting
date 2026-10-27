@@ -4,7 +4,7 @@
 
 Month-to-date sweeper/rehash credit for one Sweeper/Rehash Last Name.
 
-- appointments_set: distinct opportunities created in the month (America/New_York, any pipeline,
+- appointments_set: distinct opportunities created in the month (America/New_York, every pipeline except Inbound/Lead Locker,
   opportunities_created with pipeline_scope=all) whose contact Sweeper/Rehash Last Name
   (field HWfjOp8MvE6soxBAL75f, opportunity fallback) equals ``last_name``.
 - sales: the locked Sales grain from sales.py (Sold or Sale Cancelled stage, contact Sold Date in

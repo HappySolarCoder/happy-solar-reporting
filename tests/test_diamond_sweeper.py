@@ -369,6 +369,7 @@ class DiamondPageTests(unittest.TestCase):
         self.assertIn("ghl_opportunities_v2", html)
         self.assertIn("ghl_contacts_v2", html)
         self.assertIn(FIELD, html)
+        self.assertIn("except Inbound/Lead Locker", html)
         self.assertNotIn("SETTINGS_PASSWORD", src)
         self.assertNotIn("def _check_auth", src)
         self.assertNotIn("WWW-Authenticate", src)

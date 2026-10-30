@@ -9,6 +9,12 @@ Inbound, or a Facebook Quick Form variant, via lead_gen_source. Quick Form
 contacts are included when INCLUDE_FB_QUICK_FORM is true. They still surface
 as their own count. Lead Locker and Solar Reviews titles stay out.
 
+Sales has two views. kpis.sales is by lead date: a lead created in the window
+counts once it has a Sold/Sale Cancelled stage on any city opp and a Contact
+Sold Date on or after the window start, even when it sold after the window.
+kpis.sales_by_sold_date counts Inbound/Quick Form contacts whose Contact Sold
+Date (date-only) falls in the window, like /api/metrics/sales.
+
 This module reads Meta account insights and GA4. It does not create, change,
 or remove ads or campaigns.
 """
@@ -90,6 +96,9 @@ NA = "N/A"
 
 _STAGE_NAMES: dict[str, str] | None = None
 _RESPONSE_CACHE: dict[tuple, tuple[float, dict]] = {}
+# Sold/Sale Cancelled opps and their contacts, shared by every window for
+# CACHE_TTL_SECONDS so the Sold Date view reads them once per warm instance.
+_SOLD_CANDIDATES: tuple[float, list[dict[str, Any]], dict[str, dict]] | None = None
 _PIPELINE_READ_NOTE: str | None = None
 INDEX_FALLBACK_NOTE = (
     "The pipelineId and createdAt index is not built yet, so this read used "
@@ -121,9 +130,10 @@ TERRITORY_PIPELINE_IDS = cac.TERRITORY_PIPELINE_IDS
 
 
 def reset_caches() -> None:
-    global _STAGE_NAMES, _PIPELINE_READ_NOTE
+    global _STAGE_NAMES, _PIPELINE_READ_NOTE, _SOLD_CANDIDATES
     _STAGE_NAMES = None
     _PIPELINE_READ_NOTE = None
+    _SOLD_CANDIDATES = None
     _RESPONSE_CACHE.clear()
 
 
@@ -277,11 +287,25 @@ def stage_is_demo(stage_name: Any) -> bool:
 def _sold_stage_ids() -> set[str]:
     """Buffalo, Syracuse, Rochester, and Virtual Sold and Sale Cancelled stage ids.
 
-    Sales are these eight ids only, then one sale per deduped lead when Contact
-    Sold Date is in the window. A stage named Sold or Sale Cancelled does not
-    count. The four Sale Cancelled ids are already in this set.
+    Sales are these eight ids only. By lead date: one sale per deduped lead when
+    Contact Sold Date is on or after the lead window start. By Sold Date: one
+    sale per Inbound contact whose Sold Date is in the window. A stage named
+    Sold or Sale Cancelled does not count. The four Sale Cancelled ids are
+    already in this set.
     """
     return set(cac.SalesMetricContract().stage_ids)
+
+
+def _opp_deleted(opp: dict[str, Any]) -> bool:
+    """A deleted opportunity is never a sale."""
+    if opp.get("deleted") or opp.get("isDeleted") or opp.get("deletedAt"):
+        return True
+    return _fold(opp.get("status")) == "deleted"
+
+
+def _sold_on_or_after(sold_date_ymd: str | None, start_ymd: str) -> bool:
+    """Date-only Sold Date on or after the lead window's first day."""
+    return bool(sold_date_ymd) and sold_date_ymd >= start_ymd
 
 
 def _sweeper_rehash_filled(contact: dict[str, Any] | None) -> bool:
@@ -693,8 +717,9 @@ def classify_window(
         seen_city.add(opp_id)
         stage_id = cac.compact_str(opp.get(cac.STAGE_FIELD))
         # Eight locked stage ids only. A stage named Sold or Sale Cancelled
-        # is not a sale, on any pipeline.
-        if stage_id in sold_ids:
+        # is not a sale, on any pipeline. The sold opp can be any of the
+        # lead's city opps, created in or after the window. Deleted opps skip.
+        if stage_id in sold_ids and not _opp_deleted(opp):
             sold_contacts.add(contact_id)
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
@@ -736,14 +761,18 @@ def classify_window(
         if _history_has_city_demo(history_rows, stage_names):
             demo_events.append((contact_id, created, opp_id))
 
-    # One sale per deduped lead. Sale Cancelled is already one of the eight ids.
+    # Lead-date view: one sale per deduped lead created in the window. Sale
+    # Cancelled is already one of the eight ids. Contact Sold Date (date-only)
+    # must be on or after the window's first day; it may fall after the window
+    # ends, so a lead that sells weeks later still counts on its lead date.
+    window_start_ymd = start_local.date().isoformat()
     sales: set[str] = set()
     for cluster in clusters:
         ids = {row["contact_id"] for row in cluster}
         if not ids & sold_contacts:
             continue
         if any(
-            cac.sold_date_in_window(cac.extract_sold_date_ymd(contacts.get(contact_id)), start_local, end_local)
+            _sold_on_or_after(cac.extract_sold_date_ymd(contacts.get(contact_id)), window_start_ymd)
             for contact_id in ids
         ):
             sales.add(min(ids))
@@ -760,6 +789,7 @@ def classify_window(
         "opps": len(opp_ids),
         "demos": _count_demos_per_lead(demo_events, contacts),
         "sales": len(sales),
+        "sales_contact_ids": sorted(sales),
         "stages": stage_rows,
         "include_fb_quick_form": include_quick_form,
     }
@@ -892,6 +922,7 @@ def assemble_ads_dashboard(
     include_quick_form: bool | None = None,
     stage_status: str = "ok",
     history: dict[str, list[dict[str, Any]]] | None = None,
+    sold_date_sales: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
@@ -956,6 +987,21 @@ def assemble_ads_dashboard(
     opps_kpi = _volume_kpi(counts["opps"], goal_status, opp_goal)
     demos_kpi = _volume_kpi(counts["demos"], goal_status, demo_goal)
     sales_kpi = _volume_kpi(counts["sales"], goal_status, sale_goal)
+    sold_view = sold_date_sales or {"status": "not_read", "value": None, "contact_ids": []}
+    sold_value = sold_view.get("value") if sold_view.get("status") == "ok" else None
+    sales_kpi["detail"] = f"by lead date · by Sold Date: {count_display(sold_value)}"
+    sales_kpi["contact_ids"] = counts.get("sales_contact_ids") or []
+    sales_by_sold_date_kpi = {
+        "value": sold_value,
+        "display": count_display(sold_value),
+        "status": sold_view.get("status"),
+        "contact_ids": sold_view.get("contact_ids") or [],
+        "rule": (
+            "Distinct contactId with Inbound or Facebook Quick Form Lead Gen Source, "
+            "an opportunity in one of the eight Sold/Sale Cancelled stage ids, and "
+            "Contact Sold Date (date-only) inside this window."
+        ),
+    }
     lead_cost_goal = cost_goal_value(goals, "cost_per_lead")
     opp_cost_goal = cost_goal_value(goals, "cost_per_opp")
     demo_cost_goal = cost_goal_value(goals, "cost_per_demo")
@@ -1002,6 +1048,7 @@ def assemble_ads_dashboard(
             "cost_per_sale": cost_block(
                 spend, counts["sales"], sale_cost_goal, money_goal_label(sale_cost_goal)
             ),
+            "sales_by_sold_date": sales_by_sold_date_kpi,
         },
         "stages": counts["stages"],
         "stage_status": stage_status,
@@ -1314,6 +1361,50 @@ def load_opps_for_contacts(db: Any, contact_ids: list[str]) -> list[dict[str, An
                 opp["id"] = snap.id
             found[cac.compact_str(opp.get("id")) or f"{offset}:{index}"] = opp
     return list(found.values())
+
+
+def load_sold_candidates(db: Any) -> tuple[list[dict[str, Any]], dict[str, dict]]:
+    """Opps in the eight Sold/Sale Cancelled stage ids and their contacts.
+
+    Same bounded read as /api/metrics/sales: one `in` query on the eight ids,
+    then get_all on those contacts. Shared across windows for CACHE_TTL_SECONDS.
+    """
+    global _SOLD_CANDIDATES
+    if _SOLD_CANDIDATES is not None and time.monotonic() - _SOLD_CANDIDATES[0] <= CACHE_TTL_SECONDS:
+        return _SOLD_CANDIDATES[1], _SOLD_CANDIDATES[2]
+    stage_ids = sorted(_sold_stage_ids())
+    opps: list[dict[str, Any]] = []
+    for snap in db.collection(OPP_COLLECTION).where(cac.STAGE_FIELD, "in", stage_ids).stream():
+        opp = snap.to_dict() or {}
+        if not cac.compact_str(opp.get("id")):
+            opp["id"] = snap.id
+        opps.append(opp)
+    contacts = load_contacts(db, [_contact_id(opp) for opp in opps])
+    _SOLD_CANDIDATES = (time.monotonic(), opps, contacts)
+    return opps, contacts
+
+
+def sales_by_sold_date(
+    sold_opps: list[dict[str, Any]],
+    contacts: dict[str, dict],
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    include_quick_form: bool | None = None,
+) -> dict[str, Any]:
+    """Sold Date view: distinct Inbound/Quick Form contacts sold in the window."""
+    sold_ids = _sold_stage_ids()
+    found: set[str] = set()
+    for opp in sold_opps:
+        if cac.compact_str(opp.get(cac.STAGE_FIELD)) not in sold_ids or _opp_deleted(opp):
+            continue
+        contact_id = _contact_id(opp)
+        contact = contacts.get(contact_id)
+        if not contact_id or not is_ad_lead(contact, include_quick_form):
+            continue
+        if cac.sold_date_in_window(cac.extract_sold_date_ymd(contact), start_local, end_local):
+            found.add(contact_id)
+    return {"status": "ok", "value": len(found), "contact_ids": sorted(found)}
 
 
 def _append_history_row(found: dict[str, list[dict[str, Any]]], row: dict[str, Any]) -> None:
@@ -1873,6 +1964,13 @@ def compute_ads_dashboard(
         goals = load_goals(db, start_local, end_local)
     except Exception:
         goals = _goal_result("unavailable", None, "Monthly goals could not be read.")
+    try:
+        sold_opps, sold_contacts = load_sold_candidates(db)
+        sold_date_view = sales_by_sold_date(
+            sold_opps, sold_contacts, start_local, end_local, include_quick_form=flag
+        )
+    except Exception:
+        sold_date_view = {"status": "unavailable", "value": None, "contact_ids": []}
     if meta_fetcher:
         meta = meta_fetcher(start_local, end_local)
     else:
@@ -1895,6 +1993,7 @@ def compute_ads_dashboard(
         include_quick_form=flag,
         stage_status=stage_status,
         history=history,
+        sold_date_sales=sold_date_view,
     )
     if history_note:
         payload["notes"] = [history_note, *payload.get("notes", [])]

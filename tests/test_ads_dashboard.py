@@ -863,6 +863,81 @@ class AdsDashboardTests(unittest.TestCase):
         missed = assemble(contacts, pipeline, [opp], {"stage-New Lead": "New Lead"})
         self.assertEqual(missed["kpis"]["sales"]["value"], 0)
 
+    def test_lead_date_sale_counts_when_sold_after_the_window(self):
+        # 9/14 Inbound lead whose Virtual opp was won on 10/29.
+        sold_stage = "45acf2ef-ac72-4aa3-a327-7ed37c54b4ad"
+        self.assertIn(sold_stage, metric._sold_stage_ids())
+        contacts = {"c": contact("c", "Inbound", sold="2026-10-29T00:00:00.000Z")}
+        pipeline = [pipeline_opp("lead", "c", INSIDE, "Reconnect to Book")]
+        won = city_opp("won", "c", INSIDE, "Sit")
+        won["pipelineStageId"] = sold_stage
+        won["status"] = "won"
+        payload = assemble(contacts, pipeline, [won], {"stage-Reconnect to Book": "Reconnect to Book", sold_stage: "Sold"})
+        self.assertEqual(payload["kpis"]["demos"]["value"], 1)
+        self.assertEqual(payload["kpis"]["sales"]["value"], 1)
+        later = city_opp("later", "c", "2026-10-27T18:00:00.000Z", "Sit")
+        later["pipelineStageId"] = sold_stage
+        moved = assemble(contacts, pipeline, [later], {})
+        self.assertEqual(moved["kpis"]["opps"]["value"], 0)
+        self.assertEqual(moved["kpis"]["sales"]["value"], 1)
+        deleted = dict(won, deleted=True)
+        gone = assemble(contacts, pipeline, [deleted], {})
+        self.assertEqual(gone["kpis"]["sales"]["value"], 0)
+        no_date = assemble({"c": contact("c", "Inbound")}, pipeline, [won], {})
+        self.assertEqual(no_date["kpis"]["sales"]["value"], 0)
+
+    def test_sales_by_sold_date_view(self):
+        sold_stage = sorted(metric._sold_stage_ids())[0]
+
+        def sold(opp_id, contact_id):
+            return {"id": opp_id, "contactId": contact_id, "pipelineStageId": sold_stage}
+
+        contacts = {
+            "in": contact("in", "Inbound", sold="2026-10-08T00:00:00.000Z"),
+            "qf": contact("qf", "Facebook Quick Form", sold="2026-10-11"),
+            "early": contact("early", "Inbound", sold="2026-10-04"),
+            "late": contact("late", "Inbound", sold="2026-10-12"),
+            "door": contact("door", "Door Knock", sold="2026-10-08"),
+            "gone": contact("gone", "Inbound", sold="2026-10-08"),
+        }
+        opps = [
+            sold("a", "in"),
+            sold("b", "in"),
+            sold("c", "qf"),
+            sold("d", "early"),
+            sold("e", "late"),
+            sold("f", "door"),
+            dict(sold("g", "gone"), deleted=True),
+            {"id": "h", "contactId": "door", "pipelineStageId": "stage-sold"},
+        ]
+        start_local, end_local = metric.date_window("2026-10-05", "2026-10-11")
+        view = metric.sales_by_sold_date(opps, contacts, start_local, end_local, include_quick_form=True)
+        self.assertEqual(view["value"], 2)
+        self.assertEqual(view["contact_ids"], ["in", "qf"])
+        no_qf = metric.sales_by_sold_date(opps, contacts, start_local, end_local, include_quick_form=False)
+        self.assertEqual(no_qf["contact_ids"], ["in"])
+        payload = assemble({}, [], [], {})
+        self.assertIsNone(payload["kpis"]["sales_by_sold_date"]["value"])
+        shown = metric.assemble_ads_dashboard(
+            pipeline_opps=[], contact_opps=[], contacts={}, stage_names={},
+            start_local=start_local, end_local=end_local, now=NOW, meta=None,
+            sessions=None, goals=None, sold_date_sales=view,
+        )
+        self.assertEqual(shown["kpis"]["sales_by_sold_date"]["value"], 2)
+        self.assertIn("by Sold Date: 2", shown["kpis"]["sales"]["detail"])
+
+    def test_sold_candidates_use_the_eight_stage_ids_once(self):
+        db = FakeDB()
+        sold_stage = sorted(metric._sold_stage_ids())[0]
+        db.rows["ghl_opportunities_v2"] = [Snap({"id": "s", "contactId": "c", "pipelineStageId": sold_stage})]
+        db.contacts["c"] = contact("c", "Inbound", sold="2026-10-08")
+        opps, contacts = metric.load_sold_candidates(db)
+        metric.load_sold_candidates(db)
+        self.assertEqual(len(db.streams), 1)
+        self.assertEqual(db.streams[0][1], [("pipelineStageId", "in", sorted(metric._sold_stage_ids()))])
+        self.assertEqual([opp["id"] for opp in opps], ["s"])
+        self.assertIn("c", contacts)
+
     def test_zero_denominator_is_na_and_missing_source_is_blank(self):
         contacts = {"c": contact("c", "inbound")}
         pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]

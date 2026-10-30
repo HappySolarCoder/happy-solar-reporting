@@ -793,7 +793,11 @@ def add_self_gen_rebooks(
         "Setter Last Name equals the consultant's last name, prior stage DQ'ed / No Sit / No Show / "
         "Cancelled / Needs Rebook (never Sold or Sale Cancelled), 14+ days since the last "
         "appointment, at most one per contact per calendar month and none when the contact already "
-        "has a Self Gen opp created in the window."
+        "has a Self Gen opp created in the window. Also one per owner revival outside the Booking "
+        "Hub (ghl_opportunity_stage_history_v1 move into New Appointment, owner unchanged, blank "
+        "Sweeper/Rehash Last Name, prior stage dead or Inbound/Lead Locker / Rehash, never Sweeper "
+        "pipeline, no hub log that month, opp not created that month, 14+ days), credited to the owner "
+        "whatever the contact's original Lead Gen Source or setter (rebookSource owner_revival)."
     )
 
 

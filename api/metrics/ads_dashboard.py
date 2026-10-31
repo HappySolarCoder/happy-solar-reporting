@@ -308,6 +308,48 @@ def _sold_on_or_after(sold_date_ymd: str | None, start_ymd: str) -> bool:
     return bool(sold_date_ymd) and sold_date_ymd >= start_ymd
 
 
+# Contacts a sold opp had before it moved, newest first. Set by
+# load_sold_candidates from the opp's stage history (each row keeps the
+# contactId at the time of the stage change).
+PRIOR_CONTACTS_KEY = "_priorContactIds"
+
+
+def _sold_opp_contact_ids(
+    opp: dict[str, Any], history: dict[str, list[dict[str, Any]]] | None = None
+) -> list[str]:
+    """Every contact this opp has had: the current one first, then prior ones.
+
+    Prior contacts come from the opp's stage history rows and from
+    PRIOR_CONTACTS_KEY, so a sale moved or merged onto a duplicate contact
+    still reaches the original lead.
+    """
+    ids: list[str] = []
+    current = _contact_id(opp)
+    if current:
+        ids.append(current)
+    rows = [row for row in (history or {}).get(_opp_id(opp, ""), []) if isinstance(row, dict)]
+    rows.sort(
+        key=lambda row: _history_timestamp(row) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    prior = [cac.compact_str(row.get("contactId") or row.get("contact_id")) for row in rows]
+    for contact_id in [*prior, *(opp.get(PRIOR_CONTACTS_KEY) or [])]:
+        contact_id = cac.compact_str(contact_id)
+        if contact_id and contact_id not in ids:
+            ids.append(contact_id)
+    return ids
+
+
+def _first_sold_date(contact_ids: list[str], *lookups: dict[str, dict] | None) -> str | None:
+    """Date-only Sold Date from the first of these contacts that carries one."""
+    for contact_id in contact_ids:
+        for lookup in lookups:
+            sold = cac.extract_sold_date_ymd((lookup or {}).get(contact_id))
+            if sold:
+                return sold
+    return None
+
+
 def _sweeper_rehash_filled(contact: dict[str, Any] | None) -> bool:
     """True when the contact Sweeper/Rehash Last Name field is non-empty."""
     from sweeper_rehash_attribution import sweeper_rehash_last_name
@@ -625,8 +667,15 @@ def classify_window(
     *,
     include_quick_form: bool | None = None,
     history: dict[str, list[dict[str, Any]]] | None = None,
+    sold_opps: list[dict[str, Any]] | None = None,
+    sold_contacts: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
-    """Count deduped ad leads and the city opps that belong to them."""
+    """Count deduped ad leads and the city opps that belong to them.
+
+    sold_opps/sold_contacts (from load_sold_candidates) let a sale count for a
+    lead after its sold opp moved to another contact: the opp is matched by id
+    and by every contact it has had (stage history), once per lead cluster.
+    """
     del now_utc
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
@@ -705,7 +754,8 @@ def classify_window(
     opp_ids: set[str] = set()
     demo_events: list[tuple[str, datetime, str]] = []
     sold_ids = _sold_stage_ids()
-    sold_contacts: set[str] = set()
+    sold_members: set[str] = set()
+    sold_links: dict[str, set[str]] = {}
     seen_city: set[str] = set()
     for index, opp in enumerate(contact_opps):
         contact_id = _contact_id(opp)
@@ -720,7 +770,7 @@ def classify_window(
         # is not a sale, on any pipeline. The sold opp can be any of the
         # lead's city opps, created in or after the window. Deleted opps skip.
         if stage_id in sold_ids and not _opp_deleted(opp):
-            sold_contacts.add(contact_id)
+            sold_members.add(contact_id)
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
         if not _in_window(created, start_local, end_local):
             continue
@@ -761,19 +811,41 @@ def classify_window(
         if _history_has_city_demo(history_rows, stage_names):
             demo_events.append((contact_id, created, opp_id))
 
+    # Fallback: a sold opp that moved to another contact (duplicate or merge)
+    # still belongs to the lead it was on. Match by opp id and every contact
+    # it has had; keep the contacts it moved to so their Sold Date can be read.
+    seen_sold: set[str] = set()
+    for index, opp in enumerate(sold_opps or []):
+        opp_id = _opp_id(opp, f"sold:{index}")
+        if opp_id in seen_sold:
+            continue
+        seen_sold.add(opp_id)
+        if cac.compact_str(opp.get(cac.STAGE_FIELD)) not in sold_ids or _opp_deleted(opp):
+            continue
+        had = _sold_opp_contact_ids(opp, history)
+        for contact_id in had:
+            if contact_id in member_ids:
+                sold_members.add(contact_id)
+                sold_links.setdefault(contact_id, set()).update(had)
+
     # Lead-date view: one sale per deduped lead created in the window. Sale
     # Cancelled is already one of the eight ids. Contact Sold Date (date-only)
     # must be on or after the window's first day; it may fall after the window
     # ends, so a lead that sells weeks later still counts on its lead date.
+    # The Sold Date may sit on the lead contact or on a contact its sold opp
+    # moved to. One sale per cluster, so a duplicate never counts twice.
     window_start_ymd = start_local.date().isoformat()
     sales: set[str] = set()
     for cluster in clusters:
         ids = {row["contact_id"] for row in cluster}
-        if not ids & sold_contacts:
+        if not ids & sold_members:
             continue
+        carriers = set(ids)
+        for contact_id in ids:
+            carriers.update(sold_links.get(contact_id, ()))
         if any(
-            _sold_on_or_after(cac.extract_sold_date_ymd(contacts.get(contact_id)), window_start_ymd)
-            for contact_id in ids
+            _sold_on_or_after(_first_sold_date([contact_id], contacts, sold_contacts), window_start_ymd)
+            for contact_id in sorted(carriers)
         ):
             sales.add(min(ids))
 
@@ -923,6 +995,8 @@ def assemble_ads_dashboard(
     stage_status: str = "ok",
     history: dict[str, list[dict[str, Any]]] | None = None,
     sold_date_sales: dict[str, Any] | None = None,
+    sold_opps: list[dict[str, Any]] | None = None,
+    sold_contacts: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     if include_quick_form is None:
         include_quick_form = INCLUDE_FB_QUICK_FORM
@@ -938,6 +1012,8 @@ def assemble_ads_dashboard(
         now_utc,
         include_quick_form=include_quick_form,
         history=history,
+        sold_opps=sold_opps,
+        sold_contacts=sold_contacts,
     )
     notes: list[str] = []
     errors: list[str] = []
@@ -1368,6 +1444,12 @@ def load_sold_candidates(db: Any) -> tuple[list[dict[str, Any]], dict[str, dict]
 
     Same bounded read as /api/metrics/sales: one `in` query on the eight ids,
     then get_all on those contacts. Shared across windows for CACHE_TTL_SECONDS.
+
+    Moved-sale fallback: a sold opp whose current contact has no Lead Gen
+    Source (a duplicate or merged stub) gets its stage history read by opp id
+    (bounded `in` query) to find the contacts it had before; those contacts
+    are added with get_all. Prior ids are kept on the opp under
+    PRIOR_CONTACTS_KEY. A failed history read leaves the fallback off.
     """
     global _SOLD_CANDIDATES
     if _SOLD_CANDIDATES is not None and time.monotonic() - _SOLD_CANDIDATES[0] <= CACHE_TTL_SECONDS:
@@ -1380,6 +1462,23 @@ def load_sold_candidates(db: Any) -> tuple[list[dict[str, Any]], dict[str, dict]
             opp["id"] = snap.id
         opps.append(opp)
     contacts = load_contacts(db, [_contact_id(opp) for opp in opps])
+    moved = [
+        opp
+        for opp in opps
+        if not _opp_deleted(opp) and _opp_id(opp, "") and not lead_source(contacts.get(_contact_id(opp)))
+    ]
+    try:
+        moved_history = load_stage_history(db, [_opp_id(opp, "") for opp in moved])
+    except Exception:
+        moved_history = {}
+    prior_ids: list[str] = []
+    for opp in moved:
+        prior = _sold_opp_contact_ids(opp, moved_history)[1:]
+        if prior:
+            opp[PRIOR_CONTACTS_KEY] = prior
+            prior_ids.extend(cid for cid in prior if cid not in contacts)
+    if prior_ids:
+        contacts.update(load_contacts(db, prior_ids))
     _SOLD_CANDIDATES = (time.monotonic(), opps, contacts)
     return opps, contacts
 
@@ -1392,18 +1491,23 @@ def sales_by_sold_date(
     *,
     include_quick_form: bool | None = None,
 ) -> dict[str, Any]:
-    """Sold Date view: distinct Inbound/Quick Form contacts sold in the window."""
+    """Sold Date view: distinct Inbound/Quick Form contacts sold in the window.
+
+    A sold opp counts for the original ad-lead contact it has had (current
+    contact or one it moved from), once. Sold Date (date-only) comes from the
+    current contact if it carries one, else the newest prior contact that does.
+    """
     sold_ids = _sold_stage_ids()
     found: set[str] = set()
     for opp in sold_opps:
         if cac.compact_str(opp.get(cac.STAGE_FIELD)) not in sold_ids or _opp_deleted(opp):
             continue
-        contact_id = _contact_id(opp)
-        contact = contacts.get(contact_id)
-        if not contact_id or not is_ad_lead(contact, include_quick_form):
+        had = _sold_opp_contact_ids(opp)
+        ad_ids = [cid for cid in had if is_ad_lead(contacts.get(cid), include_quick_form)]
+        if not ad_ids:
             continue
-        if cac.sold_date_in_window(cac.extract_sold_date_ymd(contact), start_local, end_local):
-            found.add(contact_id)
+        if cac.sold_date_in_window(_first_sold_date(had, contacts), start_local, end_local):
+            found.add(ad_ids[-1])
     return {"status": "ok", "value": len(found), "contact_ids": sorted(found)}
 
 
@@ -1970,6 +2074,7 @@ def compute_ads_dashboard(
             sold_opps, sold_contacts, start_local, end_local, include_quick_form=flag
         )
     except Exception:
+        sold_opps, sold_contacts = None, None
         sold_date_view = {"status": "unavailable", "value": None, "contact_ids": []}
     if meta_fetcher:
         meta = meta_fetcher(start_local, end_local)
@@ -1994,6 +2099,8 @@ def compute_ads_dashboard(
         stage_status=stage_status,
         history=history,
         sold_date_sales=sold_date_view,
+        sold_opps=sold_opps,
+        sold_contacts=sold_contacts,
     )
     if history_note:
         payload["notes"] = [history_note, *payload.get("notes", [])]

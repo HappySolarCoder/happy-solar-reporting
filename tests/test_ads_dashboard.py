@@ -938,6 +938,104 @@ class AdsDashboardTests(unittest.TestCase):
         self.assertEqual([opp["id"] for opp in opps], ["s"])
         self.assertIn("c", contacts)
 
+    def _moved_sale(self, dup_sold=None):
+        """Lead A (Inbound, 10/8) whose sold Virtual opp now sits on stub contact B."""
+        sold_stage = "45acf2ef-ac72-4aa3-a327-7ed37c54b4ad"
+        contacts = {
+            "A": contact("A", "Inbound", sold="2026-10-29"),
+            "B": contact("B", None, sold=dup_sold),
+        }
+        pipeline = [pipeline_opp("lead", "A", INSIDE, "Reconnect to Book")]
+        won = city_opp("won", "B", INSIDE, "Sit")
+        won.update(pipelineStageId=sold_stage, status="won")
+        history = {
+            "won": [
+                {"opportunityId": "won", "contactId": "A", "pipelineId": VIRTUAL,
+                 "toStageId": "stage-reschedule", "effectiveAt": INSIDE},
+                {"opportunityId": "won", "contactId": "A", "pipelineId": VIRTUAL,
+                 "toStageId": sold_stage, "effectiveAt": "2026-10-29T22:20:36.531Z"},
+            ]
+        }
+        return sold_stage, contacts, pipeline, won, history
+
+    def _assemble_with_sold(self, contacts, pipeline, city, history, sold_opps):
+        start_local, end_local = metric.date_window("2026-10-05", "2026-10-11")
+        return metric.assemble_ads_dashboard(
+            pipeline_opps=pipeline, contact_opps=city, contacts={k: v for k, v in contacts.items() if k == "A"},
+            stage_names={}, start_local=start_local, end_local=end_local, now=NOW, meta=None,
+            sessions=None, goals=None, history=history, sold_opps=sold_opps, sold_contacts=contacts,
+        )
+
+    def test_sale_moved_to_duplicate_contact_counts_once_for_the_lead(self):
+        sold_stage, contacts, pipeline, won, history = self._moved_sale()
+        # Without the fallback the moved sale is lost (the 9/14 lead bug).
+        lost = self._assemble_with_sold(contacts, pipeline, [], history, None)
+        self.assertEqual(lost["kpis"]["sales"]["value"], 0)
+        # Opp id + stage history contact ids bring it back, once.
+        found = self._assemble_with_sold(contacts, pipeline, [], history, [won, dict(won)])
+        self.assertEqual(found["kpis"]["sales"]["value"], 1)
+        self.assertEqual(found["kpis"]["sales"]["contact_ids"], ["A"])
+        self.assertEqual(found["kpis"]["opps"]["value"], lost["kpis"]["opps"]["value"])
+        self.assertEqual(found["kpis"]["demos"]["value"], lost["kpis"]["demos"]["value"])
+        # A second sold opp still on A is the same lead: still one sale.
+        own = city_opp("own", "A", INSIDE, "Sit")
+        own.update(pipelineStageId=sold_stage)
+        both = self._assemble_with_sold(contacts, pipeline, [own], history, [won, own])
+        self.assertEqual(both["kpis"]["sales"]["value"], 1)
+        # Sold Date view: prior contact from load_sold_candidates, credited to A once.
+        moved = dict(won, **{metric.PRIOR_CONTACTS_KEY: ["A"]})
+        start_local, end_local = metric.date_window("2026-10-01", "2026-10-31")
+        view = metric.sales_by_sold_date([moved, own], contacts, start_local, end_local, include_quick_form=True)
+        self.assertEqual((view["value"], view["contact_ids"]), (1, ["A"]))
+        bare = metric.sales_by_sold_date([won], contacts, start_local, end_local, include_quick_form=True)
+        self.assertEqual(bare["value"], 0)
+        # Deleted moved opp never counts.
+        gone = self._assemble_with_sold(contacts, pipeline, [], history, [dict(won, deleted=True)])
+        self.assertEqual(gone["kpis"]["sales"]["value"], 0)
+
+    def test_sale_on_original_and_duplicate_with_sold_dates_counts_once(self):
+        sold_stage, contacts, pipeline, won, history = self._moved_sale(dup_sold="2026-10-30")
+        own = city_opp("own", "A", INSIDE, "Sit")
+        own.update(pipelineStageId=sold_stage)
+        found = self._assemble_with_sold(contacts, pipeline, [own], history, [won, own])
+        self.assertEqual((found["kpis"]["sales"]["value"], found["kpis"]["sales"]["contact_ids"]), (1, ["A"]))
+        moved = dict(won, **{metric.PRIOR_CONTACTS_KEY: ["A"]})
+        start_local, end_local = metric.date_window("2026-10-01", "2026-10-31")
+        view = metric.sales_by_sold_date([moved, own], contacts, start_local, end_local, include_quick_form=True)
+        self.assertEqual((view["value"], view["contact_ids"]), (1, ["A"]))
+        # Sold Date comes from the opp's current contact first (B: 10/30), date-only.
+        day = metric.date_window("2026-10-30", "2026-10-30")
+        self.assertEqual(metric.sales_by_sold_date([moved], contacts, *day, include_quick_form=True)["contact_ids"], ["A"])
+        # Only the duplicate carries a Sold Date: still the lead's one sale.
+        only_dup = {"A": contact("A", "Inbound"), "B": contacts["B"]}
+        found = self._assemble_with_sold(only_dup, pipeline, [], history, [won])
+        self.assertEqual(found["kpis"]["sales"]["value"], 1)
+        view = metric.sales_by_sold_date([moved], only_dup, start_local, end_local, include_quick_form=True)
+        self.assertEqual(view["contact_ids"], ["A"])
+
+    def test_sold_candidates_find_prior_contacts_of_stub_sold_opps(self):
+        db = FakeDB()
+        sold_stage = sorted(metric._sold_stage_ids())[0]
+        db.rows["ghl_opportunities_v2"] = [
+            Snap({"id": "won", "contactId": "B", "pipelineStageId": sold_stage}),
+            Snap({"id": "s", "contactId": "c", "pipelineStageId": sold_stage}),
+        ]
+        db.rows[metric.HISTORY_COLLECTION] = [
+            Snap({"opportunityId": "won", "contactId": "A", "effectiveAt": INSIDE}),
+        ]
+        db.contacts.update(
+            A=contact("A", "Inbound", sold="2026-10-29"), B=contact("B", None), c=contact("c", "Inbound", sold="2026-10-08")
+        )
+        opps, contacts = metric.load_sold_candidates(db)
+        metric.load_sold_candidates(db)
+        self.assertEqual(len(db.streams), 2)
+        self.assertEqual(db.streams[1], (metric.HISTORY_COLLECTION, [("opportunityId", "in", ["won"])]))
+        self.assertEqual({o["id"]: o.get(metric.PRIOR_CONTACTS_KEY) for o in opps}, {"won": ["A"], "s": None})
+        self.assertIn("A", contacts)
+        start_local, end_local = metric.date_window("2026-10-01", "2026-10-31")
+        view = metric.sales_by_sold_date(opps, contacts, start_local, end_local, include_quick_form=True)
+        self.assertEqual(view["contact_ids"], ["A", "c"])
+
     def test_zero_denominator_is_na_and_missing_source_is_blank(self):
         contacts = {"c": contact("c", "inbound")}
         pipeline = [pipeline_opp("lead", "c", INSIDE, "New Lead")]

@@ -6,6 +6,8 @@ Evan, 2026-11-03: no disposition ever subtracts a knock. Each
 ``dispositionHistory`` entry is one knock for ``entry.userId`` at
 ``entry.timestamp``, except Shade DQ (``shade-dq``), Already Has Solar
 (``has-solar`` / ``already-has-solar``), and the non-knock ownership states.
+The same rep putting the same disposition on the same lead again within
+``REPEAT_KNOCK_GAP_SECONDS`` (120) is still one knock.
 
 The disposition catalog is used only to resolve a name to an id. The gate is
 the sets below, not ``countsAsDoorKnock``. Day buckets stay America/New_York.
@@ -18,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -38,6 +40,15 @@ NON_KNOCK_KEYS = frozenset(
 )
 
 # Unknown legacy strings count. Only the two sets above are dropped.
+# Same rep, same lead, same normalized disposition inside this gap is one knock.
+# The anchor is the last kept event. A tap at exactly 120s does not start a new knock.
+REPEAT_KNOCK_GAP_SECONDS = 120
+REPEAT_KNOCK_GAP_MS = REPEAT_KNOCK_GAP_SECONDS * 1000
+# Closed windows still start at dispositionedAt >= start, then stop at
+# window end + this many days. A re-dispo later than that is not read, so
+# its earlier in-window knock can drop out of that old window.
+KNOCK_READ_LOOKAHEAD_DAYS = 45
+KNOCK_READ_LOOKAHEAD = timedelta(days=KNOCK_READ_LOOKAHEAD_DAYS)
 REPORTING_TZ = ZoneInfo("America/New_York")
 _SPACE_RUN = re.compile(r"\s+")
 
@@ -263,17 +274,48 @@ def _legacy_event(
     return events
 
 
+def collapse_repeat_knocks(events: Iterable[KnockEvent]) -> list[KnockEvent]:
+    """Drop same-lead, same-rep, same-disposition taps inside ``REPEAT_KNOCK_GAP_MS``.
+
+    Groups are ``leadId|userId|dispositionId``. Each group is sorted by time.
+    An event is kept only when it is more than 120 seconds after the last kept
+    event in that group. The anchor does not move to a dropped tap.
+    """
+
+    groups: dict[tuple[str, str, str], list[KnockEvent]] = {}
+    for event in events:
+        groups.setdefault((event.lead_id, event.user_id, event.disposition_id), []).append(event)
+    kept: list[KnockEvent] = []
+    for group in groups.values():
+        ordered = sorted(group, key=lambda item: (item.at, item.dedupe_key))
+        last_kept_at: int | None = None
+        for event in ordered:
+            if last_kept_at is not None and event.at - last_kept_at <= REPEAT_KNOCK_GAP_MS:
+                continue
+            kept.append(event)
+            last_kept_at = event.at
+    kept.sort(key=lambda item: (item.at, item.lead_id, item.user_id, item.disposition_id, item.dedupe_key))
+    return kept
+
+
 def knock_events(
     lead: dict[str, Any] | None,
     dispositions: Any = None,
     seen: set[str] | None = None,
+    *,
+    collapse: bool = True,
 ) -> list[KnockEvent]:
     """History entries on one lead. ``seen`` dedupes across snapshots and devices.
 
     Fallback to one event from ``status`` / ``dispositionId`` + ``dispositionedAt``
     only when ``dispositionHistory`` is missing or empty. The actor is then
     ``claimedBy`` or ``assignedTo``. Entries with no user id or no parseable
-    time are skipped. A non-empty history of unusable entries does not fall back.
+    time are skipped. A null or non-object history entry is skipped. A
+    non-empty history of unusable entries does not fall back.
+
+    After dedupe and exclusions, repeats inside ``REPEAT_KNOCK_GAP_SECONDS``
+    collapse to one knock unless ``collapse`` is false. ``collect_knock_events``
+    turns collapse off per snapshot and collapses the union once.
     """
 
     if not isinstance(lead, dict):
@@ -315,6 +357,8 @@ def knock_events(
             disposition_id=disposition_id,
             event_id=_event_id(entry),
         )
+    if collapse:
+        return collapse_repeat_knocks(events)
     return events
 
 
@@ -331,7 +375,10 @@ def collect_knock_events(
     The same lead may arrive as a full history, a trimmed history, and a local
     ack. Events are only added. A later, shorter snapshot cannot remove one.
     ``eventId`` dedupes across leads (two devices, one write). Otherwise the
-    key is ``leadId|userId|dispositionId|atMs``.
+    key is ``leadId|userId|dispositionId|atMs``. Repeats inside
+    ``REPEAT_KNOCK_GAP_SECONDS`` then collapse on the union, anchored on the
+    last kept event, before the window filter. A duplicate just inside the
+    window does not count when its kept anchor is before the window.
 
     ``start`` is inclusive and ``end`` is exclusive, compared in epoch millis.
     """
@@ -340,7 +387,7 @@ def collect_knock_events(
     end_ms = to_millis(end) if end is not None else None
     wanted = _user_text(user_id) if user_id is not None else ""
     seen: set[str] = set()
-    found: list[KnockEvent] = []
+    raw: list[KnockEvent] = []
     for index, lead in enumerate(leads):
         if not isinstance(lead, dict):
             continue
@@ -348,14 +395,16 @@ def collect_knock_events(
         if not _lead_id(lead):
             prepared = dict(lead)
             prepared["id"] = f"__row{index}"
-        for event in knock_events(prepared, dispositions, seen=seen):
-            if wanted and event.user_id != wanted:
-                continue
-            if start_ms is not None and event.at < start_ms:
-                continue
-            if end_ms is not None and event.at >= end_ms:
-                continue
-            found.append(event)
+        raw.extend(knock_events(prepared, dispositions, seen=seen, collapse=False))
+    found: list[KnockEvent] = []
+    for event in collapse_repeat_knocks(raw):
+        if wanted and event.user_id != wanted:
+            continue
+        if start_ms is not None and event.at < start_ms:
+            continue
+        if end_ms is not None and event.at >= end_ms:
+            continue
+        found.append(event)
     return found
 
 
@@ -422,28 +471,25 @@ def knocks_by_day(
     return counts
 
 
-def raydar_lead_query(collection: Any, start: Any, *, order: bool = False) -> Any:
-    """Leads whose latest ``dispositionedAt`` is on or after ``start``.
+def raydar_lead_query(collection: Any, start: Any, *, end: Any = None, order: bool = False) -> Any:
+    """Leads whose latest ``dispositionedAt`` may still hold in-window knocks.
 
-    Before: ``dispositionedAt >= start AND dispositionedAt < end`` (and, on
-    the doors metric, ``order_by dispositionedAt``).
+    ``dispositionedAt >= start`` on the same single-field index. When ``end``
+    is set, also ``dispositionedAt < end + KNOCK_READ_LOOKAHEAD`` (45 days).
+    A re-dispo inside that lookahead still carries the earlier knock. A
+    re-dispo more than 45 days after the window is not read, so that knock
+    can drop out of the old window. Callers still filter events to
+    ``[start, end)``.
 
-    After: ``dispositionedAt >= start`` on the same single-field index, with
-    the same optional ``order_by``. There is no upper bound. A later re-dispo
-    moves ``dispositionedAt`` forward, and the earlier knock is still on that
-    document. Callers keep the reporting window by filtering event times.
-
-    Windows that already end at "now" read the same documents as before,
-    because nothing is dispositioned in the future. A closed window also
-    reads leads touched after the window. That is the extra read. It is not
-    a collection scan and it does not add a per-lead follow-up: history is
-    already on the lead document the old counters streamed.
-
-    Firestore returns the whole document either way, so reading
-    ``dispositionHistory[0]`` was already downloading the full array.
+    Windows that end at "now" add an upper bound 45 days in the future, so
+    they still read the same existing leads. Optional ``order_by`` stays on
+    ``dispositionedAt``. No per-lead follow-up: history is already on the
+    document.
     """
 
     query = collection.where("dispositionedAt", ">=", start)
+    if end is not None:
+        query = query.where("dispositionedAt", "<", end + KNOCK_READ_LOOKAHEAD)
     if order:
         query = query.order_by("dispositionedAt")
     return query

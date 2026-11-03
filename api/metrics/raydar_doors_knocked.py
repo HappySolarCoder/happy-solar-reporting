@@ -336,11 +336,12 @@ def build_payload(
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     end_utc = end_local.astimezone(ZoneInfo("UTC"))
 
-    # Same index as the old [start, end) range. No upper bound: a lead
-    # re-dispositioned after the window still holds the in-window knocks.
+    # dispositionedAt >= start and < end + 45 days. A later re-dispo inside
+    # that lookahead still holds the in-window knocks.
     q = raydar_lead_query(
         db.collection(MetricContract.leads_collection),
         start_utc,
+        end=end_utc,
         order=True,
     )
     start_ms = to_millis(start_utc)
@@ -514,7 +515,7 @@ def build_payload(
         "contract": {
             "collection": MetricContract.leads_collection,
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
-            "inclusion": "dispositionedAt >= window start; each counted dispositionHistory event whose timestamp is inside the window",
+            "inclusion": "dispositionedAt >= window start and < window end + 45 days; each counted dispositionHistory event whose timestamp is inside the window. Same rep, lead, and disposition within 120 seconds is one knock.",
             "time_on_doors": "last counted knock event minus first counted knock event, per actor",
             "timezone_note": "Days are America/New_York. The Raydar app buckets in device-local Phoenix time.",
         },

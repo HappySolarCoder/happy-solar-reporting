@@ -8,7 +8,7 @@ import importlib.util
 import sys
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,7 +20,9 @@ if str(API) not in sys.path:
 
 from knock_count import (  # noqa: E402
     EXCLUDED_KNOCK_KEYS,
+    KNOCK_READ_LOOKAHEAD,
     NON_KNOCK_KEYS,
+    REPEAT_KNOCK_GAP_SECONDS,
     collect_knock_events,
     count_knocks,
     is_counted_knock,
@@ -169,6 +171,53 @@ class KnockRuleTests(unittest.TestCase):
         self.assertEqual(days["2026-10-05"], 1)
         self.assertEqual(days["2026-10-06"], 1)
 
+    def test_repeat_taps_inside_two_minutes_are_one_knock(self):
+        self.assertEqual(REPEAT_KNOCK_GAP_SECONDS, 120)
+        base = datetime(2026, 10, 5, 15, 0, tzinfo=timezone.utc)
+
+        def at(*seconds: int, disposition: str = "Not Home", user_id: str = U1) -> list[dict]:
+            return [
+                _entry(disposition, user_id=user_id, when=base + timedelta(seconds=second))
+                for second in seconds
+            ]
+
+        self.assertEqual(count_knocks([_lead("taps", at(0, 5, 10))], PROD_DISPOSITIONS), 1)
+        self.assertEqual(count_knocks([_lead("edge", at(0, 119, 121))], PROD_DISPOSITIONS), 2)
+        self.assertEqual(count_knocks([_lead("anchor", at(0, 60, 120, 180))], PROD_DISPOSITIONS), 2)
+        self.assertEqual(
+            count_knocks(
+                [_lead("other-dispo", at(0, disposition="Not Home") + at(10, disposition="Go Back"))],
+                PROD_DISPOSITIONS,
+            ),
+            2,
+        )
+        self.assertEqual(
+            count_knocks(
+                [_lead("two-reps", at(0, user_id=U1) + at(10, user_id=U2))],
+                PROD_DISPOSITIONS,
+            ),
+            2,
+        )
+        forward = count_knocks([_lead("sort", at(0, 60, 120, 180))], PROD_DISPOSITIONS)
+        backward = count_knocks([_lead("sort", list(reversed(at(0, 60, 120, 180))))], PROD_DISPOSITIONS)
+        self.assertEqual(forward, backward)
+        self.assertEqual(backward, 2)
+
+    def test_null_history_entries_are_skipped(self):
+        lead = _lead(
+            "L1",
+            [
+                None,
+                "Not Home",
+                5,
+                ["Not Home"],
+                _entry("Not Home"),
+            ],
+        )
+        self.assertEqual(count_knocks([lead], PROD_DISPOSITIONS), 1)
+        only_bad = _lead("L2", [None, "not-a-dict"], status="not-home", dispositionedAt=MON, claimedBy=U1)
+        self.assertEqual(count_knocks([only_bad], PROD_DISPOSITIONS), 0)
+
     def test_two_reps_each_keep_their_knock(self):
         lead = _lead(
             "L1",
@@ -206,7 +255,9 @@ class KnockRuleTests(unittest.TestCase):
         self.assertEqual(count_knocks([device_a, device_b], PROD_DISPOSITIONS), 1)
         other = _lead("L2", [_entry("Interested", eventId="other-evt")])
         self.assertEqual(count_knocks([device_a, other], PROD_DISPOSITIONS), 2)
-        self.assertEqual(len(collect_knock_events([full, ack], PROD_DISPOSITIONS)), 3)
+        # ack's eventId is a different dedupe key, but it is the same rep,
+        # lead, and disposition at the same instant, so the 120s rule keeps one.
+        self.assertEqual(len(collect_knock_events([full, ack], PROD_DISPOSITIONS)), 2)
 
     def test_notes_only_and_empty_history_fallback(self):
         base = _lead("L1", [_entry("Not Home")], notes="first")
@@ -312,13 +363,16 @@ class _Collection:
 
 
 class LeadQueryShapeTests(unittest.TestCase):
-    def test_lower_bound_only_on_dispositioned_at(self):
+    def test_closed_window_stops_45_days_after_end(self):
+        self.assertEqual(KNOCK_READ_LOOKAHEAD, timedelta(days=45))
         start = datetime(2026, 10, 1, tzinfo=timezone.utc)
-        query = raydar_lead_query(_Collection(), start, order=True)
+        end = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        query = raydar_lead_query(_Collection(), start, end=end, order=True)
         self.assertEqual(
             query.ops,
             [
                 ("where", "dispositionedAt", ">=", start),
+                ("where", "dispositionedAt", "<", end + timedelta(days=45)),
                 ("order_by", "dispositionedAt"),
             ],
         )
@@ -404,7 +458,7 @@ class DoorsKnockedHistoryTests(unittest.TestCase):
             sys.path.insert(0, str(METRICS))
         cls.doors = _load("raydar_doors_knocked_history", METRICS / "raydar_doors_knocked.py")
 
-    def test_shade_dq_after_a_knock_still_counts_and_query_has_no_upper_bound(self):
+    def test_shade_dq_after_a_knock_still_counts_and_read_stops_at_45_days(self):
         when = datetime(2026, 10, 12, 18, 0, tzinfo=timezone.utc)
         later = datetime(2026, 11, 2, 18, 0, tzinfo=timezone.utc)
         dispositions = [
@@ -465,8 +519,10 @@ class DoorsKnockedHistoryTests(unittest.TestCase):
         self.assertEqual(payload["breakdowns"]["time_on_doors_by_actor"][U1]["knocks"], 2)
         lead_ops = db.collections["raydar_leads_v1"].ops
         wheres = [op[1] for op in lead_ops if op[0] == "where"]
-        self.assertEqual([item[1] for item in wheres], [">="])
+        self.assertEqual([item[1] for item in wheres], [">=", "<"])
         self.assertEqual(wheres[0][0], "dispositionedAt")
+        self.assertEqual(wheres[1][0], "dispositionedAt")
+        self.assertEqual(wheres[1][2] - wheres[0][2], timedelta(days=31 + 45))
         self.assertTrue(any(op[0] == "order_by" and op[1] == ("dispositionedAt",) for op in lead_ops))
 
 

@@ -153,6 +153,18 @@ def excluded_from_owner_performance(lead_source: Any, sweeper_last_name: Any) ->
     return is_sweeper_rehash_lead_source(lead_source) or not is_blank_last_name(sweeper_last_name)
 
 
+# Evan, 2026-11-03: a sale whose Sweeper/Rehash Last Name is Diamond is
+# credited to the opportunity owner (the closer who sold it) in Owner
+# Performance sales. Ran, every other sweeper, and Diamond Sweeper totals
+# keep the 2026-10-20 rule above.
+OWNER_CREDITED_SWEEPER_SALE_NAMES = frozenset({"diamond"})
+
+
+def owner_performance_credits_sweeper_sale(sweeper_last_name: Any) -> bool:
+    """True when an Owner Performance sale stays with its owner despite the sweeper rule."""
+    return compact_text(sweeper_last_name).casefold() in OWNER_CREDITED_SWEEPER_SALE_NAMES
+
+
 def is_self_gen_lead_filter(requested: str | None) -> bool:
     if requested is None or not str(requested).strip():
         return False

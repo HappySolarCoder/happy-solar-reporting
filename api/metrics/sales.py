@@ -45,6 +45,7 @@ from lead_gen_source import inbound_source_label
 from pipeline_scope import pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
     excluded_from_owner_performance,
+    owner_performance_credits_sweeper_sale,
     excluded_from_self_gen,
     self_gen_count_label,
     sweeper_rehash_last_name,
@@ -522,7 +523,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
         if not pipeline_in_scope(pname_for_filter, pipeline=pipeline, sweeper=sweeper):
             continue
         # Owner Performance only. Default callers, including Diamond Sweeper, keep these rows.
-        if exclude_sweeper_rehash and excluded_from_owner_performance(lead_src, sweeper_name):
+        # A Diamond sweeper sale stays with the opportunity owner (Evan, 2026-11-03).
+        if exclude_sweeper_rehash and excluded_from_owner_performance(lead_src, sweeper_name) and not owner_performance_credits_sweeper_sale(sweeper_name):
             continue
 
         opp_id = opp.get(contract.opportunity_id_field) or opp_doc.id

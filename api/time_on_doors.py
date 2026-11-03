@@ -3,11 +3,12 @@
 """FMA time on doors.
 
 Time on doors is the span from the first counted door knock to the last counted
-door knock in the dashboard window. The knock clock is
-``raydar_leads_v1.dispositionedAt`` for dispositions with ``countsAsDoorKnock``.
+door knock in the dashboard window. The knock clock is the history event
+timestamp from ``knock_count``, not the lead's latest ``dispositionedAt``.
 
-Actor attribution matches the daily dashboard knock table:
-``dispositionHistory[0].userId``, then ``claimedBy``.
+Knock totals credit ``entry.userId``. ``knock_actor_id`` is the legacy
+latest-row actor (``dispositionHistory[0].userId``, then ``claimedBy``) and is
+not used for knock totals.
 """
 
 from __future__ import annotations

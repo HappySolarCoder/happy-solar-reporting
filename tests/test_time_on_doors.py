@@ -239,14 +239,14 @@ class DailyDashboardTimeOnDoorsTests(unittest.TestCase):
 
     def test_raydar_payload_uses_counted_knocks_only(self):
         src = self.raydar_src
+        self.assertIn("knock_events", src)
         self.assertIn("observe_door_knock", src)
         self.assertIn("time_on_doors_by_actor", src)
         self.assertIn('"time_on_doors": time_on_doors_table(time_by_actor, users)', src)
-        knock_gate = src.find("if not counts_as_knock:")
-        observe = src.find("observe_door_knock(door_spans, k, d.get(MetricContract.time_field))")
+        self.assertNotIn('observe_door_knock(door_spans, k, d.get(MetricContract.time_field))', src)
+        observe = src.find("observe_door_knock(")
         adjust = src.find("manual_knock_adjustments")
-        self.assertGreater(knock_gate, -1)
-        self.assertLess(knock_gate, observe)
+        self.assertGreater(observe, -1)
         self.assertLess(observe, adjust)
 
 

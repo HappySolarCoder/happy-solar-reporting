@@ -5,9 +5,11 @@
 Metric: Raydar — Dispositioned Leads (Doors Knocked)
 
 Business rule (canonical):
-- Include a lead if raydar_leads_v1.dispositionedAt is non-null.
-- Time filter field: raydar_leads_v1.dispositionedAt (Firestore Timestamp)
-- Reporting windows computed in America/New_York.
+- Each dispositionHistory entry is one knock for entry.userId at entry.timestamp.
+- Shade DQ, Already Has Solar, and ownership states (claimed / unclaimed / …) do not count.
+- Leads with an empty history fall back to one event from status/dispositionId + dispositionedAt.
+- The lead read is dispositionedAt >= window start (no upper bound) so a later re-dispo cannot drop an earlier knock. Events are then filtered to the America/New_York window.
+- Day grouping stays America/New_York. The Raydar app uses device-local Phoenix time; those day totals can differ near midnight.
 
 Params:
 - start=YYYY-MM-DD (optional; date-only, America/New_York)
@@ -39,7 +41,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -52,6 +54,7 @@ _API_DIR = Path(__file__).resolve().parent.parent
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
+from knock_count import knock_events, raydar_lead_query, to_millis
 from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
 from raydar_test_data import (
     is_excluded_raydar_record,
@@ -333,12 +336,16 @@ def build_payload(
     start_utc = start_local.astimezone(ZoneInfo("UTC"))
     end_utc = end_local.astimezone(ZoneInfo("UTC"))
 
-    q = (
-        db.collection(MetricContract.leads_collection)
-        .where(MetricContract.time_field, ">=", start_utc)
-        .where(MetricContract.time_field, "<", end_utc)
-        .order_by(MetricContract.time_field)
+    # Same index as the old [start, end) range. No upper bound: a lead
+    # re-dispositioned after the window still holds the in-window knocks.
+    q = raydar_lead_query(
+        db.collection(MetricContract.leads_collection),
+        start_utc,
+        order=True,
     )
+    start_ms = to_millis(start_utc)
+    end_ms = to_millis(end_utc)
+    seen_knocks: set[str] = set()
 
     users, test_user_ids = user_name_map(db)
 
@@ -379,52 +386,59 @@ def build_payload(
         cb = d.get("claimedBy")
         at = d.get("assignedTo")
 
-        # Primary actor attribution (per dev schema): dispositionHistory[0].userId, fallback claimedBy
+        # Appointments and convos stay on the latest disposition. They are not
+        # knock totals. Only count them when that latest stamp is inside the
+        # window, because the lead read now extends past the window.
+        latest_ms = to_millis(d.get(MetricContract.time_field))
+        latest_in_window = (
+            latest_ms is not None
+            and start_ms is not None
+            and end_ms is not None
+            and start_ms <= latest_ms < end_ms
+        )
         actor = knock_actor_id(d)
-
-        # Disposition key:
-        # - Raydar leads usually store the disposition under `status` (e.g. "not-home", "appointment")
-        # - Some payloads may include dispositionId; use it if present.
         dispo_key = d.get("dispositionId")
         if dispo_key in (None, ""):
             dispo_key = d.get("status")
-
         dispo_rec = dispo.get(str(dispo_key), {}) if dispo_key not in (None, "") else {}
         dispo_name = str(dispo_rec.get("name") or "")
         dispo_low = dispo_name.strip().lower() if isinstance(dispo_name, str) else ""
-        counts_as_knock = bool(dispo_rec.get("countsAsDoorKnock") is True)
 
-        # Convos: disposition indicates homeowner conversation
-        # Explicit exclusion handled by allowlist (Shade DQ + Not Home are not included)
-        if dispo_low in convo_allow:
+        if latest_in_window and dispo_low in convo_allow:
             convos_total += 1
             if actor not in (None, ""):
                 k = str(actor)
                 convos_by_claimed[k] = convos_by_claimed.get(k, 0) + 1
 
-        # Appointments Set
-        if dispo_low == appt_name:
+        if latest_in_window and dispo_low == appt_name:
             appts_total += 1
             if actor not in (None, ""):
                 k = str(actor)
                 appts_by_claimed[k] = appts_by_claimed.get(k, 0) + 1
 
-        # Door knocks are disposition-based
-        if not counts_as_knock:
-            continue
-
-        if actor not in (None, ""):
-            k = str(actor)
+        lead = dict(d)
+        if not lead.get("id"):
+            lead["id"] = snap.id
+        for event in knock_events(lead, dispo, seen=seen_knocks):
+            if start_ms is not None and event.at < start_ms:
+                continue
+            if end_ms is not None and event.at >= end_ms:
+                continue
+            k = event.user_id
             by_actor[k] = by_actor.get(k, 0) + 1
-            observe_door_knock(door_spans, k, d.get(MetricContract.time_field))
-
-        # Keep these breakdowns for debugging / reconciliation
-        if cb not in (None, ""):
-            k = str(cb)
-            by_claimed[k] = by_claimed.get(k, 0) + 1
-        if at not in (None, ""):
-            k = str(at)
-            by_assigned[k] = by_assigned.get(k, 0) + 1
+            observe_door_knock(
+                door_spans,
+                k,
+                datetime.fromtimestamp(event.at / 1000, tz=timezone.utc),
+            )
+            # Debug breakdowns. One increment per counted knock, on the lead's
+            # current owner fields. The knock total itself is by_actor.
+            if cb not in (None, ""):
+                claimed_key = str(cb)
+                by_claimed[claimed_key] = by_claimed.get(claimed_key, 0) + 1
+            if at not in (None, ""):
+                assigned_key = str(at)
+                by_assigned[assigned_key] = by_assigned.get(assigned_key, 0) + 1
 
     adjustment_month_key = resolve_adjustment_month_key(year, month, period, start, end, start_local, end_local)
     manual_knock_adjustments, adjustment_source = load_knock_adjustments(adjustment_month_key)
@@ -436,7 +450,9 @@ def build_payload(
         applied_adjustments[uid] = int(delta)
 
     result = sum(int(v) for v in by_actor.values())
-    count_method = "SUM(knocks_by_actor)" + (" + manual_month_adjustments" if applied_adjustments else "")
+    count_method = "SUM(history knock events in window)" + (
+        " + manual_month_adjustments" if applied_adjustments else ""
+    )
     time_by_actor = time_on_doors_by_actor(door_spans)
 
     docs = list(q.limit(25).stream())
@@ -447,6 +463,9 @@ def build_payload(
         if is_excluded_raydar_record(dd, doc_id=snap.id, test_user_ids=test_user_ids):
             continue
         ts = dd.get(MetricContract.time_field)
+        ts_ms = to_millis(ts)
+        if ts_ms is None or start_ms is None or end_ms is None or not (start_ms <= ts_ms < end_ms):
+            continue
         ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else None
         claimed_by = dd.get("claimedBy")
         assigned_to = dd.get("assignedTo")
@@ -495,8 +514,9 @@ def build_payload(
         "contract": {
             "collection": MetricContract.leads_collection,
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
-            "inclusion": "dispositionedAt is non-null (enforced by >= start)",
-            "time_on_doors": "last dispositionedAt minus first dispositionedAt among countsAsDoorKnock leads, per actor",
+            "inclusion": "dispositionedAt >= window start; each counted dispositionHistory event whose timestamp is inside the window",
+            "time_on_doors": "last counted knock event minus first counted knock event, per actor",
+            "timezone_note": "Days are America/New_York. The Raydar app buckets in device-local Phoenix time.",
         },
         "adjustments": {
             "month_key": adjustment_month_key,
@@ -578,7 +598,7 @@ def html_page(payload: dict) -> str:
       <div class=\"card\">
         <div class=\"label\">Result</div>
         <div class=\"kpi\">{esc(payload.get('result'))}</div>
-        <div class=\"meta\">COUNT where <code>raydar_leads_v1.dispositionedAt</code> in window</div>
+        <div class=\"meta\">History knock events whose timestamp is in the window. Shade DQ and Has Solar do not count.</div>
         <div class=\"meta\"><a style=\"color:#93c5fd\" href=\"?format=json&year={esc(payload.get('year'))}&month={esc(payload.get('month'))}\">?format=json</a></div>
       </div>
 

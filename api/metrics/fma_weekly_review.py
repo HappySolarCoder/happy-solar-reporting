@@ -5,7 +5,7 @@
 Aggregated weekly-review payload for FMA performance reviews.
 
 Metric semantics intentionally mirror the established dashboard contracts:
-- Knocks: Raydar dispositioned leads that count as door knocks
+- Knocks: each counted dispositionHistory event in the window (America/New_York)
 - Appointments: GHL opportunities created by setter last name (`pipeline_scope=all`, excluding inbound/lead locker)
 - Demos: GHL opportunities ran with disposition `Sit`
 - Sales: canonical sales by setter last name using sold-date window
@@ -37,6 +37,7 @@ for _path in (_API_DIR, _METRICS_DIR):
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+from knock_count import knock_events, raydar_lead_query, to_millis
 from lead_gen_source import inbound_source_label
 from raydar_test_data import (
     is_excluded_raydar_record,
@@ -463,42 +464,32 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         ensure_daily(person["daily"], day_key)[metric] += amount
         ensure_daily(daily_totals, day_key)[metric] += amount
 
-    # Raydar knocks
-    lead_query = (
-        db.collection("raydar_leads_v1")
-        .where("dispositionedAt", ">=", start_utc)
-        .where("dispositionedAt", "<", end_utc)
-    )
+    # Raydar knocks. Same >= start read as the FMA total. Event time, not the
+    # latest dispositionedAt, picks the day and the rep.
+    start_ms = to_millis(start_utc)
+    end_ms = to_millis(end_utc)
+    seen_knocks: set[str] = set()
+    lead_query = raydar_lead_query(db.collection("raydar_leads_v1"), start_utc)
     for snap in lead_query.stream():
         data = snap.to_dict() or {}
         if is_excluded_raydar_record(data, doc_id=snap.id, test_user_ids=test_user_ids):
             continue
-        ts = parse_iso_dt(data.get("dispositionedAt"))
-        if not ts:
-            continue
-
-        actor = None
-        hist = data.get("dispositionHistory") or []
-        if isinstance(hist, list) and hist:
-            first = hist[0]
-            if isinstance(first, dict):
-                actor = compact_str(first.get("userId"))
-        if not actor:
-            actor = compact_str(data.get("claimedBy"))
-        if not actor:
-            continue
-
-        dispo_key = data.get("dispositionId")
-        if dispo_key in (None, ""):
-            dispo_key = data.get("status")
-        dispo_rec = raydar_dispositions.get(str(dispo_key), {})
-        if not bool(dispo_rec.get("countsAsDoorKnock") is True):
-            continue
-
-        person = person_by_raydar_id.get(actor)
-        if not person:
-            continue
-        bump_person(person, date_key_local(ts), "knocks", 1)
+        lead = dict(data)
+        if not lead.get("id"):
+            lead["id"] = snap.id
+        for event in knock_events(lead, raydar_dispositions, seen=seen_knocks):
+            if start_ms is not None and event.at < start_ms:
+                continue
+            if end_ms is not None and event.at >= end_ms:
+                continue
+            actor = compact_str(event.user_id)
+            if not actor:
+                continue
+            person = person_by_raydar_id.get(actor)
+            if not person:
+                continue
+            moment = datetime.fromtimestamp(event.at / 1000, tz=timezone.utc)
+            bump_person(person, date_key_local(moment), "knocks", 1)
 
     # GHL opp-derived metrics
     for snap in db.collection("ghl_opportunities_v2").stream():
@@ -644,7 +635,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         "ran_appointments": ran_appointments,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "notes": {
-            "knocks": "Raydar dispositioned leads that count as door knocks (actor attribution matches current FMA dashboard logic).",
+            "knocks": "Each counted dispositionHistory event in the window, credited to entry.userId on the America/New_York day of entry.timestamp. Shade DQ and Has Solar do not count. Same rule as FMA Total Knocks.",
             "appointments": "GHL opportunities created by setter last name, pipeline_scope=all, excluding inbound/lead locker.",
             "demos": "GHL opportunities ran with disposition Sit.",
             "sales": "Canonical sales by setter last name using sold-date window.",

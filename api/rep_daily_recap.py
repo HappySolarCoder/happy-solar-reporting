@@ -1137,7 +1137,7 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     start_ms = to_millis(start_utc)
     end_ms = to_millis(end_utc)
     seen_knocks: set[str] = set()
-    for snap in raydar_lead_query(db.collection("raydar_leads_v1"), start_utc).stream():
+    for snap in raydar_lead_query(db.collection("raydar_leads_v1"), start_utc, end=end_utc).stream():
         row = snap.to_dict() or {}
         if is_excluded_raydar_record(row, doc_id=snap.id, test_user_ids=test_user_ids):
             continue

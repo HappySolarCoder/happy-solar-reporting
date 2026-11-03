@@ -464,12 +464,12 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
         ensure_daily(person["daily"], day_key)[metric] += amount
         ensure_daily(daily_totals, day_key)[metric] += amount
 
-    # Raydar knocks. Same >= start read as the FMA total. Event time, not the
+    # Raydar knocks. Same capped read as the FMA total. Event time, not the
     # latest dispositionedAt, picks the day and the rep.
     start_ms = to_millis(start_utc)
     end_ms = to_millis(end_utc)
     seen_knocks: set[str] = set()
-    lead_query = raydar_lead_query(db.collection("raydar_leads_v1"), start_utc)
+    lead_query = raydar_lead_query(db.collection("raydar_leads_v1"), start_utc, end=end_utc)
     for snap in lead_query.stream():
         data = snap.to_dict() or {}
         if is_excluded_raydar_record(data, doc_id=snap.id, test_user_ids=test_user_ids):

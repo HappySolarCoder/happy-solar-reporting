@@ -1249,7 +1249,8 @@ __DASHBOARD_NAV_HTML__
     setText('kpiApptPctSub', '');
 
     try {
-      // Knocks (Doors Knocked) date filter is raydar_leads_v1.dispositionedAt (canonical).
+      // Total Knocks counts dispositionHistory events in this window (not the latest status).
+      // The request still passes the selected dates. America/New_York, not Phoenix.
       // Wire to the selected period tab.
       const active = document.querySelector('#periodTabs .pill.active');
       const period = active ? String(active.getAttribute('data-period') || '') : '';

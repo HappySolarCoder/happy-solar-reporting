@@ -123,7 +123,7 @@ def _lead(doc_id: str, actor: str, **extra) -> Snap:
     data = {
         "status": "door",
         "dispositionedAt": WHEN,
-        "dispositionHistory": [{"userId": actor}],
+        "dispositionHistory": [{"userId": actor, "disposition": "Not Home", "timestamp": WHEN}],
         "claimedBy": actor,
     }
     data.update(extra)

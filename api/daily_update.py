@@ -7,7 +7,7 @@ Daily Update dashboard for morning meetings.
 Uses existing metric APIs with date-only window (America/New_York):
 - /api/metrics/sales
 - /api/metrics/opportunities_created
-- /api/metrics/raydar_doors_knocked (includes FMA time on doors)
+- /api/metrics/raydar_doors_knocked (includes FMA time on doors and knocks by time)
 - /api/powerline_dashboard
 """
 
@@ -152,6 +152,42 @@ __DASHBOARD_NAV_CSS__
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
     .muted { color: var(--muted2); }
+
+    .knock-chart-host { position: relative; min-height: 80px; }
+    .knock-legend-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .knock-legend {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid var(--border); background: #fff; color: #1f2937;
+      border-radius: 999px; padding: 5px 10px; min-height: 32px;
+      font: 800 12px/1.2 inherit; cursor: pointer;
+    }
+    .knock-legend.off { opacity: 0.42; }
+    .knock-legend.off span { text-decoration: line-through; }
+    .knock-legend.dim { opacity: 0.45; }
+    .knock-legend:focus-visible { outline: 2px solid #26d9eb; outline-offset: 2px; }
+    .knock-chart-scroll { width: 100%; overflow-x: auto; margin-top: 8px; -webkit-overflow-scrolling: touch; }
+    .knock-chart-svg { display: block; height: 320px; }
+    .knock-chart-svg .axis { fill: #64748b; }
+    .knock-chart-svg .grid { stroke: #eef2f7; }
+    .knock-chart-svg .baseline { stroke: #cbd5e1; }
+    .knock-chart-tip {
+      position: absolute; z-index: 5; pointer-events: none;
+      background: #0f172a; color: #fff; border-radius: 8px;
+      padding: 7px 9px; font-size: 12px; font-weight: 700; line-height: 1.35;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.28); white-space: nowrap;
+    }
+    body.oc-root .knock-legend {
+      background: #102e46; color: #f1f6ff; border-color: #2b4e66;
+    }
+    body.oc-root .knock-chart-svg .axis { fill: #91abc0; }
+    body.oc-root .knock-chart-svg .grid { stroke: #2b4e66; }
+    body.oc-root .knock-chart-svg .baseline { stroke: #7ea3ba; }
+    body.oc-root .knock-chart-tip {
+      background: #061727; color: #f1f6ff; border: 1px solid #4d7894;
+    }
+    @media (max-width: 820px) {
+      .knock-chart-svg { height: 280px; }
+    }
 
     /* Spotlight mode for meeting walkthrough */
     .card.focusable { cursor: zoom-in; transition: box-shadow .18s ease, opacity .18s ease; }
@@ -299,6 +335,11 @@ __DASHBOARD_NAV_HTML__
         <div class="kpi-sub">First door knocked to last door knocked</div>
         <div id="tblTimeOnDoors"></div>
       </div>
+      <div class="card span-12 accent-raydar">
+        <div class="card-title raydar">FMA Knocks by Time</div>
+        <div class="kpi-sub">Counted knocks in each 30-minute block, Eastern Time. A quiet block is zero, not a running total.</div>
+        <div id="knockTimeChart" class="knock-chart-host"><div class="muted" style="margin-top:8px">Loading…</div></div>
+      </div>
       <div class="card span-6 accent-powerline">
         <div class="card-title powerline">Powerline Calls by User</div>
         <div id="tblPowerline"></div>
@@ -364,7 +405,7 @@ __DASHBOARD_NAV_HTML__
     document.querySelectorAll('.card').forEach((card) => {
       card.classList.add('focusable');
       card.addEventListener('click', (ev) => {
-        if (ev.target.closest('a,button,input,select,label')) return;
+        if (ev.target.closest('a,button,input,select,label,.knock-chart-host')) return;
         openSpotlight(card);
       });
     });
@@ -453,6 +494,237 @@ __DASHBOARD_NAV_HTML__
         </tbody>
       </table>
     `;
+  }
+
+  // Paul Tol bright, then a second pass with dashes so 8+ FMAs stay distinct.
+  const KNOCK_LINE_COLORS = ['#4477AA', '#EE6677', '#228833', '#CCBB44', '#66CCEE', '#AA3377', '#44AA99'];
+  const KNOCK_LINE_DASHES = ['', '7 4', '2 3', '10 3 2 3'];
+  let knockTimePayload = null;
+  let knockTimeReady = false;
+  const knockTimeHidden = new Set();
+  let knockRenderWidth = -1;
+
+  function knockLineStyle(index) {
+    return {
+      color: KNOCK_LINE_COLORS[index % KNOCK_LINE_COLORS.length],
+      dash: KNOCK_LINE_DASHES[Math.floor(index / KNOCK_LINE_COLORS.length) % KNOCK_LINE_DASHES.length],
+    };
+  }
+
+  function escAttr(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
+  }
+
+  function knockTickStep(max) {
+    if (max <= 4) return 1;
+    const raw = max / 4;
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    const err = raw / pow;
+    const nice = err <= 1 ? 1 : err <= 2 ? 2 : err <= 5 ? 5 : 10;
+    return nice * pow;
+  }
+
+  function hideKnockTip() {
+    const tip = document.getElementById('knockTimeTip');
+    if (tip) tip.hidden = true;
+  }
+
+  function showKnockTip(dot) {
+    const tip = document.getElementById('knockTimeTip');
+    const host = document.getElementById('knockTimeChart');
+    if (!tip || !host || !dot) return;
+    const name = dot.getAttribute('data-name') || '—';
+    const label = dot.getAttribute('data-label') || '';
+    const count = Number(dot.getAttribute('data-count') || 0);
+    const color = dot.getAttribute('data-color') || '#fff';
+    const noun = count === 1 ? 'knock' : 'knocks';
+    tip.innerHTML = `<div style="color:${escAttr(color)};font-weight:900">${escAttr(name)}</div><div>${escAttr(label)}</div><div>${count.toLocaleString()} ${noun}</div>`;
+    tip.hidden = false;
+    const hostBox = host.getBoundingClientRect();
+    const dotBox = dot.getBoundingClientRect();
+    const tipWidth = tip.offsetWidth || 120;
+    let left = dotBox.left - hostBox.left + (dotBox.width / 2);
+    left = Math.min(Math.max(left, tipWidth / 2 + 6), Math.max(tipWidth / 2 + 6, hostBox.width - tipWidth / 2 - 6));
+    tip.style.left = `${left}px`;
+    const above = dotBox.top - hostBox.top;
+    if (above < 78) {
+      tip.style.top = `${above + dotBox.height + 8}px`;
+      tip.style.transform = 'translate(-50%, 0)';
+    } else {
+      tip.style.top = `${above - 8}px`;
+      tip.style.transform = 'translate(-50%, -100%)';
+    }
+  }
+
+  function applyKnockHighlight(name) {
+    const host = document.getElementById('knockTimeChart');
+    if (!host) return;
+    host.querySelectorAll('.knock-series').forEach((node) => {
+      const match = !name || node.getAttribute('data-name') === name;
+      node.style.opacity = match ? '1' : '0.16';
+    });
+    host.querySelectorAll('.knock-legend').forEach((btn) => {
+      const match = !name || btn.getAttribute('data-name') === name;
+      btn.classList.toggle('dim', !!name && !match);
+    });
+  }
+
+  function renderKnockTimeChart(force) {
+    const host = document.getElementById('knockTimeChart');
+    if (!host) return;
+    if (!knockTimeReady && !force) return;
+    const width = Math.max(280, host.clientWidth || 640);
+    if (!force && width === knockRenderWidth && host.dataset.drawn === '1') return;
+    knockRenderWidth = width;
+
+    const payload = knockTimePayload || {};
+    const buckets = Array.isArray(payload.buckets) ? payload.buckets : [];
+    const series = Array.isArray(payload.series) ? payload.series : [];
+    if (!buckets.length || !series.length) {
+      host.dataset.drawn = '1';
+      host.innerHTML = '<div class="muted" style="margin-top:8px">No knocks in this window</div>';
+      return;
+    }
+
+    const styles = series.map((_, index) => knockLineStyle(index));
+    const visible = series.map((row) => !knockTimeHidden.has(String(row?.name || '')));
+    let max = 0;
+    series.forEach((row, index) => {
+      if (!visible[index]) return;
+      (row.counts || []).forEach((value) => {
+        const count = Number(value || 0);
+        if (count > max) max = count;
+      });
+    });
+    const step = knockTickStep(max);
+    let yMax = Math.max(step, Math.ceil(max / step) * step);
+    if (yMax === max) yMax += step;
+
+    const n = buckets.length;
+    const margin = { l: 48, r: 18, t: 12, b: 96 };
+    const narrow = width < 720;
+    const plotW = narrow ? Math.max(width, n * 72 + margin.l + margin.r) : width;
+    const height = 320;
+    const innerW = plotW - margin.l - margin.r;
+    const innerH = height - margin.t - margin.b;
+    const xAt = (index) => margin.l + (n <= 1 ? innerW / 2 : (index / (n - 1)) * innerW);
+    const yAt = (value) => margin.t + innerH - (Number(value || 0) / yMax) * innerH;
+
+    let grid = '';
+    const tickCount = Math.round(yMax / step);
+    for (let tick = 0; tick <= tickCount; tick += 1) {
+      const value = tick * step;
+      const y = yAt(value);
+      const strokeClass = value === 0 ? 'baseline' : 'grid';
+      grid += `<line class="${strokeClass}" x1="${margin.l}" y1="${y.toFixed(1)}" x2="${plotW - margin.r}" y2="${y.toFixed(1)}" />`;
+      grid += `<text class="axis" x="${margin.l - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="12">${Math.round(value)}</text>`;
+    }
+
+    const gap = n <= 1 ? innerW : innerW / (n - 1);
+    const labelStep = gap >= 78 ? 1 : Math.max(1, Math.ceil(78 / gap));
+    const labelY = margin.t + innerH + 14;
+    let xlabels = '';
+    for (let index = 0; index < n; index += 1) {
+      if (index % labelStep !== 0 && index !== n - 1) continue;
+      const x = xAt(index);
+      const label = escAttr((buckets[index] && buckets[index].label) || '');
+      const anchor = index === 0 ? 'start' : 'end';
+      xlabels += `<text class="axis" text-anchor="${anchor}" transform="rotate(-40 ${x.toFixed(1)} ${labelY})" x="${x.toFixed(1)}" y="${labelY}" font-size="12">${label}</text>`;
+    }
+
+    let paths = '';
+    series.forEach((row, index) => {
+      if (!visible[index]) return;
+      const style = styles[index];
+      const counts = Array.isArray(row.counts) ? row.counts : [];
+      const name = String(row?.name || '—');
+      let d = '';
+      let dots = '';
+      for (let point = 0; point < n; point += 1) {
+        const value = Number(counts[point] || 0);
+        const x = xAt(point).toFixed(1);
+        const y = yAt(value).toFixed(1);
+        d += `${point === 0 ? 'M' : 'L'}${x} ${y}`;
+        const bucketLabel = (buckets[point] && buckets[point].label) || '';
+        dots += `<circle class="knock-dot" cx="${x}" cy="${y}" r="8" fill="transparent" data-name="${escAttr(name)}" data-label="${escAttr(bucketLabel)}" data-count="${value}" data-color="${style.color}"><title>${escAttr(name)} — ${escAttr(bucketLabel)} — ${value}</title></circle>`;
+        dots += `<circle cx="${x}" cy="${y}" r="3.4" fill="${style.color}" pointer-events="none"></circle>`;
+      }
+      const dash = style.dash ? ` stroke-dasharray="${style.dash}"` : '';
+      paths += `<g class="knock-series" data-name="${escAttr(name)}"><path d="${d}" fill="none" stroke="${style.color}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"${dash}></path>${dots}</g>`;
+    });
+
+    const legend = series.map((row, index) => {
+      const style = styles[index];
+      const name = String(row?.name || '—');
+      const dash = style.dash ? ` stroke-dasharray="${style.dash}"` : '';
+      const off = visible[index] ? '' : ' off';
+      return `<button type="button" class="knock-legend${off}" data-name="${escAttr(name)}" aria-pressed="${visible[index] ? 'true' : 'false'}"><svg width="26" height="10" aria-hidden="true" focusable="false"><line x1="1" y1="5" x2="25" y2="5" stroke="${style.color}" stroke-width="3" stroke-linecap="round"${dash}></line></svg><span>${escAttr(name)}</span></button>`;
+    }).join('');
+    const hiddenNote = visible.some(Boolean) ? '' : '<div class="muted" style="margin-top:6px">Every FMA is hidden. Select a name to show that line.</div>';
+    const scrollWidth = plotW > width + 1 ? String(plotW) : '100%';
+
+    host.dataset.drawn = '1';
+    host.innerHTML = `
+      <div class="knock-legend-row" role="group" aria-label="FMAs">${legend}</div>
+      ${hiddenNote}
+      <div class="knock-chart-scroll" onscroll="hideKnockTip()">
+        <svg class="knock-chart-svg lineChart" viewBox="0 0 ${plotW} ${height}" width="${scrollWidth}" height="320" role="img" aria-label="FMA knocks by time of day">
+          ${grid}${paths}${xlabels}
+        </svg>
+      </div>
+      <div id="knockTimeTip" class="knock-chart-tip" hidden></div>
+    `;
+  }
+
+  function bindKnockTimeChart() {
+    const host = document.getElementById('knockTimeChart');
+    if (!host || host.dataset.bound === '1') return;
+    host.dataset.bound = '1';
+    host.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.knock-legend');
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const name = btn.getAttribute('data-name') || '';
+      if (knockTimeHidden.has(name)) knockTimeHidden.delete(name);
+      else knockTimeHidden.add(name);
+      renderKnockTimeChart(true);
+    });
+    host.addEventListener('mouseover', (ev) => {
+      const btn = ev.target.closest('.knock-legend');
+      if (!btn || btn.classList.contains('off')) return;
+      applyKnockHighlight(btn.getAttribute('data-name'));
+    });
+    host.addEventListener('mouseout', (ev) => {
+      const btn = ev.target.closest('.knock-legend');
+      if (!btn) return;
+      const next = ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest('.knock-legend') : null;
+      if (next) return;
+      applyKnockHighlight(null);
+    });
+    host.addEventListener('pointerover', (ev) => {
+      const dot = ev.target.closest('.knock-dot');
+      if (dot) showKnockTip(dot);
+    });
+    host.addEventListener('pointerdown', (ev) => {
+      const dot = ev.target.closest('.knock-dot');
+      if (dot) showKnockTip(dot);
+    });
+    host.addEventListener('pointerout', (ev) => {
+      if (!ev.target.closest('.knock-dot')) return;
+      const next = ev.relatedTarget;
+      if (next && next.closest && next.closest('.knock-dot')) return;
+      hideKnockTip();
+    });
+    if (window.ResizeObserver) {
+      let frame = 0;
+      new ResizeObserver(() => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => renderKnockTimeChart(false));
+      }).observe(host);
+    }
   }
 
   function mergeCountMaps(...maps) {
@@ -555,6 +827,9 @@ __DASHBOARD_NAV_HTML__
       }
       renderKVTable('tblKnocks', knocksByName, 'Knocks');
       renderTimeOnDoorsTable('tblTimeOnDoors', knocks?.time_on_doors || []);
+      knockTimePayload = knocks?.knocks_by_time || { buckets: [], series: [] };
+      knockTimeReady = true;
+      renderKnockTimeChart(true);
 
       const { powerline, powerlineErr } = await powerlinePromise;
       if (powerlineErr) {
@@ -568,6 +843,10 @@ __DASHBOARD_NAV_HTML__
     } catch (e) {
       console.error(e);
       document.getElementById('status').textContent = `Error loading dashboard: ${String(e)}`;
+      if (!knockTimeReady) {
+        const chartHost = document.getElementById('knockTimeChart');
+        if (chartHost) chartHost.innerHTML = '<div class="muted" style="margin-top:8px">Chart unavailable</div>';
+      }
     }
   }
 
@@ -596,6 +875,7 @@ __DASHBOARD_NAV_HTML__
   }
 
   wireSpotlight();
+  bindKnockTimeChart();
   load();
 </script>
 

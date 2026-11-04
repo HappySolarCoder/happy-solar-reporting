@@ -29,6 +29,7 @@ Extended outputs used by FMS Dashboard:
 - breakdowns.convos_total / ..._by_claimed_by
 - breakdowns.time_on_doors_by_actor (first knock to last knock, per actor)
 - time_on_doors (named rows for the Daily Dashboard)
+- knocks_by_time (30-minute America/New_York buckets for the Daily Dashboard chart)
 - top_knockers / top_appt_setters / top_convo_knockers
 
 Convos definition (per Evan): dispositions that indicate we talked to homeowner.
@@ -61,7 +62,13 @@ from raydar_test_data import (
     is_raydar_test_record,
     user_record_keys,
 )
-from time_on_doors import knock_actor_id, observe_door_knock, time_on_doors_by_actor, time_on_doors_table
+from time_on_doors import (
+    knock_actor_id,
+    knock_time_chart,
+    observe_door_knock,
+    time_on_doors_by_actor,
+    time_on_doors_table,
+)
 
 _RAYDAR_CACHE = QueryCache()
 
@@ -354,8 +361,9 @@ def build_payload(
     by_claimed: dict[str, int] = {}
     by_assigned: dict[str, int] = {}
     # Counted knocks only. Month knock adjustments change knocks_by_actor and
-    # do not invent first/last timestamps.
+    # do not invent first/last timestamps or half-hour chart points.
     door_spans: dict[str, dict[str, Any]] = {}
+    door_knock_times: list[tuple[str, datetime]] = []
 
     streamed = 0
     dispo = disposition_map(db)
@@ -427,11 +435,9 @@ def build_payload(
                 continue
             k = event.user_id
             by_actor[k] = by_actor.get(k, 0) + 1
-            observe_door_knock(
-                door_spans,
-                k,
-                datetime.fromtimestamp(event.at / 1000, tz=timezone.utc),
-            )
+            moment = datetime.fromtimestamp(event.at / 1000, tz=timezone.utc)
+            observe_door_knock(door_spans, k, moment)
+            door_knock_times.append((k, moment))
             # Debug breakdowns. One increment per counted knock, on the lead's
             # current owner fields. The knock total itself is by_actor.
             if cb not in (None, ""):
@@ -517,6 +523,7 @@ def build_payload(
             "time_field": f"{MetricContract.leads_collection}.{MetricContract.time_field} (Timestamp)",
             "inclusion": "dispositionedAt >= window start and < window end + 45 days; each counted dispositionHistory event whose timestamp is inside the window. Same rep, lead, and disposition within 120 seconds is one knock.",
             "time_on_doors": "last counted knock event minus first counted knock event, per actor",
+            "knocks_by_time": "counted knock events in 30-minute America/New_York buckets from the earliest knock to the latest knock. Each bucket is that half hour only, not a running total.",
             "timezone_note": "Days are America/New_York. The Raydar app buckets in device-local Phoenix time.",
         },
         "adjustments": {
@@ -535,6 +542,7 @@ def build_payload(
             "time_on_doors_by_actor": time_by_actor,
         },
         "time_on_doors": time_on_doors_table(time_by_actor, users),
+        "knocks_by_time": knock_time_chart(door_knock_times, users),
         "users": users,
         "top_knockers": [            {"userId": uid, "name": users.get(uid, uid), "knocks": cnt}
             for uid, cnt in sorted(by_actor.items(), key=lambda kv: (-kv[1], kv[0]))[:10]

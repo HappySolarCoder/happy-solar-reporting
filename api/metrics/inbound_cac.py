@@ -360,10 +360,16 @@ def read_meta_ads_credentials() -> tuple[str | None, str | None, str | None]:
 
 
 def meta_date_bounds(start_local: datetime, end_local: datetime) -> tuple[str, str] | None:
+    """Inclusive Meta since/until calendar days for [start_local, end_local).
+
+    Exclusive midnight ends map to the previous calendar day. A partial-day
+    end (through now) keeps that calendar day so today's spend is included.
+    """
     if end_local <= start_local:
         return None
     since = start_local.date().isoformat()
-    until = (end_local - timedelta(days=1)).date().isoformat()
+    last_instant = end_local - timedelta(microseconds=1)
+    until = last_instant.date().isoformat()
     if until < since:
         return None
     return since, until
@@ -572,15 +578,22 @@ def build_inbound_source_row(
     spend_result: MetaSpendResult,
     website_form_fills: int | None = None,
     fb_quick_form_leads: int | None = None,
+    organic_leads: int | None = None,
+    paid_leads: int | None = None,
+    paid_website_leads: int | None = None,
+    arm_spend: dict[str, Any] | None = None,
+    window_label: str | None = None,
 ) -> dict[str, Any]:
     ok = spend_result.spend_status == "ok" and spend_result.spend is not None
     spend = spend_result.spend if ok else None
     costs = compute_inbound_acquisition(spend, sales)
     leads = int(nr_leads)
+    paid_n = None if paid_leads is None else int(paid_leads)
     row = {
         "source": INBOUND_CF_SOURCE,
         "unit_cost": None,
         "cost_per_lead": compute_cost_per_lead(spend, leads),
+        "paid_cost_per_lead": compute_cost_per_lead(spend, paid_n) if paid_n is not None else None,
         "opp_count": leads,
         "leads": leads,
         "nr_leads": leads,
@@ -600,6 +613,37 @@ def build_inbound_source_row(
         row["website_form_fills"] = int(website_form_fills)
     if fb_quick_form_leads is not None:
         row["fb_quick_form_leads"] = int(fb_quick_form_leads)
+    if organic_leads is not None:
+        row["organic_leads"] = int(organic_leads)
+    if paid_leads is not None:
+        row["paid_leads"] = int(paid_leads)
+    if paid_website_leads is not None:
+        row["paid_website_leads"] = int(paid_website_leads)
+    if arm_spend is not None:
+        row["meta_arm_spend"] = arm_spend
+        # Arm CPL uses first-time paid QF / paid website denominators when present.
+        arms_out = []
+        for arm in (arm_spend.get("arms") or []):
+            name = arm.get("arm")
+            arm_sp = arm.get("spend")
+            denom = None
+            if name == "Quick Form" and fb_quick_form_leads is not None:
+                denom = int(fb_quick_form_leads)
+            elif name == "Website" and paid_website_leads is not None:
+                denom = int(paid_website_leads)
+            arms_out.append(
+                {
+                    "arm": name,
+                    "spend": arm_sp,
+                    "cost_per_lead": compute_cost_per_lead(arm_sp if ok else None, denom)
+                    if denom is not None
+                    else None,
+                    "leads": denom,
+                }
+            )
+        row["meta_arm_cpl"] = arms_out
+    if window_label is not None:
+        row["window_label"] = window_label
     return row
 
 
@@ -1572,6 +1616,9 @@ def assemble_inbound_cac(
     named_fills: list[dict[str, Any]] | None = None,
     ad_cohort: dict[str, Any] | None = None,
     ad_monthly: dict[str, dict[str, Any]] | None = None,
+    inbound_arm_spend: dict[str, Any] | None = None,
+    ads_contacts: dict[str, dict] | None = None,
+    explicit_range: bool = False,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
     now = now or datetime.now(tzinfo)
@@ -1617,12 +1664,41 @@ def assemble_inbound_cac(
     else:
         spend_result = inbound_spend or unavailable_meta_spend("missing_env")
     form_fills = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
+    route_split = {
+        "organic_leads": None,
+        "paid_leads": None,
+        "paid_qf_leads": quick_leads if use_ads else None,
+        "paid_website_leads": None,
+    }
+    if use_ads:
+        contact_ids = list(ad_cohort.get("lead_contact_ids") or [])
+        if contact_ids:
+            # Live path: first-time contact ids drive organic/paid/QF/web split.
+            route_split = classify_first_time_lead_routes(
+                contact_ids=contact_ids,
+                contacts=ads_contacts or {},
+                named_fills=named_fills,
+                start_local=inbound_start,
+                end_local=inbound_end,
+            )
+            # QF subline follows first-time set (already filtered upstream).
+            quick_leads = int(route_split.get("paid_qf_leads") or 0)
+        # Prefer cohort demos key; expose demos label on KPI.
+        # Without lead_contact_ids (unit fixtures), keep cohort QF and leave
+        # organic/paid null so assemble tests stay stable.
+        ghl_leads = int(ad_cohort.get("inbound_leads") or len(contact_ids) or 0)
+    window_label = inbound_window_label(inbound_start, inbound_end, explicit_range=explicit_range or bool(start and end))
     inbound_row = build_inbound_source_row(
         nr_leads=ghl_leads,
         sales=ghl_sales,
         spend_result=spend_result,
         website_form_fills=form_fills if use_ads else None,
         fb_quick_form_leads=quick_leads if use_ads else None,
+        organic_leads=route_split.get("organic_leads") if use_ads else None,
+        paid_leads=route_split.get("paid_leads") if use_ads else None,
+        paid_website_leads=route_split.get("paid_website_leads") if use_ads else None,
+        arm_spend=inbound_arm_spend if use_ads else None,
+        window_label=window_label if use_ads else None,
     )
     inbound_kpi = kpi_row(
         source=INBOUND_CF_SOURCE,
@@ -1632,9 +1708,14 @@ def assemble_inbound_cac(
         sits=ghl_sits,
         sales=ghl_sales,
     )
+    inbound_kpi["demos"] = ghl_sits
     if use_ads:
         inbound_kpi["website_form_fills"] = form_fills
         inbound_kpi["fb_quick_form_leads"] = quick_leads
+        inbound_kpi["organic_leads"] = route_split.get("organic_leads")
+        inbound_kpi["paid_leads"] = route_split.get("paid_leads")
+        inbound_kpi["paid_website_leads"] = route_split.get("paid_website_leads")
+        inbound_kpi["window_label"] = window_label
 
     monthly: list[dict[str, Any]] = []
     if timeframe != "range":
@@ -1725,6 +1806,7 @@ def assemble_inbound_cac(
         "window_end_local": end_iso,
         "inbound_window_start_local": inbound_start.isoformat(),
         "inbound_window_end_local": inbound_end.isoformat(),
+        "inbound_window_label": inbound_window_label(inbound_start, inbound_end, explicit_range=explicit_range or bool(start and end)),
         "inbound_window_floor": INBOUND_WINDOW_FLOOR,
         "rows": rows + [inbound_row],
         "inbound": inbound_row,
@@ -1951,6 +2033,9 @@ def assemble_inbound_cac(
             "inbound_spend_status": inbound_row["spend_status"],
             "inbound_spend_reason": inbound_row.get("spend_reason"),
             "inbound_window_empty": inbound_empty,
+            "inbound_first_time": (ad_cohort or {}).get("first_time_meta"),
+            "inbound_route_split": route_split if use_ads else None,
+            "inbound_arm_spend_status": None if not inbound_arm_spend else inbound_arm_spend.get("spend_status"),
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -1985,6 +2070,24 @@ def cap_inbound_through_yesterday(
     return start_local, cap
 
 
+def inbound_window_label(start_local: datetime, end_local: datetime, *, explicit_range: bool) -> str:
+    """Human window label. Explicit ranges that end mid-day note the partial end."""
+    start_d = start_local.date()
+    last = (end_local - timedelta(microseconds=1)).date()
+    def fmt(d):
+        return d.strftime("%b %-d")
+    if start_d == last:
+        base = fmt(start_d)
+    else:
+        base = f"{fmt(start_d)}–{fmt(last)}"
+    if explicit_range and not (end_local.hour == 0 and end_local.minute == 0 and end_local.second == 0 and end_local.microsecond == 0):
+        stamp = end_local.strftime("%H:%M")
+        return f"{base} ({fmt(last)} partial through {stamp} PHX)"
+    if explicit_range:
+        return base
+    return f"{base} · through yesterday"
+
+
 def inbound_row_window(
     *,
     start: str | None,
@@ -1995,20 +2098,32 @@ def inbound_row_window(
 ) -> tuple[datetime, datetime, str, str]:
     """America/Phoenix bounds, then the existing Aug 1, 2026 floor.
 
-    The floor rule is clamp_inbound_window. This does not change that rule.
-    A default year view that starts on the floor is labeled on the page as
-    since Aug 1, 2026, not year to date.
+    Explicit start/end honor the inclusive end date. When end is today in
+    Phoenix, the window runs through now (partial day). The yesterday cap
+    applies only to the default no-param (and month) views so spend/CAC stay
+    still during the day.
     """
     tz_name = INBOUND_ROW_TIMEZONE
     phoenix_now = now.astimezone(ZoneInfo(tz_name)) if now.tzinfo else now.replace(tzinfo=ZoneInfo(tz_name))
-    if start and end:
+    explicit = bool(start and end)
+    if explicit:
         start_local, end_local, _, _ = date_range_window(start, end, tz_name)
+        # Inclusive end date: if end YMD is today (or later), stop at now.
+        end_ymd = parse_date_ymd(end)
+        if end_ymd:
+            ey, em, ed = end_ymd
+            end_date = datetime(ey, em, ed, tzinfo=ZoneInfo(tz_name)).date()
+            today = phoenix_now.date()
+            if end_date >= today:
+                end_local = phoenix_now
+            # else keep exclusive next-midnight from date_range_window
     elif month is None:
         start_local, end_local, _, _ = ytd_window(year, tz_name, phoenix_now)
     else:
         start_local, end_local, _, _ = month_window(year, month, tz_name)
     start_local, end_local = clamp_inbound_window(start_local, end_local, tz_name)
-    start_local, end_local = cap_inbound_through_yesterday(start_local, end_local, now)
+    if not explicit:
+        start_local, end_local = cap_inbound_through_yesterday(start_local, end_local, now)
     return start_local, end_local, start_local.isoformat(), end_local.isoformat()
 
 
@@ -2017,6 +2132,382 @@ def inbound_chart_month_window(year: int, month: int, now: datetime) -> tuple[da
     start_local, end_local, _, _ = month_window(year, month, INBOUND_ROW_TIMEZONE)
     start_local, end_local = clamp_inbound_window(start_local, end_local, INBOUND_ROW_TIMEZONE)
     return cap_inbound_through_yesterday(start_local, end_local, now)
+
+
+
+def _fold_campaign_text(value: Any) -> str:
+    return " ".join(str(value or "").lower().replace("-", " ").replace("_", " ").split())
+
+
+def map_meta_arm(name: Any) -> str:
+    """Map a Meta campaign/ad-set name to Quick Form, Website, or Other."""
+    text = _fold_campaign_text(name)
+    has_qf = (
+        "quick form" in text
+        or text.startswith("qf ")
+        or " qf " in f" {text} "
+        or text.endswith(" qf")
+        or "| qf" in text
+        or "qf |" in text
+    )
+    has_web = (
+        "website" in text
+        or "wny.happyslr" in text
+        or "lead accepted" in text
+        or " vs web" in text
+        or "web test" in text
+        or "| web" in text
+        or "web |" in text
+    )
+    # Parent experiments that name both arms stay Other; ad-set rows split spend.
+    if has_qf and has_web:
+        return "Other"
+    if has_qf:
+        return "Quick Form"
+    if has_web:
+        return "Website"
+    return "Other"
+
+
+def paid_fill_markers(fill: dict[str, Any]) -> list[str]:
+    """Paid markers from a website fill's captured UTM/landing params only."""
+    from urllib.parse import urlsplit, parse_qs
+
+    reasons: list[str] = []
+    lp = fill.get("landingPage") or fill.get("landing_page") or ""
+    try:
+        params = {k.lower(): (v[0] if v else "") for k, v in parse_qs(urlsplit(str(lp)).query).items()}
+    except Exception:
+        params = {}
+    us = _fold_campaign_text(fill.get("utmSource") or fill.get("utm_source") or params.get("utm_source"))
+    um = _fold_campaign_text(fill.get("utmMedium") or fill.get("utm_medium") or params.get("utm_medium"))
+    if params.get("fbclid") or fill.get("fbclid"):
+        reasons.append("fbclid")
+    paid_media = {
+        "cpc", "ppc", "paid", "paid social", "paidsocial", "paid-social", "cpm", "cpv", "display", "ads", "ad",
+    }
+    paid_medium = um in paid_media or "paid" in um or "cpc" in um or "pmax" in um
+    if paid_medium and (us in {"fb", "facebook", "ig", "instagram", "meta"} or "facebook" in us):
+        reasons.append(f"utm {us or 'facebook'}/{um or 'paid'}")
+    elif paid_medium:
+        reasons.append(f"utm {us or 'unknown'}/{um or 'paid'}")
+    return reasons
+
+
+def first_ll_created_at_by_contact(
+    db: Any,
+    contact_ids: list[str],
+) -> dict[str, datetime]:
+    """Earliest Inbound/Lead Locker opp createdAt per contact. Targeted reads only."""
+    out: dict[str, datetime] = {}
+    for cid in sorted({compact_str(c) for c in contact_ids if compact_str(c)}):
+        snaps = list(
+            db.collection(OPP_COLLECTION)
+            .where("contactId", "==", cid)
+            .stream()
+        )
+        first: datetime | None = None
+        for snap in snaps:
+            opp = snap.to_dict() or {}
+            if compact_str(opp.get("pipelineId")) != INBOUND_PIPELINE_ID:
+                continue
+            created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
+            if created is None:
+                continue
+            if first is None or created < first:
+                first = created
+        if first is not None:
+            out[cid] = first
+    return out
+
+
+def filter_ads_inputs_first_time_ll(
+    db: Any,
+    inputs: dict[str, Any],
+    start_local: datetime,
+    end_local: datetime,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Keep Ads inputs for contacts whose first-ever LL opp falls in the window."""
+    ads = _ads_dashboard()
+    pipeline = list(inputs.get("pipeline_opps") or [])
+    contacts = inputs.get("contacts") or {}
+    flag = ads.INCLUDE_FB_QUICK_FORM
+    candidate_ids: list[str] = []
+    for opp in pipeline:
+        if compact_str(opp.get("pipelineId")) != INBOUND_PIPELINE_ID:
+            continue
+        if bucket_title(opp.get(TITLE_FIELD) or opp.get("name")):
+            continue
+        created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
+        if not created or not (start_local <= created < end_local):
+            continue
+        cid = ads._contact_id(opp)
+        if not cid:
+            continue
+        if not ads.is_ad_lead(contacts.get(cid), flag):
+            continue
+        candidate_ids.append(cid)
+    first_ll = first_ll_created_at_by_contact(db, candidate_ids)
+    keep: set[str] = set()
+    for cid, first in first_ll.items():
+        # Compare in window tz
+        local = first.astimezone(start_local.tzinfo) if first.tzinfo else first.replace(tzinfo=start_local.tzinfo)
+        if start_local <= local < end_local:
+            keep.add(cid)
+    filtered_pipeline = [opp for opp in pipeline if ads._contact_id(opp) in keep]
+    filtered_contact_opps = [
+        opp for opp in (inputs.get("contact_opps") or []) if ads._contact_id(opp) in keep
+    ]
+    filtered_contacts = {cid: contacts[cid] for cid in keep if cid in contacts}
+    out = dict(inputs)
+    out["pipeline_opps"] = filtered_pipeline
+    out["contact_opps"] = filtered_contact_opps
+    out["contacts"] = filtered_contacts
+    meta = {
+        "first_time_contact_ids": sorted(keep),
+        "candidates_in_window": sorted(set(candidate_ids)),
+        "excluded_returning_contact_ids": sorted(set(candidate_ids) - keep),
+    }
+    return out, meta
+
+
+def classify_first_time_lead_routes(
+    *,
+    contact_ids: list[str],
+    contacts: dict[str, dict],
+    named_fills: list[dict[str, Any]] | None,
+    start_local: datetime,
+    end_local: datetime,
+) -> dict[str, Any]:
+    """Split first-time contacts into QF / paid website / organic from event evidence."""
+    ads = _ads_dashboard()
+    qf_ids: set[str] = set()
+    paid_web_ids: set[str] = set()
+    organic_ids: set[str] = set()
+    # Index fills by email/phone for join without dumping PII
+    import re as _re
+    def _em(v):
+        s = str(v or "").strip().lower()
+        return s if "@" in s else ""
+    def _ph(v):
+        d = _re.sub(r"\D", "", str(v or ""))
+        return d[-10:] if len(d) >= 10 else ""
+    fills = [f for f in (named_fills or []) if isinstance(f, dict)]
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for fill in fills:
+        for key in (_em(fill.get("email")), _ph(fill.get("phone"))):
+            if key:
+                by_key.setdefault(key, []).append(fill)
+    for cid in contact_ids:
+        contact = contacts.get(cid) or {}
+        source = None
+        try:
+            source = ads.lead_source(contact)
+        except Exception:
+            source = None
+        is_qf = False
+        try:
+            is_qf = bool(ads.is_quick_form(contact, source))
+        except Exception:
+            is_qf = is_facebook_quick_form_source(
+                contact_custom_field(contact, LEAD_GEN_SOURCE_CONTACT_CF_ID)
+            ) or is_facebook_quick_form_source(contact.get("source"))
+        matched: list[dict[str, Any]] = []
+        for key in (_em(contact.get("email")), _ph(contact.get("phone"))):
+            for fill in by_key.get(key, []):
+                if fill not in matched:
+                    matched.append(fill)
+        paid_reasons: list[str] = []
+        organic_fill = False
+        for fill in matched:
+            day = compact_str(fill.get("date") or fill.get("received_at") or "")[:10]
+            # Prefer date field; fall back to received_at parse
+            in_win = False
+            if len(day) == 10 and day[4] == "-":
+                in_win = start_local.date().isoformat() <= day <= (end_local - timedelta(microseconds=1)).date().isoformat()
+            if not in_win:
+                # still allow fill evidence near the lead even if date field missing
+                in_win = True
+            markers = paid_fill_markers(fill)
+            if markers:
+                paid_reasons.extend(markers)
+            elif fill.get("landingPage") or fill.get("utmSource") or fill.get("utm_source"):
+                organic_fill = True
+            elif fill.get("source"):
+                organic_fill = True
+        if is_qf:
+            qf_ids.add(cid)
+        elif paid_reasons:
+            paid_web_ids.add(cid)
+        else:
+            organic_ids.add(cid)
+            # organic_fill unused beyond classification bucket
+            _ = organic_fill
+    paid_ids = sorted(qf_ids | paid_web_ids)
+    return {
+        "organic_leads": len(organic_ids),
+        "paid_leads": len(paid_ids),
+        "paid_qf_leads": len(qf_ids),
+        "paid_website_leads": len(paid_web_ids),
+        "organic_contact_ids": sorted(organic_ids),
+        "paid_contact_ids": paid_ids,
+        "paid_qf_contact_ids": sorted(qf_ids),
+        "paid_website_contact_ids": sorted(paid_web_ids),
+    }
+
+
+def fetch_meta_ads_arm_spend(
+    start_local: datetime,
+    end_local: datetime,
+    *,
+    token: str | None = None,
+    account_id: str | None = None,
+    urlopen: Any = None,
+) -> dict[str, Any] | None:
+    """Campaign + ad-set Meta spend mapped to Quick Form / Website / Other arms.
+
+    Dual-arm parent campaigns (name contains both QF and Website) are split using
+    ad-set rows so arm spend still sums to the account total.
+    """
+    bounds = meta_date_bounds(start_local, end_local)
+    if bounds is None:
+        return None
+    since, until = bounds
+    if token is None or account_id is None:
+        token, account_id, reason = read_meta_ads_credentials()
+        if reason:
+            return None
+    opener = urlopen or urllib.request.urlopen
+
+    def _insights(level: str, fields: str) -> list[dict[str, Any]] | None:
+        params = {
+            "fields": fields,
+            "level": level,
+            "access_token": token,
+            "time_range": json.dumps({"since": since, "until": until}, separators=(",", ":")),
+            "limit": "500",
+        }
+        url = (
+            f"{META_GRAPH_API_HOST}/{META_GRAPH_API_VERSION}/{urllib.parse.quote(account_id)}/insights?"
+            + urllib.parse.urlencode(params)
+        )
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with opener(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or payload.get("error"):
+            return None
+        rows = payload.get("data")
+        return rows if isinstance(rows, list) else None
+
+    campaign_rows = _insights("campaign", "campaign_id,campaign_name,spend")
+    adset_rows = _insights("adset", "campaign_id,campaign_name,adset_id,adset_name,spend")
+    if campaign_rows is None and adset_rows is None:
+        return None
+
+    arms = {"Quick Form": 0.0, "Website": 0.0, "Other": 0.0}
+    campaigns_out: list[dict[str, Any]] = []
+    dual_campaign_ids: set[str] = set()
+    for row in campaign_rows or []:
+        if not isinstance(row, dict):
+            continue
+        spend = parse_meta_spend_value(row.get("spend"))
+        if spend is None:
+            continue
+        name = row.get("campaign_name")
+        cid = compact_str(row.get("campaign_id"))
+        arm = map_meta_arm(name)
+        folded = _fold_campaign_text(name)
+        dual = arm == "Other" and (
+            ("quick form" in folded or " qf" in f" {folded}" or folded.startswith("qf"))
+            and ("web" in folded)
+        )
+        if dual:
+            dual_campaign_ids.add(cid)
+            campaigns_out.append(
+                {
+                    "campaign_id": cid,
+                    "campaign_name": name,
+                    "spend": spend,
+                    "arm": "Other",
+                    "split_via": "adset",
+                }
+            )
+            continue
+        arms[arm] = round(arms[arm] + spend, 2)
+        campaigns_out.append(
+            {"campaign_id": cid, "campaign_name": name, "spend": spend, "arm": arm, "split_via": "campaign"}
+        )
+
+    adsets_out: list[dict[str, Any]] = []
+    for row in adset_rows or []:
+        if not isinstance(row, dict):
+            continue
+        spend = parse_meta_spend_value(row.get("spend"))
+        if spend is None:
+            continue
+        camp_id = compact_str(row.get("campaign_id"))
+        # Prefer ad-set mapping for dual-arm parents; otherwise map every ad set
+        # so single-arm campaigns are not double-counted when already mapped.
+        if dual_campaign_ids and camp_id not in dual_campaign_ids:
+            continue
+        if not dual_campaign_ids:
+            # No dual parents: campaign rows already filled arms; skip adset add.
+            continue
+        arm = map_meta_arm(row.get("adset_name") or row.get("campaign_name"))
+        arms[arm] = round(arms[arm] + spend, 2)
+        adsets_out.append(
+            {
+                "adset_id": compact_str(row.get("adset_id")),
+                "adset_name": row.get("adset_name"),
+                "campaign_id": camp_id,
+                "campaign_name": row.get("campaign_name"),
+                "spend": spend,
+                "arm": arm,
+            }
+        )
+
+    # If there were no dual parents and campaign_rows empty but adsets present, map adsets.
+    if not (campaign_rows or []) and (adset_rows or []):
+        arms = {"Quick Form": 0.0, "Website": 0.0, "Other": 0.0}
+        adsets_out = []
+        for row in adset_rows or []:
+            if not isinstance(row, dict):
+                continue
+            spend = parse_meta_spend_value(row.get("spend"))
+            if spend is None:
+                continue
+            arm = map_meta_arm(row.get("adset_name") or row.get("campaign_name"))
+            arms[arm] = round(arms[arm] + spend, 2)
+            adsets_out.append(
+                {
+                    "adset_id": compact_str(row.get("adset_id")),
+                    "adset_name": row.get("adset_name"),
+                    "campaign_id": compact_str(row.get("campaign_id")),
+                    "campaign_name": row.get("campaign_name"),
+                    "spend": spend,
+                    "arm": arm,
+                }
+            )
+
+    total = round(sum(arms.values()), 2)
+    return {
+        "spend_status": "ok",
+        "since": since,
+        "until": until,
+        "account_id": account_id,
+        "total": total,
+        "arms": [
+            {"arm": "Quick Form", "spend": arms["Quick Form"]},
+            {"arm": "Website", "spend": arms["Website"]},
+            {"arm": "Other", "spend": arms["Other"]},
+        ],
+        "campaigns": campaigns_out,
+        "adsets": adsets_out,
+        "level": "campaign+adset_for_dual",
+    }
 
 
 def load_ads_lead_inputs(db: Any, start_local: datetime, end_local: datetime) -> dict[str, Any]:
@@ -2145,7 +2636,11 @@ def compute_inbound_cac(
         phoenix_now = now.astimezone(ZoneInfo(INBOUND_ROW_TIMEZONE))
         load_start, load_end, _, _ = ytd_window(year, INBOUND_ROW_TIMEZONE, phoenix_now)
     ads_inputs = load_ads_lead_inputs(db, load_start, load_end)
+    ads_inputs, first_time_meta = filter_ads_inputs_first_time_ll(db, ads_inputs, row_start, row_end)
     ad_cohort = ads_cohort_for_window(ads_inputs, row_start, row_end, now_utc)
+    ad_cohort = dict(ad_cohort)
+    ad_cohort["first_time_meta"] = first_time_meta
+    ad_cohort["lead_contact_ids"] = list(first_time_meta.get("first_time_contact_ids") or ad_cohort.get("lead_contact_ids") or [])
     month_windows: dict[str, tuple[datetime, datetime]] = {}
     ad_monthly = None
     if not (start and end):
@@ -2160,6 +2655,7 @@ def compute_inbound_cac(
     named_fills = fetch_inbound_named_fills(db, load_start, load_end)
 
     token, account_id, cred_reason = read_meta_ads_credentials()
+    inbound_arm_spend = None
     if inbound_window_is_empty(row_start, row_end):
         inbound_spend = empty_inbound_spend()
         inbound_monthly_spend = {}
@@ -2168,6 +2664,9 @@ def compute_inbound_cac(
         inbound_monthly_spend = None
     else:
         inbound_spend = meta_spend_from_ads_dashboard(
+            row_start, row_end, token=token, account_id=account_id
+        )
+        inbound_arm_spend = fetch_meta_ads_arm_spend(
             row_start, row_end, token=token, account_id=account_id
         )
         inbound_monthly_spend = None
@@ -2198,6 +2697,9 @@ def compute_inbound_cac(
         named_fills=named_fills,
         ad_cohort=ad_cohort,
         ad_monthly=ad_monthly,
+        inbound_arm_spend=inbound_arm_spend,
+        ads_contacts=ads_inputs.get("contacts") or {},
+        explicit_range=bool(start and end),
     )
 
 

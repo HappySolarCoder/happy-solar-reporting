@@ -249,7 +249,11 @@ function inboundDefaultLabel(data) {
 function leadSubline(r) {
   if (!r) return '';
   var bits = [];
+  if (r.organic_leads != null || r.paid_leads != null) {
+    bits.push('Organic ' + (r.organic_leads == null ? '—' : r.organic_leads) + ' · Paid ' + (r.paid_leads == null ? '—' : r.paid_leads));
+  }
   if (r.fb_quick_form_leads != null) bits.push('FB Quick Form ' + r.fb_quick_form_leads);
+  if (r.paid_website_leads != null) bits.push('Paid website ' + r.paid_website_leads);
   if (r.website_form_fills != null) bits.push('Website form fills ' + r.website_form_fills);
   if (!bits.length) return '';
   return '<div class="subline">' + esc(bits.join(' · ')) + '</div>';
@@ -527,11 +531,27 @@ async function load() {
     ? (inbound.cost_per_lead != null ? inbound.cost_per_lead : inbound.unit_cost)
     : null;
   document.getElementById('inboundCpl').textContent = fmtMoney(inboundCpl);
-  document.getElementById('inboundCplMeta').textContent = inbound
-    ? ((inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable')
-      + ' ÷ ' + (inbound.opp_count == null ? '—' : inbound.opp_count) + ' GHL inbound leads'
-      + (inbound.website_form_fills == null ? '' : ' · website form fills ' + inbound.website_form_fills))
-    : 'Meta spend ÷ GHL inbound leads';
+  var cplMeta = 'Meta spend ÷ first-time GHL inbound leads';
+  if (inbound) {
+    cplMeta = (inbound.spend_status === 'ok' ? fmtMoney(inbound.spend) : 'spend unavailable')
+      + ' ÷ ' + (inbound.opp_count == null ? '—' : inbound.opp_count) + ' first-time leads';
+    if (inbound.paid_cost_per_lead != null) {
+      cplMeta += ' · paid CPL ' + fmtMoney(inbound.paid_cost_per_lead)
+        + ' (' + (inbound.paid_leads == null ? '—' : inbound.paid_leads) + ' paid)';
+    }
+    if (inbound.organic_leads != null || inbound.paid_leads != null) {
+      cplMeta += ' · organic ' + (inbound.organic_leads == null ? '—' : inbound.organic_leads)
+        + ' / paid ' + (inbound.paid_leads == null ? '—' : inbound.paid_leads);
+    }
+    if (inbound.meta_arm_cpl && inbound.meta_arm_cpl.length) {
+      cplMeta += ' · arms ' + inbound.meta_arm_cpl.map(function(a) {
+        return a.arm + ' ' + fmtMoney(a.spend)
+          + (a.cost_per_lead == null ? '' : ' CPL ' + fmtMoney(a.cost_per_lead));
+      }).join(', ');
+    }
+    if (inbound.window_label) cplMeta += ' · ' + inbound.window_label;
+  }
+  document.getElementById('inboundCplMeta').textContent = cplMeta;
   var banner = document.getElementById('inboundSpendBanner');
   if (banner) banner.style.display = (!inbound || inbound.spend_status !== 'ok') ? '' : 'none';
   document.getElementById('setterUnitKpi').textContent = fmtMoney(setterUnit != null ? setterUnit : 500);
@@ -542,7 +562,11 @@ async function load() {
   var end = String(data.window_end_local || '').slice(0, 10);
   var inboundStart = String(data.inbound_window_start_local || '').slice(0, 10);
   var inboundEnd = String(data.inbound_window_end_local || '').slice(0, 10);
-  if (inboundPeriodLabel) {
+  if (data.inbound_window_label) {
+    document.getElementById('windowKpi').textContent = data.inbound_window_label;
+    document.getElementById('windowMeta').textContent = inboundStart + ' → ' + inboundEnd
+      + ' · Lead Locker and Solar Reviews ' + start + ' → ' + end + ' ' + (data.timezone || 'America/New_York');
+  } else if (inboundPeriodLabel) {
     document.getElementById('windowKpi').textContent = inboundPeriodLabel;
     document.getElementById('windowMeta').textContent = inboundStart + ' → ' + inboundEnd
       + ' · Lead Locker and Solar Reviews ' + start + ' → ' + end + ' ' + (data.timezone || 'America/New_York');

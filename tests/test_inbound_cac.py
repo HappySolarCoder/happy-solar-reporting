@@ -1855,5 +1855,87 @@ class InboundAdsCohortTests(unittest.TestCase):
         self.assertIn("website_form_fills", page_html)
 
 
+
+class FirstTimeAndArmSpendTests(unittest.TestCase):
+    """Four inbound_cac fixes: inclusive end, first-time leads, paid CPL, arm spend."""
+
+    def test_explicit_end_includes_today_partial_and_skips_yesterday_cap(self):
+        phoenix = ZoneInfo("America/Phoenix")
+        now = datetime(2026, 11, 9, 8, 48, tzinfo=phoenix)
+        start, end, _, _ = metric.inbound_row_window(
+            start="2026-11-01", end="2026-11-09", year=2026, month=None, now=now
+        )
+        self.assertEqual(start.date().isoformat(), "2026-11-01")
+        self.assertEqual(end.hour, 8)
+        self.assertEqual(end.minute, 48)
+        label = metric.inbound_window_label(start, end, explicit_range=True)
+        self.assertIn("partial through 08:48 PHX", label)
+        # Closed past end stays exclusive next midnight (full Nov 8).
+        s2, e2, _, _ = metric.inbound_row_window(
+            start="2026-11-01", end="2026-11-08", year=2026, month=None, now=now
+        )
+        self.assertEqual(e2.date().isoformat(), "2026-11-09")
+        self.assertEqual(e2.hour, 0)
+        # Default YTD still caps through yesterday.
+        s3, e3, _, _ = metric.inbound_row_window(
+            start=None, end=None, year=2026, month=None, now=now
+        )
+        self.assertEqual(e3.date().isoformat(), "2026-11-09")
+        self.assertEqual(e3.hour, 0)
+
+    def test_map_meta_arm_qf_website_and_dual_to_other(self):
+        self.assertEqual(metric.map_meta_arm("Nov26 | A Quick Form (Instant Form)"), "Quick Form")
+        self.assertEqual(metric.map_meta_arm("Nov26 | B Website (wny.happyslr.com)"), "Website")
+        self.assertEqual(metric.map_meta_arm("Nov26 | QF vs Web test"), "Other")
+        self.assertEqual(metric.map_meta_arm("Brand awareness"), "Other")
+
+    def test_paid_fill_markers_detect_fbclid_and_paid_utm(self):
+        self.assertIn("fbclid", metric.paid_fill_markers({"landingPage": "https://x/?fbclid=abc"}))
+        marks = metric.paid_fill_markers(
+            {"utmSource": "facebook", "utmMedium": "paid", "landingPage": "https://x/"}
+        )
+        self.assertTrue(any("facebook" in m or "utm" in m for m in marks))
+        self.assertEqual(metric.paid_fill_markers({"utmSource": "google", "utmMedium": "organic"}), [])
+
+    def test_paid_cpl_and_arm_cpl_on_inbound_row(self):
+        spend = metric.MetaSpendResult(spend=400.0, spend_status="ok")
+        arms = {
+            "spend_status": "ok",
+            "total": 400.0,
+            "arms": [
+                {"arm": "Quick Form", "spend": 210.0},
+                {"arm": "Website", "spend": 190.0},
+                {"arm": "Other", "spend": 0.0},
+            ],
+        }
+        row = metric.build_inbound_source_row(
+            nr_leads=6,
+            sales=0,
+            spend_result=spend,
+            fb_quick_form_leads=1,
+            organic_leads=3,
+            paid_leads=3,
+            paid_website_leads=2,
+            arm_spend=arms,
+            window_label="Nov 1–8",
+        )
+        self.assertAlmostEqual(row["cost_per_lead"], 400.0 / 6)
+        self.assertAlmostEqual(row["paid_cost_per_lead"], 400.0 / 3)
+        self.assertEqual(row["organic_leads"], 3)
+        self.assertEqual(row["paid_leads"], 3)
+        by_arm = {a["arm"]: a for a in row["meta_arm_cpl"]}
+        self.assertAlmostEqual(by_arm["Quick Form"]["cost_per_lead"], 210.0)
+        self.assertAlmostEqual(by_arm["Website"]["cost_per_lead"], 95.0)
+        self.assertIsNone(by_arm["Other"]["cost_per_lead"])
+
+    def test_page_uses_demo_not_sit_label_and_shows_paid_cpl(self):
+        page_html = page.render_html(2026)
+        self.assertIn(">Demos<", page_html)
+        self.assertIn("paid CPL", page_html)
+        self.assertIn("Organic", page_html)
+        # Prefer demo labels in new copy; JSON key sits may remain.
+        self.assertNotIn(">Sits<", page_html)
+
+
 if __name__ == "__main__":
     unittest.main()

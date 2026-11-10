@@ -97,9 +97,9 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(locker["cac"], 45.0)
         self.assertEqual(locker["unit_cost"], 45)
         self.assertEqual(locker["cost_per_lead"], 45)
-        self.assertEqual(locker["setter_unit_cost"], 500)
-        self.assertEqual(locker["setter_spend"], 500)
-        self.assertEqual(locker["tac"], 545.0)
+        self.assertNotIn("setter_unit_cost", locker)
+        self.assertNotIn("setter_spend", locker)
+        self.assertEqual(locker["tac"], 45.0)
 
     def test_cac_is_json_null_when_sales_zero(self):
         self.assertIsNone(metric.compute_cac(450, 0))
@@ -110,8 +110,8 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(reviews["sales"], 0)
         self.assertEqual(reviews["cost_per_lead"], 70)
         self.assertIsNone(reviews["cac"])
-        self.assertEqual(reviews["setter_unit_cost"], 500)
-        self.assertEqual(reviews["setter_spend"], 0)
+        self.assertNotIn("setter_unit_cost", reviews)
+        self.assertNotIn("setter_spend", reviews)
         self.assertIsNone(reviews["tac"])
         encoded = json.dumps(reviews)
         self.assertIn('"cac": null', encoded)
@@ -128,8 +128,7 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(rows[1]["cost_per_lead"], 70)
         self.assertTrue(all(row["cac"] is None for row in rows))
         self.assertTrue(all(row["tac"] is None for row in rows))
-        self.assertTrue(all(row["setter_unit_cost"] == 500 for row in rows))
-        self.assertTrue(all(row["setter_spend"] == 0 for row in rows))
+        self.assertTrue(all("setter_unit_cost" not in row and "setter_spend" not in row for row in rows))
 
     def test_sales_are_distinct_contact_id(self):
         records = [
@@ -143,8 +142,8 @@ class RefundedAndCacTests(unittest.TestCase):
         self.assertEqual(locker["spend"], 135)
         self.assertEqual(locker["sales"], 2)
         self.assertEqual(locker["cac"], 67.5)
-        self.assertEqual(locker["setter_spend"], 1000)
-        self.assertEqual(locker["tac"], 567.5)
+        self.assertNotIn("setter_spend", locker)
+        self.assertEqual(locker["tac"], 67.5)
 
 
 class SoldDateWindowTests(unittest.TestCase):
@@ -229,7 +228,12 @@ class BoundQueryAndNavTests(unittest.TestCase):
         self.assertIn("solar_reviews_cac", page_html)
         self.assertIn("lead_locker_tac", page_html)
         self.assertIn("solar_reviews_tac", page_html)
-        self.assertIn("$500", page_html)
+        self.assertIn("Cost per demo", page_html)
+        self.assertIn(">Demos<", page_html)
+        self.assertIn(">TAC<", page_html)
+        self.assertNotIn("Setter unit", page_html)
+        self.assertNotIn("Setter spend", page_html)
+        self.assertNotIn(">Lead CAC<", page_html)
         self.assertNotIn("$400", page_html)
         self.assertIn("format: 'json'", page_html)
         self.assertIn("value: 'ytd'", page_html)
@@ -302,8 +306,8 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(overall["spend"], 590)
         self.assertEqual(overall["sales"], 0)
         self.assertIsNone(overall["cac"])
-        self.assertEqual(overall["setter_unit_cost"], 500)
-        self.assertEqual(overall["setter_spend"], 0)
+        self.assertNotIn("setter_unit_cost", overall)
+        self.assertNotIn("setter_spend", overall)
         self.assertIsNone(overall["tac"])
         encoded = json.dumps(overall)
         self.assertIn('"cac": null', encoded)
@@ -321,9 +325,9 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertEqual(overall["spend"], 590)
         self.assertEqual(overall["sales"], 3)
         self.assertEqual(overall["cac"], 590 / 3)
-        self.assertEqual(overall["setter_unit_cost"], 500)
-        self.assertEqual(overall["setter_spend"], 1500)
-        self.assertEqual(overall["tac"], 590 / 3 + 500)
+        self.assertNotIn("setter_unit_cost", overall)
+        self.assertNotIn("setter_spend", overall)
+        self.assertEqual(overall["tac"], 590 / 3)
 
     def test_month_chart_gaps_are_null_not_zero(self):
         now = datetime(2026, 3, 15, tzinfo=NY)
@@ -375,35 +379,36 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertIsNone(payload["chart"]["solar_reviews_cac"][1])
         self.assertIsNone(payload["chart"]["solar_reviews_cac"][2])
         self.assertIsNone(payload["chart"]["lead_locker_tac"][0])
-        self.assertEqual(payload["chart"]["lead_locker_tac"][1], 545.0)
+        self.assertEqual(payload["chart"]["lead_locker_tac"][1], 45.0)
         self.assertIsNone(payload["chart"]["lead_locker_tac"][2])
-        self.assertEqual(payload["chart"]["solar_reviews_tac"][0], 570.0)
+        self.assertEqual(payload["chart"]["solar_reviews_tac"][0], 70.0)
         self.assertIsNone(payload["chart"]["solar_reviews_tac"][1])
         self.assertIsNone(payload["chart"]["solar_reviews_tac"][2])
         encoded = json.dumps(payload["chart"])
         self.assertIn('"lead_locker_cac": [null, 45.0, null]', encoded)
-        self.assertIn('"lead_locker_tac": [null, 545.0, null]', encoded)
-        self.assertIn('"solar_reviews_tac": [570.0, null, null]', encoded)
-        stripped = encoded.replace("45.0", "").replace("70.0", "").replace("545.0", "").replace("570.0", "")
+        self.assertIn('"lead_locker_tac": [null, 45.0, null]', encoded)
+        self.assertIn('"solar_reviews_tac": [70.0, null, null]', encoded)
+        stripped = encoded.replace("45.0", "").replace("70.0", "")
         self.assertNotIn("0.0", stripped)
         locker = {row["source"]: row for row in payload["rows"]}["Lead Locker"]
         reviews = {row["source"]: row for row in payload["rows"]}["Solar Reviews"]
         self.assertEqual(locker["spend"], 90)
         self.assertEqual(locker["sales"], 1)
         self.assertEqual(locker["cac"], 90.0)
-        self.assertEqual(locker["setter_spend"], 500)
-        self.assertEqual(locker["tac"], 590.0)
+        self.assertNotIn("setter_spend", locker)
+        self.assertEqual(locker["tac"], 90.0)
         self.assertEqual(reviews["spend"], 70)
         self.assertEqual(reviews["sales"], 1)
         self.assertEqual(reviews["cac"], 70.0)
-        self.assertEqual(reviews["setter_spend"], 500)
-        self.assertEqual(reviews["tac"], 570.0)
+        self.assertNotIn("setter_spend", reviews)
+        self.assertEqual(reviews["tac"], 70.0)
         self.assertEqual(payload["overall"]["spend"], 160)
         self.assertEqual(payload["overall"]["sales"], 2)
         self.assertEqual(payload["overall"]["cac"], 80.0)
-        self.assertEqual(payload["overall"]["setter_spend"], 1000)
-        self.assertEqual(payload["overall"]["tac"], 580.0)
-        self.assertEqual(payload["contract"]["setter_unit_cost"], 500)
+        self.assertNotIn("setter_spend", payload["overall"])
+        self.assertEqual(payload["overall"]["tac"], 80.0)
+        self.assertNotIn("setter_unit_cost", payload["contract"])
+        self.assertEqual(payload["contract"]["tac_formula"], "lead_spend / sales")
         kpis = payload["performance_kpis"]
         self.assertEqual(kpis["nr_leads"], 3)
         self.assertEqual(kpis["leads"], 3)
@@ -440,21 +445,103 @@ class YtdDefaultAndTotalsTests(unittest.TestCase):
         self.assertTrue(all(v is None for v in empty["chart"]["solar_reviews_tac"]))
 
 
-class SetterTacTests(unittest.TestCase):
-    def test_setter_unit_cost_is_500_not_400(self):
-        self.assertEqual(metric.SETTER_UNIT_COST, 500)
-        self.assertEqual(metric.compute_setter_spend(3), 1500)
-        self.assertEqual(metric.compute_setter_spend(0), 0)
-        self.assertNotIn("SETTER_UNIT_COST = 400", METRIC_SRC)
-        self.assertNotIn("$400", PAGE_SRC)
-        self.assertIn("SETTER_UNIT_COST = 500", METRIC_SRC)
-        self.assertIn("$500", PAGE_SRC)
+class SoldDateAttributionTests(unittest.TestCase):
+    def test_sale_counts_when_the_bought_lead_is_older_than_the_window(self):
+        """October closings of earlier Lead Locker / Solar Reviews titles are sales."""
+        raws = [
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 6, 9, 14, 0, tzinfo=NY),
+                False,
+                "c-june-ll",
+                "opp-june-ll",
+            ),
+            metric.RawInboundOpp(
+                "Solar Reviews",
+                datetime(2026, 4, 5, 14, 0, tzinfo=NY),
+                False,
+                "c-april-sr",
+                "opp-april-sr",
+            ),
+            metric.RawInboundOpp(
+                "Lead Locker",
+                datetime(2026, 10, 3, 14, 0, tzinfo=NY),
+                False,
+                "c-oct-open",
+                "opp-oct-open",
+            ),
+            metric.RawInboundOpp(
+                None,
+                datetime(2026, 9, 14, 14, 0, tzinfo=NY),
+                False,
+                "c-inbound",
+                "opp-inbound",
+            ),
+        ]
+        contacts = {
+            "c-june-ll": {"customFields": [
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-10-14T00:00:00.000Z"},
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "3PL"},
+            ]},
+            "c-april-sr": {"customFields": [
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-10-19"},
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "3PL"},
+            ]},
+            "c-oct-open": {"customFields": [
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "3PL"},
+            ]},
+            "c-inbound": {"customFields": [
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-10-29T00:00:00.000Z"},
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "Inbound"},
+            ]},
+            "c-doors": {"customFields": [
+                {"id": "P9oBjgbZjJdeE0OkBj9T", "value": "2026-10-08"},
+                {"id": "hd5QqHEOVSsPom5bJ32P", "value": "Doors"},
+            ]},
+        }
+        payload = metric.assemble_inbound_cac(
+            raws,
+            contacts,
+            {"c-june-ll", "c-april-sr", "c-inbound", "c-doors", "c-oct-open"},
+            year=2026,
+            month=10,
+            now=datetime(2026, 10, 31, 12, tzinfo=NY),
+        )
+        by_source = {row["source"]: row for row in payload["rows"]}
+        self.assertEqual(by_source["Lead Locker"]["opp_count"], 1)
+        self.assertEqual(by_source["Lead Locker"]["sales"], 1)
+        self.assertEqual(by_source["Lead Locker"]["spend"], 45)
+        self.assertEqual(by_source["Lead Locker"]["tac"], 45.0)
+        self.assertEqual(by_source["Solar Reviews"]["opp_count"], 0)
+        self.assertEqual(by_source["Solar Reviews"]["sales"], 1)
+        self.assertEqual(by_source["Solar Reviews"]["spend"], 0)
+        self.assertEqual(by_source["Solar Reviews"]["tac"], 0.0)
+        self.assertEqual(by_source["Inbound"]["sales"], 1)
+        self.assertEqual(payload["overall"]["sales"], 2)
+        self.assertEqual(payload["overall"]["spend"], 45)
+        self.assertNotIn("setter_spend", by_source["Lead Locker"])
+        self.assertNotIn("setter_unit_cost", payload["contract"])
 
-    def test_tac_equals_cac_plus_500_when_sales_positive(self):
-        self.assertEqual(metric.compute_tac(90, 1), 590.0)
-        self.assertEqual(metric.compute_tac(90, 1), metric.compute_cac(90, 1) + 500)
-        self.assertEqual(metric.compute_tac(135, 2), 567.5)
-        self.assertEqual(metric.compute_tac(135, 2), metric.compute_cac(135, 2) + 500)
+    def test_cost_per_demo_is_blank_when_demos_are_zero(self):
+        self.assertIsNone(metric.compute_cost_per_demo(1440, 0))
+        self.assertIsNone(metric.compute_cost_per_demo(None, 3))
+        self.assertEqual(metric.compute_cost_per_demo(1440, 5), 288.0)
+
+
+class TacTests(unittest.TestCase):
+    def test_setter_pay_is_not_part_of_tac(self):
+        self.assertFalse(hasattr(metric, "SETTER_UNIT_COST"))
+        self.assertFalse(hasattr(metric, "compute_setter_spend"))
+        self.assertNotIn("SETTER_UNIT_COST", METRIC_SRC)
+        self.assertNotIn("Setter unit", PAGE_SRC)
+        self.assertNotIn("Setter spend", PAGE_SRC)
+        self.assertNotIn("Lead CAC", PAGE_SRC)
+
+    def test_tac_equals_spend_over_sales(self):
+        self.assertEqual(metric.compute_tac(90, 1), 90.0)
+        self.assertEqual(metric.compute_tac(90, 1), metric.compute_cac(90, 1))
+        self.assertEqual(metric.compute_tac(135, 2), 67.5)
+        self.assertIsNone(metric.compute_tac(None, 2))
         rows = metric.build_source_rows(
             [
                 metric.InboundOppRecord("Lead Locker", True, False, "c1"),
@@ -464,8 +551,8 @@ class SetterTacTests(unittest.TestCase):
         )
         locker = {row["source"]: row for row in rows}["Lead Locker"]
         self.assertEqual(locker["cac"], 45.0)
-        self.assertEqual(locker["tac"], locker["cac"] + 500)
-        self.assertEqual(locker["setter_spend"], locker["sales"] * 500)
+        self.assertEqual(locker["tac"], locker["cac"])
+        self.assertNotIn("setter_spend", locker)
 
     def test_tac_is_json_null_when_sales_zero(self):
         self.assertIsNone(metric.compute_tac(450, 0))
@@ -769,7 +856,7 @@ class PerformanceKpiTests(unittest.TestCase):
         self.assertEqual(locker["spend"], 45)
         self.assertEqual(locker["sales"], 1)
         self.assertEqual(locker["cac"], 45.0)
-        self.assertEqual(locker["tac"], 545.0)
+        self.assertEqual(locker["tac"], 45.0)
         self.assertEqual(payload["overall"]["sales"], 1)
         kpis = payload["performance_kpis"]
         self.assertEqual(kpis["nr_leads"], 1)
@@ -1002,7 +1089,7 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertEqual(row["spend_status"], "unavailable")
         self.assertEqual(row["spend_source"], "meta_ads")
         self.assertEqual(row["sales"], 2)
-        self.assertEqual(row["setter_spend"], 1000)
+        self.assertNotIn("setter_spend", row)
         self.assertIsNone(row["cac"])
         self.assertIsNone(row["tac"])
         self.assertTrue(row["example_banner"])
@@ -1015,19 +1102,29 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertNotIn('"cac": 0', encoded)
         self.assertNotIn('"cost_per_lead": 0', encoded)
 
-    def test_spend_1000_sales_2_is_cac_500_tac_1000(self):
+    def test_spend_1000_sales_2_is_cac_500_and_tac_matches(self):
         row = metric.build_inbound_source_row(
             nr_leads=4,
             sales=2,
             spend_result=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+            demos=4,
         )
         self.assertEqual(row["spend"], 1000)
         self.assertEqual(row["spend_status"], "ok")
         self.assertFalse(row["example_banner"])
         self.assertEqual(row["cac"], 500)
         self.assertEqual(row["cost_per_lead"], 250)
-        self.assertEqual(row["setter_spend"], 1000)
-        self.assertEqual(row["tac"], 1000)
+        self.assertNotIn("setter_spend", row)
+        self.assertEqual(row["tac"], 500)
+        self.assertEqual(row["demos"], 4)
+        self.assertEqual(row["cost_per_demo"], 250)
+        blank = metric.build_inbound_source_row(
+            nr_leads=4,
+            sales=2,
+            spend_result=metric.MetaSpendResult(spend=1000, spend_status="ok"),
+            demos=0,
+        )
+        self.assertIsNone(blank["cost_per_demo"])
 
     def test_lead_locker_title_is_not_inbound_unless_cf_inbound(self):
         now = datetime(2026, 9, 15, tzinfo=NY)
@@ -1167,7 +1264,7 @@ class InboundCfMetaTests(unittest.TestCase):
         self.assertEqual(payload["chart"]["months"][8], "2026-09")
         self.assertIsNone(payload["chart"]["inbound_cac"][7])
         self.assertEqual(payload["chart"]["inbound_cac"][8], 1000)
-        self.assertEqual(payload["chart"]["inbound_tac"][8], 1500)
+        self.assertEqual(payload["chart"]["inbound_tac"][8], 1000)
         empty = metric.assemble_inbound_cac([], {}, set(), year=2026, month=None, now=now)
         self.assertNotIn("inbound_cac", empty["chart"])
         self.assertNotIn("inbound_tac", empty["chart"])
@@ -1815,8 +1912,8 @@ class InboundAdsCohortTests(unittest.TestCase):
         ]
         payload = metric.assemble_inbound_cac(
             [],
-            {},
-            set(),
+            {"c-in": inbound},
+            {"c-in"},
             year=2026,
             month=10,
             now=datetime(2026, 10, 12, tzinfo=NY),

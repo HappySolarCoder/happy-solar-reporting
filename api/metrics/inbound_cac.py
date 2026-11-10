@@ -22,19 +22,24 @@ Metric per row (same rules for YTD window or a single NY month):
 1. Scope inbound opps: pipelineId == Inbound/Lead Locker AND title match
    AND pipelineStageId != Refunded AND createdAt in the window.
 2. Spend = count(those opps) × unit cost.
-3. Sales = distinct contactId among those spend-scope opps that also appear
-   on at least one opportunity currently in the 8 Sold/Sale Cancelled stage
-   IDs AND whose Contact Sold Date (P9oBjgbZjJdeE0OkBj9T) falls in the same
-   window (date-only; do not timezone-shift a ...Z wrapper).
-   Missing Sold Date is excluded — same as sales.py.
+3. Sales = distinct contactId with an opportunity in the 8 Sold/Sale
+   Cancelled stage IDs AND Contact Sold Date (P9oBjgbZjJdeE0OkBj9T) in the
+   window (date-only; do not timezone-shift a ...Z wrapper), attributed to
+   Lead Locker / Solar Reviews by that contact's inbound title. The bought
+   lead does not have to be created in the same window — a June Lead Locker
+   opp that sells in October is an October Lead Locker sale. Missing Sold
+   Date is excluded — same as sales.py. Refunded-only titles do not attribute.
 4. CAC (lead) = spend / sales. sales == 0 → JSON null, never 0.
-5. Setter unit cost SETTER_UNIT_COST = $500 per sale (constant; not invented).
-   setter_spend = sales × 500.
-   TAC = (lead_spend + setter_spend) / sales  (= CAC + 500 when sales > 0).
-   sales == 0 → TAC JSON null, never 0 (same as CAC).
-6. Overall CAC / TAC use the same formulas on totals.
+   TAC is the same ratio. Setter pay is not a cost. sales == 0 or spend
+   unavailable → TAC JSON null, never 0.
+5. Demos: Lead Locker / Solar Reviews use territory Sit appointments in the
+   window attributed by inbound title. Inbound uses the Ads Dashboard demo
+   rule (Demo stage, Sold, or Sale Cancelled; a One Legger is not a demo).
+   Cost per demo = spend / demos. demos == 0 or spend unavailable → null.
+6. Overall CAC / TAC / demos use the same formulas on Lead Locker + Solar
+   Reviews totals. Inbound is not folded in.
 7. Monthly chart series: Lead Locker / Solar Reviews CAC plus matching TAC
-   series. Months with sales=0 are JSON null gaps, never 0.
+   series. Months with sales=0 are JSON null gaps, never 0. TAC equals CAC.
 
 Inbound row (third row; not title-bucket; not folded into Overall). Days are
 America/Phoenix, the same window the Ads Dashboard uses. Leads are the Ads
@@ -55,7 +60,8 @@ Lead Locker / Solar Reviews / Overall keep America/New_York and are not clamped.
 - Cost per lead (CPL) = Meta spend / GHL inbound leads. leads==0 or spend
   unavailable → JSON null, never invented $0 CPL. Lead Locker / Solar Reviews
   keep fixed unit costs $45 / $70 (also exposed as cost_per_lead).
-- Setter $500 / TAC same formula. CAC/TAC null when spend is null or sales=0.
+- TAC = lead spend / sales. CAC/TAC null when spend is null or sales=0.
+  Setter pay is not included.
 - Overall stays Lead Locker + Solar Reviews only (do not fold Inbound in).
 
 Performance KPIs (same window; table under YTD totals, same rows as CAC):
@@ -184,7 +190,6 @@ INBOUND_PIPELINE_ID = "7nSEgeoBYXZiIS7x41Jy"
 REFUNDED_STAGE_NAME = "Refunded"
 REFUNDED_STAGE_ID = "5bb63eb2-2208-481e-a0b9-f82ece3c030a"
 SOLD_DATE_CUSTOM_FIELD_ID = "P9oBjgbZjJdeE0OkBj9T"
-SETTER_UNIT_COST = 500
 
 SALE_STAGE_NAMES: tuple[str, ...] = (
     "Buffalo Sold",
@@ -284,32 +289,40 @@ def compute_cost_per_lead(spend: float | int | None, leads: int) -> float | None
     return spend / int(leads)
 
 
-def compute_setter_spend(sales: int, setter_unit_cost: int = SETTER_UNIT_COST) -> int:
-    return int(sales) * setter_unit_cost
-
-
-def compute_tac(
-    lead_spend: float | int,
-    sales: int,
-    setter_unit_cost: int = SETTER_UNIT_COST,
-) -> float | None:
-    """TAC = (lead_spend + sales × 500) / sales. sales == 0 → JSON null."""
-    if sales == 0:
+def compute_tac(lead_spend: float | int | None, sales: int) -> float | None:
+    """TAC = lead spend / sales. sales == 0 or spend missing → JSON null, never 0."""
+    if lead_spend is None or int(sales) == 0:
         return None
-    return (lead_spend + compute_setter_spend(sales, setter_unit_cost)) / sales
+    return lead_spend / int(sales)
 
 
-def attach_acquisition_costs(
-    row: dict[str, Any],
-    setter_unit_cost: int = SETTER_UNIT_COST,
-) -> dict[str, Any]:
-    """Add setter_unit_cost, setter_spend, and tac. Does not invent other $."""
+def compute_cost_per_demo(spend: float | int | None, demos: int) -> float | None:
+    """Cost per demo = spend / demos. demos == 0 or spend missing → JSON null."""
+    if spend is None or int(demos) == 0:
+        return None
+    return spend / int(demos)
+
+
+def attach_acquisition_costs(row: dict[str, Any]) -> dict[str, Any]:
+    """Set tac from lead spend / sales. Does not invent dollars or setter pay."""
     sales = int(row.get("sales") or 0)
-    spend = int(row.get("spend") or 0)
-    row["setter_unit_cost"] = setter_unit_cost
-    row["setter_spend"] = compute_setter_spend(sales, setter_unit_cost)
-    row["tac"] = compute_tac(spend, sales, setter_unit_cost)
+    spend = row.get("spend")
+    row["tac"] = compute_tac(spend, sales)
     return row
+
+
+def stamp_demo_costs(row: dict[str, Any], demos: int | None) -> None:
+    """Attach demos and cost per demo. Unavailable spend stays blank, never $0."""
+    if demos is None:
+        row["demos"] = None
+        row["cost_per_demo"] = None
+        return
+    count = int(demos)
+    row["demos"] = count
+    spend = row.get("spend")
+    if row.get("spend_status") == "unavailable":
+        spend = None
+    row["cost_per_demo"] = compute_cost_per_demo(spend, count)
 
 
 def contact_custom_field(contact: dict[str, Any] | None, cf_id: str) -> Any:
@@ -549,25 +562,13 @@ def _graph_insights_spend(
     )
 
 
-def compute_inbound_acquisition(
-    spend: float | None,
-    sales: int,
-    setter_unit_cost: int = SETTER_UNIT_COST,
-) -> dict[str, Any]:
+def compute_inbound_acquisition(spend: float | None, sales: int) -> dict[str, Any]:
     sale_count = int(sales)
-    setter_spend = compute_setter_spend(sale_count, setter_unit_cost)
     if spend is None or sale_count == 0:
-        return {
-            "setter_unit_cost": setter_unit_cost,
-            "setter_spend": setter_spend,
-            "cac": None,
-            "tac": None,
-        }
+        return {"cac": None, "tac": None}
     return {
-        "setter_unit_cost": setter_unit_cost,
-        "setter_spend": setter_spend,
         "cac": compute_cac(spend, sale_count),
-        "tac": compute_tac(spend, sale_count, setter_unit_cost),
+        "tac": compute_tac(spend, sale_count),
     }
 
 
@@ -585,6 +586,7 @@ def build_inbound_source_row(
     paid_google_contact_ids: list[str] | None = None,
     arm_spend: dict[str, Any] | None = None,
     window_label: str | None = None,
+    demos: int | None = None,
 ) -> dict[str, Any]:
     ok = spend_result.spend_status == "ok" and spend_result.spend is not None
     spend = spend_result.spend if ok else None
@@ -606,11 +608,12 @@ def build_inbound_source_row(
         "spend_reason": None if ok else spend_result.reason,
         "sales": int(sales),
         "cac": costs["cac"],
-        "setter_unit_cost": costs["setter_unit_cost"],
-        "setter_spend": costs["setter_spend"],
         "tac": costs["tac"],
         "example_banner": not ok,
     }
+    if demos is not None:
+        row["demos"] = int(demos)
+        row["cost_per_demo"] = compute_cost_per_demo(spend, int(demos))
     if website_form_fills is not None:
         row["website_form_fills"] = int(website_form_fills)
     if fb_quick_form_leads is not None:
@@ -1275,6 +1278,65 @@ def sold_date_in_window(sold_date_ymd: str | None, start_local: datetime, end_lo
     return start_date_str <= sold_date_ymd < end_date_str
 
 
+def sold_date_on_window_days(
+    sold_date_ymd: str | None, start_local: datetime, end_local: datetime
+) -> bool:
+    """Date-only Sold Date on a calendar day the window overlaps.
+
+    A partial-day end (through now) includes that calendar day. An exclusive
+    midnight end includes the previous day, same as sold_date_in_window.
+    """
+    if not sold_date_ymd or end_local <= start_local:
+        return False
+    start_ymd = start_local.date().isoformat()
+    last_ymd = (end_local - timedelta(microseconds=1)).date().isoformat()
+    return start_ymd <= sold_date_ymd <= last_ymd
+
+
+def sales_source_buckets(raws: list[RawInboundOpp]) -> dict[str, str]:
+    """contactId → Lead Locker | Solar Reviews from a non-refunded inbound title.
+
+    The bought-lead opportunity does not have to be created in the reporting
+    window. A later Contact Sold Date still belongs to that source. A
+    refunded-only title does not attribute a sale. Latest non-refunded
+    createdAt wins when one contact has both titles.
+    """
+    best: dict[str, tuple[datetime, str]] = {}
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    for raw in raws:
+        if raw.refunded or not raw.bucket or not raw.contact_id:
+            continue
+        created = raw.created_local or fallback
+        prev = best.get(raw.contact_id)
+        if prev is None or created >= prev[0]:
+            best[raw.contact_id] = (created, raw.bucket)
+    return {cid: bucket for cid, (_created, bucket) in best.items()}
+
+
+def inbound_window_sale_ids(
+    contacts_map: dict[str, dict],
+    candidate_ids: set[str],
+    contact_buckets: dict[str, str],
+    start_local: datetime,
+    end_local: datetime,
+) -> set[str]:
+    """Inbound sales: Sold Date in the window and Lead Gen Source is Inbound.
+
+    A contact already titled Lead Locker or Solar Reviews stays on that row.
+    """
+    titled = set(SOURCE_LABELS)
+    found: set[str] = set()
+    for cid in candidate_ids:
+        if contact_buckets.get(cid) in titled:
+            continue
+        if not contact_is_inbound(contacts_map.get(cid)):
+            continue
+        sold_date = extract_sold_date_ymd(contacts_map.get(cid))
+        if sold_date_on_window_days(sold_date, start_local, end_local):
+            found.add(cid)
+    return found
+
+
 def classify_inbound_opp(opp: dict[str, Any], start_local: datetime, end_local: datetime) -> InboundOppRecord:
     return InboundOppRecord(
         bucket=bucket_title(opp.get(TITLE_FIELD)),
@@ -1324,12 +1386,30 @@ def spend_contact_ids(records: list[InboundOppRecord]) -> set[str]:
 def build_source_rows(
     records: list[InboundOppRecord],
     sold_contact_ids: set[str],
+    contact_buckets: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
+    """Lead spend is leads created in the window. Sales are sold in the window.
+
+    contact_buckets maps a sold contact to Lead Locker / Solar Reviews from
+    any non-refunded inbound title, including titles created before the
+    window. When omitted, buckets come from the non-refunded in-window rows
+    (tests that only pass those records).
+    """
+    buckets = contact_buckets
+    if buckets is None:
+        buckets = {}
+        for rec in records:
+            if rec.bucket and rec.contact_id and rec.in_window and not rec.refunded:
+                buckets.setdefault(rec.contact_id, rec.bucket)
+    sales_by_bucket = {source.label: 0 for source in SOURCES}
+    for cid in sold_contact_ids:
+        bucket = buckets.get(cid)
+        if bucket in sales_by_bucket:
+            sales_by_bucket[bucket] += 1
     rows: list[dict[str, Any]] = []
     for source in SOURCES:
         opp_count = 0
         refunded_excluded_count = 0
-        spend_contacts: set[str] = set()
         for rec in records:
             if rec.bucket != source.label or not rec.in_window:
                 continue
@@ -1337,9 +1417,7 @@ def build_source_rows(
                 refunded_excluded_count += 1
                 continue
             opp_count += 1
-            if rec.contact_id:
-                spend_contacts.add(rec.contact_id)
-        sales = len(spend_contacts & sold_contact_ids)
+        sales = sales_by_bucket[source.label]
         spend = opp_count * source.unit_cost
         rows.append(
             attach_acquisition_costs(
@@ -1605,10 +1683,11 @@ def _window_bundle(
     sold_stage_ids: set[str],
     start_local: datetime,
     end_local: datetime,
+    contact_buckets: dict[str, str] | None = None,
 ) -> tuple[list[InboundOppRecord], list[dict[str, Any]], dict[str, Any], set[str]]:
     records = records_for_window(raws, start_local, end_local)
     sold_in_window = sold_contacts_in_window(contacts_map, sold_stage_ids, start_local, end_local)
-    rows = build_source_rows(records, sold_in_window)
+    rows = build_source_rows(records, sold_in_window, contact_buckets)
     return records, rows, build_overall(rows), sold_in_window
 
 
@@ -1647,8 +1726,9 @@ def assemble_inbound_cac(
         start_local, end_local, start_iso, end_iso = month_window(year, month, tz)
         timeframe = "month"
 
+    contact_buckets = sales_source_buckets(raws)
     records, rows, overall, sold_in_window = _window_bundle(
-        raws, contacts_map, sold_stage_ids, start_local, end_local
+        raws, contacts_map, sold_stage_ids, start_local, end_local, contact_buckets
     )
     now_utc = now.astimezone(timezone.utc)
     use_ads = ad_cohort is not None
@@ -1658,21 +1738,21 @@ def assemble_inbound_cac(
         ghl_leads = int(ad_cohort.get("inbound_leads") or 0)
         ghl_opps = int(ad_cohort.get("opps") or 0)
         ghl_sits = int(ad_cohort.get("demos") or 0)
-        ghl_sales = int(ad_cohort.get("sales") or 0)
         quick_leads = int(ad_cohort.get("fb_quick_form_leads") or 0)
     else:
         inbound_start, inbound_end = clamp_inbound_window(start_local, end_local, tz)
         inbound_created, inbound_sits = count_inbound_cf_performance(
             territory_opps or [], contacts_map, inbound_start, inbound_end, now_utc
         )
-        inbound_sold = inbound_sales_contact_ids(
-            contacts_map, sold_stage_ids, inbound_start, inbound_end
-        )
         ghl_leads = count_inbound_named_fills(named_fills, inbound_start, inbound_end)
         ghl_opps = len(inbound_created)
         ghl_sits = len(inbound_sits)
-        ghl_sales = len(inbound_sold)
         quick_leads = None
+    ghl_sales = len(
+        inbound_window_sale_ids(
+            contacts_map, sold_stage_ids, contact_buckets, inbound_start, inbound_end
+        )
+    )
     inbound_empty = inbound_window_is_empty(inbound_start, inbound_end)
     if inbound_empty:
         spend_result = empty_inbound_spend()
@@ -1719,6 +1799,7 @@ def assemble_inbound_cac(
         paid_google_contact_ids=route_split.get("paid_google_contact_ids") if use_ads else None,
         arm_spend=inbound_arm_spend if use_ads else None,
         window_label=window_label if use_ads else None,
+        demos=ghl_sits,
     )
     inbound_kpi = kpi_row(
         source=INBOUND_CF_SOURCE,
@@ -1747,7 +1828,7 @@ def assemble_inbound_cac(
         for chart_month in ytd_months(year, now):
             m_start, m_end, _, _ = month_window(year, chart_month, tz)
             _m_records, m_rows, m_overall, _ = _window_bundle(
-                raws, contacts_map, sold_stage_ids, m_start, m_end
+                raws, contacts_map, sold_stage_ids, m_start, m_end, contact_buckets
             )
             if use_ads:
                 label = f"{year}-{chart_month:02d}"
@@ -1758,7 +1839,15 @@ def assemble_inbound_cac(
                 else:
                     phoenix_start, phoenix_end = inbound_chart_month_window(year, chart_month, now)
                 m_leads = int(cohort.get("inbound_leads") or 0)
-                m_sales = int(cohort.get("sales") or 0)
+                m_sales = len(
+                    inbound_window_sale_ids(
+                        contacts_map,
+                        sold_stage_ids,
+                        contact_buckets,
+                        phoenix_start,
+                        phoenix_end,
+                    )
+                )
                 m_fills = count_inbound_named_fills(named_fills, phoenix_start, phoenix_end)
                 if inbound_window_is_empty(phoenix_start, phoenix_end):
                     m_spend = empty_inbound_spend()
@@ -1776,8 +1865,14 @@ def assemble_inbound_cac(
                 _m_created, _m_sits = count_inbound_cf_performance(
                     territory_opps or [], contacts_map, inbound_m_start, inbound_m_end, now_utc
                 )
-                m_sold = inbound_sales_contact_ids(
-                    contacts_map, sold_stage_ids, inbound_m_start, inbound_m_end
+                m_sales = len(
+                    inbound_window_sale_ids(
+                        contacts_map,
+                        sold_stage_ids,
+                        contact_buckets,
+                        inbound_m_start,
+                        inbound_m_end,
+                    )
                 )
                 m_leads = count_inbound_named_fills(named_fills, inbound_m_start, inbound_m_end)
                 if inbound_window_is_empty(inbound_m_start, inbound_m_end):
@@ -1786,7 +1881,7 @@ def assemble_inbound_cac(
                     m_spend = month_spend_result(year, chart_month, inbound_monthly_spend)
                 m_inbound = build_inbound_source_row(
                     nr_leads=m_leads,
-                    sales=len(m_sold),
+                    sales=m_sales,
                     spend_result=m_spend,
                 )
             monthly.append(
@@ -1816,6 +1911,12 @@ def assemble_inbound_cac(
         "rows": list(performance_kpis.get("rows") or []) + [inbound_kpi],
         "inbound": inbound_kpi,
     }
+    kpi_by_source = {row.get("source"): row for row in (performance_kpis.get("rows") or [])}
+    for row in rows:
+        sits = (kpi_by_source.get(row.get("source")) or {}).get("sits")
+        stamp_demo_costs(row, 0 if sits is None else int(sits))
+    overall_sits = (performance_kpis.get("overall") or {}).get("sits")
+    stamp_demo_costs(overall, 0 if overall_sits is None else int(overall_sits))
 
     contract = SalesMetricContract()
     spend_ids = spend_contact_ids(records)
@@ -1842,11 +1943,12 @@ def assemble_inbound_cac(
         "count_method": (
             "spend = count(ghl_opportunities_v2 where pipelineId=Inbound/Lead Locker "
             "AND name title-bucket AND pipelineStageId!=Refunded AND createdAt in window) "
-            "× unit_cost; sales = COUNT_DISTINCT(contactId) among those opps that also have "
-            "a Sold/Sale Cancelled opp and Contact Sold Date in the same window; "
+            "× unit_cost; sales = COUNT_DISTINCT(contactId) with a Sold/Sale Cancelled "
+            "opp and Contact Sold Date in the window, attributed by the contact's "
+            "inbound title even when that bought lead was created earlier; "
             "default window is YTD (calendar year America/New_York); "
-            "setter_spend = sales × SETTER_UNIT_COST (500); "
-            "TAC = (lead_spend + setter_spend) / sales (= CAC + 500 when sales>0); "
+            "TAC = lead_spend / sales (null when sales=0 or spend is unavailable; "
+            "setter pay is not included); "
             "overall CAC/TAC = totals (null if sales=0); "
             "monthly chart CAC/TAC is null (gap) when that month's sales=0; "
             "performance_kpis rows are Lead Locker / Solar Reviews / Overall "
@@ -1910,8 +2012,8 @@ def assemble_inbound_cac(
                 f"{CONTACT_COLLECTION}.customFields[{SOLD_DATE_CUSTOM_FIELD_ID}] (ISO, date-only)"
             ),
             "sales_grain": f"COUNT_DISTINCT({OPP_COLLECTION}.contactId)",
-            "setter_unit_cost": SETTER_UNIT_COST,
-            "tac_formula": "(lead_spend + sales * setter_unit_cost) / sales",
+            "tac_formula": "lead_spend / sales",
+            "cost_per_demo_formula": "lead_spend / demos",
             "charles_pipeline_name": "Inbound/3PL",
             "warehouse_pipeline_name": INBOUND_PIPELINE_NAME,
             "charles_sale_stage": "Won",
@@ -2013,14 +2115,12 @@ def assemble_inbound_cac(
                     "window + CF=Inbound (same sit rules as LL/SR KPI sits)"
                 ),
                 "sales": (
-                    "Ads Dashboard sales for that lead set: the eight locked Sold "
-                    "and Sale Cancelled stage ids, deduped per lead, plus Contact "
-                    "Sold Date in the Phoenix window. A stage name is not a sale."
-                    if use_ads
-                    else
-                    "COUNT_DISTINCT contactId Sold/Sale Cancelled + Contact Sold Date "
-                    "in the clamped Inbound window + CF=Inbound "
-                    "(same as /api/metrics/sales?lead_source=Inbound)"
+                    "COUNT_DISTINCT contactId in the eight Sold/Sale Cancelled stage "
+                    "ids whose Contact Sold Date falls on a calendar day in the "
+                    "Inbound window and whose Lead Gen Source is Inbound or a "
+                    "Facebook Quick Form variant. A Lead Locker or Solar Reviews "
+                    "title on that contact stays on that row. A stage name is not "
+                    "a sale. The bought lead does not have to be created in the window."
                 ),
                 "overall_excludes_inbound": True,
             },

@@ -323,7 +323,8 @@ class RaydarChartPayloadTests(unittest.TestCase):
         self.assertEqual(chart["buckets"][0]["label"], f"3:00{DASH}3:30 PM")
         self.assertEqual(
             set(db.collections),
-            {"raydar_leads_v1", "raydar_users_v1", "raydar_dispositions_v1"},
+            # The counts-only events mirror is read once (absent here, so it adds nothing).
+            {"raydar_leads_v1", "raydar_users_v1", "raydar_dispositions_v1", "raydar_field_knock_events_v1"},
         )
         wheres = [op for op in db.collections["raydar_leads_v1"].ops if op[0] == "where"]
         self.assertEqual(len(wheres), 2)

@@ -55,7 +55,13 @@ _API_DIR = Path(__file__).resolve().parent.parent
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
-from knock_count import knock_events, raydar_lead_query, to_millis
+from knock_count import (
+    knock_events,
+    load_field_event_index,
+    orphan_ledger_events,
+    raydar_lead_query,
+    to_millis,
+)
 from query_result_cache import QueryCache, range_end_ymd, ttl_seconds
 from raydar_test_data import (
     is_excluded_raydar_record,
@@ -387,8 +393,13 @@ def build_payload(
     convos_total = 0
     convos_by_claimed: dict[str, int] = {}
 
+    # Counts-only knocks (fieldKnockEvents mirror). Empty or absent = no change.
+    ledger = load_field_event_index(db, start_utc, end_utc, dispo)
+    streamed_lead_ids: set[str] = set()
+
     for snap in q.stream():
         d = snap.to_dict() or {}
+        streamed_lead_ids.add(str(d.get("id") or snap.id))  # an excluded lead must not resurface as an orphan
         if is_excluded_raydar_record(d, doc_id=snap.id, test_user_ids=test_user_ids):
             continue
         streamed += 1
@@ -428,7 +439,7 @@ def build_payload(
         lead = dict(d)
         if not lead.get("id"):
             lead["id"] = snap.id
-        for event in knock_events(lead, dispo, seen=seen_knocks):
+        for event in knock_events(lead, dispo, seen=seen_knocks, ledger=ledger):
             if start_ms is not None and event.at < start_ms:
                 continue
             if end_ms is not None and event.at >= end_ms:
@@ -446,6 +457,20 @@ def build_payload(
             if at not in (None, ""):
                 assigned_key = str(at)
                 by_assigned[assigned_key] = by_assigned.get(assigned_key, 0) + 1
+
+    # Counts-only events on leads the lead query did not return (a refused pin
+    # keeps its old dispositionedAt). No lead document, so no claimed/assigned
+    # debug breakdown for these; the knock total and the rep are the event's own.
+    for event in orphan_ledger_events(ledger, streamed_lead_ids, seen_knocks, exclude_user_ids=test_user_ids):
+        if start_ms is not None and event.at < start_ms:
+            continue
+        if end_ms is not None and event.at >= end_ms:
+            continue
+        k = event.user_id
+        by_actor[k] = by_actor.get(k, 0) + 1
+        moment = datetime.fromtimestamp(event.at / 1000, tz=timezone.utc)
+        observe_door_knock(door_spans, k, moment)
+        door_knock_times.append((k, moment))
 
     adjustment_month_key = resolve_adjustment_month_key(year, month, period, start, end, start_local, end_local)
     manual_knock_adjustments, adjustment_source = load_knock_adjustments(adjustment_month_key)

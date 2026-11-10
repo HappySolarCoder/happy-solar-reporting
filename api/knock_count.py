@@ -13,15 +13,28 @@ The disposition catalog is used only to resolve a name to an id. The gate is
 the sets below, not ``countsAsDoorKnock``. Day buckets stay America/New_York.
 The Raydar app buckets in device-local time (Phoenix); this module does not.
 
-This module does not read or write Firestore.
+Counts-only knocks (``fieldKnockEvents``, Raydar PR A): a knock the field API
+refused to write to the lead (the pin belonged to someone else) is stored as an
+event row instead. :func:`field_event_index` turns mirrored rows into
+``KnockEvent`` objects keyed like a history entry without an ``eventId``,
+``leadId|userId|dispositionId|atMs``, so a draft that is first counted-only and
+later accepted into history counts once. :func:`knock_events` merges a lead's
+events into that lead's history before the 120 s collapse (the collapse groups
+are per lead, so this equals one union collapse). Events on leads the lead
+query did not return come from :func:`orphan_ledger_events`. With no events
+(collection absent or empty) every count is exactly what it was.
+
+Only :func:`load_field_event_index` reads Firestore, and it never writes.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 EXCLUDED_KNOCK_KEYS = frozenset({"shade-dq", "has-solar", "already-has-solar"})
@@ -50,6 +63,11 @@ REPEAT_KNOCK_GAP_MS = REPEAT_KNOCK_GAP_SECONDS * 1000
 KNOCK_READ_LOOKAHEAD_DAYS = 45
 KNOCK_READ_LOOKAHEAD = timedelta(days=KNOCK_READ_LOOKAHEAD_DAYS)
 REPORTING_TZ = ZoneInfo("America/New_York")
+# Mirror of the app's fieldKnockEvents (filled by the Raydar Firestore sync).
+# A missing or empty collection is a no-op. Override only for tests.
+FIELD_KNOCK_EVENTS_COLLECTION = os.environ.get("RAYDAR_FIELD_KNOCK_EVENTS_COLLECTION") or "raydar_field_knock_events_v1"
+FIELD_KNOCK_EVENTS_LIMIT = 20000
+_LOG = logging.getLogger(__name__)
 _SPACE_RUN = re.compile(r"\s+")
 
 
@@ -304,6 +322,7 @@ def knock_events(
     seen: set[str] | None = None,
     *,
     collapse: bool = True,
+    ledger: Mapping[str, list[KnockEvent]] | None = None,
 ) -> list[KnockEvent]:
     """History entries on one lead. ``seen`` dedupes across snapshots and devices.
 
@@ -316,11 +335,24 @@ def knock_events(
     After dedupe and exclusions, repeats inside ``REPEAT_KNOCK_GAP_SECONDS``
     collapse to one knock unless ``collapse`` is false. ``collect_knock_events``
     turns collapse off per snapshot and collapses the union once.
+
+    ``ledger`` is the :func:`field_event_index` result. This lead's counts-only
+    events are added after its history (history wins a key tie) and then take
+    part in the same collapse. ``None`` or no events for the lead changes nothing.
     """
 
     if not isinstance(lead, dict):
         return []
     bag = seen if seen is not None else set()
+    own = ledger.get(_lead_id(lead)) if ledger else None
+    if own:
+        base = knock_events(lead, dispositions, bag, collapse=False)
+        for event in own:
+            if event.dedupe_key in bag:
+                continue
+            bag.add(event.dedupe_key)
+            base.append(event)
+        return collapse_repeat_knocks(base) if collapse else base
     history = lead.get("dispositionHistory")
     if not isinstance(history, list):
         if history in (None, ""):
@@ -493,3 +525,115 @@ def raydar_lead_query(collection: Any, start: Any, *, end: Any = None, order: bo
     if order:
         query = query.order_by("dispositionedAt")
     return query
+
+
+def field_event_index(
+    rows: Iterable[Any],
+    dispositions: Any = None,
+) -> dict[str, list[KnockEvent]]:
+    """Mirrored ``fieldKnockEvents`` rows to ``{leadId: [KnockEvent]}``.
+
+    A row is ``{uid, leadId, actionAt, dispositionId | status | disposition}``.
+    ``actionAt`` is the draft's original time, never the server time. Rows with
+    no rep, lead or parseable time are skipped. Shade DQ, Already Has Solar and
+    the non-knock states are dropped here, because these rows do not pass
+    through the history exclusions. Duplicate keys collapse to one.
+    """
+
+    bag: set[str] = set()  # own dedupe only; history dedupe happens at merge time
+    index: dict[str, list[KnockEvent]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        user_id = _user_text(row.get("uid")) or _user_text(row.get("userId"))
+        lead_id = _user_text(row.get("leadId"))
+        at_ms = to_millis(row.get("actionAt"))
+        if not user_id or not lead_id or at_ms is None:
+            continue
+        raw = row.get("dispositionId")
+        if raw in (None, ""):
+            raw = row.get("status")
+        if raw in (None, ""):
+            raw = row.get("disposition")
+        if _raw_is_blocked(raw):
+            continue
+        disposition_id = normalize_dispo_key(raw, dispositions)
+        if not is_counted_knock(disposition_id):
+            continue
+        events: list[KnockEvent] = []
+        # Same fallback key a history entry without an eventId gets.
+        _append_event(
+            events,
+            bag,
+            lead_id=lead_id,
+            user_id=user_id,
+            at_ms=at_ms,
+            disposition_id=disposition_id,
+            event_id="",
+        )
+        if events:
+            index.setdefault(lead_id, []).append(events[0])
+    return index
+
+
+def orphan_ledger_events(
+    index: Mapping[str, list[KnockEvent]] | None,
+    streamed_lead_ids: set[str],
+    seen: set[str],
+    *,
+    exclude_user_ids: Iterable[str] = (),
+) -> list[KnockEvent]:
+    """Counts-only events on leads the lead query did not return.
+
+    A refused pin keeps its old ``dispositionedAt``, so its lead is usually
+    outside the window's lead read and has no history inside the window. Those
+    events are counted here, collapsed per lead. Leads that were streamed already
+    merged their events in :func:`knock_events`.
+    """
+
+    if not index:
+        return []
+    skip_users = set(exclude_user_ids)
+    out: list[KnockEvent] = []
+    for lead_id, events in index.items():
+        if lead_id in streamed_lead_ids:
+            continue
+        fresh = []
+        for event in events:
+            if event.user_id in skip_users or event.dedupe_key in seen:
+                continue
+            seen.add(event.dedupe_key)
+            fresh.append(event)
+        out.extend(collapse_repeat_knocks(fresh))
+    out.sort(key=lambda item: (item.at, item.lead_id, item.user_id, item.disposition_id, item.dedupe_key))
+    return out
+
+
+def load_field_event_index(
+    db: Any,
+    start: Any,
+    end: Any,
+    dispositions: Any = None,
+    *,
+    collection: str | None = None,
+) -> dict[str, list[KnockEvent]]:
+    """Read mirrored events with ``start <= actionAt < end`` and index them.
+
+    One single-field range read, capped at ``FIELD_KNOCK_EVENTS_LIMIT``. An
+    absent or empty collection returns ``{}``, so counts are history-only,
+    exactly as before the events existed. A failed read also returns ``{}``
+    and logs a warning: a broken mirror must never take a dashboard down.
+    """
+
+    name = collection or FIELD_KNOCK_EVENTS_COLLECTION
+    try:
+        query = db.collection(name).where("actionAt", ">=", start)
+        if end is not None:
+            query = query.where("actionAt", "<", end)
+        rows = [snap.to_dict() or {} for snap in query.limit(FIELD_KNOCK_EVENTS_LIMIT).stream()]
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("field knock events not read (%s): %s", name, type(exc).__name__)
+        return {}
+    if len(rows) >= FIELD_KNOCK_EVENTS_LIMIT:
+        _LOG.warning("field knock events hit the %s row cap; counts may be low", FIELD_KNOCK_EVENTS_LIMIT)
+    return field_event_index(rows, dispositions)

@@ -1933,6 +1933,8 @@ class FirstTimeAndArmSpendTests(unittest.TestCase):
         self.assertIn(">Demos<", page_html)
         self.assertIn("paid CPL", page_html)
         self.assertIn("Organic", page_html)
+        self.assertIn("Paid – Google", page_html)
+        self.assertIn("paidGoogleTable", page_html)
         # Prefer demo labels in new copy; JSON key sits may remain.
         self.assertNotIn(">Sits<", page_html)
 
@@ -2024,6 +2026,60 @@ class FirstTimeAndArmSpendTests(unittest.TestCase):
         self.assertEqual(split["paid_other_leads"], 0)
         self.assertIsNone(split["lead_arms"]["c-organic"])
         self.assertEqual(split["lead_classes"]["c-organic"], "organic")
+
+    def test_google_pmax_is_paid_google_in_total_outside_meta_cpl(self):
+        """Fixture modeled on yOiv0KF3EeYgKesz5dxk (google / wix-pmax-leads-campaign + gclid). No PII."""
+        phoenix = ZoneInfo("America/Phoenix")
+        start = datetime(2026, 11, 10, tzinfo=phoenix)
+        end = datetime(2026, 11, 11, tzinfo=phoenix)
+        contacts = {
+            "c-paid-google": {
+                "email": "paid.g@example.com",
+                "phone": "5550100102",
+            }
+        }
+        fill = {
+            "email": "paid.g@example.com",
+            "phone": "5550100102",
+            "date": "2026-11-10",
+            "utmSource": "google",
+            "utmMedium": "wix-pmax-leads-campaign",
+            "utmCampaign": "google-ads-campaign-example",
+            "landingPage": "https://example.com/?gclid=xyz&utm_source=google&utm_medium=wix-pmax-leads-campaign",
+        }
+        split = metric.classify_first_time_lead_routes(
+            contact_ids=["c-paid-google"],
+            contacts=contacts,
+            named_fills=[fill],
+            start_local=start,
+            end_local=end,
+        )
+        self.assertEqual(split["paid_google_leads"], 1)
+        self.assertEqual(split["paid_leads"], 0)
+        self.assertEqual(split["organic_leads"], 0)
+        self.assertEqual(split["paid_website_leads"], 0)
+        self.assertEqual(split["lead_classes"]["c-paid-google"], "paid_google")
+        self.assertIsNone(split["lead_arms"]["c-paid-google"])
+        self.assertEqual(split["paid_google_contact_ids"], ["c-paid-google"])
+        # 6 first-time: 3 organic + 2 Meta paid + 1 Paid – Google. Total CPL includes it; Meta paid CPL does not.
+        spend = metric.MetaSpendResult(spend=400.0, spend_status="ok")
+        row = metric.build_inbound_source_row(
+            nr_leads=6,
+            sales=0,
+            spend_result=spend,
+            organic_leads=3,
+            paid_leads=2,
+            paid_website_leads=1,
+            fb_quick_form_leads=1,
+            paid_google_leads=1,
+            paid_google_contact_ids=["c-paid-google"],
+        )
+        self.assertEqual(row["leads"], 6)
+        self.assertAlmostEqual(row["cost_per_lead"], 400.0 / 6)
+        self.assertAlmostEqual(row["paid_cost_per_lead"], 400.0 / 2)
+        self.assertEqual(row["paid_google_leads"], 1)
+        self.assertEqual(row["paid_google_label"], "Paid – Google")
+        self.assertEqual(row["paid_google_contact_ids"], ["c-paid-google"])
 
 
 if __name__ == "__main__":

@@ -171,6 +171,9 @@ __DASHBOARD_NAV_HTML__
         <div class="card-title" id="totalsTitle">since Aug 1, 2026 · America/Phoenix</div>
         <div class="meta" style="margin-bottom:10px">Lead Locker, Solar Reviews, Inbound, and overall (Overall = LL+SR only). Refunded-stage leads are excluded from LL/SR lead spend. Cost per lead is $45 / $70 for Lead Locker / Solar Reviews. Inbound cost per lead is Meta spend ÷ GHL inbound leads (blank when leads=0 or spend is unavailable — never a fake $0 CPL). Inbound spend is Meta Ads for the America/Phoenix window (blank when auth is not ready — never a fake $0 CAC). Inbound Leads are the Ads Dashboard set. Website form fills are a sub-line, not the lead count. Setter is $500 per sale. Lead CAC and TAC are blank when sales=0 or spend is unavailable. <a class="jsonlink" id="jsonLink" href="#">JSON</a></div>
         <div class="tableWrap"><table id="cacTable"></table></div>
+        <div class="tableWrap" id="paidGoogleWrap" style="margin-top:10px;display:none">
+          <table id="paidGoogleTable"></table>
+        </div>
       </div>
       <div class="card span-12">
         <div class="card-title" id="kpiTitle">Performance KPIs · since Aug 1, 2026 · America/Phoenix</div>
@@ -254,6 +257,8 @@ function leadSubline(r) {
   }
   if (r.fb_quick_form_leads != null) bits.push('FB Quick Form ' + r.fb_quick_form_leads);
   if (r.paid_website_leads != null) bits.push('Paid website ' + r.paid_website_leads);
+  var googleN = (r.paid_google_leads != null) ? r.paid_google_leads : r.paid_other_leads;
+  if (googleN != null && googleN > 0) bits.push('Paid – Google ' + googleN);
   if (r.website_form_fills != null) bits.push('Website form fills ' + r.website_form_fills);
   if (!bits.length) return '';
   return '<div class="subline">' + esc(bits.join(' · ')) + '</div>';
@@ -271,6 +276,31 @@ function rowBySource(rows, name) {
     if (rows[i].source === name) return rows[i];
   }
   return null;
+}
+function renderPaidGoogleRow(inbound) {
+  var wrap = document.getElementById('paidGoogleWrap');
+  var el = document.getElementById('paidGoogleTable');
+  if (!wrap || !el) return;
+  var n = inbound ? (inbound.paid_google_leads != null ? inbound.paid_google_leads : inbound.paid_other_leads) : null;
+  if (n == null) {
+    wrap.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  var ids = inbound.paid_google_contact_ids || inbound.paid_other_contact_ids || [];
+  var html = '<thead><tr>';
+  html += '<th>Source</th>';
+  html += '<th class="num">Leads</th>';
+  html += '<th>Contact IDs</th>';
+  html += '<th>Notes</th>';
+  html += '</tr></thead><tbody><tr>';
+  html += '<td>Paid – Google</td>';
+  html += '<td class="num">' + esc(n) + '</td>';
+  html += '<td>' + (ids.length ? esc(ids.join(', ')) : '—') + '</td>';
+  html += '<td>Included in Inbound first-time leads and total CPL. Outside arms A/B and Meta paid CPL.</td>';
+  html += '</tr></tbody>';
+  el.innerHTML = html;
+  wrap.style.display = '';
 }
 function renderTable(el, rows, overall) {
   var html = '<thead><tr>';
@@ -543,6 +573,11 @@ async function load() {
       cplMeta += ' · organic ' + (inbound.organic_leads == null ? '—' : inbound.organic_leads)
         + ' / paid ' + (inbound.paid_leads == null ? '—' : inbound.paid_leads);
     }
+    var googleN = (inbound.paid_google_leads != null) ? inbound.paid_google_leads : inbound.paid_other_leads;
+    if (googleN != null && googleN > 0) {
+      cplMeta += ' · Paid – Google ' + googleN
+        + ' (in total / total CPL; outside arms A/B and Meta paid CPL)';
+    }
     if (inbound.meta_arm_cpl && inbound.meta_arm_cpl.length) {
       cplMeta += ' · arms ' + inbound.meta_arm_cpl.map(function(a) {
         return a.arm + ' ' + fmtMoney(a.spend)
@@ -576,6 +611,7 @@ async function load() {
     document.getElementById('windowMeta').textContent = data.timezone || 'America/New_York';
   }
   renderTable(document.getElementById('cacTable'), data.rows || [], overall);
+  renderPaidGoogleRow(inbound || data.inbound);
   renderKpiTable(document.getElementById('kpiTable'), data.performance_kpis || {});
   drawCacChart(data.chart || {});
   } catch (err) {

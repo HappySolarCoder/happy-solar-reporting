@@ -581,6 +581,8 @@ def build_inbound_source_row(
     organic_leads: int | None = None,
     paid_leads: int | None = None,
     paid_website_leads: int | None = None,
+    paid_google_leads: int | None = None,
+    paid_google_contact_ids: list[str] | None = None,
     arm_spend: dict[str, Any] | None = None,
     window_label: str | None = None,
 ) -> dict[str, Any]:
@@ -619,6 +621,14 @@ def build_inbound_source_row(
         row["paid_leads"] = int(paid_leads)
     if paid_website_leads is not None:
         row["paid_website_leads"] = int(paid_website_leads)
+    if paid_google_leads is not None:
+        n = int(paid_google_leads)
+        row["paid_google_leads"] = n
+        row["paid_google_label"] = "Paid – Google"
+        row["paid_google_contact_ids"] = list(paid_google_contact_ids or [])
+        # Aliases kept so a mid-PR reader still sees the prior key.
+        row["paid_other_leads"] = n
+        row["paid_other_label"] = "Paid – Google"
     if arm_spend is not None:
         row["meta_arm_spend"] = arm_spend
         # Arm CPL uses first-time paid QF / paid website denominators when present.
@@ -1132,13 +1142,17 @@ def empty_inbound_spend() -> MetaSpendResult:
 
 
 def ymd_dates_in_window(start_local: datetime, end_local: datetime) -> list[str]:
-    """Inclusive start date through exclusive end date (America/New_York days)."""
+    """Calendar dates that overlap [start_local, end_local).
+
+    An exclusive midnight end maps to the previous day. A partial-day end
+    (through now) includes that calendar day so today's fills are loaded.
+    """
     if end_local <= start_local:
         return []
     dates: list[str] = []
     day = start_local.date()
-    last = end_local.date()
-    while day < last:
+    last = (end_local - timedelta(microseconds=1)).date()
+    while day <= last:
         dates.append(day.isoformat())
         day += timedelta(days=1)
     return dates
@@ -1149,8 +1163,8 @@ def named_fill_in_window(fill: dict[str, Any], start_local: datetime, end_local:
     if len(day) < 10:
         return False
     start_ymd = start_local.date().isoformat()
-    end_ymd = end_local.date().isoformat()
-    return start_ymd <= day[:10] < end_ymd
+    last_ymd = (end_local - timedelta(microseconds=1)).date().isoformat() if end_local > start_local else start_ymd
+    return start_ymd <= day[:10] <= last_ymd
 
 
 def _metrics_exclusion_reason():
@@ -1618,6 +1632,7 @@ def assemble_inbound_cac(
     ad_monthly: dict[str, dict[str, Any]] | None = None,
     inbound_arm_spend: dict[str, Any] | None = None,
     ads_contacts: dict[str, dict] | None = None,
+    ads_pipeline_opps: list[dict[str, Any]] | None = None,
     explicit_range: bool = False,
 ) -> dict[str, Any]:
     tzinfo = ZoneInfo(tz)
@@ -1669,6 +1684,8 @@ def assemble_inbound_cac(
         "paid_leads": None,
         "paid_qf_leads": quick_leads if use_ads else None,
         "paid_website_leads": None,
+        "paid_other_leads": None,
+        "paid_google_leads": None,
     }
     if use_ads:
         contact_ids = list(ad_cohort.get("lead_contact_ids") or [])
@@ -1680,6 +1697,7 @@ def assemble_inbound_cac(
                 named_fills=named_fills,
                 start_local=inbound_start,
                 end_local=inbound_end,
+                pipeline_opps=ads_pipeline_opps,
             )
             # QF subline follows first-time set (already filtered upstream).
             quick_leads = int(route_split.get("paid_qf_leads") or 0)
@@ -1697,6 +1715,8 @@ def assemble_inbound_cac(
         organic_leads=route_split.get("organic_leads") if use_ads else None,
         paid_leads=route_split.get("paid_leads") if use_ads else None,
         paid_website_leads=route_split.get("paid_website_leads") if use_ads else None,
+        paid_google_leads=route_split.get("paid_google_leads") if use_ads else None,
+        paid_google_contact_ids=route_split.get("paid_google_contact_ids") if use_ads else None,
         arm_spend=inbound_arm_spend if use_ads else None,
         window_label=window_label if use_ads else None,
     )
@@ -1715,7 +1735,12 @@ def assemble_inbound_cac(
         inbound_kpi["organic_leads"] = route_split.get("organic_leads")
         inbound_kpi["paid_leads"] = route_split.get("paid_leads")
         inbound_kpi["paid_website_leads"] = route_split.get("paid_website_leads")
+        inbound_kpi["paid_google_leads"] = route_split.get("paid_google_leads")
+        inbound_kpi["paid_google_contact_ids"] = route_split.get("paid_google_contact_ids")
+        inbound_kpi["paid_other_leads"] = route_split.get("paid_google_leads")
         inbound_kpi["window_label"] = window_label
+        if route_split.get("paid_google_leads"):
+            inbound_kpi["paid_google_label"] = "Paid – Google"
 
     monthly: list[dict[str, Any]] = []
     if timeframe != "range":
@@ -2169,29 +2194,165 @@ def map_meta_arm(name: Any) -> str:
     return "Other"
 
 
-def paid_fill_markers(fill: dict[str, Any]) -> list[str]:
-    """Paid markers from a website fill's captured UTM/landing params only."""
+def _fill_query_params(fill: dict[str, Any]) -> dict[str, str]:
+    """Query params from the submission event's landing page, plus explicit click-id fields."""
     from urllib.parse import urlsplit, parse_qs
 
-    reasons: list[str] = []
     lp = fill.get("landingPage") or fill.get("landing_page") or ""
     try:
         params = {k.lower(): (v[0] if v else "") for k, v in parse_qs(urlsplit(str(lp)).query).items()}
     except Exception:
         params = {}
-    us = _fold_campaign_text(fill.get("utmSource") or fill.get("utm_source") or params.get("utm_source"))
-    um = _fold_campaign_text(fill.get("utmMedium") or fill.get("utm_medium") or params.get("utm_medium"))
-    if params.get("fbclid") or fill.get("fbclid"):
-        reasons.append("fbclid")
-    paid_media = {
-        "cpc", "ppc", "paid", "paid social", "paidsocial", "paid-social", "cpm", "cpv", "display", "ads", "ad",
+    for key in ("fbclid", "gclid", "gbraid", "wbraid"):
+        if fill.get(key) and not params.get(key):
+            params[key] = str(fill.get(key))
+    return params
+
+
+def fill_event_params(fill: dict[str, Any]) -> dict[str, Any]:
+    """The submission event's own UTM and click ids. Never tags or contact.source."""
+    params = _fill_query_params(fill)
+    us = fill.get("utmSource") or fill.get("utm_source") or params.get("utm_source")
+    um = fill.get("utmMedium") or fill.get("utm_medium") or params.get("utm_medium")
+    uc = fill.get("utmCampaign") or fill.get("utm_campaign") or params.get("utm_campaign")
+    ucont = fill.get("utmContent") or fill.get("utm_content") or params.get("utm_content")
+    uterm = fill.get("utmTerm") or fill.get("utm_term") or params.get("utm_term")
+    return {
+        "utm_source": us,
+        "utm_medium": um,
+        "utm_campaign": uc,
+        "utm_content": ucont,
+        "utm_term": uterm,
+        "utm_source_folded": _fold_campaign_text(us),
+        "utm_medium_folded": _fold_campaign_text(um),
+        "utm_campaign_folded": _fold_campaign_text(uc),
+        "utm_content_folded": _fold_campaign_text(ucont),
+        "fbclid": bool(params.get("fbclid") or fill.get("fbclid")),
+        "gclid": bool(params.get("gclid") or fill.get("gclid")),
+        "gbraid": bool(params.get("gbraid") or fill.get("gbraid")),
+        "wbraid": bool(params.get("wbraid") or fill.get("wbraid")),
+        "params": params,
     }
-    paid_medium = um in paid_media or "paid" in um or "cpc" in um or "pmax" in um
-    if paid_medium and (us in {"fb", "facebook", "ig", "instagram", "meta"} or "facebook" in us):
-        reasons.append(f"utm {us or 'facebook'}/{um or 'paid'}")
-    elif paid_medium:
-        reasons.append(f"utm {us or 'unknown'}/{um or 'paid'}")
+
+
+# Website ad-set id for Nov26 | B Website (arm B).
+META_WEBSITE_ADSET_ID = "120252378845310744"
+PAID_GOOGLE_LABEL = "Paid – Google"
+PAID_OTHER_LABEL = PAID_GOOGLE_LABEL
+
+
+def is_meta_paid_website_event(params: dict[str, Any]) -> bool:
+    """Paid Meta website: the event has utm_medium=paid_social or an fbclid."""
+    um = params.get("utm_medium_folded") or ""
+    return bool(params.get("fbclid")) or um == "paid social" or "paid social" in um
+
+
+def is_google_paid_event(params: dict[str, Any]) -> bool:
+    """Google paid: gclid/gbraid/wbraid, or a Google source with a paid/pmax medium."""
+    if params.get("gclid") or params.get("gbraid") or params.get("wbraid"):
+        return True
+    us = params.get("utm_source_folded") or ""
+    um = params.get("utm_medium_folded") or ""
+    google = us == "google" or "google" in us
+    paidm = (
+        um in {"cpc", "ppc", "paid", "paid social", "pmax", "ads", "ad"}
+        or "paid" in um
+        or "cpc" in um
+        or "pmax" in um
+    )
+    return bool(google and paidm)
+
+
+def map_website_event_arm(params: dict[str, Any]) -> str | None:
+    """Arm B when campaign is nov26_qf_vs_web and content/term point at the B Website ad set."""
+    term = compact_str(params.get("utm_term"))
+    if term == META_WEBSITE_ADSET_ID:
+        return "B"
+    camp = params.get("utm_campaign_folded") or ""
+    content = params.get("utm_content_folded") or ""
+    content_raw = str(params.get("utm_content") or "").lower()
+    nov26 = "nov26 qf vs web" in camp
+    points_at_b = (
+        " b " in f" {content} "
+        or content.startswith("b ")
+        or "_b_" in content_raw
+        or "website" in content
+        or term == META_WEBSITE_ADSET_ID
+    )
+    if nov26 and points_at_b:
+        return "B"
+    if "nov26 b" in content or "b website" in content:
+        return "B"
+    return None
+
+
+def paid_fill_markers(fill: dict[str, Any]) -> list[str]:
+    """Paid markers from a website fill's captured UTM/landing params only."""
+    ev = fill_event_params(fill)
+    reasons: list[str] = []
+    if ev["fbclid"]:
+        reasons.append("fbclid")
+    if ev["gclid"]:
+        reasons.append("gclid")
+    if ev["gbraid"]:
+        reasons.append("gbraid")
+    if ev["wbraid"]:
+        reasons.append("wbraid")
+    us, um = ev["utm_source_folded"], ev["utm_medium_folded"]
+    if is_meta_paid_website_event(ev) and "fbclid" not in reasons:
+        reasons.append(f"utm {us or 'facebook'}/{um or 'paid_social'}")
+    elif is_google_paid_event(ev) and not (ev["gclid"] or ev["gbraid"] or ev["wbraid"]):
+        reasons.append(f"utm {us or 'google'}/{um or 'paid'}")
+    elif um and (um in {"cpc", "ppc", "paid", "paid social", "pmax"} or "paid" in um or "cpc" in um or "pmax" in um):
+        if us in {"fb", "facebook", "ig", "instagram", "meta"} or "facebook" in us:
+            reasons.append(f"utm {us or 'facebook'}/{um or 'paid'}")
     return reasons
+
+
+def _contact_match_keys(contact: dict[str, Any], opps: list[dict[str, Any]] | None = None) -> set[str]:
+    """Email and last-10 phone keys for event matching. Values stay in-process only."""
+    import re as _re
+
+    def _em(v: Any) -> str:
+        s = str(v or "").strip().lower()
+        return s if "@" in s else ""
+
+    def _ph(v: Any) -> str:
+        d = _re.sub(r"\D", "", str(v or ""))
+        return d[-10:] if len(d) >= 10 else ""
+
+    keys: set[str] = set()
+    blobs: list[Any] = [contact or {}]
+    for rel in (contact or {}).get("relations") or []:
+        if isinstance(rel, dict):
+            blobs.append(rel)
+    for opp in opps or []:
+        blobs.append(opp)
+        for rel in opp.get("relations") or []:
+            if isinstance(rel, dict):
+                blobs.append(rel)
+    for blob in blobs:
+        if not isinstance(blob, dict):
+            continue
+        for field in ("email", "emailAddress", "contactEmail"):
+            k = _em(blob.get(field))
+            if k:
+                keys.add(k)
+        for field in ("phone", "phoneNumber", "contactPhone"):
+            k = _ph(blob.get(field))
+            if k:
+                keys.add(k)
+        for field in ("additionalEmails", "additionalPhones"):
+            for item in blob.get(field) or []:
+                if isinstance(item, dict):
+                    k = _em(item.get("email") or item.get("phone")) or _ph(
+                        item.get("phone") or item.get("email")
+                    )
+                else:
+                    k = _em(item) or _ph(item)
+                if k:
+                    keys.add(k)
+    return keys
 
 
 def first_ll_created_at_by_contact(
@@ -2278,26 +2439,47 @@ def classify_first_time_lead_routes(
     named_fills: list[dict[str, Any]] | None,
     start_local: datetime,
     end_local: datetime,
+    pipeline_opps: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Split first-time contacts into QF / paid website / organic from event evidence."""
+    """Split first-time contacts from matched submission events (email+phone or QF).
+
+    Website paid (Meta) requires the event's own utm_medium=paid_social or an
+    fbclid — not tags or contact.source. Arm B is nov26_qf_vs_web with
+    content/term pointing at the B Website ad set. QF is arm A. A gclid or
+    Google paid medium is Paid – Google: outside A/B and Meta paid CPL,
+    included in total first-time leads and total CPL.
+    """
     ads = _ads_dashboard()
     qf_ids: set[str] = set()
     paid_web_ids: set[str] = set()
+    paid_other_ids: set[str] = set()
     organic_ids: set[str] = set()
-    # Index fills by email/phone for join without dumping PII
+    arms: dict[str, str | None] = {}
+    classes: dict[str, str] = {}
     import re as _re
-    def _em(v):
+
+    def _em(v: Any) -> str:
         s = str(v or "").strip().lower()
         return s if "@" in s else ""
-    def _ph(v):
+
+    def _ph(v: Any) -> str:
         d = _re.sub(r"\D", "", str(v or ""))
         return d[-10:] if len(d) >= 10 else ""
+
     fills = [f for f in (named_fills or []) if isinstance(f, dict)]
     by_key: dict[str, list[dict[str, Any]]] = {}
     for fill in fills:
-        for key in (_em(fill.get("email")), _ph(fill.get("phone"))):
+        for key in (
+            _em(fill.get("email") or fill.get("emailAddress") or fill.get("contact_email")),
+            _ph(fill.get("phone") or fill.get("phoneNumber")),
+        ):
             if key:
                 by_key.setdefault(key, []).append(fill)
+    opps_by_cid: dict[str, list[dict[str, Any]]] = {}
+    for opp in pipeline_opps or []:
+        cid = compact_str(opp.get("contactId") or "")
+        if cid:
+            opps_by_cid.setdefault(cid, []).append(opp)
     for cid in contact_ids:
         contact = contacts.get(cid) or {}
         source = None
@@ -2313,46 +2495,54 @@ def classify_first_time_lead_routes(
                 contact_custom_field(contact, LEAD_GEN_SOURCE_CONTACT_CF_ID)
             ) or is_facebook_quick_form_source(contact.get("source"))
         matched: list[dict[str, Any]] = []
-        for key in (_em(contact.get("email")), _ph(contact.get("phone"))):
+        for key in _contact_match_keys(contact, opps_by_cid.get(cid)):
             for fill in by_key.get(key, []):
                 if fill not in matched:
                     matched.append(fill)
-        paid_reasons: list[str] = []
-        organic_fill = False
+        meta_web = False
+        google_paid = False
+        event_arm: str | None = None
         for fill in matched:
-            day = compact_str(fill.get("date") or fill.get("received_at") or "")[:10]
-            # Prefer date field; fall back to received_at parse
-            in_win = False
-            if len(day) == 10 and day[4] == "-":
-                in_win = start_local.date().isoformat() <= day <= (end_local - timedelta(microseconds=1)).date().isoformat()
-            if not in_win:
-                # still allow fill evidence near the lead even if date field missing
-                in_win = True
-            markers = paid_fill_markers(fill)
-            if markers:
-                paid_reasons.extend(markers)
-            elif fill.get("landingPage") or fill.get("utmSource") or fill.get("utm_source"):
-                organic_fill = True
-            elif fill.get("source"):
-                organic_fill = True
+            ev = fill_event_params(fill)
+            if is_meta_paid_website_event(ev):
+                meta_web = True
+                event_arm = event_arm or map_website_event_arm(ev)
+            elif is_google_paid_event(ev):
+                google_paid = True
         if is_qf:
             qf_ids.add(cid)
-        elif paid_reasons:
+            arms[cid] = "A"
+            classes[cid] = "captured paid QF"
+        elif meta_web:
             paid_web_ids.add(cid)
+            arms[cid] = event_arm
+            classes[cid] = "captured paid website"
+        elif google_paid:
+            paid_other_ids.add(cid)
+            arms[cid] = None
+            classes[cid] = "paid_google"
         else:
             organic_ids.add(cid)
-            # organic_fill unused beyond classification bucket
-            _ = organic_fill
+            arms[cid] = None
+            classes[cid] = "organic"
     paid_ids = sorted(qf_ids | paid_web_ids)
     return {
         "organic_leads": len(organic_ids),
         "paid_leads": len(paid_ids),
         "paid_qf_leads": len(qf_ids),
         "paid_website_leads": len(paid_web_ids),
+        "paid_other_leads": len(paid_other_ids),
+        "paid_other_label": PAID_GOOGLE_LABEL,
+        "paid_google_leads": len(paid_other_ids),
+        "paid_google_label": PAID_GOOGLE_LABEL,
         "organic_contact_ids": sorted(organic_ids),
         "paid_contact_ids": paid_ids,
         "paid_qf_contact_ids": sorted(qf_ids),
         "paid_website_contact_ids": sorted(paid_web_ids),
+        "paid_other_contact_ids": sorted(paid_other_ids),
+        "paid_google_contact_ids": sorted(paid_other_ids),
+        "lead_arms": {cid: arms.get(cid) for cid in contact_ids},
+        "lead_classes": {cid: classes.get(cid) for cid in contact_ids},
     }
 
 
@@ -2699,6 +2889,7 @@ def compute_inbound_cac(
         ad_monthly=ad_monthly,
         inbound_arm_spend=inbound_arm_spend,
         ads_contacts=ads_inputs.get("contacts") or {},
+        ads_pipeline_opps=ads_inputs.get("pipeline_opps") or [],
         explicit_range=bool(start and end),
     )
 

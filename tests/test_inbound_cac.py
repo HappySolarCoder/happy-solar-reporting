@@ -1936,6 +1936,95 @@ class FirstTimeAndArmSpendTests(unittest.TestCase):
         # Prefer demo labels in new copy; JSON key sits may remain.
         self.assertNotIn(">Sits<", page_html)
 
+    def test_partial_day_window_includes_that_calendar_days_fills(self):
+        phoenix = ZoneInfo("America/Phoenix")
+        start = datetime(2026, 11, 1, tzinfo=phoenix)
+        partial = datetime(2026, 11, 9, 8, 48, tzinfo=phoenix)
+        days = metric.ymd_dates_in_window(start, partial)
+        self.assertIn("2026-11-09", days)
+        self.assertIn("2026-11-01", days)
+        closed = datetime(2026, 11, 9, tzinfo=phoenix)  # exclusive midnight = through Nov 8
+        self.assertNotIn("2026-11-09", metric.ymd_dates_in_window(start, closed))
+        self.assertTrue(
+            metric.named_fill_in_window({"date": "2026-11-09"}, start, partial)
+        )
+        self.assertFalse(
+            metric.named_fill_in_window({"date": "2026-11-09"}, start, closed)
+        )
+
+    def test_paid_social_and_fbclid_website_event_is_arm_b(self):
+        """Regression for 5CTSk7qnwcUrRTIo1WvH: paid_social + fbclid → paid, arm B. Fixture, no PII."""
+        phoenix = ZoneInfo("America/Phoenix")
+        start = datetime(2026, 11, 9, tzinfo=phoenix)
+        end = datetime(2026, 11, 10, tzinfo=phoenix)
+        contacts = {
+            "c-paid-web-b": {
+                "email": "web.b@example.com",
+                "phone": "5550100100",
+                "firstName": "Web",
+                "lastName": "Bee",
+            }
+        }
+        fill = {
+            "email": "web.b@example.com",
+            "phone": "5550100100",
+            "date": "2026-11-09",
+            "landingPage": (
+                "https://example.com/estimate?fbclid=abc123"
+                "&utm_source=facebook&utm_medium=paid_social"
+                "&utm_campaign=nov26_qf_vs_web"
+                "&utm_content=Nov26_B_Dominic_static"
+                "&utm_term=120252378845310744"
+            ),
+        }
+        split = metric.classify_first_time_lead_routes(
+            contact_ids=["c-paid-web-b"],
+            contacts=contacts,
+            named_fills=[fill],
+            start_local=start,
+            end_local=end,
+        )
+        self.assertEqual(split["paid_website_leads"], 1)
+        self.assertEqual(split["paid_leads"], 1)
+        self.assertEqual(split["organic_leads"], 0)
+        self.assertEqual(split["paid_other_leads"], 0)
+        self.assertEqual(split["lead_arms"]["c-paid-web-b"], "B")
+        self.assertEqual(split["lead_classes"]["c-paid-web-b"], "captured paid website")
+        self.assertIn("c-paid-web-b", split["paid_website_contact_ids"])
+
+    def test_organic_website_event_has_no_params(self):
+        """Regression for Pw8AxiCSJkvg3kxxIQVb pattern: landing with no UTM/fbclid → organic."""
+        phoenix = ZoneInfo("America/Phoenix")
+        start = datetime(2026, 11, 9, tzinfo=phoenix)
+        end = datetime(2026, 11, 10, tzinfo=phoenix)
+        contacts = {
+            "c-organic": {
+                "email": "org.t@example.com",
+                "phone": "5550100101",
+                "firstName": "Org",
+                "lastName": "Tee",
+            }
+        }
+        fill = {
+            "email": "org.t@example.com",
+            "phone": "5550100101",
+            "date": "2026-11-09",
+            "landingPage": "https://example.com/",
+        }
+        split = metric.classify_first_time_lead_routes(
+            contact_ids=["c-organic"],
+            contacts=contacts,
+            named_fills=[fill],
+            start_local=start,
+            end_local=end,
+        )
+        self.assertEqual(split["organic_leads"], 1)
+        self.assertEqual(split["paid_leads"], 0)
+        self.assertEqual(split["paid_website_leads"], 0)
+        self.assertEqual(split["paid_other_leads"], 0)
+        self.assertIsNone(split["lead_arms"]["c-organic"])
+        self.assertEqual(split["lead_classes"]["c-organic"], "organic")
+
 
 if __name__ == "__main__":
     unittest.main()

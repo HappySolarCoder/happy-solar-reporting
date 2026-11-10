@@ -105,6 +105,32 @@ class FieldEventIndexTests(unittest.TestCase):
         index = field_event_index([row(at=T0)], DISPOS)
         self.assertEqual(len(knock_events(lead, DISPOS, ledger=index)), 1)
 
+    def test_hotleads_rows_index_by_reason_and_counting_ignores_the_reason(self):
+        rows = [
+            row(lead="ghl_a", at=T0, collection="hotLeads", reason="in_territory"),
+            row(lead="ghl_b", at=T0, collection="hotLeads", reason="staff"),
+            row(lead="ghl_c", at=T0, collection="hotLeads", reason="out_of_territory"),
+            row(lead="ghl_d", at=T0, dispo="shade-dq", collection="hotLeads", reason="in_territory"),
+            row(lead="ghl_e", at=T0, dispo="shade-dq", collection="hotLeads", reason="staff"),
+        ]
+        index = field_event_index(rows, DISPOS)
+        self.assertEqual(sorted(index), ["ghl_a", "ghl_b", "ghl_c"])
+        # None of these leads are in the lead query: all three come back through the orphan path, once each.
+        seen: set[str] = set()
+        out = orphan_ledger_events(index, set(), seen)
+        self.assertEqual([e.lead_id for e in out], ["ghl_a", "ghl_b", "ghl_c"])
+        self.assertEqual(orphan_ledger_events(index, set(), seen), [])
+        # 120 s collapse and the exact same key behave the same for both labels.
+        close = field_event_index(
+            [
+                row(lead="ghl_a", at=T0, collection="hotLeads", reason="in_territory"),
+                row(lead="ghl_a", at=T0 + timedelta(seconds=90), collection="hotLeads", reason="staff"),
+                row(lead="ghl_a", at=T0, collection="hotLeads", reason="staff"),
+            ],
+            DISPOS,
+        )
+        self.assertEqual(len(orphan_ledger_events(close, set(), set())), 1)
+
     def test_orphan_events_count_only_for_unstreamed_leads_and_skip_test_users(self):
         index = field_event_index(
             [row(lead="lead-1"), row(lead="lead-2", uid=U2), row(lead="lead-3", uid="uid-test"), row(lead="lead-2", uid=U2, at=T0 + timedelta(seconds=30))],
@@ -197,6 +223,39 @@ class DoorsKnockedPayloadTests(unittest.TestCase):
         self.assertEqual(payload["breakdowns"]["knocks_by_actor"], {U1: 1, U2: 1})
         self.assertEqual(payload["result"], 2)
         self.assertEqual(payload["breakdowns"]["time_on_doors_by_actor"][U2]["knocks"], 1)
+
+    def test_3pl_hotleads_events_count_through_the_reader(self):
+        # 3PL (collection hotLeads) knocks: lead ids like ghl_* are never in the leads query, so they
+        # count through the orphan ledger. reason in_territory = a rep's own territory; staff = admin/manager.
+        when = datetime(2026, 11, 3, 18, 0, tzinfo=timezone.utc)
+
+        def hot(lead, uid, at, reason="in_territory", dispo="not-home"):
+            return row(lead=lead, uid=uid, at=at, dispo=dispo, collection="hotLeads", reason=reason, source="live")
+
+        for reason in ("in_territory", "staff"):
+            with self.subTest(reason=reason):
+                payload = self.payload(
+                    [
+                        hot("ghl_opp1", U2, when + timedelta(hours=1), reason),
+                        # Same rep, lead and dispo 60 s later (a double tap): collapses into the first.
+                        hot("ghl_opp1", U2, when + timedelta(hours=1, seconds=60), reason),
+                        # Exact replay of the first (same ledger key, e.g. mirror re-sync): once.
+                        hot("ghl_opp1", U2, when + timedelta(hours=1), reason),
+                        # Excluded dispositions never count, even though the lead id is not in the leads query.
+                        hot("ghl_opp2", U2, when + timedelta(hours=2), reason, dispo="shade-dq"),
+                        hot("ghl_opp3", U2, when + timedelta(hours=3), reason, dispo="already-has-solar"),
+                    ]
+                )
+                self.assertEqual(payload["breakdowns"]["knocks_by_actor"], {U1: 1, U2: 1})
+                self.assertEqual(payload["result"], 2)
+                # Past the 120 s window it is a second knock.
+                again = self.payload(
+                    [
+                        hot("ghl_opp1", U2, when + timedelta(hours=1), reason),
+                        hot("ghl_opp1", U2, when + timedelta(hours=1, seconds=121), reason),
+                    ]
+                )
+                self.assertEqual(again["breakdowns"]["knocks_by_actor"], {U1: 1, U2: 2})
 
     def test_every_knock_reader_merges_events(self):
         for relative in (

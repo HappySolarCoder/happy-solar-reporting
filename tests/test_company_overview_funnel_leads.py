@@ -43,6 +43,13 @@ class FunnelLeadsReuseTests(unittest.TestCase):
         self.assertIn("is_inbound_lead_source", split)
         self.assertIn("not raw.refunded", split)
 
+    def test_five_tier_funnels_share_the_four_tier_height(self):
+        css = (ROOT / "api" / "ops_theme.css").read_text(encoding="utf-8")
+        self.assertIn(".oc-page .source-funnel .compact-funnel{height:357px}", css)
+        self.assertIn(".oc-page .source-funnel .compact-funnel>.compact-stage{flex:1 1 0;height:auto;min-height:0;gap:2px}", css)
+        self.assertIn("font:700 19px Manrope,sans-serif", css)
+        self.assertNotIn("font:700 23px Manrope,sans-serif", css)
+
     def test_selected_range_drives_the_displayed_count(self):
         completed = subprocess.run(
             ["node", str(ROOT / "tests" / "company_overview_funnel_leads.mjs")],

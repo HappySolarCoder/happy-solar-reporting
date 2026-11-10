@@ -121,6 +121,13 @@ const surfaces = ["workspace", "sidebar", "overlay"].map((name) => {
   el.isConnected = true;
   return el;
 });
+const filterBar = makeElement("div");
+filterBar.id = "filterHost";
+filterBar.className = "global-filterbar";
+filterBar.isConnected = true;
+const dateInput = makeElement("input");
+dateInput.setAttribute("type", "date");
+filterBar.querySelector = (sel) => (String(sel).includes("date") ? dateInput : null);
 const main = makeElement("main");
 main.id = "main";
 main.isConnected = true;
@@ -162,8 +169,11 @@ globalThis.document = {
     return null;
   },
   querySelectorAll(sel) {
-    if (String(sel).includes(".workspace")) return surfaces;
-    return [];
+    const text = String(sel);
+    if (!text.includes(".workspace")) return [];
+    const nodes = surfaces.slice();
+    if (text.includes(".global-filterbar")) nodes.push(filterBar);
+    return nodes;
   },
   addEventListener(type, fn) {
     docListeners[type] = docListeners[type] || [];
@@ -327,6 +337,7 @@ async function mainTest() {
   assert(body.classList.contains("loading-open"), "scroll lock class");
   assert(body.style.overflow === "hidden", "background scroll locked");
   assert(surfaces.every((el) => el.inert === true), "workspace, sidebar, and modal are inert");
+  assert(filterBar.inert === true, "date filter bar is inert while the overlay is open");
   assert(document.activeElement === layer(), "focus moves to the dialog while loading");
   let escapeBlocked = false;
   layer().dispatch("keydown", {
@@ -353,6 +364,7 @@ async function mainTest() {
   assert(layer().hidden, "overlay hides after the slow request renders");
   assert(document.activeElement === focusBeforeSlow, "focus returns after a successful load");
   assert(surfaces.every((el) => el.inert === false), "inert state restored");
+  assert(filterBar.inert === false, "date filter bar accepts input again after the overlay closes");
   assert(!body.classList.contains("loading-open"), "scroll lock released");
 
   loading.begin("view");

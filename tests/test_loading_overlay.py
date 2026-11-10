@@ -87,6 +87,20 @@ class LoadingOverlayWiringTests(unittest.TestCase):
         self.assertIn("window.hsOpsReload = load", html)
         self.assertIn("hsOptional: true", html)
 
+    def test_overlay_stays_above_date_controls(self):
+        css = (API / "loading_overlay.css").read_text(encoding="utf-8")
+        script = (API / "loading_overlay_script.txt").read_text(encoding="utf-8")
+        self.assertIn("z-index:20000", css)
+        self.assertNotIn("z-index:12000", css)
+        self.assertNotIn("pointer-events:auto}", css)
+        self.assertIn("pointer-events:none !important", css)
+        self.assertIn("#dashboardLoading", css)
+        self.assertIn("function portalParent()", script)
+        self.assertIn("function trapsFixed(", script)
+        self.assertNotIn("containsDateOrFilter", script)
+        self.assertIn(".global-filterbar", script)
+        self.assertIn("parent.appendChild(layer)", script)
+
     def test_nav_css_appends_overlay_without_replacing_the_theme(self):
         css = nav.dashboard_nav_css()
         self.assertIn(".dashboard-loading", css)

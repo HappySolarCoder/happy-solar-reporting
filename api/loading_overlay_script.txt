@@ -76,18 +76,47 @@
     return '<div class="loading-card"><div class="loading-brand">HAPPY SOLAR <span>/</span> OPERATIONS CONTROL</div><div class="loading-error-icon" aria-hidden="true">!</div><h2 id="loadingTitle">We couldn’t refresh this view</h2><p id="loadingErrorStatus" role="status" aria-live="polite">' + support + '</p><div class="loading-error-actions"><button type="button" class="primary" id="loadingRetry">Try again</button><button type="button" id="loadingChangeDates">Change dates</button><button type="button" id="loadingBack">Back to dashboard</button></div></div>';
   }
 
+  function trapsFixed(el) {
+    if (!el || typeof root.getComputedStyle !== "function") return false;
+    var style;
+    try {
+      style = root.getComputedStyle(el);
+    } catch (error) {
+      return false;
+    }
+    if (!style) return false;
+    function active(value) {
+      return !!value && value !== "none" && value !== "auto" && value !== "normal";
+    }
+    if (active(style.transform) || active(style.filter) || active(style.perspective)) return true;
+    if (active(style.backdropFilter) || active(style.webkitBackdropFilter)) return true;
+    if (style.willChange && /transform|filter|perspective|contain/.test(style.willChange)) return true;
+    if (style.contain && /paint|layout|strict|content/.test(style.contain)) return true;
+    if (style.opacity && style.opacity !== "1") return true;
+    return false;
+  }
+
+  function portalParent() {
+    var body = document.body;
+    var rootEl = document.documentElement;
+    if (body && trapsFixed(body) && rootEl && !trapsFixed(rootEl)) return rootEl;
+    return body || rootEl;
+  }
+
   function ensureLayer() {
-    if (layer && layer.isConnected) return layer;
-    layer = document.createElement("div");
-    layer.id = "dashboardLoading";
-    layer.className = "dashboard-loading";
-    layer.hidden = true;
-    layer.setAttribute("role", "dialog");
-    layer.setAttribute("aria-modal", "true");
-    layer.setAttribute("aria-labelledby", "loadingTitle");
-    layer.tabIndex = -1;
-    layer.addEventListener("keydown", onLayerKeydown);
-    document.body.appendChild(layer);
+    if (!layer || !layer.isConnected) {
+      layer = document.createElement("div");
+      layer.id = "dashboardLoading";
+      layer.className = "dashboard-loading";
+      layer.hidden = true;
+      layer.setAttribute("role", "dialog");
+      layer.setAttribute("aria-modal", "true");
+      layer.setAttribute("aria-labelledby", "loadingTitle");
+      layer.tabIndex = -1;
+      layer.addEventListener("keydown", onLayerKeydown);
+    }
+    var parent = portalParent();
+    if (parent && (layer.parentElement !== parent || parent.lastElementChild !== layer)) parent.appendChild(layer);
     return layer;
   }
 
@@ -95,32 +124,10 @@
     return document.getElementById("main") || document.querySelector("main");
   }
 
-  function containsDateOrFilter(el) {
-    if (!el) return false;
-    var cls = typeof el.className === "string" ? el.className : "";
-    if (/(^|\s)(global-filterbar|filters|filter-controls|oc-injected-filters)(\s|$)/.test(cls)) return true;
-    if (el.id === "filterHost") return true;
-    if (typeof el.querySelector !== "function") return false;
-    try {
-      return !!el.querySelector("input[type='date'], input[type='month'], input[type='week'], .global-filterbar, .filters, .filter-controls");
-    } catch (error) {
-      return false;
-    }
-  }
-
   function blockedNodes() {
-    var nodes = document.querySelectorAll(".workspace, #sidebar, #overlay, .wrap, .goose-open, .goose-panel");
-    var out = [];
-    Array.prototype.forEach.call(nodes, function (el) {
-      if (!containsDateOrFilter(el)) {
-        out.push(el);
-        return;
-      }
-      Array.prototype.forEach.call(el.children || [], function (child) {
-        if (!containsDateOrFilter(child)) out.push(child);
-      });
-    });
-    return out;
+    return document.querySelectorAll(
+      ".workspace, .wrap, #sidebar, #overlay, .goose-open, .goose-panel, .global-filterbar, .oc-injected-filters, .filters, .filter-controls, #filterHost, .date-presets, .topbar, .oc-embed-bar, .oc-menu-btn"
+    );
   }
 
   function setBlocked(value) {

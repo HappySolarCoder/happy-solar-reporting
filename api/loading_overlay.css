@@ -6,7 +6,7 @@
 
 /* Production adaptation: typography, button focus, short viewports, and a quiet freshness chip.
    The rules above are the approved overlay stylesheet and stay unchanged. */
-.dashboard-loading{z-index:11000;font-family:'DM Sans',Arial,sans-serif}
+.dashboard-loading{z-index:20000;font-family:'DM Sans',Arial,sans-serif}
 .dashboard-loading .loading-card{box-sizing:border-box;max-width:490px}
 .dashboard-loading button{border:1px solid #203e54;background:#102d43;border-radius:7px;padding:9px 13px;color:#f1f6ff;font:inherit;cursor:pointer}
 .dashboard-loading button:hover{background:#193c54;border-color:#40657d}
@@ -18,7 +18,38 @@ body.loading-open .goose-open,body.loading-open .goose-panel{z-index:1;pointer-e
 .hs-focus-target:focus,.hs-focus-target:focus-visible{outline:none!important}
 .hs-freshness{position:fixed;right:16px;bottom:16px;z-index:12050;margin:0;padding:6px 10px;border:1px solid #24435a;border-radius:999px;background:#0c253bcc;color:#9ab8c9;font:11px/1.4 'DM Sans',Arial,sans-serif;pointer-events:none}
 .hs-freshness.is-error{color:#ffbe45;border-color:#8b784c}
-.loading-open .global-filterbar,.loading-open .oc-injected-filters,.loading-open .filters,.loading-open .filter-controls,.loading-open #filterHost,.loading-open input[type="date"],.loading-open input[type="month"],.loading-open input[type="week"]{position:relative;z-index:12000;pointer-events:auto}
+/* Page chrome stays under the overlay. Date bars, Apply, and presets must not
+   paint above this layer or receive clicks while it is open. */
+body.loading-open .global-filterbar,
+body.loading-open .global-filterbar *,
+body.loading-open .oc-injected-filters,
+body.loading-open .oc-injected-filters *,
+body.loading-open .filters,
+body.loading-open .filters *,
+body.loading-open .filter-controls,
+body.loading-open .filter-controls *,
+body.loading-open #filterHost,
+body.loading-open #filterHost *,
+body.loading-open .date-presets,
+body.loading-open .date-presets *,
+body.loading-open .topbar,
+body.loading-open .topbar *,
+body.loading-open .oc-embed-bar,
+body.loading-open .oc-embed-bar *,
+body.loading-open .oc-embed-menu,
+body.loading-open .oc-embed-menu *,
+body.loading-open .oc-menu-btn,
+body.loading-open #sidebar,
+body.loading-open #sidebar *,
+body.loading-open .workspace,
+body.loading-open .workspace *,
+body.loading-open .wrap,
+body.loading-open .wrap *,
+body.loading-open > a[aria-label="Secret Lab"],
+body.loading-open > a[title="Secret Lab"]{pointer-events:none !important}
+body.loading-open #dashboardLoading,
+body.loading-open #dashboardLoading *{pointer-events:auto !important}
+body.loading-open #dashboardLoading .loading-grid{pointer-events:none !important}
 .hs-freshness[hidden]{display:none}
 @media(max-height:720px),(max-width:800px){
   .dashboard-loading{overflow:auto;align-items:flex-start;justify-content:center;overscroll-behavior:contain}

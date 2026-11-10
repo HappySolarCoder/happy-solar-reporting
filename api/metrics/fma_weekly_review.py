@@ -37,7 +37,13 @@ for _path in (_API_DIR, _METRICS_DIR):
 from google.cloud import firestore
 from google.oauth2 import service_account
 
-from knock_count import knock_events, raydar_lead_query, to_millis
+from knock_count import (
+    knock_events,
+    load_field_event_index,
+    orphan_ledger_events,
+    raydar_lead_query,
+    to_millis,
+)
 from lead_gen_source import inbound_source_label
 from raydar_test_data import (
     is_excluded_raydar_record,
@@ -470,26 +476,34 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
     end_ms = to_millis(end_utc)
     seen_knocks: set[str] = set()
     lead_query = raydar_lead_query(db.collection("raydar_leads_v1"), start_utc, end=end_utc)
+    # Counts-only knocks (fieldKnockEvents mirror). Empty or absent = no change.
+    ledger = load_field_event_index(db, start_utc, end_utc, raydar_dispositions)
+    streamed_lead_ids: set[str] = set()
+    raydar_events: list[Any] = []
     for snap in lead_query.stream():
         data = snap.to_dict() or {}
+        streamed_lead_ids.add(str(data.get("id") or snap.id))  # an excluded lead must not resurface as an orphan
         if is_excluded_raydar_record(data, doc_id=snap.id, test_user_ids=test_user_ids):
             continue
         lead = dict(data)
         if not lead.get("id"):
             lead["id"] = snap.id
-        for event in knock_events(lead, raydar_dispositions, seen=seen_knocks):
-            if start_ms is not None and event.at < start_ms:
-                continue
-            if end_ms is not None and event.at >= end_ms:
-                continue
-            actor = compact_str(event.user_id)
-            if not actor:
-                continue
-            person = person_by_raydar_id.get(actor)
-            if not person:
-                continue
-            moment = datetime.fromtimestamp(event.at / 1000, tz=timezone.utc)
-            bump_person(person, date_key_local(moment), "knocks", 1)
+        for event in knock_events(lead, raydar_dispositions, seen=seen_knocks, ledger=ledger):
+            raydar_events.append(event)
+    raydar_events.extend(orphan_ledger_events(ledger, streamed_lead_ids, seen_knocks, exclude_user_ids=test_user_ids))
+    for event in raydar_events:
+        if start_ms is not None and event.at < start_ms:
+            continue
+        if end_ms is not None and event.at >= end_ms:
+            continue
+        actor = compact_str(event.user_id)
+        if not actor:
+            continue
+        person = person_by_raydar_id.get(actor)
+        if not person:
+            continue
+        moment = datetime.fromtimestamp(event.at / 1000, tz=timezone.utc)
+        bump_person(person, date_key_local(moment), "knocks", 1)
 
     # GHL opp-derived metrics
     for snap in db.collection("ghl_opportunities_v2").stream():

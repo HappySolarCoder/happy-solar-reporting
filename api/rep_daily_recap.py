@@ -83,7 +83,13 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
-from knock_count import knock_events, raydar_lead_query, to_millis
+from knock_count import (
+    knock_events,
+    load_field_event_index,
+    orphan_ledger_events,
+    raydar_lead_query,
+    to_millis,
+)
 from raydar_test_data import is_excluded_raydar_record, is_raydar_test_record, user_record_keys
 
 METRICS_DIR = API_DIR / "metrics"
@@ -1137,37 +1143,45 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
     start_ms = to_millis(start_utc)
     end_ms = to_millis(end_utc)
     seen_knocks: set[str] = set()
+    # Counts-only knocks (fieldKnockEvents mirror). Empty or absent = no change.
+    ledger = load_field_event_index(db, start_utc, end_utc, dispositions)
+    streamed_lead_ids: set[str] = set()
+    raydar_events: list[Any] = []
     for snap in raydar_lead_query(db.collection("raydar_leads_v1"), start_utc, end=end_utc).stream():
         row = snap.to_dict() or {}
+        streamed_lead_ids.add(str(row.get("id") or snap.id))  # an excluded lead must not resurface as an orphan
         if is_excluded_raydar_record(row, doc_id=snap.id, test_user_ids=test_user_ids):
             continue
         lead = dict(row)
         if not lead.get("id"):
             lead["id"] = snap.id
-        for event in knock_events(lead, dispositions, seen=seen_knocks):
-            if start_ms is not None and event.at < start_ms:
-                continue
-            if end_ms is not None and event.at >= end_ms:
-                continue
-            actor = compact_str(event.user_id)
-            if not actor:
-                unmapped_raydar["Unassigned"] += 1
-                continue
-            owner_key = raydar_to_owner.get(actor)
-            actor_name = (raydar_users.get(actor) or {}).get("name") or actor
-            if not owner_key:
-                # Fallback name match only if the actor name resolves to a rep alias.
-                owner_key = map_label_to_owner_fuzzy(actor_name, alias_index, identities)
-            if not owner_key:
-                unmapped_raydar[actor_name] += 1
-                continue
-            bucket = ensure_owner_bucket(
-                owner_key,
-                identities.get(owner_key, {}).get("label") or user_names.get(owner_key) or actor_name,
-            )
-            status = event.disposition_id or "unknown"
-            bucket["doors_knocked"] += 1
-            bucket["door_statuses"][status] += 1
+        for event in knock_events(lead, dispositions, seen=seen_knocks, ledger=ledger):
+            raydar_events.append(event)
+    raydar_events.extend(orphan_ledger_events(ledger, streamed_lead_ids, seen_knocks, exclude_user_ids=test_user_ids))
+    for event in raydar_events:
+        if start_ms is not None and event.at < start_ms:
+            continue
+        if end_ms is not None and event.at >= end_ms:
+            continue
+        actor = compact_str(event.user_id)
+        if not actor:
+            unmapped_raydar["Unassigned"] += 1
+            continue
+        owner_key = raydar_to_owner.get(actor)
+        actor_name = (raydar_users.get(actor) or {}).get("name") or actor
+        if not owner_key:
+            # Fallback name match only if the actor name resolves to a rep alias.
+            owner_key = map_label_to_owner_fuzzy(actor_name, alias_index, identities)
+        if not owner_key:
+            unmapped_raydar[actor_name] += 1
+            continue
+        bucket = ensure_owner_bucket(
+            owner_key,
+            identities.get(owner_key, {}).get("label") or user_names.get(owner_key) or actor_name,
+        )
+        status = event.disposition_id or "unknown"
+        bucket["doors_knocked"] += 1
+        bucket["door_statuses"][status] += 1
 
     owners = []
     for bucket in owner_buckets.values():

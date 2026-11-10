@@ -30,17 +30,34 @@ FUNNELS = (
     ("3PL", "3pl", "3PL"),
 )
 
+# channel_goals.LEADS_CHANNELS. Company, Doors, Self gen, and Sweeper have no lead actual.
+LEAD_FUNNEL_CHANNELS = frozenset({"Inbound", "3PL"})
+# One step lighter than Opps created so the new top tier stays in the same taper.
+LEAD_STAGE_COLOR = "#187090"
+
 
 def _funnel(channel: str, prefix: str, label: str) -> str:
+    has_leads = channel in LEAD_FUNNEL_CHANNELS
+    shift = 4 if has_leads else 0
+    # Widest trapezoid. Count is filled from channel_goals.leads for the selected dates.
+    leads = ""
+    if has_leads:
+        leads = f"""
+            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: leads, view funnel and monthly trend" style="--inset:0%;--next:4%;--stage-color:{LEAD_STAGE_COLOR}"><span>Leads</span><strong id="lg{prefix}Leads">—</strong><small>Created in range <span class="stage-arrow">↗</span></small></button>"""
+    created_note = (
+        f'<small id="lg{prefix}CreatedNote">Created in range <span class="stage-arrow">↗</span></small>'
+        if has_leads
+        else '<small>Created in range <span class="stage-arrow">↗</span></small>'
+    )
     return f"""
         <section class="panel source-funnel{' company-funnel' if channel == 'Company' else ''}" data-channel="{channel}">
           <div class="panel-head"><h2><button type="button" class="funnel-title-button" data-open-funnel="{channel}">{label} Funnel</button></h2>
             <button type="button" class="expand-btn" aria-label="Expand {label} funnel" data-open-funnel="{channel}">⤢</button></div>
-          <div class="panel-body compact-funnel">
-            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: opportunities created, view funnel and monthly trend" style="--inset:0%;--next:4%;--stage-color:#125975"><span>Opps created</span><strong id="lg{prefix}Created">—</strong><small>Created in range <span class="stage-arrow">↗</span></small></button>
-            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: Demo percent, view funnel and monthly trend" style="--inset:4%;--next:8%;--stage-color:#124962"><span>Demo %</span><strong id="lg{prefix}Demo">—</strong><small id="lg{prefix}DemoCounts">Demos — / ran — <span class="stage-arrow">↗</span></small></button>
-            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: Opp2Prelim, view funnel and monthly trend" style="--inset:8%;--next:12%;--stage-color:#123e54"><span>Opp2Prelim</span><strong id="lg{prefix}Opp2">—</strong><small id="lg{prefix}Opp2Counts">Sales — / ran — <span class="stage-arrow">↗</span></small></button>
-            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: sales, view funnel and monthly trend" style="--inset:12%;--next:16%;--stage-color:#104d48"><span>Sales</span><strong id="lg{prefix}Sales">—</strong><small>Sold in range <span class="stage-arrow">↗</span></small></button>
+          <div class="panel-body compact-funnel">{leads}
+            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: opportunities created, view funnel and monthly trend" style="--inset:{shift}%;--next:{shift + 4}%;--stage-color:#125975"><span>Opps created</span><strong id="lg{prefix}Created">—</strong>{created_note}</button>
+            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: Demo percent, view funnel and monthly trend" style="--inset:{shift + 4}%;--next:{shift + 8}%;--stage-color:#124962"><span>Demo %</span><strong id="lg{prefix}Demo">—</strong><small id="lg{prefix}DemoCounts">Demos — / ran — <span class="stage-arrow">↗</span></small></button>
+            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: Opp2Prelim, view funnel and monthly trend" style="--inset:{shift + 8}%;--next:{shift + 12}%;--stage-color:#123e54"><span>Opp2Prelim</span><strong id="lg{prefix}Opp2">—</strong><small id="lg{prefix}Opp2Counts">Sales — / ran — <span class="stage-arrow">↗</span></small></button>
+            <button type="button" class="compact-stage" data-open-funnel="{channel}" aria-label="{label}: sales, view funnel and monthly trend" style="--inset:{shift + 12}%;--next:{shift + 16}%;--stage-color:#104d48"><span>Sales</span><strong id="lg{prefix}Sales">—</strong><small>Sold in range <span class="stage-arrow">↗</span></small></button>
           </div>
         </section>"""
 

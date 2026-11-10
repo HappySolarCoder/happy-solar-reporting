@@ -388,6 +388,24 @@
     if (source === "All") return ["Company", "Doors", "Self gen", "Sweeper", "Inbound", "3PL"];
     return ["Company", source];
   }
+  // Same actual as the channel goals table: channel_goals.compute_leads → split_leads.
+  // Only Inbound and 3PL have a lead actual. This page does not recount them.
+  function leadCount(name) {
+    if (name !== "Inbound" && name !== "3PL") return null;
+    if (!channelGoalsMatch()) return null;
+    const leads = channelGoals && channelGoals.leads;
+    if (!leads || leads[name] == null || leads[name] === "") return null;
+    const number = Number(leads[name]);
+    return Number.isFinite(number) ? number : null;
+  }
+  function withLeads(name, stats) {
+    if (name !== "Inbound" && name !== "3PL") return stats;
+    return Object.assign({}, stats, { leads: leadCount(name) });
+  }
+  function oppOfLeadsText(created, leads, territory) {
+    if (territory !== "All" || !(Number(leads) > 0) || created == null || Number.isNaN(Number(created))) return "";
+    return rateText(created, leads) + " of leads";
+  }
   function fillStage(prefix, stats) {
     setText(prefix + "Created", numText(stats.created));
     setText(prefix + "Demo", rateText(stats.demos, stats.ran));
@@ -395,6 +413,12 @@
     setText(prefix + "Opp2", rateText(stats.sales, stats.ran));
     setText(prefix + "Opp2Counts", stats.ran == null ? "Sales — / ran —" : stats.sales + " sales / " + stats.ran + " ran");
     setText(prefix + "Sales", numText(stats.sales));
+    if (document.getElementById(prefix + "Leads")) setText(prefix + "Leads", numText(stats.leads));
+    const note = document.getElementById(prefix + "CreatedNote");
+    if (note) {
+      const extra = oppOfLeadsText(stats.created, stats.leads, (pageFilters || filters()).territory);
+      note.innerHTML = "Created in range" + (extra ? " · " + esc(extra) : "") + ' <span class="stage-arrow">↗</span>';
+    }
   }
   function donut(pipe, total) {
     const host = document.getElementById("territoryDonut");
@@ -461,7 +485,7 @@
       card.hidden = names.indexOf(card.getAttribute("data-channel")) < 0;
     });
     const map = { Company: "Company", Doors: "Doors", "Self gen": "SelfGen", Sweeper: "Sweeper", Inbound: "Inbound", "3PL": "3pl" };
-    names.forEach(function (name) { fillStage("lg" + map[name], stats[name]); });
+    names.forEach(function (name) { fillStage("lg" + map[name], withLeads(name, stats[name])); });
     const company = stats.Company;
     const f = pageFilters || filters();
     setText("totalSales", numText(company.sales));
@@ -686,10 +710,11 @@
     channelTask.then(function (cg) {
       if (token !== requestToken) return;
       channelGoals = cg;
-      if (cg && cg.self_gen && snapshot && selfGenPack()) {
+      if (snapshot) {
         const st = channelsFrom(snapshot);
         const ids = { Doors: "Doors", "Self gen": "SelfGen", Inbound: "Inbound", "3PL": "3pl" };
-        Object.keys(ids).forEach(function (n) { fillStage("lg" + ids[n], st[n]); });
+        const refresh = (cg && cg.self_gen && selfGenPack()) ? Object.keys(ids) : ["Inbound", "3PL"];
+        refresh.forEach(function (n) { fillStage("lg" + ids[n], withLeads(n, st[n])); });
       }
       paintChannelGoals();
     });
@@ -729,9 +754,26 @@
     modal(title, body);
     document.getElementById("overlay").classList.add("drawer-mode");
   }
-  function stageButton(label, value, detail, index) {
+  function stageButton(label, value, detail, index, color) {
     const colors = ["#125975", "#124962", "#123e54", "#104d48"];
-    return '<div class="compact-stage" style="--inset:' + (index * 4) + "%;--next:" + ((index + 1) * 4) + "%;--stage-color:" + colors[index] + '"><span>' + esc(label) + "</span><strong>" + esc(value) + "</strong><small>" + esc(detail) + "</small></div>";
+    const paint = color || colors[index];
+    return '<div class="compact-stage" style="--inset:' + (index * 4) + "%;--next:" + ((index + 1) * 4) + "%;--stage-color:" + paint + '"><span>' + esc(label) + "</span><strong>" + esc(value) + "</strong><small>" + esc(detail) + "</small></div>";
+  }
+  function historyStages(name, stats, territory) {
+    const rows = [];
+    if (name === "Inbound" || name === "3PL") {
+      rows.push(["Leads", numText(stats.leads), "Created in selected period", "#187090"]);
+    }
+    const leadRate = oppOfLeadsText(stats.created, stats.leads, territory);
+    rows.push(
+      ["Opportunities created", numText(stats.created), "Created in selected period" + (leadRate ? " · " + leadRate : ""), "#125975"],
+      ["Demo %", rateText(stats.demos, stats.ran), stats.ran == null ? "Demos — / ran —" : stats.demos + " demos / " + stats.ran + " ran", "#124962"],
+      ["Opp2Prelim", rateText(stats.sales, stats.ran), stats.ran == null ? "Sales — / ran —" : stats.sales + " sales / " + stats.ran + " ran", "#123e54"],
+      ["Sales", numText(stats.sales), "Sold in selected period", "#104d48"]
+    );
+    return rows.map(function (row, index) {
+      return stageButton(row[0], row[1], row[2], index, row[3]);
+    }).join("");
   }
   async function monthRow(name, month) {
     let response;
@@ -805,16 +847,10 @@
   async function openFunnelHistory(name) {
     historyChannel = name;
     historyMode = "counts";
-    const stats = channelsFrom(snapshot || {}).Company && name === "Company"
-      ? channelsFrom(snapshot || {})[name]
-      : (channelsFrom(snapshot || {})[name] || pack(null, null, null, null));
+    const base = channelsFrom(snapshot || {});
+    const stats = withLeads(name, (base.Company && name === "Company" ? base[name] : (base[name] || pack(null, null, null, null))));
     const f = pageFilters || filters();
-    const stages = [
-      stageButton("Opportunities created", numText(stats.created), "Created in selected period", 0),
-      stageButton("Demo %", rateText(stats.demos, stats.ran), stats.ran == null ? "Demos — / ran —" : stats.demos + " demos / " + stats.ran + " ran", 1),
-      stageButton("Opp2Prelim", rateText(stats.sales, stats.ran), stats.ran == null ? "Sales — / ran —" : stats.sales + " sales / " + stats.ran + " ran", 2),
-      stageButton("Sales", numText(stats.sales), "Sold in selected period", 3),
-    ].join("");
+    const stages = historyStages(name, stats, f.territory);
     modal(name + " · funnel & monthly trend",
       '<div class="drawer-context">' + esc(f.territory === "All" ? "All territories" : f.territory) + " · " + esc(f.start) + " – " + esc(f.end) + " · America/New_York</div>" +
       '<section class="popup-funnel-area"><div class="popup-funnel-heading"><h3>' + esc(name) + " funnel</h3><p>" + esc(f.start) + " – " + esc(f.end) + "</p></div><div class=\"popup-funnel\">" + stages + "</div></section>" +

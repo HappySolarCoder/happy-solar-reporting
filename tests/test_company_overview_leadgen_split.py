@@ -15,6 +15,13 @@ if str(API) not in sys.path:
     sys.path.insert(0, str(API))
 
 
+def _funnel_section(html: str, channel: str) -> str:
+    marker = f'data-channel="{channel}"'
+    start = html.index(marker)
+    end = html.index("</section>", start)
+    return html[start:end]
+
+
 def load_company_overview():
     spec = importlib.util.spec_from_file_location(
         "hs_company_overview_leadgen", API / "company_overview.py"
@@ -86,6 +93,36 @@ class LeadGenInbound3plSplitTests(unittest.TestCase):
         self.assertNotIn("Lead Locker", html)
         self.assertNotIn("Solar Reviews", html)
         self.assertNotIn("bucket_title", html)
+
+    def test_leads_tier_only_on_channels_that_already_define_leads(self):
+        html = self.html
+        self.assertEqual(html.count(">Leads</span>"), 2)
+        for channel, prefix in (("Inbound", "Inbound"), ("3PL", "3pl")):
+            section = _funnel_section(html, channel)
+            leads_at = section.index(">Leads</span>")
+            opps_at = section.index(">Opps created</span>")
+            self.assertLess(leads_at, opps_at)
+            self.assertIn(f'id="lg{prefix}Leads"', section)
+            self.assertIn('style="--inset:0%;--next:4%;--stage-color:#187090"', section)
+            self.assertIn(">Created in range <span class=\"stage-arrow\">↗</span></small>", section)
+            lead_button = section[: leads_at]
+            self.assertIn(f'data-open-funnel="{channel}"', lead_button)
+            self.assertIn(f'aria-label="{channel if channel != "3PL" else "3PL"}: leads, view funnel and monthly trend"', section)
+            self.assertRegex(
+                section,
+                r'--inset:4%;--next:8%;--stage-color:#125975"><span>Opps created',
+            )
+            self.assertIn(f'id="lg{prefix}CreatedNote"', section)
+        for channel in ("Company", "Doors", "Self gen", "Sweeper"):
+            section = _funnel_section(html, channel)
+            self.assertNotIn(">Leads</span>", section)
+            self.assertNotIn("Leads", section)
+            self.assertNotIn("CreatedNote", section)
+            self.assertIn(
+                '--inset:0%;--next:4%;--stage-color:#125975"><span>Opps created',
+                section,
+            )
+            self.assertIn('--inset:12%;--next:16%;--stage-color:#104d48"><span>Sales', section)
 
 
 if __name__ == "__main__":

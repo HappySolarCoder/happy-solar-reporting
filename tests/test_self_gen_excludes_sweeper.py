@@ -122,7 +122,8 @@ class ScOverviewSelfGenFilterTests(unittest.TestCase):
         doors = {"customFields": [{"id": LEAD_FIELD, "value": "Doors"}, {"id": FIELD, "value": "Diamond"}]}
         self.assertTrue(sc_overview.passes_lead_source_filter("Doors", doors, opp))
         src = (API / "sc_overview.py").read_text(encoding="utf-8")
-        self.assertEqual(src.count("passes_lead_source_filter"), 4)
+        # def, three opportunity loops, and the Sold Date sales hook (86bd1yacq).
+        self.assertEqual(src.count("passes_lead_source_filter"), 5)
 
 
 if __name__ == "__main__":

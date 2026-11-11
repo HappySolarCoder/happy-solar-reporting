@@ -10,10 +10,15 @@ Purpose:
 - Default: company overview (all reps).
 
 Canonical metric alignment:
-- Completed appointment outcomes / Opps Ran / Demos / Summary Sales use appointmentOccurredAt windows.
-- Summary Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie).
+- Completed appointment outcomes / Opps Ran / Demos use appointmentOccurredAt windows.
+- Summary Sales (KPI, Owner Performance, totals) use the locked Sales Dashboard contract:
+  metrics.sales.compute_sales with exclude_sweeper_rehash=True. Contact Sold Date
+  P9oBjgbZjJdeE0OkBj9T compared as a date only, one count per distinct contactId,
+  Sold + Sale Cancelled stage ids, credited to the opportunity's assignedTo. A Diamond
+  sweeper sale is credited to the owner (#139). (Evan, 2026-11-11, ticket 86bd1yacq.)
+- Close Rate and Opp2Prelim divide Sold Date sales by appointment-date Opps Ran / Demos,
+  so they mix two bases.
 - Two-Touch stays on Sold Date windows.
-- Company Sales (/api/metrics/sales, P9oBjgbZjJdeE0OkBj9T) stay on Contact Sold Date. This page does not change that contract.
 """
 
 from __future__ import annotations
@@ -652,6 +657,47 @@ def qualifies_two_touch_close(
     return False
 
 
+def sold_date_sales_by_owner(
+    db: Any,
+    *,
+    start_local: datetime,
+    end_local: datetime,
+    allowed_owner_ids: set[str],
+    lead_source: str,
+) -> dict[str, int]:
+    """Sales per opp owner (assignedTo) on the locked Sales Dashboard contract.
+
+    Reuses metrics.sales.compute_sales exactly as the Sales Dashboard owner table
+    does (exclude_sweeper_rehash=True), so Sold Date is date-only, contacts are
+    distinct and a Diamond sweeper sale stays with the owner. Dedupe runs across
+    all owners before the owner and lead-source filters below.
+    """
+    from sales import SalesMetricContract, compute_sales
+
+    credited: dict[str, int] = {}
+
+    def on_sale(*, opp: dict[str, Any], contact: dict[str, Any], **_kwargs: Any) -> None:
+        owner = compact_str(opp.get("assignedTo"))
+        if owner not in allowed_owner_ids:
+            return
+        if not passes_lead_source_filter(lead_source, contact, opp):
+            return
+        credited[owner] = credited.get(owner, 0) + 1
+
+    compute_sales(
+        db,
+        SalesMetricContract(),
+        year=start_local.year,
+        month=start_local.month,
+        tz=str(TZ.key),
+        start=start_local.date().isoformat(),
+        end=(end_local - timedelta(days=1)).date().isoformat(),
+        exclude_sweeper_rehash=True,
+        on_sale=on_sale,
+    )
+    return credited
+
+
 def build_payload(
     db: firestore.Client,
     *,
@@ -816,8 +862,26 @@ def build_payload(
             owner_rows[owner]["ran"] += 1
         if disposition == "Sit":
             owner_rows[owner]["demos"] += 1
-        if is_completed_sale_outcome_bucket(outcome_bucket):
-            owner_rows[owner]["sales"] += 1
+
+    # Sales are Sold Date sales (Sales Dashboard contract). Ran and Demos stay on appointment date.
+    sold_sales_by_owner = sold_date_sales_by_owner(
+        db,
+        start_local=start_local,
+        end_local=end_local,
+        allowed_owner_ids=allowed_owner_ids,
+        lead_source=selected_lead_source,
+    )
+    for owner, count in sold_sales_by_owner.items():
+        if owner not in owner_rows:
+            owner_rows[owner] = {
+                "owner_id": owner,
+                "owner": owner_directory.get(owner, {}).get("label") or f"Unknown User ({owner[-6:]})",
+                "team": owner_directory.get(owner, {}).get("team", ""),
+                "ran": 0,
+                "demos": 0,
+                "sales": 0,
+            }
+        owner_rows[owner]["sales"] = int(count)
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
@@ -947,7 +1011,7 @@ def build_payload(
         "completed": sum(stage_counts.values()),
         "opps_ran": sum(int(r["ran"]) for r in rows),
         "demos": sum(int(r["demos"]) for r in rows),
-        "sales": completed_sale_count(stage_counts),
+        "sales": sum(int(r["sales"]) for r in rows),
     }
     totals["opp2prelim"] = round((totals["sales"] / totals["opps_ran"]) * 100, 1) if totals["opps_ran"] > 0 else None
     totals["close_rate_on_demos"] = close_rate_on_demos(totals["sales"], totals["demos"])
@@ -976,6 +1040,7 @@ def build_payload(
 
     return {
         "metric": "SC Overview",
+        "sales_basis": "sold_date",
         "timezone": "America/New_York",
         "window_start": start_label,
         "window_end": end_label,
@@ -1417,7 +1482,7 @@ def render_html(
 
       <div class="card span-4">
         <div class="card-title">Summary</div>
-        <div class="meta">Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie). Opps Ran, Demos, and Sales stay on appointmentOccurredAt. Two-Touch stays on Sold Date.</div>
+        <div class="meta">Sales by Sold Date (same count as the Sales Dashboard); Ran/Demos by appointment date. Close rate mixes the two bases. The pie is by appointment date. Two-Touch stays on Sold Date.</div>
         <div class="kpi-grid">
           <div class="kpi"><div class="label">Opps Ran</div><div id="kpiRan" class="kpi-value">—</div></div>
           <div class="kpi"><div class="label">Demos</div><div id="kpiDemos" class="kpi-value">—</div></div>
@@ -1429,7 +1494,7 @@ def render_html(
 
       <div class="card span-12">
         <div class="card-title">Owner Performance</div>
-        <div class="meta">Sales and close rate use completed-appointment Sold + Sale Cancelled, not company Sold Date sales.</div>
+        <div class="meta">Sales are by Sold Date (same count as the Sales Dashboard owner table); Ran and Demos are by appointment date. Opp2Prelim and close rate divide Sold Date sales by appointment-date Ran and Demos, so they mix the two bases.</div>
         <div class="tablewrap">
           <table>
             <thead>

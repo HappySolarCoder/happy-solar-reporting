@@ -10,8 +10,11 @@ Purpose:
 - Default: company overview (all reps).
 
 Canonical metric alignment:
-- Completed appointment outcomes / Opps Ran / Demos / Summary Sales use appointmentOccurredAt windows.
-- Summary Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie).
+- Completed appointment outcomes / Opps Ran / Demos use appointmentOccurredAt windows.
+- Summary Sales use Contact Sold Date via one compute_sales pass per request
+  (Sales Dashboard owner table: exclude_sweeper_rehash). This page does not write data.
+- Pie Sold and Sale Cancelled stay on appointment date.
+- Close rate mixes sold-date sales with appointment-date demos.
 - Two-Touch stays on Sold Date windows.
 - Company Sales (/api/metrics/sales, P9oBjgbZjJdeE0OkBj9T) stay on Contact Sold Date. This page does not change that contract.
 """
@@ -42,6 +45,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import is_inbound_lead_source
+from sales import SalesMetricContract, compute_sales
 from sweeper_rehash_attribution import excluded_from_self_gen, sweeper_rehash_last_name
 
 TZ = ZoneInfo("America/New_York")
@@ -167,7 +171,7 @@ def normalize_stage_text(value: Any) -> str:
 
 
 def is_completed_sale_outcome_bucket(label: Any) -> bool:
-    """Pie buckets that count as Consultant Overview Summary Sales."""
+    """Pie slices Sold and Sale Cancelled. Summary Sales use Sold Date instead."""
     stage_low = normalize_stage_text(label)
     return stage_low in {"sold", "sale cancelled", "sale canceled"}
 
@@ -816,8 +820,6 @@ def build_payload(
             owner_rows[owner]["ran"] += 1
         if disposition == "Sit":
             owner_rows[owner]["demos"] += 1
-        if is_completed_sale_outcome_bucket(outcome_bucket):
-            owner_rows[owner]["sales"] += 1
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
@@ -902,6 +904,26 @@ def build_payload(
             if age_days >= TOUCH_PIPELINE_STALE_DAYS:
                 touch_rows[owner]["stale_touch_opps"] += 1
 
+    # One Sold Date pass. Same grain as the Sales Dashboard owner table.
+    # Pie slices above stay on the appointment window.
+    sold_date_sales = compute_sales(
+        db,
+        SalesMetricContract(),
+        year=year,
+        month=month,
+        tz="America/New_York",
+        start=start,
+        end=end,
+        lead_source=selected_lead_source or None,
+        exclude_sweeper_rehash=True,
+    )
+    sold_by_owner = {
+        compact_str(name).casefold(): int(count or 0)
+        for name, count in ((sold_date_sales.get("breakdowns") or {}).get("sales_by_owner") or {}).items()
+    }
+    for row in owner_rows.values():
+        row["sales"] = int(sold_by_owner.get(compact_str(row["owner"]).casefold(), 0))
+
     rows = []
     for row in owner_rows.values():
         ran = int(row["ran"])
@@ -947,7 +969,7 @@ def build_payload(
         "completed": sum(stage_counts.values()),
         "opps_ran": sum(int(r["ran"]) for r in rows),
         "demos": sum(int(r["demos"]) for r in rows),
-        "sales": completed_sale_count(stage_counts),
+        "sales": sum(int(r["sales"]) for r in rows),
     }
     totals["opp2prelim"] = round((totals["sales"] / totals["opps_ran"]) * 100, 1) if totals["opps_ran"] > 0 else None
     totals["close_rate_on_demos"] = close_rate_on_demos(totals["sales"], totals["demos"])
@@ -1417,7 +1439,7 @@ def render_html(
 
       <div class="card span-4">
         <div class="card-title">Summary</div>
-        <div class="meta">Sales are completed-appointment Sold + Sale Cancelled (same grain as the pie). Opps Ran, Demos, and Sales stay on appointmentOccurredAt. Two-Touch stays on Sold Date.</div>
+        <div class="meta">Sales use Contact Sold Date, the same grain as the Sales Dashboard owner table. Opps Ran and Demos stay on appointmentOccurredAt. Close rate mixes sold-date sales with appointment-date demos. Pie Sold and Sale Cancelled stay on appointment date. Two-Touch stays on Sold Date.</div>
         <div class="kpi-grid">
           <div class="kpi"><div class="label">Opps Ran</div><div id="kpiRan" class="kpi-value">—</div></div>
           <div class="kpi"><div class="label">Demos</div><div id="kpiDemos" class="kpi-value">—</div></div>
@@ -1429,7 +1451,7 @@ def render_html(
 
       <div class="card span-12">
         <div class="card-title">Owner Performance</div>
-        <div class="meta">Sales and close rate use completed-appointment Sold + Sale Cancelled, not company Sold Date sales.</div>
+        <div class="meta">Sales use Contact Sold Date. Close rate mixes sold-date sales with appointment-date demos. Pie Sold and Sale Cancelled stay on appointment date.</div>
         <div class="tablewrap">
           <table>
             <thead>

@@ -4,8 +4,9 @@
 
 Month-to-date sweeper/rehash credit for one Sweeper/Rehash Last Name.
 
-- appointments_set: distinct opportunities created in the month (America/New_York, every pipeline except Inbound/Lead Locker,
-  opportunities_created with pipeline_scope=all) whose contact Sweeper/Rehash Last Name
+- appointments_set: opportunities_created with pipeline_scope=all (America/New_York, every pipeline except Inbound/Lead Locker).
+  That is in-scope opportunities by createdAt, plus one booking-date credit per contact per ET day when no
+  in-scope opportunity was created that day. Sweeper/Rehash Last Name
   (field HWfjOp8MvE6soxBAL75f, opportunity fallback) equals ``last_name``.
 - sales: the locked Sales grain from sales.py (Sold or Sale Cancelled stage, contact Sold Date in
   the month, distinct contact) where that same field equals ``last_name``.
@@ -36,15 +37,18 @@ def same_name(value: Any, wanted: str) -> bool:
 
 
 def appointment_rows(created_payload: dict[str, Any], last_name: str) -> list[dict[str, Any]]:
+    from booking_rebooks import created_row_identity
+
     seen: set[str] = set()
     rows: list[dict[str, Any]] = []
     for row in created_payload.get("sample_rows") or []:
         if not isinstance(row, dict) or not same_name(row.get("sweeperRehashLastName"), last_name):
             continue
         opp_id = str(row.get("opportunityId") or "")
-        if not opp_id or opp_id in seen:
+        key = created_row_identity(row)
+        if not opp_id or not key or key in seen:
             continue
-        seen.add(opp_id)
+        seen.add(key)
         rows.append(
             {
                 "opportunityId": opp_id,
@@ -95,7 +99,10 @@ def compute_sweeper_credit(db, *, year: int, month: int, last_name: str) -> dict
         "sale_rows": sorted(sales_rows.values(), key=lambda r: str(r.get("soldDate") or "")),
         "contract": {
             "field": f"ghl_contacts_v2.customFields[{SWEEPER_REHASH_LAST_NAME_FIELD_ID}] then the same id on the opportunity",
-            "appointments_set": "COUNT_DISTINCT opportunity id from opportunities_created pipeline_scope=all, createdAt in month",
+            "appointments_set": (
+                "opportunities_created pipeline_scope=all: in-scope opps by createdAt, plus one "
+                "booking-date credit per contact per ET day when no in-scope opp was created that day"
+            ),
             "sales": "Locked Sales grain (sales.py) filtered by the field",
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",

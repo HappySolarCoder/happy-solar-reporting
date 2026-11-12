@@ -100,6 +100,8 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
     moved_from[label] counts overridden rows under the lead-source label the
     snapshot breakdowns used, so the page can take them out of that channel.
     """
+    from booking_rebooks import created_row_identity
+
     keys = ("appointments", "ran", "demos", "sales")
     out = dict.fromkeys(keys, 0)
     split = {r: dict.fromkeys(keys, 0) for r in ("lead_source", "fallback", "override", "rebook")}
@@ -116,7 +118,7 @@ def self_gen_actuals(created_payload: dict[str, Any], demo_payload: dict[str, An
     for row in created_payload.get("sample_rows") or []:
         if not isinstance(row, dict):
             continue
-        oid = str(row.get("opportunityId") or "")
+        oid = created_row_identity(row)
         if not oid or oid in seen:
             continue
         seen.add(oid)
@@ -172,8 +174,10 @@ def filled(value: Any) -> bool:
 
 
 def sweeper_created(created_payload: dict[str, Any]) -> int:
+    from booking_rebooks import created_row_identity
+
     ids = {
-        str(row.get("opportunityId") or "")
+        created_row_identity(row)
         for row in created_payload.get("sample_rows") or []
         if isinstance(row, dict) and filled(row.get("sweeperRehashLastName"))
     }

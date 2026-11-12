@@ -3,10 +3,14 @@
 """Vercel Python function: /api/metrics/opportunities_created
 
 Metric: Opportunities Created
-Definition: Opportunities created (front half of the funnel).
+Definition: Opportunities created (front half of the funnel), plus a booking-date
+rebook when the hub booked an appointment and did not create a regional opportunity that day.
 Calculation: count distinct opportunities created in included pipelines (Buffalo, Syracuse, Rochester, Virtual),
-excluding specific pipelines (Rehash, Sweeper, Inbound/Lead Locker).
-Time filter: based on opportunity createdAt (EST month window).
+excluding specific pipelines (Rehash, Sweeper, Inbound/Lead Locker), by createdAt.
+Also one credit per contact per America/New_York day when a countable appointment's
+dateAdded falls in the window and that contact has no in-scope opportunity created
+the same day. The credit is the contact's most recent regional opportunity.
+Time filter: opportunity createdAt, or the appointment booking time, both America/New_York.
 
 This endpoint supports the two requested “cards” via breakdowns:
 - created_by_setter_last_name
@@ -411,6 +415,162 @@ def normalize_channel(v: Any) -> str:
     return labeled or str(v)
 
 
+def apply_booking_credits(
+    db: firestore.Client,
+    c: MetricContract,
+    *,
+    start_local: datetime,
+    end_local: datetime,
+    pipe_names: dict[str, str],
+    contact_cache: dict[str, dict],
+    matching_rows: dict[str, dict[str, Any]],
+    counted_contact_days: set[tuple[str, Any]],
+    by_pipeline: dict[str, int],
+    by_setter: dict[str, int],
+    setter_labels: dict[str, str],
+    by_lead: dict[str, int],
+    by_bucket: dict[str, int],
+    by_bucket_setter: dict[str, dict[str, int]],
+    bucket_setter_labels: dict[str, dict[str, str]],
+    included: set[str],
+    excluded: set[str],
+    pipeline_scope_norm: str,
+    pipeline: str | None,
+    sweeper: bool,
+    lead_source_norm: str | None,
+    setter_filter_norm: str | None,
+) -> dict[str, Any]:
+    """Add one set per contact per ET booking day when no in-scope opp was created that day.
+
+    Failures stay in debug. They never replace the createdAt count and never scan a collection.
+    """
+    import booking_rebooks as br
+
+    try:
+        events, debug = br.load_booked_appointments(db, start_local, end_local)
+    except Exception as exc:
+        return {"error": str(exc)[:300], "booking_credits": 0}
+    chosen, stats = br.select_daily_bookings(events, counted_contact_days)
+    debug["booking_selection"] = stats
+    debug["booking_credits"] = 0
+    if not chosen:
+        return debug
+
+    missing_contacts = [br.contact_id_of(ev) for ev in chosen if br.contact_id_of(ev) not in contact_cache]
+    if missing_contacts:
+        contact_cache.update(load_contacts_by_ids(db, missing_contacts))
+    opps = br.load_opportunities_for_contacts(db, (br.contact_id_of(ev) for ev in chosen))
+    needed_pipelines: list[Any] = []
+    for opp in opps:
+        needed_pipelines.extend(pipeline_id_keys(opp.get("pipelineId")))
+    if needed_pipelines:
+        pipe_names.update(pipeline_name_lookup(db, needed_pipelines))
+
+    def pipeline_label(raw_id: Any) -> str:
+        return resolve_pipeline_name(pipe_names, raw_id)
+
+    by_contact: dict[str, list[dict[str, Any]]] = {}
+    for opp in opps:
+        cid = compact_str(opp.get("contactId"))
+        if cid:
+            by_contact.setdefault(cid, []).append(opp)
+
+    skipped_no_regional = 0
+    skipped_same_day = 0
+    skipped_filter = 0
+    for event in chosen:
+        cid = br.contact_id_of(event)
+        moment = br.booking_moment(event)
+        if not cid or moment is None:
+            continue
+        local = moment.astimezone(start_local.tzinfo)
+        day = local.date()
+        regional = br.pick_most_recent_regional(by_contact.get(cid, []), pipeline_label)
+        if regional is None:
+            skipped_no_regional += 1
+            continue
+        opp_created = br.opportunity_created_moment(regional)
+        if opp_created is not None and opp_created.astimezone(start_local.tzinfo).date() == day:
+            skipped_same_day += 1
+            continue
+        pname = pipeline_label(regional.get("pipelineId"))
+        pname_norm = pname.strip().lower()
+        if pname_norm in excluded:
+            skipped_filter += 1
+            continue
+        if pipeline_scope_norm != "all" and included and pname_norm not in included:
+            skipped_filter += 1
+            continue
+        if not pipeline_in_scope(pname, pipeline=pipeline, sweeper=sweeper):
+            skipped_filter += 1
+            continue
+
+        contact = contact_cache.get(cid)
+        setter_opp = opportunity_custom_field(regional, c.setter_last_name_opportunity_cf_id)
+        setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
+        setter = setter_opp if setter_opp not in (None, "") else setter_contact
+        lead = contact_custom_field(contact, c.lead_gen_source_contact_cf_id)
+        lead_norm = normalize_channel(lead)
+        sweeper_last = sweeper_rehash_last_name(contact, regional, c.sweeper_rehash_last_name_cf_id)
+        credited = attributed_last_name(setter, lead_norm, sweeper_last, day)
+        setter_norm = normalize_person_display(credited, empty="none")
+        if setter_filter_norm and setter_norm.lower() != setter_filter_norm:
+            skipped_filter += 1
+            continue
+        if not lead_source_matches(lead_source_norm, lead_norm, sweeper_last, day):
+            skipped_filter += 1
+            continue
+
+        bucket = leadgen_bucket(lead_norm, sweeper_last, pname)
+        bucket_name = sweeper_last if sweeper_last else setter_norm
+        opp_id = compact_str(regional.get("id"))
+        if not opp_id:
+            skipped_no_regional += 1
+            continue
+        assignee = br.assignee_id(event)
+        owner_id = assignee or str(regional.get("assignedTo") or "")
+        row: dict[str, Any] = {
+            "opportunityId": opp_id,
+            "bookingRebook": True,
+            "bookingDate": day.isoformat(),
+            "appointmentId": br.appointment_id(event) or None,
+            "pipeline": pname,
+            "ownerId": owner_id,
+            "contactId": cid,
+            "contactLastName": (contact.get("lastName") if isinstance(contact, dict) else None),
+            "createdAt": br.booking_iso(moment),
+            "setterLastName": setter_norm,
+            "leadGenSource": lead_norm,
+            "sweeperRehashLastName": sweeper_last or None,
+            "pipelineId": compact_str(regional.get("pipelineId")) or None,
+            "pipelineStageId": compact_str(regional.get("pipelineStageId") or regional.get("pipelineStageUId")) or None,
+            "pipelineStageName": compact_str(regional.get("pipelineStageName") or regional.get("stageName")) or None,
+            "leadGenBucket": bucket,
+        }
+        if not assignee:
+            for key in ("assignedToName", "assignedToUserName", "assignedUserName", "ownerName", "assignedToUser"):
+                if regional.get(key) is not None:
+                    row[key] = regional.get(key)
+        matching_rows[f"{opp_id}~booked~{day.isoformat()}"] = row
+        by_pipeline[pname] = by_pipeline.get(pname, 0) + 1
+        add_casefold_count(by_setter, setter_labels, setter_norm, empty="none")
+        lead_tally = self_gen_count_label(lead_norm, sweeper_last)
+        by_lead[lead_tally] = by_lead.get(lead_tally, 0) + 1
+        by_bucket[bucket] = by_bucket.get(bucket, 0) + 1
+        add_casefold_count(
+            by_bucket_setter[bucket],
+            bucket_setter_labels[bucket],
+            normalize_person_display(bucket_name, empty="none"),
+            empty="none",
+        )
+        debug["booking_credits"] += 1
+
+    debug["skipped_no_regional"] = skipped_no_regional
+    debug["skipped_same_day_opp"] = skipped_same_day
+    debug["skipped_filter"] = skipped_filter
+    return debug
+
+
 def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, start: str | None = None, end: str | None = None, lead_source: str | None = None, pipeline_scope: str | None = None, setter_last_name: str | None = None, pipeline: str | None = None, sweeper: bool = False, include_rebooks: bool = False) -> dict[str, Any]:
     if start and end:
         start_local, end_local, start_iso, end_iso = date_range_window(start, end, c.timezone)
@@ -488,6 +648,9 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     in_pipeline = 0
 
     matching_rows: dict[str, dict[str, Any]] = {}
+    # Contact + ET day already represented by an in-scope opportunity createdAt.
+    # Setter and lead-source filters do not free that day for a second credit.
+    counted_contact_days: set[tuple[str, Any]] = set()
 
     by_pipeline: dict[str, int] = {}
     by_owner: dict[str, int] = {}
@@ -537,6 +700,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
         # join to contact
         cid = str(opp.get("contactId") or "")
+        if cid:
+            counted_contact_days.add((compact_str(cid), created_local.date()))
         contact = get_contact(cid) if cid else None
         setter_opp = opportunity_custom_field(opp, c.setter_last_name_opportunity_cf_id)
         setter_contact = contact_custom_field(contact, c.setter_last_name_contact_cf_id)
@@ -595,6 +760,31 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             empty="none",
         )
 
+    booking_debug = apply_booking_credits(
+        db,
+        c,
+        start_local=start_local,
+        end_local=end_local,
+        pipe_names=pipe_names,
+        contact_cache=contact_cache,
+        matching_rows=matching_rows,
+        counted_contact_days=counted_contact_days,
+        by_pipeline=by_pipeline,
+        by_setter=by_setter,
+        setter_labels=setter_labels,
+        by_lead=by_lead,
+        by_bucket=by_bucket,
+        by_bucket_setter=by_bucket_setter,
+        bucket_setter_labels=bucket_setter_labels,
+        included=included,
+        excluded=excluded,
+        pipeline_scope_norm=pipeline_scope_norm,
+        pipeline=pipeline,
+        sweeper=sweeper,
+        lead_source_norm=lead_source_norm,
+        setter_filter_norm=setter_filter_norm,
+    )
+
     sweeper_rehash_appointments = sum(
         1 for row in matching_rows.values() if row.get("sweeperRehashLastName")
     )
@@ -619,19 +809,39 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
         "window_end_local": end_iso,
         "result": len(matching_rows),
         "count_method": (
-            "COUNT_DISTINCT(ghl_opportunities_v2.id) where createdAt in window (America/New_York) "
-            "and pipeline in {Buffalo,Syracuse,Rochester,Virtual} excluding {Rehash,Sweeper,Inbound/Lead Locker}"
+            "COUNT in-scope ghl_opportunities_v2 createdAt in window (America/New_York), "
+            "pipelines {Buffalo,Syracuse,Rochester,Virtual} excluding {Inbound/Lead Locker}, "
+            "plus one booking-date credit per contact per ET day when a countable appointment "
+            "dateAdded is in the window and that contact has no in-scope opportunity created the same day. "
+            "The credit is the contact's most recent regional opportunity. "
+            "Cancelled, deleted, and invalid appointments are ignored. One credit per contact per day."
         ),
         "debug": {
             "opps_scanned": scanned,
             "opps_in_time_window": in_time,
             "opps_in_time_and_pipeline_scope": in_pipeline,
             "rows_listed": len(matching_rows),
+            "booking_rebooks": booking_debug,
         },
         "contract": {
             "base_collection": c.opp_collection,
             "time_field": f"{c.opp_collection}.{c.created_at_field}",
-            "time_handling": "Parse ISO -> convert to America/New_York -> compare to month window",
+            "time_handling": (
+                "Parse ISO -> convert to America/New_York -> compare to the window. "
+                "A booking credit uses the appointment dateAdded (Booking Hub booking time) "
+                "in America/New_York, not the appointment start."
+            ),
+            "booking_rebooks": (
+                "When an appointment is booked (dateAdded) for a contact with no in-scope "
+                "opportunity created that same America/New_York day, count one set on the booking "
+                "date, attributed to the contact's most recent Buffalo/Syracuse/Rochester/Virtual "
+                "opportunity. Owner is the appointment assignee, or that opportunity's owner. "
+                "Setter and lead source use the same contact/opportunity fields as a created opportunity, "
+                "including the Sweeper/Rehash cutoff. Same-day in-scope create wins. "
+                "One credit per contact per day. Cancelled, deleted, and invalid appointments do not count. "
+                "Reads ghl_appointment_events_v2, ghl_calendar_events_v2, and ghl_appointments_v2 "
+                "by dateAdded range only (cached). No full scan and no GoHighLevel write."
+            ),
             "pipeline_field": f"{c.opp_collection}.pipelineId -> {c.pipeline_collection}.name",
             "included_pipeline_names": list(c.included_pipeline_names),
             "excluded_pipeline_names": list(c.excluded_pipeline_names),

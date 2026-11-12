@@ -465,9 +465,13 @@ def apply_booking_credits(
         needed_pipelines.extend(pipeline_id_keys(opp.get("pipelineId")))
     if needed_pipelines:
         pipe_names.update(pipeline_name_lookup(db, needed_pipelines))
+    stage_names = br.load_stage_names(db, (opp.get("pipelineId") for opp in opps))
 
     def pipeline_label(raw_id: Any) -> str:
         return resolve_pipeline_name(pipe_names, raw_id)
+
+    def stage_label(opp: dict) -> str:
+        return br.stage_name_of(opp, stage_names)
 
     by_contact: dict[str, list[dict[str, Any]]] = {}
     for opp in opps:
@@ -478,6 +482,8 @@ def apply_booking_credits(
     skipped_no_regional = 0
     skipped_same_day = 0
     skipped_filter = 0
+    skipped_open = 0
+    skipped_delayed = 0
     for event in chosen:
         cid = br.contact_id_of(event)
         moment = br.booking_moment(event)
@@ -485,13 +491,18 @@ def apply_booking_credits(
             continue
         local = moment.astimezone(start_local.tzinfo)
         day = local.date()
-        regional = br.pick_most_recent_regional(by_contact.get(cid, []), pipeline_label)
-        if regional is None:
-            skipped_no_regional += 1
-            continue
-        opp_created = br.opportunity_created_moment(regional)
-        if opp_created is not None and opp_created.astimezone(start_local.tzinfo).date() == day:
+        reason, regional = br.rebook_decision(by_contact.get(cid, []), pipeline_label, stage_label, moment)
+        if reason == "same_day_opportunity":
             skipped_same_day += 1
+            continue
+        if reason == "created_within_7_days":
+            skipped_delayed += 1
+            continue
+        if reason in {"open_regional_opp", "open_opp_earlier_appointment"}:
+            skipped_open += 1
+            continue
+        if reason != "credit" or regional is None:
+            skipped_no_regional += 1
             continue
         pname = pipeline_label(regional.get("pipelineId"))
         pname_norm = pname.strip().lower()
@@ -567,6 +578,8 @@ def apply_booking_credits(
 
     debug["skipped_no_regional"] = skipped_no_regional
     debug["skipped_same_day_opp"] = skipped_same_day
+    debug["skipped_open_opp"] = skipped_open
+    debug["skipped_created_within_7_days"] = skipped_delayed
     debug["skipped_filter"] = skipped_filter
     return debug
 
@@ -832,15 +845,17 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
                 "in America/New_York, not the appointment start."
             ),
             "booking_rebooks": (
-                "When an appointment is booked (dateAdded) for a contact with no in-scope "
-                "opportunity created that same America/New_York day, count one set on the booking "
-                "date, attributed to the contact's most recent Buffalo/Syracuse/Rochester/Virtual "
-                "opportunity. Owner is the appointment assignee, or that opportunity's owner. "
-                "Setter and lead source use the same contact/opportunity fields as a created opportunity, "
-                "including the Sweeper/Rehash cutoff. Same-day in-scope create wins. "
-                "One credit per contact per day. Cancelled, deleted, and invalid appointments do not count. "
-                "Reads ghl_appointment_events_v2, ghl_calendar_events_v2, and ghl_appointments_v2 "
-                "by dateAdded range only (cached). No full scan and no GoHighLevel write."
+                "A Booking Hub sales-calendar appointment (calendar group Blxh1ULhWznbBH5kZQBK; "
+                "not Empower+ fglYHXEMSyXFHyi3BFN4, interview, onboarding, or personal) counts on "
+                "dateAdded in America/New_York only when every Buffalo/Syracuse/Rochester/Virtual "
+                "opportunity for the contact is terminal (Sold or Sale Cancelled; open DQ'd is not) "
+                "and none was created that day or within the next 7 days. The credit is the most "
+                "recent of those closed opportunities. Owner is the appointment assignee, or that "
+                "opportunity's owner. Setter and lead source follow the created-opportunity rules, "
+                "including the Sweeper/Rehash cutoff. One credit per contact per day. Cancelled, "
+                "deleted, and invalid appointments do not count. Reads ghl_appointment_events_v2 "
+                "by dateAdded range only (cached). An empty range probes one document so an empty "
+                "collection is distinct from a dateAdded field mismatch. No full scan and no GoHighLevel write."
             ),
             "pipeline_field": f"{c.opp_collection}.pipelineId -> {c.pipeline_collection}.name",
             "included_pipeline_names": list(c.included_pipeline_names),

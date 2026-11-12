@@ -29,7 +29,10 @@ APRIL_OPP = "EKnVtmggYlnwfj7KvX8e"
 LOCKER_OPP = "ptni8KkJRP8Isydm5qoO"
 NEW_OPP = "newVirtualNov11aaaa"
 VIRTUAL = "r1b9pwgliYj7WyWBchTV"
+BUFFALO = "GQtUlcTmLJ61HZjrGEPC"
 LOCKER = "7nSEgeoBYXZiIS7x41Jy"
+HUB_GROUP = br.BOOKING_HUB_GROUP_ID
+EMPOWER = "fglYHXEMSyXFHyi3BFN4"
 JEFF = "jeffSalasUser0001"
 OLD_OWNER = "formerCloser0001"
 LEAD = "hd5QqHEOVSsPom5bJ32P"
@@ -117,7 +120,6 @@ def april_opp(**over):
         "contactId": PINKHAM,
         "pipelineId": VIRTUAL,
         "pipelineStageId": "sale-cancelled",
-        "pipelineStageName": "Sale Cancelled",
         "assignedTo": OLD_OWNER,
         "createdAt": "2026-04-06T15:00:00.000Z",
         "customFields": [],
@@ -141,7 +143,9 @@ def appointment(**over):
     d = {
         "id": "appt-pinkham-nov11",
         "contactId": PINKHAM,
-        "calendarId": "virtual-calendar",
+        "calendarId": "virtual-sales-calendar",
+        "calendarGroupId": HUB_GROUP,
+        "calendarName": "Virtual",
         "assignedUserId": JEFF,
         "dateAdded": BOOKED_NOV_11,
         "startTime": "2026-11-15T19:00:00.000Z",
@@ -155,8 +159,26 @@ def appointment(**over):
 def make_db(*, opps=None, appointments=None, contact_doc=None, events_raise=False):
     data = {
         "ghl_pipelines_v2": {
-            VIRTUAL: {"id": VIRTUAL, "name": "Virtual"},
-            LOCKER: {"id": LOCKER, "name": "Inbound/Lead Locker"},
+            VIRTUAL: {
+                "id": VIRTUAL,
+                "name": "Virtual",
+                "stages": [
+                    {"id": "sale-cancelled", "name": "Sale Cancelled"},
+                    {"id": "sold", "name": "Sold"},
+                    {"id": "new-appt", "name": "New Appointment"},
+                    {"id": "dq", "name": "DQ'd"},
+                ],
+            },
+            BUFFALO: {
+                "id": BUFFALO,
+                "name": "Buffalo",
+                "stages": [
+                    {"id": "sale-cancelled", "name": "Sale Cancelled"},
+                    {"id": "new-appt", "name": "New Appointment"},
+                    {"id": "dq", "name": "DQ'd"},
+                ],
+            },
+            LOCKER: {"id": LOCKER, "name": "Inbound/Lead Locker", "stages": []},
         },
         "roster_people_v1": {
             "jeff": {"display_name": "Jeff Salas", "ghl_user_id": JEFF},
@@ -164,11 +186,13 @@ def make_db(*, opps=None, appointments=None, contact_doc=None, events_raise=Fals
         },
         "ghl_users_v2": {},
         "ghl_opportunities_v2": {},
-        "ghl_contacts_v2": {PINKHAM: contact_doc if contact_doc is not None else contact()},
+        "ghl_contacts_v2": {},
         "ghl_appointment_events_v2": {},
         "ghl_calendar_events_v2": {},
         "ghl_appointments_v2": {},
     }
+    person = contact_doc if contact_doc is not None else contact()
+    data["ghl_contacts_v2"][person.get("id") or PINKHAM] = person
     for opp in opps or []:
         data["ghl_opportunities_v2"][opp["id"]] = opp
     for ev in appointments or []:
@@ -317,6 +341,152 @@ class PinkhamBookingTests(unittest.TestCase):
         self.assertFalse(br.appointment_status_ignored({"appointmentStatus": "confirmed"}))
         self.assertFalse(br.appointment_status_ignored({"appointmentStatus": "noshow"}))
         self.assertFalse(br.appointment_status_ignored({"appointmentStatus": "showed"}))
+        self.assertTrue(br.is_terminal_stage("Sale Cancelled"))
+        self.assertTrue(br.is_terminal_stage("Sold"))
+        self.assertFalse(br.is_terminal_stage("DQ'd"))
+        self.assertFalse(br.is_terminal_stage("DQ'ed"))
+        self.assertFalse(br.is_terminal_stage("New Appointment"))
+        self.assertFalse(br.calendar_allowed({"calendarId": EMPOWER, "calendarGroupId": HUB_GROUP, "calendarName": "Empower+"}))
+        self.assertFalse(br.calendar_allowed({"calendarId": "x", "calendarGroupId": HUB_GROUP, "calendarName": "Interview"}))
+        self.assertFalse(br.calendar_allowed({"calendarId": "x", "calendarGroupId": HUB_GROUP, "calendarName": "Onboarding"}))
+        self.assertFalse(br.calendar_allowed({"calendarId": "x", "calendarGroupId": HUB_GROUP, "calendarName": "Jeff Personal"}))
+        self.assertTrue(br.calendar_allowed({"calendarId": "virtual-sales-calendar", "calendarGroupId": HUB_GROUP, "calendarName": "Virtual"}))
+
+    def test_wojcik_reschedule_of_an_open_buffalo_opp_does_not_count(self):
+        # Booked/rescheduled Nov 11 onto the Buffalo opp created Nov 10.
+        wojcik = "wojcikContact0001"
+        opp = {
+            "id": "wojcik-buffalo",
+            "contactId": wojcik,
+            "pipelineId": BUFFALO,
+            "pipelineStageId": "new-appt",
+            "assignedTo": JEFF,
+            "createdAt": "2026-11-10T15:00:00.000Z",
+            "appointmentStartTime": "2026-11-14T18:00:00.000Z",
+            "appointmentEventId": "wojcik-first-appt",
+            "customFields": [],
+        }
+        ev = appointment(id="wojcik-nov11", contactId=wojcik, dateAdded=BOOKED_NOV_11)
+        db = make_db(opps=[opp], appointments=[ev], contact_doc={"id": wojcik, "lastName": "Wojcik", "customFields": [cf(LEAD, "Inbound"), cf(SETTER, "Calabrese")]})
+        day = on_day(db, "2026-11-11")
+        self.assertEqual(day["result"], 0)
+        self.assertEqual(day["debug"]["booking_rebooks"]["skipped_open_opp"], 1)
+        both = compute(make_db(opps=[opp], appointments=[ev], contact_doc=db.data["ghl_contacts_v2"][wojcik]), MetricContract(), year=2026, month=11, start="2026-11-10", end="2026-11-11", pipeline_scope="all")
+        self.assertEqual(both["result"], 1)
+        self.assertEqual(both["sample_rows"][0]["opportunityId"], "wojcik-buffalo")
+        self.assertNotIn("bookingRebook", both["sample_rows"][0])
+
+    def test_weighlen_followup_on_open_dq_does_not_count(self):
+        weighlen = "weighlenContact001"
+        opp = {
+            "id": "weighlen-march",
+            "contactId": weighlen,
+            "pipelineId": BUFFALO,
+            "pipelineStageId": "dq",
+            "assignedTo": JEFF,
+            "createdAt": "2026-03-04T15:00:00.000Z",
+            "appointmentStartTime": "2026-03-08T18:00:00.000Z",
+            "customFields": [],
+        }
+        ev = appointment(id="weighlen-nov11", contactId=weighlen, dateAdded=BOOKED_NOV_11)
+        contact_doc = {"id": weighlen, "lastName": "Weighlen", "customFields": [cf(LEAD, "Inbound"), cf(SETTER, "Calabrese")]}
+        out = on_day(make_db(opps=[opp], appointments=[ev], contact_doc=contact_doc), "2026-11-11")
+        self.assertEqual(out["result"], 0)
+        self.assertEqual(out["sample_rows"], [])
+        self.assertEqual(out["debug"]["booking_rebooks"]["skipped_open_opp"], 1)
+        self.assertFalse(br.is_terminal_stage("DQ'd"))
+
+    def test_dabella_opp_created_within_7_days_counts_once(self):
+        # Booked Nov 5. Buffalo opportunity created Nov 7. The create is the set.
+        dabella = "dabellaContact0001"
+        opp = {
+            "id": "dabella-buffalo",
+            "contactId": dabella,
+            "pipelineId": BUFFALO,
+            "pipelineStageId": "new-appt",
+            "assignedTo": JEFF,
+            "createdAt": "2026-11-07T16:00:00.000Z",
+            "customFields": [],
+        }
+        ev = appointment(id="dabella-nov5", contactId=dabella, dateAdded="2026-11-05T18:00:00.000Z")
+        contact_doc = {"id": dabella, "lastName": "Dabella", "customFields": [cf(LEAD, "Inbound"), cf(SETTER, "Calabrese")]}
+        br._CACHE.clear()
+        out = compute(
+            make_db(opps=[opp], appointments=[ev], contact_doc=contact_doc),
+            MetricContract(),
+            year=2026,
+            month=11,
+            start="2026-11-01",
+            end="2026-11-12",
+            pipeline_scope="all",
+        )
+        self.assertEqual(out["result"], 1)
+        self.assertEqual(out["sample_rows"][0]["opportunityId"], "dabella-buffalo")
+        self.assertNotIn("bookingRebook", out["sample_rows"][0])
+        self.assertEqual(out["debug"]["booking_rebooks"]["skipped_created_within_7_days"], 1)
+
+    def test_parkison_personal_calendar_does_not_count(self):
+        # Nov 12 on the Empower+ portal calendar, even with a closed regional opp.
+        parkison = "parkisonContact001"
+        opp = {
+            "id": "parkison-virtual",
+            "contactId": parkison,
+            "pipelineId": VIRTUAL,
+            "pipelineStageId": "sale-cancelled",
+            "assignedTo": JEFF,
+            "createdAt": "2026-04-02T15:00:00.000Z",
+            "customFields": [],
+        }
+        ev = appointment(
+            id="parkison-nov12",
+            contactId=parkison,
+            dateAdded="2026-11-12T17:00:00.000Z",
+            calendarId=EMPOWER,
+            calendarName="Empower+",
+        )
+        contact_doc = {"id": parkison, "lastName": "Parkison", "customFields": [cf(LEAD, "Inbound"), cf(SETTER, "Calabrese")]}
+        out = on_day(make_db(opps=[opp], appointments=[ev], contact_doc=contact_doc), "2026-11-12")
+        self.assertEqual(out["result"], 0)
+        self.assertEqual(out["sample_rows"], [])
+        self.assertEqual(out["debug"]["booking_rebooks"]["booking_selection"]["calendar_excluded"], 1)
+        personal = appointment(
+            id="parkison-personal",
+            contactId=parkison,
+            dateAdded="2026-11-12T17:00:00.000Z",
+            calendarId="personal-cal",
+            calendarName="Parkison Personal",
+        )
+        out_personal = on_day(make_db(opps=[opp], appointments=[personal], contact_doc=contact_doc), "2026-11-12")
+        self.assertEqual(out_personal["result"], 0)
+
+    def test_empty_collection_is_not_a_field_mismatch(self):
+        fresh = {
+            "id": NEW_OPP,
+            "contactId": PINKHAM,
+            "pipelineId": VIRTUAL,
+            "pipelineStageId": "new-appt",
+            "assignedTo": JEFF,
+            "createdAt": "2026-11-11T16:00:00.000Z",
+            "customFields": [],
+        }
+        out = on_day(make_db(opps=[fresh], appointments=[]), "2026-11-11")
+        probe = out["debug"]["booking_rebooks"]["collection_probe"]
+        self.assertEqual(probe["collection_state"], "empty")
+        self.assertFalse(probe["field_mismatch"])
+        self.assertEqual(out["debug"]["booking_rebooks"]["appointments_scanned"], 0)
+        self.assertEqual(out["debug"]["booking_rebooks"]["collection"], "ghl_appointment_events_v2")
+
+    def test_docs_without_date_added_are_a_field_mismatch(self):
+        bad = {"id": "bad-shape", "contactId": PINKHAM, "startTime": BOOKED_NOV_11, "status": "confirmed"}
+        db = make_db(appointments=[])
+        db.data["ghl_appointment_events_v2"]["bad-shape"] = bad
+        out = on_day(db, "2026-11-11")
+        probe = out["debug"]["booking_rebooks"]["collection_probe"]
+        self.assertEqual(probe["collection_state"], "not_empty")
+        self.assertTrue(probe["field_mismatch"])
+        self.assertIn("startTime", probe["sample_fields"])
+        self.assertNotIn("dateAdded", probe["sample_fields"])
+        self.assertEqual(out["result"], 0)
 
 
 if __name__ == "__main__":

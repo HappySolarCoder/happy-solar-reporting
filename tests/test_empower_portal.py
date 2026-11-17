@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import os
 import sys
@@ -21,10 +22,33 @@ FIXTURE_PATH = ROOT / "tests" / "fixtures" / "nyhep_empower_portal.json"
 if str(API) not in sys.path:
     sys.path.insert(0, str(API))
 
+
+def load_from_path(name: str, path: Path):
+    """Load this file even when api/metrics is ahead of api on sys.path."""
+    resolved = path.resolve()
+    cached = sys.modules.get(name)
+    cached_file = Path(getattr(cached, "__file__", "") or "")
+    if cached is not None and cached_file.resolve() != resolved:
+        del sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, resolved)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {name} from {resolved}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# Older suites insert api/metrics at sys.path[0], where a module named
+# empower_portal used to shadow api/empower_portal.py. Bind the page from
+# its path so this file cannot pick up that collision.
+empower_portal = load_from_path("hs_empower_portal_page", API / "empower_portal.py")
+ingest = load_from_path("hs_empower_portal_ingest", API / "empower_portal_ingest.py")
+metrics = load_from_path("hs_empower_portal_metrics", API / "metrics" / "empower_portal_metrics.py")
+# The page imports the ingest by its path name inside load_view.
+sys.modules["empower_portal_ingest"] = ingest
+
 import dashboard_nav as nav
-import empower_portal
-import empower_portal_ingest as ingest
-import metrics.empower_portal as metrics
 from copilot.auth import identity_for_chat, sign_bloom_token
 
 
@@ -234,6 +258,7 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(tones["E-1007"], "")
         self.assertEqual(self.view["waiting"][0]["stepLabel"], "Contractor Assignment (Pending)")
         by_id = {row["id"]: row for row in self.view["enrollments"]}
+        self.assertEqual(by_id["E-1005"]["stepLabel"], "Workscope Submission (Submitted)")
         self.assertEqual(by_id["E-1014"]["status"], "Closed")
         self.assertEqual(by_id["E-1014"]["statusTone"], "success")
         self.assertEqual(by_id["E-1014"]["installer"], "Not assigned")
@@ -253,6 +278,35 @@ class MetricTests(unittest.TestCase):
         encoded = json.dumps(self.view).lower()
         self.assertNotIn("phone", encoded)
         self.assertNotIn("email", encoded)
+
+    def test_enrollment_stage_is_step_and_status(self):
+        view = metrics.build_portal_view(
+            {
+                "snapshot": "2026-11-17_am",
+                "checkedAt": "check",
+                "projects": [
+                    {
+                        "id": "E-20",
+                        "customer": "Stage Example",
+                        "status": "Open",
+                        "step": "Workscope Submission",
+                        "stepStatus": "New",
+                        "onTodo": True,
+                    },
+                    {
+                        "id": "E-21",
+                        "customer": "No Status",
+                        "status": "Open",
+                        "step": "Install Started",
+                        "stepStatus": "",
+                    },
+                ],
+            }
+        )
+        by_id = {row["id"]: row for row in view["enrollments"]}
+        self.assertEqual(by_id["E-20"]["stepLabel"], "Workscope Submission (New)")
+        self.assertEqual(by_id["E-21"]["stepLabel"], "Install Started")
+        self.assertEqual(view["waiting"][0]["stepLabel"], "Workscope Submission (New)")
 
 
 class IngestTests(unittest.TestCase):
@@ -377,6 +431,15 @@ class PageTests(unittest.TestCase):
         self.assertIn("All enrollments", html)
         self.assertIn("Check history", html)
         self.assertIn('href="/api/empower_portal"', html)
+        self.assertIn("esc(row.stepLabel || row.step)", html)
+        self.assertEqual(
+            Path(empower_portal.__file__).resolve(),
+            (API / "empower_portal.py").resolve(),
+        )
+        self.assertEqual(
+            Path(metrics.__file__).resolve(),
+            (API / "metrics" / "empower_portal_metrics.py").resolve(),
+        )
         for name in CUSTOMERS:
             self.assertNotIn(name, html)
         page_src = (API / "empower_portal.py").read_text(encoding="utf-8")

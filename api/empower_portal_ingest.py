@@ -24,7 +24,7 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
-from metrics.empower_portal import build_portal_view, contains_forbidden_keys
+from metrics.empower_portal_metrics import build_portal_view, contains_forbidden_keys
 
 
 ENV_NAME = "NYHEP_INGEST_SECRET"
@@ -93,7 +93,7 @@ def secret_matches(headers, secret: str) -> bool:
         candidates.append(hook)
     for presented in candidates:
         try:
-            if hmac.compare_digest(presented, secret):
+            if hmac.compare_digest(presented.encode("utf-8"), secret.encode("utf-8")):
                 return True
         except Exception:
             continue

@@ -243,6 +243,7 @@ def _enrollment_rows(projects: list[dict]) -> list[dict]:
                 "status": status,
                 "statusTone": "success" if status == "Closed" else "",
                 "step": str(row.get("step") or "").strip(),
+                "stepLabel": _step_label(row.get("step"), row.get("stepStatus")),
                 "installer": display_installer(row.get("installer")),
                 "tier": display_tier(row.get("tier")),
             }

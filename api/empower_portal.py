@@ -32,7 +32,7 @@ from copilot.auth import (
     identity_from_headers,
 )
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
-from metrics.empower_portal import (
+from metrics.empower_portal_metrics import (
     SOURCE_LINE,
     SUBTITLE_LEAD,
     TITLE,
@@ -301,7 +301,7 @@ def render_empower_portal_html() -> str:
             esc(row.city),
             esc(row.enrolled),
             cell(row.status, row.statusTone),
-            esc(row.step),
+            esc(row.stepLabel || row.step),
             esc(row.installer),
             esc(row.tier)
           ];

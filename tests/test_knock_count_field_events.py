@@ -257,6 +257,51 @@ class DoorsKnockedPayloadTests(unittest.TestCase):
                 )
                 self.assertEqual(again["breakdowns"]["knocks_by_actor"], {U1: 1, U2: 2})
 
+    def test_closer_knocks_outside_territory_count_for_the_closer(self):
+        # Nov 18 2026: solar consultants (Raydar role 'closer') knock outside their territories. The
+        # field API applies the knock to the lead, so it lands in dispositionHistory under the closer
+        # even though another rep owns the pin. Nothing here filters by role, owner or event reason.
+        when = datetime(2026, 11, 3, 18, 0, tzinfo=timezone.utc)
+        closer = "uid-closer"
+        owned_by_u1 = {
+            "status": "not-home",
+            "dispositionedAt": when + timedelta(hours=1),
+            "claimedBy": U1,
+            "assignedTo": U1,
+            "dispositionHistory": [{"userId": closer, "disposition": "Not Home", "timestamp": when + timedelta(hours=1)}],
+        }
+        collections = {
+            "raydar_leads_v1": [
+                _Snap(
+                    "lead-1",
+                    {
+                        "status": "not-home",
+                        "dispositionedAt": when,
+                        "claimedBy": U1,
+                        "dispositionHistory": [{"userId": U1, "disposition": "Not Home", "timestamp": when}],
+                    },
+                ),
+                _Snap("lead-2", owned_by_u1),
+            ],
+            "raydar_users_v1": [
+                _Snap(U1, {"name": "Rep One", "role": "setter"}),
+                _Snap(closer, {"name": "Cal Closer", "role": "closer"}),
+            ],
+            "raydar_dispositions_v1": [_Snap("not-home", {"name": "Not Home", "countsAsDoorKnock": True})],
+            # Counts-only rows with any reason value, including a new one, still count for the knocker.
+            "raydar_field_knock_events_v1": [
+                _Snap("e0", row(lead="lead-7", uid=closer, at=when + timedelta(hours=2), reason="owned_by_other")),
+                _Snap("e1", row(lead="lead-6", uid=closer, at=when + timedelta(hours=3), reason="closer")),
+            ],
+        }
+        payload = self.doors.build_payload(_Db(collections), 2026, 11, start="2026-11-03", end="2026-11-03")
+        self.assertEqual(payload["breakdowns"]["knocks_by_actor"], {U1: 1, closer: 3})
+        self.assertEqual(payload["result"], 4)
+        # Library level: the history entry is credited to the closer, not the pin owner.
+        lead = {"id": "lead-2", **owned_by_u1}
+        self.assertEqual(count_knocks([lead], DISPOS, user_id=closer), 1)
+        self.assertEqual(count_knocks([lead], DISPOS, user_id=U1), 0)
+
     def test_every_knock_reader_merges_events(self):
         for relative in (
             "api/metrics/raydar_doors_knocked.py",

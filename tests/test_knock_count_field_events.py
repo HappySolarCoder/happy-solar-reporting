@@ -302,6 +302,33 @@ class DoorsKnockedPayloadTests(unittest.TestCase):
         self.assertEqual(count_knocks([lead], DISPOS, user_id=closer), 1)
         self.assertEqual(count_knocks([lead], DISPOS, user_id=U1), 0)
 
+    def test_closer_one_tap_history_plus_closer_event_counts_once(self):
+        # One tap: Raydar applies a closer's knock to lead X (history entry at T) AND writes a
+        # reason-'closer' fieldKnockEvents row for the same lead, uid and T. Shared ledger key -> 1 knock.
+        when = datetime(2026, 11, 3, 18, 30, tzinfo=timezone.utc)
+        closer = "uid-closer"
+        collections = {
+            "raydar_leads_v1": [
+                _Snap(
+                    "lead-x",
+                    {
+                        "status": "not-home",
+                        "dispositionedAt": when,
+                        "claimedBy": U1,
+                        "dispositionHistory": [{"userId": closer, "disposition": "Not Home", "timestamp": when}],
+                    },
+                )
+            ],
+            "raydar_users_v1": [_Snap(U1, {"name": "Rep One"}), _Snap(closer, {"name": "Cal Closer", "role": "closer"})],
+            "raydar_dispositions_v1": [_Snap("not-home", {"name": "Not Home", "countsAsDoorKnock": True})],
+            "raydar_field_knock_events_v1": [
+                _Snap(f"{closer}_draft-1", row(lead="lead-x", uid=closer, at=when, reason="closer", collection="leads", source="live")),
+            ],
+        }
+        payload = self.doors.build_payload(_Db(collections), 2026, 11, start="2026-11-03", end="2026-11-03")
+        self.assertEqual(payload["breakdowns"]["knocks_by_actor"], {closer: 1})
+        self.assertEqual(payload["result"], 1)
+
     def test_every_knock_reader_merges_events(self):
         for relative in (
             "api/metrics/raydar_doors_knocked.py",

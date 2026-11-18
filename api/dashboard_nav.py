@@ -1016,6 +1016,7 @@ NAV_GROUPS = (
             ("sale_cancellation_report", "Sale Cancellations", "/api/sale_cancellation_report"),
             ("bot_kpi_scorecard", "Bot KPI Scorecard", "/api/bot_kpi_scorecard"),
             ("settings", "Admin Settings", "/api/settings"),
+            ("empower_portal", "EmPower+ Portal", "/api/empower_portal"),
         ),
     ),
 )
@@ -1085,6 +1086,7 @@ EMBED_MENUS = (
             "sale_cancellation_report",
             "bot_kpi_scorecard",
             "settings",
+            "empower_portal",
         ),
     ),
 )

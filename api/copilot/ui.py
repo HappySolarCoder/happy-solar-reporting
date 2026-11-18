@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 from copilot.auth import bloom_parent_origins
+from copilot.bloom_frame import bloom_frame_script
 from copilot.messages import UI_TITLE, WELCOME
 
 
@@ -13,6 +14,7 @@ def render_panel() -> str:
     welcome = WELCOME.replace("'", "\\'")
     title = UI_TITLE
     origins_json = json.dumps(bloom_parent_origins())
+    frame_script = bloom_frame_script(indent="  ")
     return f"""
 <script>document.documentElement.classList.add('goose-dock');</script>
 <button type="button" id="gooseOpen" class="goose-open" aria-label="Ask about our data" title="Ask about our data"><img src="/goose-headset.png" alt="" width="56" height="56" /></button>
@@ -81,19 +83,7 @@ def render_panel() -> str:
   let bloomBearerExp = 0;
   let bloomBlockReason = '';
   const bloomWaiters = [];
-
-  function parentOrigin() {{
-    if (window.parent === window) return '';
-    try {{
-      if (document.referrer) {{
-        const origin = new URL(document.referrer).origin;
-        return bloomParents.has(origin) ? origin : '';
-      }}
-    }} catch (err) {{
-      return '';
-    }}
-    return bloomParents.size === 1 ? Array.from(bloomParents)[0] : '';
-  }}
+{frame_script}
 
   function tokenStillFresh() {{
     return Boolean(bloomBearer) && bloomBearerExp - Date.now() > 15000;
@@ -174,7 +164,9 @@ def render_panel() -> str:
   function tellParent(action) {{
     const origin = parentOrigin();
     if (!origin) return;
-    window.parent.postMessage({{ type: 'happy-solar-goose', action: action }}, origin);
+    bloomFrameTargets().forEach(function (origin) {{
+      window.parent.postMessage({{ type: 'happy-solar-goose', action: action }}, origin);
+    }});
   }}
 
   function requestBloomToken() {{
@@ -187,7 +179,9 @@ def render_panel() -> str:
         window.clearTimeout(timer);
         resolve(token);
       }});
-      window.parent.postMessage({{ type: 'happy-solar-goose', action: 'request-token' }}, origin);
+      bloomFrameTargets().forEach(function (origin) {{
+        window.parent.postMessage({{ type: 'happy-solar-goose', action: 'request-token' }}, origin);
+      }});
     }});
   }}
 

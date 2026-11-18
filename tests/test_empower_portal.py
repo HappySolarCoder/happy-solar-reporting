@@ -45,6 +45,7 @@ def load_from_path(name: str, path: Path):
 empower_portal = load_from_path("hs_empower_portal_page", API / "empower_portal.py")
 ingest = load_from_path("hs_empower_portal_ingest", API / "empower_portal_ingest.py")
 metrics = load_from_path("hs_empower_portal_metrics", API / "metrics" / "empower_portal_metrics.py")
+bloom_frame_probe = load_from_path("bloom_frame_probe", ROOT / "tests" / "bloom_frame_probe.py")
 # The page imports the ingest by its path name inside load_view.
 sys.modules["empower_portal_ingest"] = ingest
 
@@ -60,6 +61,11 @@ FRAME_ANCESTORS = (
     "frame-ancestors 'self' https://bloom.happyslr.com "
     "https://*.happyslr.com https://happy-solar-bloom-portal.vercel.app"
 )
+BLOOM_TWO = "https://happy-solar-bloom-portal.vercel.app,https://bloom.happyslr.com"
+BLOOM_VERCEL = "https://happy-solar-bloom-portal.vercel.app"
+BLOOM_PROD = "https://bloom.happyslr.com"
+REPORTING_REFERRER = "https://database-migration-chi.vercel.app/api/company_overview"
+SHELL_TOKEN = "abcdefghij.klmnopqrstuvwxyz"
 CUSTOMERS = [row["customer"] for row in FIXTURE["projects"]]
 WAITING_DUE_ORDER = [
     "E-1001",
@@ -512,6 +518,127 @@ class PageTests(unittest.TestCase):
         self.assertNotIn("email", raw.decode().lower())
         self.assertNotIn(SETTINGS_PASSWORD, raw.decode())
         self.assertEqual(db.writes, [])
+
+    def _framed_html(self) -> str:
+        with patch.dict(os.environ, {"COPILOT_BLOOM_ORIGINS": BLOOM_TWO}):
+            with patch.object(empower_portal, "load_view", side_effect=AssertionError("html reads data")):
+                status, headers, raw = invoke(empower_portal, "GET", "/api/empower_portal")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(headers["Content-Security-Policy"], FRAME_ANCESTORS)
+        html = raw.decode()
+        script = html[html.rfind("<script>") :]
+        self.assertIn("location.ancestorOrigins", script)
+        self.assertIn("window.parent === window", script)
+        self.assertIn("2500", script)
+        self.assertNotIn("new URL(document.referrer)", script)
+        self.assertNotIn("bloomParents.size === 1", script)
+        for name in CUSTOMERS:
+            self.assertNotIn(name, html)
+        return html
+
+    def _probe(self, html: str, **scenario) -> dict:
+        return bloom_frame_probe.probe_bloom_frame(html, scenario, "empower")
+
+    def test_reporting_referrer_still_requests_bloom_token(self):
+        html = self._framed_html()
+        result = self._probe(
+            html,
+            topLevel=False,
+            referrer=REPORTING_REFERRER,
+            ancestorOrigins=[],
+        )
+        self.assertEqual(
+            bloom_frame_probe.request_origins(result),
+            [BLOOM_VERCEL, BLOOM_PROD],
+        )
+        self.assertEqual(result["timeouts"], [2500])
+        self.assertEqual(result["fetches"], [])
+        self.assertTrue(result["dashboardHidden"])
+
+    def test_empty_referrer_with_two_bloom_origins_still_requests(self):
+        html = self._framed_html()
+        result = self._probe(html, topLevel=False, referrer="", ancestorOrigins=[])
+        self.assertEqual(
+            bloom_frame_probe.request_origins(result),
+            [BLOOM_VERCEL, BLOOM_PROD],
+        )
+        self.assertEqual(result["timeouts"], [2500])
+        self.assertEqual(result["fetches"], [])
+
+    def test_ancestor_origins_prefer_bloom_then_every_allowlisted_parent(self):
+        html = self._framed_html()
+        result = self._probe(
+            html,
+            topLevel=False,
+            referrer=REPORTING_REFERRER,
+            ancestorOrigins=["https://database-migration-chi.vercel.app", BLOOM_PROD],
+            messages=[
+                {
+                    "origin": "https://evil.example",
+                    "data": {"type": "happy-solar-goose", "action": "token", "token": SHELL_TOKEN},
+                },
+                {
+                    "origin": "https://evil.example",
+                    "data": {"type": "happy-solar-goose", "action": "token-unavailable"},
+                },
+            ],
+        )
+        self.assertEqual(
+            bloom_frame_probe.request_origins(result),
+            [BLOOM_PROD, BLOOM_VERCEL],
+        )
+        self.assertEqual(result["fetches"], [])
+        self.assertTrue(result["dashboardHidden"])
+
+        unlocked = self._probe(
+            html,
+            topLevel=False,
+            referrer=REPORTING_REFERRER,
+            ancestorOrigins=["https://database-migration-chi.vercel.app", BLOOM_PROD],
+            messages=[
+                {
+                    "origin": BLOOM_PROD,
+                    "data": {"type": "happy-solar-goose", "action": "token", "token": SHELL_TOKEN},
+                }
+            ],
+        )
+        self.assertEqual(len(unlocked["fetches"]), 1)
+        self.assertEqual(unlocked["fetches"][0]["url"], "/api/empower_portal?format=json")
+        self.assertEqual(unlocked["fetches"][0]["authorization"], "Bearer " + SHELL_TOKEN)
+        self.assertFalse(unlocked["dashboardHidden"])
+
+        denied = self._probe(
+            html,
+            topLevel=False,
+            referrer="",
+            ancestorOrigins=[BLOOM_PROD],
+            messages=[
+                {
+                    "origin": BLOOM_PROD,
+                    "data": {"type": "happy-solar-goose", "action": "token-unavailable"},
+                }
+            ],
+        )
+        self.assertEqual(denied["fetches"], [])
+        self.assertEqual(denied["locked"]["text"], "Sign in through Bloom Data Center")
+        self.assertFalse(denied["locked"]["hidden"])
+        self.assertTrue(denied["dashboardHidden"])
+
+    def test_top_level_empower_portal_stays_locked(self):
+        html = self._framed_html()
+        result = self._probe(
+            html,
+            topLevel=True,
+            referrer="https://bloom.happyslr.com/data",
+            ancestorOrigins=[BLOOM_PROD, BLOOM_VERCEL],
+        )
+        self.assertEqual(result["posts"], [])
+        self.assertEqual(result["fetches"], [])
+        self.assertEqual(result["timeouts"], [])
+        self.assertEqual(result["locked"]["text"], "Sign in through Bloom Data Center")
+        self.assertFalse(result["locked"]["hidden"])
+        self.assertTrue(result["dashboardHidden"])
 
 
 def _group_button(html: str, label: str) -> str:

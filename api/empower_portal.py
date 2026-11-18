@@ -31,6 +31,7 @@ from copilot.auth import (
     identity_from_bloom_bearer,
     identity_from_headers,
 )
+from copilot.bloom_frame import bloom_frame_script
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 from metrics.empower_portal_metrics import (
     SOURCE_LINE,
@@ -95,6 +96,7 @@ def send_html(handler, html: str) -> None:
 
 def render_empower_portal_html() -> str:
     origins = json.dumps(bloom_parent_origins())
+    frame_script = bloom_frame_script(indent="      ")
     page = """<!doctype html>
 <html class="oc-root" lang="en">
 <head>
@@ -202,18 +204,7 @@ def render_empower_portal_html() -> str:
         });
       }
 
-      function parentOrigin() {
-        if (window.parent === window) return "";
-        try {
-          if (document.referrer) {
-            const origin = new URL(document.referrer).origin;
-            return bloomParents.has(origin) ? origin : "";
-          }
-        } catch (err) {
-          return "";
-        }
-        return bloomParents.size === 1 ? Array.from(bloomParents)[0] : "";
-      }
+__BLOOM_FRAME__
 
       function showLocked() {
         locked.hidden = false;
@@ -230,8 +221,8 @@ def render_empower_portal_html() -> str:
       }
 
       function requestBloomToken() {
-        const origin = parentOrigin();
-        if (!origin) return Promise.resolve("");
+        const targets = bloomFrameTargets();
+        if (!targets.length) return Promise.resolve("");
         return new Promise(function (resolve) {
           const timer = window.setTimeout(function () {
             window.removeEventListener("message", onMessage);
@@ -253,7 +244,9 @@ def render_empower_portal_html() -> str:
             resolve(token);
           }
           window.addEventListener("message", onMessage);
-          window.parent.postMessage({ type: "happy-solar-goose", action: "request-token" }, origin);
+          targets.forEach(function (origin) {
+            window.parent.postMessage({ type: "happy-solar-goose", action: "request-token" }, origin);
+          });
         });
       }
 
@@ -387,6 +380,7 @@ def render_empower_portal_html() -> str:
         .replace("__NAV_CSS__", dashboard_nav_css())
         .replace("__NAV_HTML__", render_dashboard_nav("empower_portal"))
         .replace("__BLOOM_ORIGINS__", origins)
+        .replace("__BLOOM_FRAME__", frame_script)
     )
 
 

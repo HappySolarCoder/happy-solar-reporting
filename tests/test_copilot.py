@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import io
 import json
 import os
@@ -17,6 +18,23 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
+
+
+def _load_bloom_frame_probe():
+    path = ROOT / "tests" / "bloom_frame_probe.py"
+    spec = importlib.util.spec_from_file_location("bloom_frame_probe", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load bloom frame probe from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+bloom_frame_probe = _load_bloom_frame_probe()
+BLOOM_VERCEL = "https://happy-solar-bloom-portal.vercel.app"
+BLOOM_PROD = "https://bloom.happyslr.com"
+BLOOM_TWO = f"{BLOOM_VERCEL},{BLOOM_PROD}"
+REPORTING_REFERRER = "https://database-migration-chi.vercel.app/api/company_overview"
 
 from copilot.admin_actions import approve_term
 from copilot.auth import (
@@ -1063,6 +1081,65 @@ class CopilotTests(unittest.TestCase):
         self.assertNotIn("drawChips", html)
         self.assertNotIn("data-goose-q", html)
         self.assertNotIn('id="gooseChips"', html)
+
+    def _goose_html(self) -> str:
+        from copilot.ui import render_panel
+
+        with patch.dict(os.environ, {"COPILOT_BLOOM_ORIGINS": BLOOM_TWO}):
+            html = render_panel()
+        script = html[html.rfind("<script>") :]
+        self.assertIn("location.ancestorOrigins", script)
+        self.assertIn("window.parent === window", script)
+        self.assertIn("2500", script)
+        self.assertNotIn("new URL(document.referrer)", script)
+        self.assertNotIn("bloomParents.size === 1", script)
+        self.assertIn("bloomParents.has(event.origin)", script)
+        return html
+
+    def _probe_goose(self, html: str, **scenario) -> dict:
+        return bloom_frame_probe.probe_bloom_frame(html, scenario, "copilot")
+
+    def test_reporting_referrer_still_requests_bloom_token(self):
+        result = self._probe_goose(
+            self._goose_html(),
+            topLevel=False,
+            referrer=REPORTING_REFERRER,
+            ancestorOrigins=[],
+        )
+        self.assertEqual(bloom_frame_probe.request_origins(result), [BLOOM_VERCEL, BLOOM_PROD])
+        self.assertEqual(result["timeouts"], [2500])
+
+    def test_empty_referrer_with_two_bloom_origins_still_requests(self):
+        result = self._probe_goose(self._goose_html(), topLevel=False, referrer="", ancestorOrigins=[])
+        self.assertEqual(bloom_frame_probe.request_origins(result), [BLOOM_VERCEL, BLOOM_PROD])
+        actions = [post["data"]["action"] for post in result["posts"]]
+        self.assertEqual(actions.count("panel-open"), 2)
+        self.assertEqual(actions.count("request-token"), 2)
+
+    def test_ancestor_origins_prefer_bloom_then_every_allowlisted_parent(self):
+        result = self._probe_goose(
+            self._goose_html(),
+            topLevel=False,
+            referrer=REPORTING_REFERRER,
+            ancestorOrigins=["https://database-migration-chi.vercel.app", BLOOM_PROD],
+        )
+        self.assertEqual(bloom_frame_probe.request_origins(result), [BLOOM_PROD, BLOOM_VERCEL])
+        panel_open = [
+            post["origin"]
+            for post in result["posts"]
+            if (post.get("data") or {}).get("action") == "panel-open"
+        ]
+        self.assertEqual(panel_open, [BLOOM_PROD, BLOOM_VERCEL])
+
+    def test_top_level_goose_panel_does_not_request_a_token(self):
+        result = self._probe_goose(
+            self._goose_html(),
+            topLevel=True,
+            referrer="https://bloom.happyslr.com/data",
+            ancestorOrigins=[BLOOM_PROD, BLOOM_VERCEL],
+        )
+        self.assertEqual(result["posts"], [])
+        self.assertEqual(result["timeouts"], [])
 
     def test_panel_reads_company_overview_date_inputs(self):
         from copilot.ui import render_panel

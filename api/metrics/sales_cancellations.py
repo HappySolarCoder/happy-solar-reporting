@@ -20,6 +20,7 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 
 from lead_gen_source import inbound_source_label
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 
 
 OWNER_NAME_OVERRIDES = {
@@ -261,6 +262,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
     for snap in db.collection(c.opp_collection).stream():
         scanned += 1
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         contact_id = str(opp.get("contactId") or "").strip()
         if not contact_id:
@@ -353,11 +356,13 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "opportunities_scanned": scanned,
             "opportunities_matched_pipeline_scope": matched_pipeline,
             "opportunities_matched_sold_date_window": matched_window,
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "contract": {
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "window_field": "ghl_contacts_v2.customFields[P9oBjgbZjJdeE0OkBj9T]",
             "included_pipeline_names": list(c.included_pipeline_names),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "sold_stage_ids": list(c.sold_stage_ids),
             "cancelled_stage_ids": list(c.cancelled_stage_ids),
         },

@@ -10,6 +10,19 @@ from __future__ import annotations
 
 SWEEPER_PIPELINES = frozenset({"sweeper", "rehash"})
 
+# Empower+ (location MMKRDviKggXzlcHQTnvZ). Never a sales-funnel pipeline.
+# Match the id, not the name: the name can change.
+NON_FUNNEL_PIPELINE_IDS = frozenset({"5hPKCGzAskcC6LEZuc1H"})
+
+
+def compact_str(value: object) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def is_non_funnel_pipeline(pipeline_id: object) -> bool:
+    """True when this pipeline id is outside every sales-funnel metric."""
+    return compact_str(pipeline_id).strip() in NON_FUNNEL_PIPELINE_IDS
+
 
 def normalize_pipeline_name(name: object) -> str:
     return " ".join(str(name or "").strip().lower().split())

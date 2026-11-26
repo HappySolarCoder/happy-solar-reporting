@@ -41,6 +41,8 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
+
 TIMEZONE_NAME = "America/Phoenix"
 PHOENIX = ZoneInfo(TIMEZONE_NAME)
 PHOENIX_ZONE_NAMES = frozenset({"america/phoenix", "us/arizona"})
@@ -581,6 +583,8 @@ def _history_was_territory(rows: list[dict[str, Any]] | None) -> bool:
 
 
 def _opp_was_territory(opp: dict[str, Any], history: dict[str, list[dict[str, Any]]]) -> bool:
+    if is_non_funnel_pipeline(opp.get("pipelineId")):
+        return False
     if cac.is_territory_pipeline(opp.get("pipelineId")):
         return True
     return _history_was_territory(history.get(_opp_id(opp, "")))
@@ -685,6 +689,8 @@ def classify_window(
     seen_opps: set[str] = set()
 
     for index, opp in enumerate(pipeline_opps):
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if cac.compact_str(opp.get("pipelineId")) != LEAD_PIPELINE_ID:
             continue
         if cac.bucket_title(opp.get(cac.TITLE_FIELD) or opp.get("name")):
@@ -1094,6 +1100,8 @@ def assemble_ads_dashboard(
         "metric": "Ads Dashboard",
         "timezone": TIMEZONE_NAME,
         "read_only": True,
+        "contract": {"excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS)},
+        "debug": {"excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS)},
         "include_fb_quick_form": include_quick_form,
         "start": start_date,
         "end": end_date,
@@ -1377,6 +1385,8 @@ def load_pipeline_opps(db: Any, start_local: datetime, end_local: datetime) -> l
     loaded: list[dict[str, Any]] = []
     for snap in snaps:
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if not cac.compact_str(opp.get("id")):
             opp["id"] = snap.id
         if cac.compact_str(opp.get("pipelineId")) != LEAD_PIPELINE_ID:

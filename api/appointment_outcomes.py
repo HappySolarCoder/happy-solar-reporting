@@ -24,10 +24,14 @@ from zoneinfo import ZoneInfo
 API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+METRICS_DIR = API_DIR / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
 
 from google.cloud import firestore
 from google.oauth2 import service_account
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 
 TZ = ZoneInfo("America/New_York")
 SETTER_LAST_NAME_FIELD_ID = "Eq4NLTSkJ56KTxbxypuE"
@@ -267,6 +271,7 @@ def render_page(
         f"""<!doctype html>
 <html>
 <head>
+  <!-- excluded_pipeline_ids: {",".join(sorted(NON_FUNNEL_PIPELINE_IDS))} -->
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>Happy Solar - Appointment Outcomes</title>
@@ -513,6 +518,8 @@ class handler(BaseHTTPRequestHandler):
 
             for s in docs:
                 d = s.to_dict() or {}
+                if is_non_funnel_pipeline(d.get("pipelineId")):
+                    continue
                 dt_utc = parse_firestore_ts(d.get("appointmentStartTime"))
                 if not dt_utc:
                     continue

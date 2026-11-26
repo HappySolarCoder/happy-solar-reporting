@@ -42,7 +42,7 @@ from google.cloud import firestore
 
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
-from pipeline_scope import pipeline_in_scope, truthy_flag
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline, pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
     excluded_from_owner_performance,
     owner_performance_credits_sweeper_sale,
@@ -451,6 +451,8 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
 
     for opp_doc in opp_snaps:
         opp = opp_doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         stage_id = opp.get(contract.stage_field)
         if stage_id not in stage_set:
@@ -635,6 +637,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "distinct_contact_ids": len(unique_contact_ids),
             "duplicate_opportunities_removed": len(unique_opp_ids) - len(unique_contact_ids),
             "join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "contract": {
             "base_collection": contract.collection,
@@ -644,6 +647,7 @@ def compute_sales(db: firestore.Client, contract: SalesMetricContract, *, year: 
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "sold_date_field": f"ghl_contacts_v2.customFields[{contract.sold_date_custom_field_id}] (ISO)",
             "included_stage_ids": list(contract.stage_ids),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "filters": {
             "lead_source": lead_source,

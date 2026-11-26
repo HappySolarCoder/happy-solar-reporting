@@ -131,6 +131,7 @@ from funnel_test_address import (
 )
 from lead_gen_source import is_facebook_quick_form_source, is_inbound_lead_source
 from sales import SalesMetricContract, get_db
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 
 TIMEZONE_NAME = "America/New_York"
 INBOUND_ROW_TIMEZONE = "America/Phoenix"
@@ -913,6 +914,8 @@ def inbound_contact_title_buckets(raws: list[RawInboundOpp]) -> dict[str, str]:
 
 
 def is_territory_pipeline(pipeline_id: Any) -> bool:
+    if is_non_funnel_pipeline(pipeline_id):
+        return False
     return compact_str(pipeline_id) in TERRITORY_PIPELINE_ID_SET
 
 
@@ -1541,6 +1544,8 @@ def load_inbound_opps(db: firestore.Client) -> list[dict[str, Any]]:
     loaded: list[dict[str, Any]] = []
     for snap in snaps:
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if not compact_str(opp.get("id")):
             opp["id"] = snap.id
         loaded.append(opp)
@@ -1548,6 +1553,8 @@ def load_inbound_opps(db: firestore.Client) -> list[dict[str, Any]]:
 
 
 def territory_from_opp(opp: dict[str, Any], tzinfo, snap_id: str = "") -> TerritoryOpp | None:
+    if is_non_funnel_pipeline(opp.get("pipelineId")):
+        return None
     if not is_territory_pipeline(opp.get("pipelineId")):
         return None
     created = parse_iso_dt(opp.get(CREATED_AT_FIELD))
@@ -1655,6 +1662,8 @@ def load_sold_stage_contact_ids(
     sold_ids: set[str] = set()
     for snap in snaps:
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if opp.get(STAGE_FIELD) not in stage_set:
             continue
         cid = compact_str(opp.get("contactId"))
@@ -2004,6 +2013,7 @@ def assemble_inbound_cac(
             "title_field": f"{OPP_COLLECTION}.{TITLE_FIELD}",
             "pipeline_name": INBOUND_PIPELINE_NAME,
             "pipeline_id": INBOUND_PIPELINE_ID,
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "refunded_stage_name": REFUNDED_STAGE_NAME,
             "refunded_stage_id": REFUNDED_STAGE_ID,
             "sale_stage_names": list(SALE_STAGE_NAMES),
@@ -2470,6 +2480,8 @@ def first_ll_created_at_by_contact(
         first: datetime | None = None
         for snap in snaps:
             opp = snap.to_dict() or {}
+            if is_non_funnel_pipeline(opp.get("pipelineId")):
+                continue
             if compact_str(opp.get("pipelineId")) != INBOUND_PIPELINE_ID:
                 continue
             created = parse_iso_dt(opp.get(CREATED_AT_FIELD))

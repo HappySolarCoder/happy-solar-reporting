@@ -16,6 +16,8 @@ and payroll.
 
 from __future__ import annotations
 
+from pipeline_scope import is_non_funnel_pipeline
+
 import re
 import sys
 from datetime import date, datetime, timezone
@@ -260,6 +262,8 @@ def sweeper_funnel_rows(
     kept: list[dict] = []
     for row in rows or []:
         if not isinstance(row, dict):
+            continue
+        if is_non_funnel_pipeline(row.get("pipelineId")):
             continue
         sweeper = compact_text(row.get(name_field))
         if is_blank_last_name(sweeper):

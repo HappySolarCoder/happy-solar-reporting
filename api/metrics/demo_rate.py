@@ -51,7 +51,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import inbound_source_label
-from pipeline_scope import pipeline_in_scope, truthy_flag
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline, pipeline_in_scope, truthy_flag
 from sit_timestamp import frozen_sit_timestamp
 from sweeper_rehash_attribution import (
     attributed_last_name,
@@ -962,6 +962,8 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
 
     for snap in opp_snaps:
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         pname = resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         pname_low = pname.lower()
@@ -1110,6 +1112,12 @@ def build_payload(db: firestore.Client, year: int, month: int, filters: dict[str
         "rows": matching,
         "owner_profiles": list(owner_profiles.values()),
         "setter_profiles": setter_profiles,
+        "contract": {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        },
+        "debug": {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        },
     }
 
 

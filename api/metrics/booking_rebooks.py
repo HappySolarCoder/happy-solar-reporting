@@ -30,6 +30,7 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from cycle_view import base_opp_id
+from pipeline_scope import is_non_funnel_pipeline
 
 NY = ZoneInfo("America/New_York")
 CACHE_SECONDS = 600
@@ -418,6 +419,8 @@ def load_opportunities_for_contacts(db: Any, contact_ids: Iterable[str]) -> list
             data = snap.to_dict() or {}
             if not isinstance(data, dict):
                 continue
+            if is_non_funnel_pipeline(data.get("pipelineId")):
+                continue
             data.setdefault("id", snap.id)
             oid = compact(data.get("id") or snap.id)
             if oid and oid not in seen_ids:
@@ -461,7 +464,9 @@ def rebook_decision(
     regional = [
         opp
         for opp in opportunities
-        if isinstance(opp, dict) and is_regional_pipeline(pipeline_name(opp.get("pipelineId")))
+        if isinstance(opp, dict)
+        and not is_non_funnel_pipeline(opp.get("pipelineId"))
+        and is_regional_pipeline(pipeline_name(opp.get("pipelineId")))
     ]
     if not regional:
         return "no_regional", None
@@ -534,6 +539,8 @@ def pick_most_recent_regional(
     for opp in opportunities:
         if not isinstance(opp, dict):
             continue
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if not is_regional_pipeline(pipeline_name(opp.get("pipelineId"))):
             continue
         moment = opportunity_created_moment(opp)
@@ -551,7 +558,11 @@ def pick_most_recent_regional(
     real_id = base_opp_id(best.get("id"))
     if real_id and real_id != compact(best.get("id")):
         for opp in opportunities:
-            if compact(opp.get("id")) == real_id and is_regional_pipeline(pipeline_name(opp.get("pipelineId"))):
+            if (
+                compact(opp.get("id")) == real_id
+                and not is_non_funnel_pipeline(opp.get("pipelineId"))
+                and is_regional_pipeline(pipeline_name(opp.get("pipelineId")))
+            ):
                 return opp
         best = dict(best)
         best["id"] = real_id

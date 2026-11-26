@@ -64,6 +64,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
+
 NY = ZoneInfo("America/New_York")
 
 REBOOK_COLLECTION = "ghl_selfgen_rebooks_v1"
@@ -383,6 +385,8 @@ def other_opps_created_in_month(db: Any, contact_id: str, opp_id: str, day: date
         if snap.id == opp_id:
             continue
         d = snap.to_dict() or {}
+        if is_non_funnel_pipeline(d.get("pipelineId")):
+            continue
         if compact(d.get("id")) == opp_id:
             continue
         created = as_utc(d.get("createdAt"))
@@ -467,6 +471,9 @@ def load_rebook_credits(
 
         if not opp or not cid:
             skip("missing_opportunity_or_contact")
+            continue
+        if is_non_funnel_pipeline(opp.get("pipelineId")) or is_non_funnel_pipeline(log.get("pipelineId")):
+            skip("non_funnel_pipeline")
             continue
         if is_revival:
             if sweeper_last_name(contact, opp):

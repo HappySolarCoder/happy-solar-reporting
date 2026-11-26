@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+from pathlib import Path
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
@@ -25,6 +27,11 @@ from zoneinfo import ZoneInfo
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_METRICS = Path(__file__).resolve().parent / "metrics"
+if str(_METRICS) not in sys.path:
+    sys.path.insert(0, str(_METRICS))
+from pipeline_scope import is_non_funnel_pipeline  # noqa: E402
 
 
 BUFFALO_SOLD_STAGE_IDS = {
@@ -634,6 +641,8 @@ def build_data(db, year, month, default_override, row_overrides, sort_col="sold_
     rows = []
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         stage_id = str(opp.get("pipelineStageId") or "")
         if stage_id not in BUFFALO_SOLD_STAGE_IDS:
             continue

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from copilot.periods import (
     TimezoneUnconfirmed,
@@ -348,7 +350,13 @@ class ScopeDecision:
     uncertainty_reason: str = ""
 
     def as_dict(self) -> dict:
+        metrics = Path(__file__).resolve().parents[1] / "metrics"
+        if str(metrics) not in sys.path:
+            sys.path.insert(0, str(metrics))
+        from pipeline_scope import NON_FUNNEL_PIPELINE_IDS
+
         return {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "intent": self.intent,
             "company_text": self.company_text,
             "denial_text": self.denial_text,

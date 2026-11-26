@@ -38,6 +38,7 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 
 from lead_gen_source import inbound_source_label
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,8 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
     for opp_snap in db.collection(c.opps).stream():
         scanned += 1
         opp = opp_snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         stage_id = opp.get(c.stage_field)
         if stage_id not in stage_set:
@@ -263,9 +266,11 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
             "lead_source_field": f"{c.contacts}.customFields[{c.lead_source_contact_cf_id}]",
             "lead_source": lead_source,
             "included_stage_ids": list(c.stage_ids),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "debug": {
             "opps_scanned": scanned,
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "opps_matched_stage": matched_stage,
             "opps_matched_stage_and_sold_date": matched_date,
             "rows_counted": len(rows),

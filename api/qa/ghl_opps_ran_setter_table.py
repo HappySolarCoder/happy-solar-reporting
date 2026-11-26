@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 from typing import Any
@@ -32,6 +34,11 @@ from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_METRICS = Path(__file__).resolve().parents[1] / "metrics"
+if str(_METRICS) not in sys.path:
+    sys.path.insert(0, str(_METRICS))
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -187,6 +194,8 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
     for snap in q.stream():
         scanned += 1
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         dispo = opp.get(c.disposition_field)
         if dispo not in ("Sit", "No Sit"):
@@ -248,11 +257,13 @@ def compute(db: firestore.Client, c: Contract, *, year: int, month: int, start: 
             "disposition_value": ["Sit", "No Sit"],
             "pipelines_included": list(c.included_pipeline_names),
             "pipelines_excluded": list(c.excluded_pipeline_names),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "setter_field": f"{c.contacts}.customFields[{c.setter_cf_id}]",
         },
         "debug": {
             "opps_scanned": scanned,
             "rows_counted": len(rows_sorted),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "breakdowns": {
             "ran_by_setter_last_name": ran_by_setter,

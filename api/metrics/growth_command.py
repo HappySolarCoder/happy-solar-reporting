@@ -531,6 +531,8 @@ def summarize(spec: dict) -> dict:
     return {
         "is_demo": is_demo,
         "validated": False,
+        "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
+        "contract": {"excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"]},
         "badge": "SAMPLE DATA" if is_demo else None,
         "title": "Growth command center",
         "subtitle": "Paid acquisition through sold deals",

@@ -23,6 +23,7 @@ for _path in (str(METRICS_DIR), str(PRIVATE_DIR)):
         sys.path.insert(0, _path)
 
 import demo_rate
+from pipeline_scope import is_non_funnel_pipeline
 from sweeper_rehash_attribution import attributed_last_name, sweeper_rehash_last_name
 from fma_payroll_logic import (
     LEAD_GEN_SOURCE_CF,
@@ -194,6 +195,8 @@ def collect_sits(db: Any, week_start, week_end) -> list[dict[str, Any]]:
 
     sits: list[dict[str, Any]] = []
     for snap, opp in opps:
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         pname = demo_rate.resolve_pipeline_name(pipelines, opp.get("pipelineId"), fallback="").strip()
         if not demo_rate.pipeline_in_demo_scope(pname.lower(), contract):
             continue

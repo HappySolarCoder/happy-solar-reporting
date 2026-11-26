@@ -487,6 +487,7 @@ def compute_diamond_opp_list(
             ),
             "name_url": GHL_OPPORTUNITY_URL,
             "collections": [OPP_COLLECTION, CONTACT_COLLECTION, "ghl_pipelines_v2"],
+            "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
         },
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }

@@ -27,6 +27,7 @@ DEFINITION = {
     "timestamp": "frozen_sit_timestamp = min(appointmentOccurredAt, dispositionDate)",
     "pipelines_included": ["buffalo", "rochester", "virtual", "syracuse", "rehash", "sweeper"],
     "pipelines_excluded": ["inbound/lead locker"],
+    "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
     "follow_up": "not a second demo",
     "setter": "contact Setter Last Name Eq4NLTSkJ56KTxbxypuE, else opportunity same field, else last token of Setter Name Xhy6k4xfHRJ6s5IbfA5x; Sweeper/Rehash Last Name HWfjOp8MvE6soxBAL75f replaces that setter when the field is filled and the demo's America/New_York date is on or after 2026-09-24",
     "lead_gen_source": "contact hd5QqHEOVSsPom5bJ32P",

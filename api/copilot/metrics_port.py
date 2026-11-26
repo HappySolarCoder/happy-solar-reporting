@@ -88,6 +88,7 @@ class LiveMetrics:
             end=period.end,
         )
         return {
+            "excluded_pipeline_ids": sorted(_load("pipeline_scope").NON_FUNNEL_PIPELINE_IDS),
             "sales": sales.get("result"),
             "created": created.get("result"),
             "ran": ran.get("result"),

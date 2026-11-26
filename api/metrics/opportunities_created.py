@@ -47,7 +47,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from ghl_user_names import load_ghl_user_names
-from pipeline_scope import pipeline_in_scope, truthy_flag
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline, pipeline_in_scope, truthy_flag
 from lead_gen_source import inbound_source_label
 from leadgen_bucket import BUCKETS, leadgen_bucket
 from sweeper_rehash_attribution import (
@@ -504,6 +504,9 @@ def apply_booking_credits(
         if reason != "credit" or regional is None:
             skipped_no_regional += 1
             continue
+        if is_non_funnel_pipeline(regional.get("pipelineId")):
+            skipped_filter += 1
+            continue
         pname = pipeline_label(regional.get("pipelineId"))
         pname_norm = pname.strip().lower()
         if pname_norm in excluded:
@@ -678,6 +681,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
     for doc in opp_snaps:
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         opp_id = str(opp.get("id") or doc.id)
 
         created = parse_iso_dt(opp.get(c.created_at_field))
@@ -835,6 +840,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "opps_in_time_and_pipeline_scope": in_pipeline,
             "rows_listed": len(matching_rows),
             "booking_rebooks": booking_debug,
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "contract": {
             "base_collection": c.opp_collection,
@@ -860,6 +866,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "pipeline_field": f"{c.opp_collection}.pipelineId -> {c.pipeline_collection}.name",
             "included_pipeline_names": list(c.included_pipeline_names),
             "excluded_pipeline_names": list(c.excluded_pipeline_names),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "owner_field": f"{c.opp_collection}.assignedTo -> roster_people_v1.ghl_user_id -> display_name (misses: ghl_users_v2 get_all, then assignedToName)",
             "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "sweeper_rehash_last_name_field": (
@@ -993,7 +1000,11 @@ def add_self_gen_rebooks(
                 r for r in res.rows
                 if not setter_filter_norm or str(r.get("setterLastName") or "").strip().lower() == setter_filter_norm
             ]
-            debug = {"logs_scanned": res.logs_scanned, "excluded": res.excluded}
+            debug = {
+                "logs_scanned": res.logs_scanned,
+                "excluded": res.excluded,
+                "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+            }
         except Exception as exc:  # never break the dashboards on the opt-in path
             payload["self_gen_rebooks_error"] = str(exc)[:300]
             rows = []

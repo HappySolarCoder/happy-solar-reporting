@@ -46,6 +46,7 @@ from knock_count import (
     to_millis,
 )
 from lead_gen_source import inbound_source_label
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 from raydar_test_data import (
     is_excluded_raydar_record,
     is_raydar_test_record,
@@ -496,6 +497,8 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
     # GHL opp-derived metrics
     for snap in db.collection("ghl_opportunities_v2").stream():
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         pipeline_id = compact_str(opp.get("pipelineId"))
         pipeline_name = compact_str(pipeline_names.get(pipeline_id) or pipeline_id or "unknown")
         if pipeline_name.lower() == "inbound/lead locker":
@@ -679,6 +682,7 @@ def build_payload(db: firestore.Client, *, start: str, end: str) -> dict[str, An
             "month_hint": month,
             "roster_count": len(roster_people),
             "ran_appointment_rows": len(ran_appointments),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
     }
 

@@ -4,7 +4,7 @@
 Dry-run is the default. It prints counts and does not write.
 
     python scripts/backfill_nyhep_stage_events.py --fixture tests/fixtures/nyhep_stage_events.json
-    python scripts/backfill_nyhep_stage_events.py --local-dir ./nyhep-exports
+    python scripts/backfill_nyhep_stage_events.py --local-dir ./nyhep-exports --dry-run
     python scripts/backfill_nyhep_stage_events.py --write
 
 --write is explicit. Do not pass it against production unless that write has
@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import zipfile
+from datetime import date, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,9 +41,13 @@ from metrics.nyhep_stage_events import (  # noqa: E402
 )
 
 
-_SHEET_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+_SHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _ENROLLMENT_FILE = "EnrollmentList.xlsx"
 _TODO_FILE = "ToDoList.xlsx"
+_EXCEL_EPOCH = date(1899, 12, 30)
+_BUILTIN_DATE_FORMATS = {14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47}
+_MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})")
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 
 
 def _norm_header(value: object) -> str:
@@ -60,6 +66,53 @@ def _cell(row: list[str], mapping: dict[str, int], *names: str) -> str:
     return ""
 
 
+def _column_index(ref: str) -> int | None:
+    letters = []
+    for char in ref:
+        if char.isalpha():
+            letters.append(char)
+        else:
+            break
+    if not letters:
+        return None
+    index = 0
+    for char in letters:
+        index = index * 26 + (ord(char.upper()) - 64)
+    return index - 1
+
+
+def _looks_like_date_format(code: str) -> bool:
+    lowered = code.lower()
+    if any(token in lowered for token in ("yy", "dd")):
+        return True
+    return "m" in lowered and "d" in lowered and "y" in lowered
+
+
+def as_mdy(value: object) -> str:
+    """Calendar date as M/D/YYYY. Excel serials and datetimes are converted."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    matched = _MDY.match(text)
+    if matched:
+        month, day, year = (int(part) for part in matched.groups())
+        return f"{month}/{day}/{year}"
+    matched = _ISO_DATE.match(text)
+    if matched:
+        year, month, day = (int(part) for part in matched.groups())
+        return f"{month}/{day}/{year}"
+    try:
+        serial = float(text)
+    except ValueError:
+        return text
+    if serial < 1 or serial > 80000:
+        return text
+    parsed = _EXCEL_EPOCH + timedelta(days=int(serial))
+    if not 1990 <= parsed.year <= 2100:
+        return text
+    return f"{parsed.month}/{parsed.day}/{parsed.year}"
+
+
 def projects_from_tables(enrollment_rows: list[list[str]], todo_rows: list[list[str]] | None) -> list[dict]:
     """Join an Enrollment List sheet to a To-Do List sheet on enrollment number."""
     if not enrollment_rows:
@@ -74,7 +127,8 @@ def projects_from_tables(enrollment_rows: list[list[str]], todo_rows: list[list[
                 continue
             todos[enroll_id] = {
                 "step": _cell(row, todo_map, "Workflow Step", "Step"),
-                "step_status": _cell(row, todo_map, "Step Status"),
+                "step_status": _cell(row, todo_map, "Workflow Step Status", "Step Status"),
+                "due": _cell(row, todo_map, "Due Date", "Due"),
             }
     projects = []
     for row in enrollment_rows[1:]:
@@ -87,11 +141,11 @@ def projects_from_tables(enrollment_rows: list[list[str]], todo_rows: list[list[
             "customer": _cell(row, mapping, "Customer", "Customer Name"),
             "city": _cell(row, mapping, "City"),
             "county": _cell(row, mapping, "County"),
-            "enrolled": _cell(row, mapping, "Enrolled", "Enrollment Date", "Date Enrolled"),
+            "enrolled": as_mdy(_cell(row, mapping, "Enrolled", "Enrollment Date", "Date Enrolled")),
             "status": _cell(row, mapping, "Status", "Enrollment Status"),
             "step": _cell(row, mapping, "Workflow Step", "Step"),
             "stepStatus": _cell(row, mapping, "Step Status"),
-            "due": _cell(row, mapping, "Due", "Due Date"),
+            "due": as_mdy(_cell(row, mapping, "Due", "Due Date")),
             "tier": _cell(row, mapping, "Tier"),
             "installer": _cell(row, mapping, "Installer"),
             "program": _cell(row, mapping, "Program"),
@@ -102,27 +156,105 @@ def projects_from_tables(enrollment_rows: list[list[str]], todo_rows: list[list[
             project["todoStep"] = todo["step"]
             if todo["step_status"]:
                 project["stepStatus"] = todo["step_status"]
+            if todo["due"]:
+                project["due"] = as_mdy(todo["due"])
         projects.append(project)
     return projects
 
 
+def _shared_strings(book: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in book.namelist():
+        return []
+    root = ElementTree.fromstring(book.read("xl/sharedStrings.xml"))
+    strings = []
+    for item in root.findall(f"{{{_SHEET_NS}}}si"):
+        runs = item.findall(f"{{{_SHEET_NS}}}r")
+        if runs:
+            parts = []
+            for run in runs:
+                for node in run.findall(f"{{{_SHEET_NS}}}t"):
+                    parts.append(node.text or "")
+            strings.append("".join(parts))
+            continue
+        strings.append("".join(node.text or "" for node in item.findall(f"{{{_SHEET_NS}}}t")))
+    return strings
+
+
+def _date_style_indexes(book: zipfile.ZipFile) -> set[int]:
+    if "xl/styles.xml" not in book.namelist():
+        return set()
+    root = ElementTree.fromstring(book.read("xl/styles.xml"))
+    custom: dict[int, str] = {}
+    for num in root.findall(f"{{{_SHEET_NS}}}numFmts/{{{_SHEET_NS}}}numFmt"):
+        try:
+            custom[int(num.get("numFmtId") or 0)] = num.get("formatCode") or ""
+        except ValueError:
+            continue
+    date_ids = set(_BUILTIN_DATE_FORMATS)
+    for fmt_id, code in custom.items():
+        if _looks_like_date_format(code):
+            date_ids.add(fmt_id)
+    indexes = set()
+    for index, xf in enumerate(root.findall(f"{{{_SHEET_NS}}}cellXfs/{{{_SHEET_NS}}}xf")):
+        try:
+            fmt_id = int(xf.get("numFmtId") or 0)
+        except ValueError:
+            continue
+        if fmt_id in date_ids:
+            indexes.add(index)
+    return indexes
+
+
+def _cell_text(cell: ElementTree.Element, shared: list[str], date_styles: set[int]) -> str:
+    inline = cell.find(f"{{{_SHEET_NS}}}is")
+    if inline is not None:
+        return "".join(node.text or "" for node in inline.iter(f"{{{_SHEET_NS}}}t"))
+    value = cell.find(f"{{{_SHEET_NS}}}v")
+    raw = "" if value is None or value.text is None else value.text
+    if cell.get("t") == "s":
+        try:
+            index = int(raw)
+        except ValueError:
+            return ""
+        return shared[index] if 0 <= index < len(shared) else ""
+    style = cell.get("s")
+    try:
+        style_index = int(style) if style is not None else None
+    except ValueError:
+        style_index = None
+    if style_index is not None and style_index in date_styles:
+        return as_mdy(raw)
+    return raw
+
+
 def read_xlsx(path: Path) -> list[list[str]]:
-    """Read the first worksheet. Cells are inline strings or raw values."""
-    namespace = _SHEET_NS["m"]
+    """Read the first worksheet, including shared strings and sparse cells."""
     with zipfile.ZipFile(path) as book:
-        sheet = ElementTree.fromstring(book.read("xl/worksheets/sheet1.xml"))
+        shared = _shared_strings(book)
+        date_styles = _date_style_indexes(book)
+        sheet_name = "xl/worksheets/sheet1.xml"
+        if sheet_name not in book.namelist():
+            sheets = sorted(
+                name for name in book.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            )
+            if not sheets:
+                return []
+            sheet_name = sheets[0]
+        sheet = ElementTree.fromstring(book.read(sheet_name))
     rows = []
-    for row in sheet.findall(f".//{{{namespace}}}sheetData/{{{namespace}}}row"):
-        cells = []
-        for cell in row.findall(f"{{{namespace}}}c"):
-            inline = cell.find(f"{{{namespace}}}is")
-            if inline is not None:
-                text = "".join(node.text or "" for node in inline.iter(f"{{{namespace}}}t"))
-            else:
-                value = cell.find(f"{{{namespace}}}v")
-                text = "" if value is None or value.text is None else value.text
-            cells.append(text)
-        rows.append(cells)
+    for row in sheet.findall(f".//{{{_SHEET_NS}}}sheetData/{{{_SHEET_NS}}}row"):
+        values: dict[int, str] = {}
+        next_index = 0
+        for cell in row.findall(f"{{{_SHEET_NS}}}c"):
+            index = _column_index(cell.get("r") or "")
+            if index is None:
+                index = next_index
+            values[index] = _cell_text(cell, shared, date_styles)
+            next_index = index + 1
+        if not values:
+            rows.append([])
+            continue
+        rows.append([values.get(index, "") for index in range(max(values) + 1)])
     return rows
 
 
@@ -137,10 +269,18 @@ def snapshots_from_local_dir(folder: Path) -> list[dict]:
         todo_path = child / _TODO_FILE
         todo_rows = read_xlsx(todo_path) if todo_path.is_file() else None
         checked = child / "checkedAt.txt"
+        data_path = child / "data.json"
+        if checked.is_file():
+            checked_at = checked.read_text(encoding="utf-8").strip()
+        elif data_path.is_file():
+            payload = json.loads(data_path.read_text(encoding="utf-8"))
+            checked_at = str(payload.get("checkedAt") or "").strip() if isinstance(payload, dict) else ""
+        else:
+            checked_at = ""
         snapshots.append(
             {
                 "snapshot": child.name,
-                "checkedAt": checked.read_text(encoding="utf-8").strip() if checked.is_file() else child.name,
+                "checkedAt": checked_at or child.name,
                 "projects": projects_from_tables(read_xlsx(enrollment), todo_rows),
             }
         )
@@ -164,7 +304,7 @@ def _overlay(base: list[dict], extra: list[dict]) -> list[dict]:
             item = dict(project)
             extra_project = extras.get(str(item.get("id") or ""))
             if extra_project:
-                for field in ("program", "projectType", "todoStep", "onTodo", "stepStatus"):
+                for field in ("program", "projectType", "todoStep", "onTodo", "stepStatus", "due", "enrolled"):
                     if field in extra_project and extra_project.get(field) not in ("", None):
                         item[field] = extra_project[field]
             projects.append(item)
@@ -204,7 +344,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Dry-run NYHEP stage events unless --write is set.")
     parser.add_argument("--fixture", help="JSON snapshots. Does not read Firestore.")
     parser.add_argument("--local-dir", help="Snapshot folders with EnrollmentList.xlsx and ToDoList.xlsx.")
-    parser.add_argument("--write", action="store_true", help="Write event documents. Omit this to dry-run.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Print counts and do not write. This is the default.")
+    mode.add_argument("--write", action="store_true", help="Write event documents. Dry-run is the default.")
     args = parser.parse_args(argv)
     if not args.fixture and not args.local_dir and not args.write:
         parser.error("pass --fixture, --local-dir, or --write")

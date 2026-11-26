@@ -388,6 +388,226 @@ class StageEventTests(unittest.TestCase):
         self.assertEqual(snaps[0]["projects"][0]["todoStep"], "Workscope Submission")
         self.assertEqual(snaps[0]["checkedAt"], "Wed Nov 18, 9:00 AM Phoenix")
 
+    def test_shared_string_workbook_dry_run_is_stable(self):
+        import backfill_nyhep_stage_events as backfill
+
+        enrolled_serial = (date(2026, 9, 1) - date(1899, 12, 30)).days
+        due_serial = (date(2026, 11, 20) - date(1899, 12, 30)).days
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_export(
+                root / "2026-11-17_pm",
+                step="Workscope Review",
+                enrolled_serial=enrolled_serial,
+                due_serial=due_serial,
+                checked_at="Tue Nov 17, 2:31 PM Phoenix",
+            )
+            _write_export(
+                root / "2026-11-18_am",
+                step="Final Project Review",
+                enrolled_serial=enrolled_serial,
+                due_serial=due_serial,
+                checked_at="Wed Nov 18, 8:10 AM Phoenix",
+            )
+            parsed = backfill.snapshots_from_local_dir(root)
+            by_id = {row["snapshot"]: row for row in parsed}
+            first = by_id["2026-11-17_pm"]["projects"][0]
+            self.assertEqual(first["id"], "1170001")
+            self.assertEqual(first["customer"], "Ada Marin")
+            self.assertEqual(first["status"], "Open")
+            self.assertEqual(first["step"], "Workscope Review")
+            self.assertEqual(first["todoStep"], "Workscope Submission")
+            self.assertEqual(first["stepStatus"], "New")
+            self.assertEqual(first["enrolled"], "9/1/2026")
+            self.assertEqual(first["due"], "11/20/2026")
+            self.assertEqual(by_id["2026-11-17_pm"]["checkedAt"], "Tue Nov 17, 2:31 PM Phoenix")
+            self.assertEqual(by_id["2026-11-18_am"]["projects"][0]["step"], "Final Project Review")
+            outputs = []
+            for _ in range(2):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPTS / "backfill_nyhep_stage_events.py"),
+                        "--local-dir",
+                        str(root),
+                        "--dry-run",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertNotIn("unrecognized arguments", completed.stderr)
+                self.assertIn("dry-run", completed.stdout)
+                self.assertNotIn("wrote ", completed.stdout)
+                self.assertNotIn("NYHEP_INGEST_SECRET", completed.stdout)
+                outputs.append(completed.stdout)
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("observations 2", outputs[0])
+        self.assertIn("enrollments 1", outputs[0])
+        self.assertIn("events 2", outputs[0])
+        self.assertNotIn("observations 0", outputs[0])
+
+
+def _write_export(folder: Path, step: str, enrolled_serial: int, due_serial: int, checked_at: str) -> None:
+    """One NYHEP-shaped export: shared strings, a skipped empty cell, and date serials."""
+    folder.mkdir()
+    (folder / "data.json").write_text(json.dumps({"checkedAt": checked_at}), encoding="utf-8")
+    headers = [
+        "Enrollment Number",
+        "Customer",
+        "Notes",
+        "Status",
+        "Workflow Step",
+        "Enrollment Date",
+        "Program",
+        "Project Type",
+    ]
+    # Notes (column C) is omitted from the data row, the way Excel drops an empty cell.
+    enrollment_cells = {
+        "A": "1170001",
+        "B": "Ada Marin",
+        "D": "Open",
+        "E": step,
+        "F": str(enrolled_serial),
+        "G": "EmPower+",
+        "H": "Residential",
+    }
+    _write_shared_sheet(
+        folder / "EnrollmentList.xlsx",
+        headers,
+        enrollment_cells,
+        date_columns={"F"},
+    )
+    _write_shared_sheet(
+        folder / "ToDoList.xlsx",
+        ["Enrollment Number", "Workflow Step", "Workflow Step Status", "Due Date"],
+        {
+            "A": "1170001",
+            "B": "Workscope Submission",
+            "C": "New",
+            "D": str(due_serial),
+        },
+        date_columns={"D"},
+        rich_headers={"Workflow Step Status": ("Workflow Step ", "Status")},
+    )
+
+
+def _col_letter(index: int) -> str:
+    letters = ""
+    number = index + 1
+    while number:
+        number, rem = divmod(number - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def _write_shared_sheet(
+    path: Path,
+    headers: list[str],
+    data_cells: dict[str, str],
+    date_columns: set[str],
+    rich_headers: dict[str, tuple[str, str]] | None = None,
+) -> None:
+    rich_headers = rich_headers or {}
+    strings: list[str] = []
+    index_of: dict[str, int] = {}
+
+    def share(value: str) -> int:
+        if value not in index_of:
+            index_of[value] = len(strings)
+            strings.append(value)
+        return index_of[value]
+
+    for header in headers:
+        if header not in rich_headers:
+            share(header)
+    for value in data_cells.values():
+        if not value.isdigit():
+            share(value)
+    shared_xml = []
+    for text in strings:
+        if text in rich_headers:
+            left, right = rich_headers[text]
+            shared_xml.append(f"<si><r><t>{escape(left)}</t></r><r><t>{escape(right)}</t></r></si>")
+        else:
+            shared_xml.append(f"<si><t>{escape(text)}</t></si>")
+    # Rich headers are not in `strings` yet. Add them so the header cell can point at the rich item.
+    for header, parts in rich_headers.items():
+        if header not in index_of:
+            index_of[header] = len(strings)
+            strings.append(header)
+            left, right = parts
+            shared_xml.append(f"<si><r><t>{escape(left)}</t></r><r><t>{escape(right)}</t></r></si>")
+
+    def header_cells() -> str:
+        cells = []
+        for index, header in enumerate(headers):
+            ref = f"{_col_letter(index)}1"
+            cells.append(f'<c r="{ref}" t="s"><v>{index_of[header]}</v></c>')
+        return "".join(cells)
+
+    def data_row() -> str:
+        cells = []
+        for column, value in data_cells.items():
+            ref = f"{column}2"
+            if column in date_columns:
+                cells.append(f'<c r="{ref}" s="1"><v>{value}</v></c>')
+            elif value.isdigit() and value not in index_of:
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                cells.append(f'<c r="{ref}" t="s"><v>{index_of[value]}</v></c>')
+        return "".join(cells)
+
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<sheetData><row r=\"1\">{header_cells()}</row><row r=\"2\">{data_row()}</row></sheetData></worksheet>"
+    )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>'
+    )
+    shared = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"{''.join(shared_xml)}</sst>"
+    )
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/></Relationships>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/sharedStrings.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        "</Types>"
+    )
+    with zipfile.ZipFile(path, "w") as book:
+        book.writestr("[Content_Types].xml", content_types)
+        book.writestr("xl/workbook.xml", workbook)
+        book.writestr("xl/_rels/workbook.xml.rels", rels)
+        book.writestr("xl/sharedStrings.xml", shared)
+        book.writestr("xl/styles.xml", styles)
+        book.writestr("xl/worksheets/sheet1.xml", sheet)
+
 
 def _write_xlsx(path: Path, rows: list[list[str]]) -> None:
     sheet_rows = []

@@ -76,10 +76,12 @@ def load_view() -> dict:
     return build_portal_view(payload, load_recent_events(db, payload))
 
 
-def _send(handler, status: int, body: bytes, content_type: str, cache_control: str) -> None:
+def _send(handler, status: int, body: bytes, content_type: str, cache_control: str, vary: str | None = None) -> None:
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Cache-Control", cache_control)
+    if vary:
+        handler.send_header("Vary", vary)
     handler.send_header("Content-Security-Policy", FRAME_ANCESTORS)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
@@ -92,7 +94,8 @@ def send_json(handler, status: int, payload: dict) -> None:
         status,
         json.dumps(payload, default=str).encode("utf-8"),
         "application/json; charset=utf-8",
-        "s-maxage=300",
+        "private, max-age=300",
+        "Authorization",
     )
 
 

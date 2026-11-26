@@ -526,7 +526,8 @@ class PageTests(unittest.TestCase):
 
         status, headers, raw = allowed({})
         self.assertEqual(status, 401)
-        self.assertEqual(headers["Cache-Control"], "s-maxage=300")
+        self.assertEqual(headers["Cache-Control"], "private, max-age=300")
+        self.assertEqual(headers["Vary"], "Authorization")
         self.assertEqual(headers["Content-Security-Policy"], FRAME_ANCESTORS)
         self.assertNotIn("*.vercel.app", headers["Content-Security-Policy"])
         self.assertEqual(json.loads(raw.decode()), {"ok": False, "error": "unauthorized"})
@@ -560,7 +561,8 @@ class PageTests(unittest.TestCase):
         for role in ("manager", "coach"):
             status, headers, raw = allowed(bloom_headers(role))
             self.assertEqual(status, 200, role)
-            self.assertEqual(headers["Cache-Control"], "s-maxage=300")
+            self.assertEqual(headers["Cache-Control"], "private, max-age=300")
+            self.assertEqual(headers["Vary"], "Authorization")
             self.assertEqual(headers["Content-Security-Policy"], FRAME_ANCESTORS)
             body = json.loads(raw.decode())
             self.assertEqual(body["metrics"]["overdue"], 1)

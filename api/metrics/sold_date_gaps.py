@@ -33,6 +33,7 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 from sales import SalesMetricContract, get_db
 
 SOLD_DATE_FIELD_ID = "P9oBjgbZjJdeE0OkBj9T"
@@ -185,6 +186,8 @@ def compute_sold_date_gaps(
 
     for snap in opp_snaps:
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         stage_id = opp.get(contract.stage_field)
         if stage_id not in stage_set:
             continue
@@ -239,6 +242,7 @@ def compute_sold_date_gaps(
             "sold_stage_contacts_joined": sold_stage_contacts,
             "contacts_missing": missing_contact,
             "gaps": len(rows),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "contract": {
             "base_collection": contract.collection,
@@ -247,6 +251,7 @@ def compute_sold_date_gaps(
             "contact_join": "ghl_opportunities_v2.contactId -> ghl_contacts_v2.id",
             "sold_date_field": f"ghl_contacts_v2.customFields[{sold_field_id}] (ISO date-only)",
             "grain": "distinct contactId",
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "writes": "none — does not write or restore Sold Date",
         },
         "rows": rows,

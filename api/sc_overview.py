@@ -47,6 +47,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import is_inbound_lead_source
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 from sweeper_rehash_attribution import excluded_from_self_gen, sweeper_rehash_last_name
 
 TZ = ZoneInfo("America/New_York")
@@ -531,6 +532,8 @@ def build_owner_directory(
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         owner_id = compact_str(opp.get("assignedTo"))
         if not owner_id:
             continue
@@ -786,6 +789,8 @@ def build_payload(
     completed_rows = 0
     for doc in opp_query.stream():
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         owner = compact_str(opp.get("assignedTo"))
         if owner not in allowed_owner_ids:
             continue
@@ -885,6 +890,8 @@ def build_payload(
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         owner = compact_str(opp.get("assignedTo"))
         if owner not in allowed_owner_ids:
             continue
@@ -921,6 +928,8 @@ def build_payload(
 
     for doc in db.collection("ghl_opportunities_v2").stream():
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         owner = compact_str(opp.get("assignedTo"))
         if owner not in allowed_owner_ids:
             continue
@@ -1069,6 +1078,10 @@ def build_payload(
         "debug": {
             "rep_roster_count": len(rep_roster),
             "completed_rows": completed_rows,
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        },
+        "contract": {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

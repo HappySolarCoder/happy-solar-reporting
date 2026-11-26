@@ -104,6 +104,7 @@ def compute_sweeper_credit(db, *, year: int, month: int, last_name: str) -> dict
                 "booking-date credit per contact per ET day when no in-scope opp was created that day"
             ),
             "sales": "Locked Sales grain (sales.py) filtered by the field",
+            "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

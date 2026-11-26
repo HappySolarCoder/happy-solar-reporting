@@ -342,6 +342,7 @@ def compute_diamond_sweeper(
                 "deleted-opportunity rule belongs to that lead set and is not applied here."
             ),
             "collections": ["ghl_opportunities_v2", "ghl_contacts_v2", "ghl_pipelines_v2"],
+            "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

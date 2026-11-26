@@ -96,6 +96,8 @@ class handler(BaseHTTPRequestHandler):
                 "query": q,
                 "cache": {"hit": False, "ttl": _TTL_SECONDS},
                 "data": out,
+                "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
+                "contract": {"excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"]},
                 "generated_at": int(now),
             }
             _CACHE[cache_key] = (now, payload)

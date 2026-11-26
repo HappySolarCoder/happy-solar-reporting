@@ -341,6 +341,7 @@ def compute_channel_goals(db, *, year: int, month: int, start: str | None = None
             "self_gen": "Lead Gen Source Self Gen, or setter last name equals the opportunity owner's last name (case-insensitive), which overrides any other Lead Gen Source. A filled Sweeper/Rehash Last Name is never Self Gen. Appointments also add consultant Booking Hub rebooks (opportunities_created self_gen_rebooks, split from_rebook), at most one per contact and never a contact already counted through createdAt.",
             "demo_rate": "demos / appointments ran",
             "opp2prelim": "sales / appointments ran",
+            "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

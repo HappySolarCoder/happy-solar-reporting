@@ -50,11 +50,15 @@ from zoneinfo import ZoneInfo
 API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
+METRICS_DIR = API_DIR / "metrics"
+if str(METRICS_DIR) not in sys.path:
+    sys.path.insert(0, str(METRICS_DIR))
 
 from google.cloud import firestore
 from google.oauth2 import service_account
 from dashboard_nav import dashboard_nav_css, render_dashboard_nav
 from missing_disposition_rule import appointment_is_missing, appointment_start_minute
+from pipeline_scope import is_non_funnel_pipeline
 
 
 OWNER_NAME_OVERRIDES = {
@@ -543,6 +547,8 @@ def _related_opportunities(
     for cid in contact_ids:
         for snap in db.collection("ghl_opportunities_v2").where("contactId", "==", cid).stream():
             opp = snap.to_dict() or {}
+            if is_non_funnel_pipeline(opp.get("pipelineId")):
+                continue
             stage_id = str(opp.get("pipelineStageId") or "")
             pipeline_id = str(opp.get("pipelineId") or "")
             out[cid].append({
@@ -637,6 +643,8 @@ class handler(BaseHTTPRequestHandler):
 
             for snap in q.stream():
                 opp = snap.to_dict() or {}
+                if is_non_funnel_pipeline(opp.get("pipelineId")):
+                    continue
 
                 stage_id = str(opp.get('pipelineStageId') or '')
                 stage_name = stage_lookup.get(stage_id, '')

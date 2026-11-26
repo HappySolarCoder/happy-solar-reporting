@@ -54,6 +54,8 @@ METRICS_DIR = Path(__file__).resolve().parent
 if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
+from pipeline_scope import is_non_funnel_pipeline
+
 
 def _load_inbound_cac():
     """Load the metrics module, not the /api/inbound_cac page."""
@@ -239,6 +241,8 @@ def count_paid_social(
     unparsed_created = 0
 
     for index, opp in enumerate(pipeline_opps):
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if cac.compact_str(opp.get("pipelineId")) != LEAD_PIPELINE_ID:
             continue
         created = cac.parse_iso_dt(opp.get(cac.CREATED_AT_FIELD))
@@ -270,6 +274,8 @@ def count_paid_social(
     opp_days: dict[str, int] = {}
     by_territory = {name: 0 for name in TERRITORY_PIPELINE_NAMES.values()}
     for opp in territory_created:
+        if is_non_funnel_pipeline(opp.pipeline_id):
+            continue
         if not cac.is_territory_pipeline(opp.pipeline_id):
             continue
         if opp.contact_id not in lead_contacts:
@@ -289,6 +295,8 @@ def count_paid_social(
     demo_excluded_by_source: dict[str, int] = {}
     demo_by_territory = {name: 0 for name in TERRITORY_PIPELINE_NAMES.values()}
     for opp in territory_demos:
+        if is_non_funnel_pipeline(opp.pipeline_id):
+            continue
         if not opp.opportunity_id or opp.opportunity_id in demo_ids:
             continue
         name = territory_name(opp.pipeline_id)

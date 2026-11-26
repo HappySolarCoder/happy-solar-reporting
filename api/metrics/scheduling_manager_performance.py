@@ -40,6 +40,8 @@ from urllib.parse import parse_qs, urlparse
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
+
 
 def compact_str(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
@@ -238,6 +240,8 @@ def build_payload(
     for doc in db.collection(contract.opp_collection).stream():
         scanned += 1
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         created_dt = parse_iso_dt(opp.get(contract.created_at_field))
         if not created_dt:
             continue
@@ -320,6 +324,7 @@ def build_payload(
             "pipeline_field": f"{contract.opp_collection}.pipelineId -> {contract.pipeline_collection}.name",
             "included_pipeline_names": list(contract.included_pipeline_names),
             "excluded_pipeline_names": list(contract.excluded_pipeline_names),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "scheduling_manager_resolution": [
                 f"{contract.opp_collection}.customFields[{contract.scheduling_manager_opp_cf_id}]",
                 f"{contract.contact_collection}.{contract.scheduling_manager_contact_field}",
@@ -333,6 +338,7 @@ def build_payload(
             "opportunities_in_pipeline_scope": in_scope,
             "opportunities_with_manager": with_manager,
             "sample_rows_returned": len(sample_rows),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "rows": sample_rows,
         "generated_at": datetime.utcnow().isoformat() + "Z",

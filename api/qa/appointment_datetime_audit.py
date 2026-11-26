@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+from pathlib import Path
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from typing import Any
@@ -12,6 +14,11 @@ from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_METRICS = Path(__file__).resolve().parents[1] / "metrics"
+if str(_METRICS) not in sys.path:
+    sys.path.insert(0, str(_METRICS))
+from pipeline_scope import is_non_funnel_pipeline  # noqa: E402
 
 
 def get_db() -> firestore.Client:
@@ -130,6 +137,8 @@ class handler(BaseHTTPRequestHandler):
             ccache: dict[str, dict] = {}
             for snap in db.collection("ghl_opportunities_v2").stream():
                 o = snap.to_dict() or {}
+                if is_non_funnel_pipeline(o.get("pipelineId")):
+                    continue
                 created = to_iso_utc(o.get("createdAt"))
                 if not created or created[:7] != f"{year}-{str(month).zfill(2)}":
                     continue

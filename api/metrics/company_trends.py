@@ -115,6 +115,8 @@ class handler(BaseHTTPRequestHandler):
                 "rows": rows,
                 "start": f"{start_y}-{str(start_m).zfill(2)}",
                 "end": f"{end_y}-{str(end_m).zfill(2)}",
+                "excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"],
+                "contract": {"excluded_pipeline_ids": ["5hPKCGzAskcC6LEZuc1H"]},
             }
             _CACHE[key] = (t, payload)
 

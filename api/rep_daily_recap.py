@@ -97,6 +97,7 @@ if str(METRICS_DIR) not in sys.path:
     sys.path.insert(0, str(METRICS_DIR))
 
 from lead_gen_source import inbound_source_label
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline
 from sit_timestamp import frozen_sit_timestamp
 
 
@@ -995,6 +996,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
         return any(key and key in seen_opportunity_ids for key in keys)
 
     def append_appointment(opp: dict[str, Any], snap_id: str, appt_dt: datetime, *, attribution: str) -> None:
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            return
         pipeline_id = compact_str(opp.get("pipelineId"))
         owner_id = compact_str(opp.get("assignedTo"))
         owner_label = resolve_owner_name(opp, owner_id, user_names) if owner_id else "Unassigned"
@@ -1057,6 +1060,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
 
     for snap in ghl_query.stream():
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         appt_dt = as_dt(opp.get("appointmentStartTime"))
         if not appt_dt:
             continue
@@ -1075,6 +1080,8 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
 
     for snap in extra_snaps.values():
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         if already_listed(opp, snap.id):
             continue
         pipeline_id = compact_str(opp.get("pipelineId"))
@@ -1242,6 +1249,13 @@ def build_payload(start_local: datetime, end_local_excl: datetime) -> dict[str, 
             for pipeline, count in excluded_pipeline_counts.most_common()
         ],
         "appointment_pipeline_scope": "territory",
+        "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        "contract": {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        },
+        "debug": {
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
+        },
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 

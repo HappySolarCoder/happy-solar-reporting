@@ -39,7 +39,7 @@ from google.cloud import firestore
 
 from ghl_user_names import load_ghl_user_names
 from lead_gen_source import inbound_source_label
-from pipeline_scope import pipeline_in_scope, truthy_flag
+from pipeline_scope import NON_FUNNEL_PIPELINE_IDS, is_non_funnel_pipeline, pipeline_in_scope, truthy_flag
 from sweeper_rehash_attribution import (
     excluded_from_owner_performance,
     excluded_from_self_gen,
@@ -496,6 +496,8 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
 
     for doc in opp_snaps:
         opp = doc.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
         opp_id = str(opp.get("id") or doc.id)
 
         # disposition check (use derived field for speed)
@@ -598,6 +600,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "opps_with_disposition": matched_dispo,
             "opps_with_disposition_and_in_window": matched_time,
             "rows_listed": len(matching_rows),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
         },
         "contract": {
             "base_collection": c.opp_collection,
@@ -605,6 +608,7 @@ def compute(db: firestore.Client, c: MetricContract, *, year: int, month: int, s
             "time_field": f"{c.opp_collection}.{c.appointment_occurred_at_field} (Timestamp)",
             "time_handling": "Convert Timestamp -> America/New_York -> compare to month window (appointmentOccurredAt)",
             "excluded_pipelines": list(c.excluded_pipeline_names),
+            "excluded_pipeline_ids": sorted(NON_FUNNEL_PIPELINE_IDS),
             "setter_field": f"opportunity.customFields[{c.setter_last_name_opportunity_cf_id}] then fallback {c.contact_collection}.customFields[{c.setter_last_name_contact_cf_id}]",
             "lead_gen_source_field": f"{c.contact_collection}.customFields[{c.lead_gen_source_contact_cf_id}] (normalized to none)",
             "filters": {"lead_source": lead_source_norm, "exclude_sweeper_rehash": bool(exclude_sweeper_rehash)},

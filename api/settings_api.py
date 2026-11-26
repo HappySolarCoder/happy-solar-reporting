@@ -35,6 +35,11 @@ _API_DIR = Path(__file__).resolve().parent
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
+_METRICS = _API_DIR / "metrics"
+if str(_METRICS) not in sys.path:
+    sys.path.insert(0, str(_METRICS))
+
+from pipeline_scope import is_non_funnel_pipeline  # noqa: E402
 from raydar_test_data import is_raydar_test_record, setter_excluded_from_metrics, user_record_keys  # noqa: E402
 
 
@@ -194,6 +199,8 @@ def list_ghl_setter_last_names(db: firestore.Client) -> list[dict[str, str]]:
             break
 
         opp = snap.to_dict() or {}
+        if is_non_funnel_pipeline(opp.get("pipelineId")):
+            continue
 
         dispo = opp.get("dispositionValue")
         if dispo not in ("Sit", "No Sit"):

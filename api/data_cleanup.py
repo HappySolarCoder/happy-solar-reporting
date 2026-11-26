@@ -20,6 +20,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from typing import Any
@@ -28,6 +30,11 @@ from urllib.parse import parse_qs, urlparse
 
 from google.cloud import firestore
 from google.oauth2 import service_account
+
+_METRICS = Path(__file__).resolve().parent / "metrics"
+if str(_METRICS) not in sys.path:
+    sys.path.insert(0, str(_METRICS))
+from pipeline_scope import is_non_funnel_pipeline  # noqa: E402
 
 
 APPT_CF_ID = "e3udzXVTyqrMqICpyqjF"
@@ -297,6 +304,8 @@ class handler(BaseHTTPRequestHandler):
 
             for snap in db.collection("ghl_opportunities_v2").stream():
                 opp = snap.to_dict() or {}
+                if is_non_funnel_pipeline(opp.get("pipelineId")):
+                    continue
                 created_dt = parse_iso_dt(opp.get("createdAt"))
                 if not created_dt:
                     continue

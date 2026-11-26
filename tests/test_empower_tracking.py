@@ -64,6 +64,31 @@ PHOENIX = ZoneInfo("America/Phoenix")
 BUFFALO = "GQtUlcTmLJ61HZjrGEPC"
 BLOOM_SECRET = "bloom-test-secret"
 SETTINGS_PASSWORD = "settings-test-password"
+_SAVED_GHL_KEY = None
+_GHL_PATCHES = []
+
+
+def _block_live_ghl(*_args, **_kwargs):
+    raise AssertionError("tests must not open a live GHL request")
+
+
+def setUpModule():
+    """A developer key in the environment must not leak into these tests."""
+    global _SAVED_GHL_KEY
+    _SAVED_GHL_KEY = os.environ.pop("GHL_API_KEY", None)
+    _GHL_PATCHES.append(patch("urllib.request.urlopen", _block_live_ghl))
+    _GHL_PATCHES.append(patch("metrics.empower_linker.readonly_opener_from_env", return_value=None))
+    for item in _GHL_PATCHES:
+        item.start()
+
+
+def tearDownModule():
+    while _GHL_PATCHES:
+        _GHL_PATCHES.pop().stop()
+    if _SAVED_GHL_KEY is None:
+        os.environ.pop("GHL_API_KEY", None)
+    else:
+        os.environ["GHL_API_KEY"] = _SAVED_GHL_KEY
 
 
 def load_handler(name: str, path: Path):
@@ -567,8 +592,13 @@ class LinkEndpointTests(unittest.TestCase):
 
 
 class ShadowSyncTests(unittest.TestCase):
-    def test_field_diff_is_idempotent_and_never_moves_stage(self):
+    def setUp(self):
+        self._ghl_key = patch.dict(os.environ, {"GHL_API_KEY": ""}, clear=False)
+        self._ghl_key.start()
+        self.addCleanup(self._ghl_key.stop)
         os.environ.pop("EMPOWER_AUTO_CREATE_OPPS", None)
+
+    def test_field_diff_is_idempotent_and_never_moves_stage(self):
         self.assertFalse(auto_create_enabled())
         project = {
             "id": "E-SYNC",
@@ -665,6 +695,35 @@ class ShadowSyncTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             guarded_set(FakeDb(), "ghl_opportunities_v2", "opp-sync", {"id": "opp-sync"})
+
+    def test_present_ghl_api_key_never_reaches_ghl(self):
+        from metrics.empower_linker import sync_links
+
+        calls = []
+
+        def trap(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("live GHL during tests")
+
+        project = {"id": "E-SYNC", "customer": "Nia Sample", "status": "Open", "step": "Assessment Review"}
+        opp = _opp("opp-sync", EMPOWER_PIPELINE_ID, "c-sync", customFields=[])
+        with patch.dict(os.environ, {"GHL_API_KEY": "present-test-key"}):
+            self.assertEqual(os.environ.get("GHL_API_KEY"), "present-test-key")
+            with patch("urllib.request.urlopen", trap):
+                run_shadow_sync(
+                    [project],
+                    [opp],
+                    now=datetime(2026, 11, 25, 9, 0, tzinfo=PHOENIX),
+                    dry_run=True,
+                )
+                sync_links(
+                    [project],
+                    [{"id": "E-SYNC", "phone": "5551112222"}],
+                    [opp],
+                    {},
+                    now="2026-11-25T09:00:00-07:00",
+                )
+        self.assertEqual(calls, [])
 
 
 class StageEventTests(unittest.TestCase):

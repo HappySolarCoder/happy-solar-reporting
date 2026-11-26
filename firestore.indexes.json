@@ -7,6 +7,14 @@
         {"fieldPath": "pipelineId", "order": "ASCENDING"},
         {"fieldPath": "createdAt", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "nyhep_empower_stage_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "ended_at", "order": "ASCENDING"},
+        {"fieldPath": "enrollment_id", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

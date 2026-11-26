@@ -69,17 +69,17 @@ def view_identity(headers):
 
 def load_view() -> dict:
     from empower_portal_ingest import get_db, load_latest
+    from metrics.nyhep_stage_events import load_recent_events
 
-    payload = load_latest(get_db())
-    if not payload:
-        return build_portal_view({})
-    return build_portal_view(payload)
+    db = get_db()
+    payload = load_latest(db) or {}
+    return build_portal_view(payload, load_recent_events(db, payload))
 
 
-def _send(handler, status: int, body: bytes, content_type: str) -> None:
+def _send(handler, status: int, body: bytes, content_type: str, cache_control: str) -> None:
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
-    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Cache-Control", cache_control)
     handler.send_header("Content-Security-Policy", FRAME_ANCESTORS)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
@@ -87,11 +87,17 @@ def _send(handler, status: int, body: bytes, content_type: str) -> None:
 
 
 def send_json(handler, status: int, payload: dict) -> None:
-    _send(handler, status, json.dumps(payload, default=str).encode("utf-8"), "application/json; charset=utf-8")
+    _send(
+        handler,
+        status,
+        json.dumps(payload, default=str).encode("utf-8"),
+        "application/json; charset=utf-8",
+        "s-maxage=300",
+    )
 
 
 def send_html(handler, html: str) -> None:
-    _send(handler, 200, html.encode("utf-8"), "text/html; charset=utf-8")
+    _send(handler, 200, html.encode("utf-8"), "text/html; charset=utf-8", "no-store")
 
 
 def render_empower_portal_html() -> str:
@@ -110,6 +116,8 @@ def render_empower_portal_html() -> str:
     .ep-filter { min-height: 36px; }
     .ep-filter.active { color: var(--cyan); border-color: var(--cyan); background: #123e52; }
     .ep-lock { margin: 0 0 18px; }
+    .ep-history { min-height: 32px; }
+    .ep-timeline-row[hidden] { display: none !important; }
     #stageBars:empty::before { content: "No open projects."; color: var(--muted); }
   </style>
 </head>
@@ -153,17 +161,17 @@ def render_empower_portal_html() -> str:
           </div>
         </section>
         <section class="panel">
-          <div class="panel-head"><h2>Stage history</h2></div>
-          <div class="panel-body tablewrap">
-            <table>
-              <thead><tr><th>Checked</th><th>Enroll #</th><th>Customer</th><th>Change</th><th>From</th><th>To</th></tr></thead>
-              <tbody id="stageHistoryBody"></tbody>
-            </table>
-          </div>
-        </section>
-        <section class="panel">
           <div class="panel-head"><h2>Open projects by stage</h2></div>
           <div class="panel-body" id="stageBars"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>With the program</h2></div>
+          <div class="panel-body tablewrap">
+            <table>
+              <thead><tr><th>Enroll #</th><th>Customer</th><th>Stage</th><th>Days</th><th>Since</th><th>Flag</th></tr></thead>
+              <tbody id="programBody"></tbody>
+            </table>
+          </div>
         </section>
         <section class="panel">
           <div class="panel-head"><h2>Waiting on us, by due date</h2></div>
@@ -180,7 +188,7 @@ def render_empower_portal_html() -> str:
             <div class="ep-filters" id="statusFilters" data-default="Open" role="group" aria-label="Enrollment status"></div>
             <div class="tablewrap">
               <table>
-                <thead><tr><th>Enroll #</th><th>Customer</th><th>City</th><th>Enrolled</th><th>Status</th><th>Stage</th><th>Installer</th><th>Tier</th></tr></thead>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>City</th><th>Enrolled</th><th>Status</th><th>Stage</th><th>Installer</th><th>Tier</th><th>History</th></tr></thead>
                 <tbody id="enrollmentBody"></tbody>
               </table>
             </div>
@@ -292,12 +300,23 @@ __BLOOM_FRAME__
         });
       }
 
+      function timelineHtml(row) {
+        const items = row.timeline || [];
+        if (!items.length) return "<p>No stage events in the last 120 days.</p>";
+        return "<ul>" + items.map(function (item) {
+          const todo = item.todoStage ? " To-Do " + esc(item.todoStage) + "." : "";
+          const ended = item.ended ? " Ended." : " Current.";
+          return "<li><b>" + esc(item.stage || "—") + "</b> " + esc(item.enrollmentStatus || "") + todo + " " + esc(item.since || "") + "." + ended + "</li>";
+        }).join("") + "</ul>";
+      }
+
       function renderEnrollments() {
         const rows = ((latest && latest.enrollments) || []).filter(function (row) {
           return statusFilter === "All" || row.status === statusFilter;
         });
-        fill("enrollmentBody", rows, function (row) {
-          return [
+        const body = document.getElementById("enrollmentBody");
+        body.innerHTML = rows.length ? rows.map(function (row) {
+          const cells = [
             esc(row.id),
             esc(row.customer),
             esc(row.city),
@@ -305,8 +324,21 @@ __BLOOM_FRAME__
             cell(row.status, row.statusTone),
             esc(row.stepLabel || row.step),
             esc(row.installer),
-            esc(row.tier)
-          ];
+            esc(row.tier),
+            '<button type="button" class="ep-history" data-enroll="' + esc(row.id) + '" aria-expanded="false">History</button>'
+          ].map(function (item) { return "<td>" + item + "</td>"; }).join("");
+          const detail = '<tr class="ep-timeline-row" hidden data-for="' + esc(row.id) + '"><td colspan="9">' + timelineHtml(row) + "</td></tr>";
+          return "<tr>" + cells + "</tr>" + detail;
+        }).join("") : '<tr><td colspan="9">Nothing to show.</td></tr>';
+        body.querySelectorAll(".ep-history").forEach(function (button) {
+          button.addEventListener("click", function () {
+            const enroll = button.getAttribute("data-enroll");
+            const detail = body.querySelector('.ep-timeline-row[data-for="' + enroll + '"]');
+            if (!detail) return;
+            const open = detail.hidden;
+            detail.hidden = !open;
+            button.setAttribute("aria-expanded", open ? "true" : "false");
+          });
         });
       }
 
@@ -334,8 +366,9 @@ __BLOOM_FRAME__
         fill("changesBody", changes, function (row) {
           return [esc(row.id), esc(row.customer), esc(row.change)];
         });
-        fill("stageHistoryBody", latest.stageHistory || [], function (row) {
-          return [esc(row.checkedAt), esc(row.id), esc(row.customer), esc(row.change), cell(row.from), cell(row.to)];
+        fill("programBody", latest.withProgram || [], function (row) {
+          const flag = row.flag ? '<span class="danger">' + esc(row.flag) + "</span>" : "—";
+          return [esc(row.id), esc(row.customer), esc(row.stage), esc(row.daysInStage), esc(row.since), flag];
         });
 
         const stages = latest.stages || [];

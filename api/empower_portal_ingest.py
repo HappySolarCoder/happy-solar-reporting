@@ -4,7 +4,9 @@
 
 Weekday box routine posts the NYHEP EmPower+ snapshot. The shared secret is
 NYHEP_INGEST_SECRET, sent as Authorization: Bearer or X-Webhook-Secret.
-GET never writes. Re-posting one snapshot replaces that history row.
+GET never writes. Re-posting one snapshot replaces that history row and
+replaces the stage-history rows for that same snapshot. Stage history is
+the difference in status, step, and step status versus the previous check.
 """
 
 from __future__ import annotations
@@ -24,7 +26,13 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
-from metrics.empower_portal_metrics import build_portal_view, contains_forbidden_keys
+from metrics.empower_portal_metrics import (
+    build_portal_view,
+    contains_forbidden_keys,
+    derive_stage_events,
+    merge_stage_history,
+    prior_snapshot_id,
+)
 
 
 ENV_NAME = "NYHEP_INGEST_SECRET"
@@ -49,6 +57,8 @@ _PROJECT_FIELDS = (
     "installer",
 )
 _CHANGE_FIELDS = ("id", "customer", "change")
+_STAGE_FIELDS = ("id", "customer", "snapshot", "checkedAt", "change", "from", "to")
+_STAGE_CHANGES = {"added", "removed", "step", "status", "step status"}
 
 
 def header_value(headers, name: str) -> str:
@@ -246,26 +256,74 @@ def merge_history(existing: object, incoming: object, current: dict) -> list[dic
     return items
 
 
-def _existing_history(db, collection: str, doc_id: str) -> list:
+def _clean_stage_event(row: dict) -> dict | None:
+    event = {field: _clean_text(row.get(field), 500) for field in _STAGE_FIELDS}
+    if not event["id"] or not event["snapshot"]:
+        return None
+    if event["change"] not in _STAGE_CHANGES:
+        return None
+    return event
+
+
+def _clean_stage_history(events: object) -> list[dict]:
+    if not isinstance(events, list):
+        return []
+    cleaned = []
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        event = _clean_stage_event(row)
+        if event:
+            cleaned.append(event)
+    return cleaned
+
+
+def _existing_latest(db) -> dict:
     try:
-        snap = db.collection(collection).document(doc_id).get()
+        snap = db.collection(LATEST_COLLECTION).document(LATEST_DOC_ID).get()
+    except Exception:
+        return {}
+    if not getattr(snap, "exists", False):
+        return {}
+    data = snap.to_dict() or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _snapshot_projects(db, snapshot_id: str) -> list:
+    if not snapshot_id:
+        return []
+    try:
+        snap = db.collection(SNAPSHOT_COLLECTION).document(snapshot_id).get()
     except Exception:
         return []
     if not getattr(snap, "exists", False):
         return []
     data = snap.to_dict() or {}
-    history = data.get("history") if isinstance(data, dict) else None
-    return history if isinstance(history, list) else []
+    projects = data.get("projects") if isinstance(data, dict) else None
+    return projects if isinstance(projects, list) else []
 
 
 def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
     updated_at = moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existing = _existing_latest(db)
     current = _computed_history_entry(cleaned)
     history = merge_history(
-        _existing_history(db, LATEST_COLLECTION, LATEST_DOC_ID),
+        existing.get("history") if existing else [],
         cleaned["history"],
         current,
+    )
+    prior_id = prior_snapshot_id(history, cleaned["snapshot"])
+    stage_events = derive_stage_events(
+        _snapshot_projects(db, prior_id),
+        cleaned["projects"],
+        cleaned["snapshot"],
+        cleaned["checkedAt"],
+    )
+    stage_history = merge_stage_history(
+        _clean_stage_history(existing.get("stageHistory")),
+        cleaned["snapshot"],
+        stage_events,
     )
     latest = {
         "snapshot": cleaned["snapshot"],
@@ -273,6 +331,7 @@ def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
         "projects": cleaned["projects"],
         "changes": cleaned["changes"],
         "history": history,
+        "stageHistory": stage_history,
         "updatedAt": updated_at,
     }
     snapshot_doc = {
@@ -284,6 +343,7 @@ def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
         "closed": current["closed"],
         "cancelled": current["cancelled"],
         "total": current["total"],
+        "stageChanges": stage_events,
         "updatedAt": updated_at,
     }
     db.collection(LATEST_COLLECTION).document(LATEST_DOC_ID).set(latest)

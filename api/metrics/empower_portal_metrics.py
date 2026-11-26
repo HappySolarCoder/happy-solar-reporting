@@ -179,6 +179,144 @@ def _history_rank(entry: dict) -> tuple:
     return (day, period, snapshot)
 
 
+_STAGE_CHANGE_LABELS = {
+    "added": "Added",
+    "removed": "Removed",
+    "step": "Step",
+    "status": "Status",
+    "step status": "Step status",
+}
+
+
+def stage_label(row: dict | None) -> str:
+    """Pipeline step plus enrollment status. Blank when the row is missing."""
+    if not isinstance(row, dict):
+        return ""
+    step = _step_label(row.get("step"), row.get("stepStatus"))
+    status = normalize_status(row.get("status"))
+    if step and status != "Other":
+        return f"{step} · {status}"
+    if step:
+        return step
+    return "" if status == "Other" else status
+
+
+def _project_index(projects: object) -> dict[str, dict]:
+    indexed: dict[str, dict] = {}
+    if not isinstance(projects, list):
+        return indexed
+    for row in projects:
+        if not isinstance(row, dict):
+            continue
+        enroll_id = str(row.get("id") or "").strip()
+        if enroll_id:
+            indexed[enroll_id] = row
+    return indexed
+
+
+def _stage_signature(row: dict) -> tuple[str, str, str]:
+    return (
+        normalize_status(row.get("status")),
+        str(row.get("step") or "").strip(),
+        str(row.get("stepStatus") or "").strip(),
+    )
+
+
+def stage_change_kind(before: dict | None, after: dict | None) -> str:
+    """How the enrollment stage moved. Blank when status, step, and step status match."""
+    if before is None and after is None:
+        return ""
+    if before is None:
+        return "added"
+    if after is None:
+        return "removed"
+    before_status, before_step, before_step_status = _stage_signature(before)
+    after_status, after_step, after_step_status = _stage_signature(after)
+    if (before_status, before_step, before_step_status) == (
+        after_status,
+        after_step,
+        after_step_status,
+    ):
+        return ""
+    if before_step != after_step:
+        return "step"
+    if before_status != after_status:
+        return "status"
+    return "step status"
+
+
+def derive_stage_events(
+    previous: object,
+    current: object,
+    snapshot: object,
+    checked_at: object,
+) -> list[dict]:
+    """Stage rows for one check, compared with the previous snapshot's projects."""
+    snapshot_id = str(snapshot or "").strip()
+    checked = str(checked_at or "").strip()
+    before = _project_index(previous)
+    after = _project_index(current)
+    events: list[dict] = []
+    for enroll_id in sorted(set(before) | set(after)):
+        prev = before.get(enroll_id)
+        nxt = after.get(enroll_id)
+        kind = stage_change_kind(prev, nxt)
+        if not kind:
+            continue
+        source = nxt or prev or {}
+        events.append(
+            {
+                "id": enroll_id,
+                "customer": str(source.get("customer") or "").strip(),
+                "snapshot": snapshot_id,
+                "checkedAt": checked,
+                "change": kind,
+                "from": stage_label(prev),
+                "to": stage_label(nxt),
+            }
+        )
+    return events
+
+
+def prior_snapshot_id(history: object, snapshot_id: object) -> str:
+    """Latest check strictly before snapshot_id. Same ids do not count."""
+    current = str(snapshot_id or "").strip()
+    if not current or not isinstance(history, list):
+        return ""
+    current_rank = _history_rank({"snapshot": current})
+    best_id = ""
+    best_rank: tuple | None = None
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        candidate = str(entry.get("snapshot") or "").strip()
+        if not candidate or candidate == current:
+            continue
+        rank = _history_rank(entry)
+        if rank < current_rank and (best_rank is None or rank > best_rank):
+            best_id = candidate
+            best_rank = rank
+    return best_id
+
+
+def merge_stage_history(existing: object, snapshot_id: object, events: object) -> list[dict]:
+    """Replace every stored row for this snapshot, then append the new rows."""
+    current = str(snapshot_id or "").strip()
+    kept: list[dict] = []
+    if isinstance(existing, list):
+        for item in existing:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("snapshot") or "").strip() == current:
+                continue
+            kept.append(dict(item))
+    if isinstance(events, list):
+        for item in events:
+            if isinstance(item, dict):
+                kept.append(dict(item))
+    return kept
+
+
 def _stage_rows(projects: list[dict]) -> list[dict]:
     counts: dict[str, int] = {}
     for row in projects:
@@ -248,6 +386,33 @@ def _enrollment_rows(projects: list[dict]) -> list[dict]:
                 "tier": display_tier(row.get("tier")),
             }
         )
+    return rows
+
+
+def _stage_history_rows(events: object) -> list[dict]:
+    if not isinstance(events, list):
+        return []
+    rows = []
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("change") or "").strip()
+        label = _STAGE_CHANGE_LABELS.get(kind)
+        if not label:
+            continue
+        rows.append(
+            {
+                "id": str(item.get("id") or "").strip(),
+                "customer": str(item.get("customer") or "").strip(),
+                "snapshot": str(item.get("snapshot") or "").strip(),
+                "checkedAt": str(item.get("checkedAt") or "").strip(),
+                "change": label,
+                "from": str(item.get("from") or "").strip(),
+                "to": str(item.get("to") or "").strip(),
+            }
+        )
+    rows.sort(key=lambda row: row["id"])
+    rows.sort(key=lambda row: _history_rank(row), reverse=True)
     return rows
 
 
@@ -333,4 +498,5 @@ def build_portal_view(payload: dict | None) -> dict[str, Any]:
         "waiting": waiting,
         "enrollments": _enrollment_rows(projects),
         "history": _history_rows(source.get("history")),
+        "stageHistory": _stage_history_rows(source.get("stageHistory")),
     }

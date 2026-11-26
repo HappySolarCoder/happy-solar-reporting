@@ -153,6 +153,15 @@ def render_empower_portal_html() -> str:
           </div>
         </section>
         <section class="panel">
+          <div class="panel-head"><h2>Stage history</h2></div>
+          <div class="panel-body tablewrap">
+            <table>
+              <thead><tr><th>Checked</th><th>Enroll #</th><th>Customer</th><th>Change</th><th>From</th><th>To</th></tr></thead>
+              <tbody id="stageHistoryBody"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
           <div class="panel-head"><h2>Open projects by stage</h2></div>
           <div class="panel-body" id="stageBars"></div>
         </section>
@@ -324,6 +333,9 @@ __BLOOM_FRAME__
         changesPanel.hidden = changes.length === 0;
         fill("changesBody", changes, function (row) {
           return [esc(row.id), esc(row.customer), esc(row.change)];
+        });
+        fill("stageHistoryBody", latest.stageHistory || [], function (row) {
+          return [esc(row.checkedAt), esc(row.id), esc(row.customer), esc(row.change), cell(row.from), cell(row.to)];
         });
 
         const stages = latest.stages || [];

@@ -279,6 +279,7 @@ class MetricTests(unittest.TestCase):
         self.assertEqual([row["changeCount"] for row in self.view["history"]], [3, 1])
         self.assertEqual(metrics.history_change_count([{"id": "E-1"}, {"id": "E-2"}]), 2)
         self.assertEqual(metrics.history_change_count(3), 3)
+        self.assertEqual(self.view["stageHistory"], [])
         self.assertEqual(metrics.normalize_status("completed"), "Closed")
         self.assertEqual(metrics.normalize_status("canceled"), "Cancelled")
         encoded = json.dumps(self.view).lower()
@@ -313,6 +314,153 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(by_id["E-20"]["stepLabel"], "Workscope Submission (New)")
         self.assertEqual(by_id["E-21"]["stepLabel"], "Install Started")
         self.assertEqual(view["waiting"][0]["stepLabel"], "Workscope Submission (New)")
+
+    def test_stage_history_diffs_status_step_and_step_status(self):
+        previous = [
+            {
+                "id": "E-1",
+                "customer": "Ada Marin",
+                "status": "Open",
+                "step": "Workscope Submission",
+                "stepStatus": "New",
+            },
+            {
+                "id": "E-2",
+                "customer": "Ben Ortiz",
+                "status": "Open",
+                "step": "Assessment Review",
+                "stepStatus": "Waiting",
+            },
+            {
+                "id": "E-4",
+                "customer": "Drew Patel",
+                "status": "Open",
+                "step": "Install Started",
+                "stepStatus": "Active",
+            },
+            {
+                "id": "E-5",
+                "customer": "Eve Brooks",
+                "status": "Open",
+                "step": "Final Project Submission",
+                "stepStatus": "New",
+            },
+        ]
+        current = [
+            {
+                "id": "E-1",
+                "customer": "Ada Marin",
+                "status": "Open",
+                "step": "Workscope Review",
+                "stepStatus": "In Review",
+            },
+            {
+                "id": "E-3",
+                "customer": "Cara Nguyen",
+                "status": "Closed",
+                "step": "Funding Allocations",
+                "stepStatus": "Done",
+            },
+            {
+                "id": "E-4",
+                "customer": "Drew Patel",
+                "status": "Closed",
+                "step": "Install Started",
+                "stepStatus": "Active",
+            },
+            {
+                "id": "E-5",
+                "customer": "Eve Brooks",
+                "status": "Open",
+                "step": "Final Project Submission",
+                "stepStatus": "Submitted",
+            },
+        ]
+        events = metrics.derive_stage_events(
+            previous, current, "2026-11-18_pm", "Wed Nov 18, 4:00 PM Phoenix"
+        )
+        by_id = {row["id"]: row for row in events}
+        self.assertEqual(set(by_id), {"E-1", "E-2", "E-3", "E-4", "E-5"})
+        self.assertEqual(by_id["E-1"]["change"], "step")
+        self.assertEqual(by_id["E-1"]["from"], "Workscope Submission (New) · Open")
+        self.assertEqual(by_id["E-1"]["to"], "Workscope Review (In Review) · Open")
+        self.assertEqual(by_id["E-2"]["change"], "removed")
+        self.assertEqual(by_id["E-2"]["to"], "")
+        self.assertEqual(by_id["E-3"]["change"], "added")
+        self.assertEqual(by_id["E-3"]["from"], "")
+        self.assertEqual(by_id["E-4"]["change"], "status")
+        self.assertEqual(by_id["E-5"]["change"], "step status")
+        unchanged = {
+            "id": "E-9",
+            "customer": "Same",
+            "status": "Open",
+            "step": "Install Started",
+            "stepStatus": "Active",
+            "onTodo": False,
+            "due": "12/1/2026",
+        }
+        moved_todo = dict(unchanged)
+        moved_todo["onTodo"] = True
+        self.assertEqual(
+            metrics.derive_stage_events([unchanged], [moved_todo], "2026-11-18_pm", "pm"),
+            [],
+        )
+        self.assertEqual(
+            metrics.prior_snapshot_id(
+                [
+                    {"snapshot": "2026-11-18_pm"},
+                    {"snapshot": "2026-11-17_pm"},
+                    {"snapshot": "2026-11-18_am"},
+                ],
+                "2026-11-18_pm",
+            ),
+            "2026-11-18_am",
+        )
+        merged = metrics.merge_stage_history(
+            [
+                {"id": "E-1", "snapshot": "2026-11-18_am", "change": "added"},
+                {"id": "E-1", "snapshot": "2026-11-18_pm", "change": "step"},
+            ],
+            "2026-11-18_pm",
+            [{"id": "E-1", "snapshot": "2026-11-18_pm", "change": "status"}],
+        )
+        self.assertEqual(
+            [(row["snapshot"], row["change"]) for row in merged],
+            [("2026-11-18_am", "added"), ("2026-11-18_pm", "status")],
+        )
+        older = {
+            "id": "E-1",
+            "customer": "Ada Marin",
+            "snapshot": "2026-11-18_am",
+            "checkedAt": "am",
+            "change": "added",
+            "from": "",
+            "to": "Workscope Submission (New) · Open",
+        }
+        view = metrics.build_portal_view(
+            {
+                "snapshot": "2026-11-18_pm",
+                "checkedAt": "pm",
+                "projects": [],
+                "stageHistory": events + [older, {"id": "E-9", "change": "phone", "customer": "Nope"}],
+            }
+        )
+        self.assertEqual(
+            [(row["snapshot"], row["id"]) for row in view["stageHistory"]],
+            [
+                ("2026-11-18_pm", "E-1"),
+                ("2026-11-18_pm", "E-2"),
+                ("2026-11-18_pm", "E-3"),
+                ("2026-11-18_pm", "E-4"),
+                ("2026-11-18_pm", "E-5"),
+                ("2026-11-18_am", "E-1"),
+            ],
+        )
+        self.assertEqual(view["stageHistory"][0]["change"], "Step")
+        self.assertEqual(view["stageHistory"][-1]["change"], "Added")
+        encoded = json.dumps(view["stageHistory"]).lower()
+        self.assertNotIn("phone", encoded)
+        self.assertNotIn("nope", encoded)
 
 
 class IngestTests(unittest.TestCase):
@@ -376,6 +524,118 @@ class IngestTests(unittest.TestCase):
         snapshot_keys = [key for key in db.docs if key[0] == ingest.SNAPSHOT_COLLECTION]
         self.assertEqual(snapshot_keys, [(ingest.SNAPSHOT_COLLECTION, "2026-11-17_pm")])
         self.assertEqual(len(db.writes), 4)
+        self.assertEqual(len(latest["stageHistory"]), len(FIXTURE["projects"]))
+        self.assertTrue(all(row["change"] == "added" for row in latest["stageHistory"]))
+
+    def test_stage_history_follows_the_previous_snapshot_and_reposts_replace(self):
+        morning = {
+            "snapshot": "2026-11-18_am",
+            "checkedAt": "Wed Nov 18, 9:00 AM Phoenix",
+            "projects": [
+                {
+                    "id": "E-1",
+                    "customer": "Ada Marin",
+                    "status": "Open",
+                    "step": "Workscope Submission",
+                    "stepStatus": "New",
+                },
+                {
+                    "id": "E-2",
+                    "customer": "Ben Ortiz",
+                    "status": "Open",
+                    "step": "Assessment Review",
+                    "stepStatus": "Waiting",
+                },
+            ],
+            "changes": [],
+            "history": [],
+        }
+        evening = {
+            "snapshot": "2026-11-18_pm",
+            "checkedAt": "Wed Nov 18, 4:00 PM Phoenix",
+            "projects": [
+                {
+                    "id": "E-1",
+                    "customer": "Ada Marin",
+                    "status": "Open",
+                    "step": "Workscope Review",
+                    "stepStatus": "In Review",
+                },
+                {
+                    "id": "E-3",
+                    "customer": "Cara Nguyen",
+                    "status": "Closed",
+                    "step": "Funding Allocations",
+                    "stepStatus": "Done",
+                },
+            ],
+            "changes": [],
+            "history": [],
+        }
+        corrected = {
+            **evening,
+            "projects": [
+                {
+                    "id": "E-1",
+                    "customer": "Ada Marin",
+                    "status": "Open",
+                    "step": "Workscope Submission",
+                    "stepStatus": "Submitted",
+                },
+                evening["projects"][1],
+            ],
+        }
+        db = FakeDb()
+        headers = {"X-Webhook-Secret": INGEST_SECRET}
+        with patch.dict(os.environ, {"NYHEP_INGEST_SECRET": INGEST_SECRET}):
+            with patch.object(ingest, "get_db", return_value=db):
+                self.assertEqual(self._post(morning, headers)[0], 200)
+                self.assertEqual(self._post(evening, headers)[0], 200)
+                latest = db.docs[(ingest.LATEST_COLLECTION, ingest.LATEST_DOC_ID)]
+                evening_rows = [
+                    (row["id"], row["change"])
+                    for row in latest["stageHistory"]
+                    if row["snapshot"] == "2026-11-18_pm"
+                ]
+                self.assertEqual(
+                    evening_rows,
+                    [("E-1", "step"), ("E-2", "removed"), ("E-3", "added")],
+                )
+                self.assertEqual(self._post(evening, headers)[0], 200)
+                latest = db.docs[(ingest.LATEST_COLLECTION, ingest.LATEST_DOC_ID)]
+                self.assertEqual(
+                    [
+                        (row["id"], row["change"])
+                        for row in latest["stageHistory"]
+                        if row["snapshot"] == "2026-11-18_pm"
+                    ],
+                    evening_rows,
+                )
+                self.assertEqual(
+                    len([row for row in latest["stageHistory"] if row["snapshot"] == "2026-11-18_pm"]),
+                    3,
+                )
+                self.assertEqual(self._post(corrected, headers)[0], 200)
+        latest = db.docs[(ingest.LATEST_COLLECTION, ingest.LATEST_DOC_ID)]
+        self.assertEqual(
+            [
+                (row["id"], row["change"], row["to"])
+                for row in latest["stageHistory"]
+                if row["snapshot"] == "2026-11-18_pm"
+            ],
+            [
+                ("E-1", "step status", "Workscope Submission (Submitted) · Open"),
+                ("E-2", "removed", ""),
+                ("E-3", "added", "Funding Allocations (Done) · Closed"),
+            ],
+        )
+        self.assertEqual(
+            [row["change"] for row in latest["stageHistory"] if row["snapshot"] == "2026-11-18_am"],
+            ["added", "added"],
+        )
+        stored = json.dumps(latest)
+        self.assertNotIn("phone", stored.lower())
+        self.assertNotIn(INGEST_SECRET, stored)
 
     def test_phone_email_and_contact_are_rejected(self):
         db = FakeDb()
@@ -432,12 +692,14 @@ class PageTests(unittest.TestCase):
         self.assertIn('data.action === "token-unavailable"', html)
         self.assertIn('data-default="Open"', html)
         self.assertIn("Changed since the last check", html)
+        self.assertIn("Stage history", html)
         self.assertIn("Open projects by stage", html)
         self.assertIn("Waiting on us, by due date", html)
         self.assertIn("All enrollments", html)
         self.assertIn("Check history", html)
         self.assertIn('href="/api/empower_portal"', html)
         self.assertIn("esc(row.stepLabel || row.step)", html)
+        self.assertIn('latest.stageHistory || []', html)
         self.assertEqual(
             Path(empower_portal.__file__).resolve(),
             (API / "empower_portal.py").resolve(),

@@ -15,6 +15,30 @@
         {"fieldPath": "ended_at", "order": "ASCENDING"},
         {"fieldPath": "enrollment_id", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "ghl_empower_stage_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "ended_at", "order": "ASCENDING"},
+        {"fieldPath": "opp_id", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empower_alerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "resolved_at", "order": "ASCENDING"},
+        {"fieldPath": "last_fired_at", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "empower_links",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "updated_at", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []

@@ -520,6 +520,9 @@ class PageTests(unittest.TestCase):
         db.docs[(ingest.LATEST_COLLECTION, ingest.LATEST_DOC_ID)] = FIXTURE
 
         def allowed(headers):
+            # A second import of this file (pytest path vs package path) can
+            # replace the ingest module the page imports. Point it back first.
+            sys.modules["empower_portal_ingest"] = ingest
             with self._env():
                 with patch.object(ingest, "get_db", return_value=db):
                     return invoke(empower_portal, "GET", "/api/empower_portal?format=json", headers)

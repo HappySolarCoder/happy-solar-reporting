@@ -73,7 +73,10 @@ def load_view() -> dict:
 
     db = get_db()
     payload = load_latest(db) or {}
-    return build_portal_view(payload, load_recent_events(db, payload))
+    events = load_recent_events(db, payload)
+    from metrics.empower_linker import link_health_for_portal
+
+    return build_portal_view(payload, events, link_health=link_health_for_portal(db, payload))
 
 
 def _send(handler, status: int, body: bytes, content_type: str, cache_control: str, vary: str | None = None) -> None:
@@ -197,6 +200,61 @@ def render_empower_portal_html() -> str:
             </div>
           </div>
         </section>
+        <p id="linkStale" class="notice warn" hidden></p>
+        <section class="panel" id="linkHealth">
+          <div class="panel-head"><h2>Link health</h2></div>
+          <div class="panel-body">
+            <h3>Needs confirmation</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>Suggested opp</th><th>Why</th><th></th></tr></thead>
+                <tbody id="suggestedBody"></tbody>
+              </table>
+            </div>
+            <h3>GHL opp in another pipeline</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>Pipeline</th><th>Opp</th></tr></thead>
+                <tbody id="otherPipelineBody"></tbody>
+              </table>
+            </div>
+            <h3>GHL record only</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>City</th><th>Step</th></tr></thead>
+                <tbody id="ghlContactBody"></tbody>
+              </table>
+            </div>
+            <h3>Closed or cancelled, still unmatched</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>Status</th><th>Why</th></tr></thead>
+                <tbody id="closedLinkBody"></tbody>
+              </table>
+            </div>
+            <h3>Not in GHL</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>City</th><th>Step</th></tr></thead>
+                <tbody id="notInGhlBody"></tbody>
+              </table>
+            </div>
+            <h3>Empower+ opp with no NYHEP enrollment</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Opp</th><th>Stage</th><th>Days</th><th>Why</th></tr></thead>
+                <tbody id="unmatchedGhlBody"></tbody>
+              </table>
+            </div>
+            <h3>Stage behind NYHEP</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>NYHEP stage</th><th>GHL stage</th></tr></thead>
+                <tbody id="stageGapBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
         <section class="panel">
           <div class="panel-head"><h2>Check history</h2></div>
           <div class="panel-body tablewrap">
@@ -217,6 +275,7 @@ def render_empower_portal_html() -> str:
       const dashboard = document.getElementById("dashboard");
       let statusFilter = document.getElementById("statusFilters").getAttribute("data-default") || "Open";
       let latest = null;
+      let authToken = "";
 
       function esc(value) {
         return String(value == null ? "" : value).replace(/[&<>"']/g, function (ch) {
@@ -345,6 +404,73 @@ __BLOOM_FRAME__
         });
       }
 
+      function postLink(action, enroll, opp) {
+        if (!authToken) return;
+        fetch("/api/empower_portal_link", {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + authToken,
+            Accept: "application/json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ action: action, enrollmentId: enroll, oppId: opp || "" })
+        }).then(function (response) {
+          if (!response.ok) return null;
+          return fetch("/api/empower_portal?format=json", {
+            headers: { Authorization: "Bearer " + authToken, Accept: "application/json" },
+            cache: "no-store"
+          });
+        }).then(function (response) {
+          if (!response || !response.ok) return null;
+          return response.json();
+        }).then(function (data) {
+          if (data) render(data);
+        }).catch(function () {});
+      }
+
+      function renderLinkHealth() {
+        const health = (latest && latest.linkHealth) || {};
+        const stale = document.getElementById("linkStale");
+        const banner = health.staleBanner || "";
+        stale.hidden = !banner;
+        stale.textContent = banner;
+        fill("suggestedBody", health.suggested || [], function (row) {
+          const confirm = '<button type="button" class="ep-confirm" data-enroll="' + esc(row.id) + '" data-opp="' + esc(row.suggestedOppId || "") + '">Confirm</button>';
+          const reject = '<button type="button" class="ep-reject" data-enroll="' + esc(row.id) + '">Reject</button>';
+          return [esc(row.id), esc(row.customer), esc(row.suggestedOppId), esc(row.reason), confirm + " " + reject];
+        });
+        const otherRows = (health.ghlOtherPipeline || []).concat(health.otherPipeline || []);
+        fill("otherPipelineBody", otherRows, function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.pipelineName), esc(row.oppId)];
+        });
+        fill("closedLinkBody", health.closedOrCancelled || [], function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.enrollmentStatus), esc(row.reason)];
+        });
+        fill("ghlContactBody", health.ghlContactOnly || [], function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.city), esc(row.step)];
+        });
+        fill("notInGhlBody", health.notInGhl || [], function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.city), esc(row.step)];
+        });
+        fill("unmatchedGhlBody", health.unmatchedGhl || [], function (row) {
+          return [esc(row.oppId || row.id), esc(row.ghlStage), esc(row.days), esc(row.reason)];
+        });
+        fill("stageGapBody", health.stageDisagreements || [], function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.nyhepStage), esc(row.ghlStage)];
+        });
+        const suggested = document.getElementById("suggestedBody");
+        suggested.querySelectorAll(".ep-confirm").forEach(function (button) {
+          button.addEventListener("click", function () {
+            postLink("confirm", button.getAttribute("data-enroll"), button.getAttribute("data-opp"));
+          });
+        });
+        suggested.querySelectorAll(".ep-reject").forEach(function (button) {
+          button.addEventListener("click", function () {
+            postLink("reject", button.getAttribute("data-enroll"), "");
+          });
+        });
+      }
+
       function render(data) {
         latest = data || {};
         locked.hidden = true;
@@ -387,6 +513,7 @@ __BLOOM_FRAME__
         });
         renderFilters();
         renderEnrollments();
+        renderLinkHealth();
         fill("historyBody", latest.history || [], function (row) {
           return [esc(row.checkedAt), esc(row.total), esc(row.open), esc(row.closed), esc(row.cancelled), esc(row.changeCount)];
         });
@@ -397,6 +524,7 @@ __BLOOM_FRAME__
           showLocked();
           return null;
         }
+        authToken = token;
         return fetch("/api/empower_portal?format=json", {
           headers: { Authorization: "Bearer " + token, Accept: "application/json" },
           cache: "no-store"

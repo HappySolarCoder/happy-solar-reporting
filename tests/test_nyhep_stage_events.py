@@ -20,10 +20,10 @@ API = ROOT / "api"
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(API))
 sys.path.insert(0, str(SCRIPTS))
-sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT))
 
 from metrics import nyhep_stage_events as stage
-from test_empower_portal import INGEST_SECRET, FakeDb, ingest
+from tests.test_empower_portal import INGEST_SECRET, FakeDb, ingest, invoke
 from unittest.mock import patch
 import os
 
@@ -140,8 +140,6 @@ def reference_snapshots():
 
 
 def _post(db, payload):
-    from test_empower_portal import invoke
-
     raw = json.dumps(payload).encode("utf-8")
     headers = {"X-Webhook-Secret": INGEST_SECRET, "Content-Length": str(len(raw))}
     with patch.dict(os.environ, {"NYHEP_INGEST_SECRET": INGEST_SECRET}):

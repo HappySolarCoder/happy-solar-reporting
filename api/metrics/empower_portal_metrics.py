@@ -163,6 +163,24 @@ def contains_forbidden_keys(value: object) -> bool:
     return False
 
 
+_STRIP_WORDS = _FORBIDDEN_KEY_WORDS + ("address",)
+
+
+def strip_portal_fields(value: object) -> object:
+    """Drop phone, email, contact, and address keys before a portal write."""
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            norm = _norm_key(key)
+            if any(word in norm for word in _STRIP_WORDS):
+                continue
+            cleaned[key] = strip_portal_fields(item)
+        return cleaned
+    if isinstance(value, list):
+        return [strip_portal_fields(item) for item in value]
+    return value
+
+
 def _step_label(step: object, step_status: object) -> str:
     step_text = str(step or "").strip()
     status_text = str(step_status or "").strip()
@@ -290,7 +308,7 @@ def _public_changes(changes: object) -> list[dict]:
     return rows
 
 
-def build_portal_view(payload: dict | None, events: list | None = None) -> dict[str, Any]:
+def build_portal_view(payload: dict | None, events: list | None = None, link_health: dict | None = None) -> dict[str, Any]:
     """Public view model. Phone, email, and contact keys are not copied."""
     source = payload if isinstance(payload, dict) else {}
     projects = [row for row in source.get("projects") or [] if isinstance(row, dict)]
@@ -339,4 +357,20 @@ def build_portal_view(payload: dict | None, events: list | None = None) -> dict[
         "enrollments": enrollments,
         "history": _history_rows(source.get("history")),
         "withProgram": stage["withProgram"],
+        "linkHealth": link_health if isinstance(link_health, dict) else _empty_link_health(),
+    }
+
+
+def _empty_link_health() -> dict[str, Any]:
+    return {
+        "stale": False,
+        "staleBanner": "",
+        "suggested": [],
+        "otherPipeline": [],
+        "ghlOtherPipeline": [],
+        "ghlContactOnly": [],
+        "notInGhl": [],
+        "closedOrCancelled": [],
+        "unmatchedGhl": [],
+        "stageDisagreements": [],
     }

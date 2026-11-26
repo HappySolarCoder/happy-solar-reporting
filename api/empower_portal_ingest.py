@@ -26,7 +26,7 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
-from metrics.empower_portal_metrics import build_portal_view, contains_forbidden_keys
+from metrics.empower_portal_metrics import build_portal_view, contains_forbidden_keys, strip_portal_fields
 from metrics.nyhep_stage_events import sync_stage_events
 
 
@@ -279,16 +279,16 @@ def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
     latest = {
         "snapshot": cleaned["snapshot"],
         "checkedAt": cleaned["checkedAt"],
-        "projects": cleaned["projects"],
-        "changes": cleaned["changes"],
-        "history": history,
+        "projects": strip_portal_fields(cleaned["projects"]),
+        "changes": strip_portal_fields(cleaned["changes"]),
+        "history": strip_portal_fields(history),
         "updatedAt": updated_at,
     }
     snapshot_doc = {
         "snapshot": cleaned["snapshot"],
         "checkedAt": cleaned["checkedAt"],
-        "projects": cleaned["projects"],
-        "changes": cleaned["changes"],
+        "projects": latest["projects"],
+        "changes": latest["changes"],
         "open": current["open"],
         "closed": current["closed"],
         "cancelled": current["cancelled"],
@@ -379,11 +379,19 @@ class handler(BaseHTTPRequestHandler):
         if cleaned is None:
             write_json(self, 400, {"ok": False, "error": "invalid_body"})
             return
+        matches = payload.get("matches") if isinstance(payload.get("matches"), list) else []
         try:
-            result = upsert_snapshot(get_db(), cleaned)
+            db = get_db()
+            result = upsert_snapshot(db, cleaned)
         except Exception:
             write_json(self, 500, {"ok": False, "error": "warehouse_unavailable"})
             return
+        try:
+            from empower_ghl_sync import after_ingest
+
+            result.update(after_ingest(db, cleaned, matches))
+        except Exception:
+            result["tracking"] = "skipped"
         write_json(self, 200, result)
 
 

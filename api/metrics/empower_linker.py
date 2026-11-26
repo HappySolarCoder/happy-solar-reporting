@@ -48,6 +48,8 @@ _PUBLIC_KEYS = (
     "ghlStage",
     "nyhepStage",
     "days",
+    "enrollmentStatus",
+    "priority",
 )
 
 
@@ -85,6 +87,65 @@ def names_match(left: object, right: object) -> bool:
         return True
     smaller, larger = (a, b) if len(a) <= len(b) else (b, a)
     return smaller <= larger and len(smaller) >= 2
+
+
+def _ordered_tokens(value: object) -> list[str]:
+    text = str(value or "").lower().replace(",", " ")
+    text = re.sub(r"[^a-z\s]", " ", text)
+    skip = {"jr", "sr", "ii", "iii"}
+    return [token for token in text.split() if token and token not in skip]
+
+
+def name_parts(value: object) -> tuple[str, str]:
+    """First name and last name. 'Last, First' and 'First Last' both work."""
+    raw = str(value or "").strip()
+    if "," in raw:
+        last_raw, first_raw = raw.split(",", 1)
+        firsts = _ordered_tokens(first_raw)
+        lasts = _ordered_tokens(last_raw)
+    else:
+        tokens = _ordered_tokens(raw)
+        if len(tokens) < 2:
+            return "", ""
+        firsts = tokens[:1]
+        lasts = tokens[-1:]
+    return (firsts[0] if firsts else "", lasts[-1] if lasts else "")
+
+
+def edit_distance(left: str, right: str) -> int:
+    if left == right:
+        return 0
+    if not left:
+        return len(right)
+    if not right:
+        return len(left)
+    previous = list(range(len(right) + 1))
+    for index, char in enumerate(left, 1):
+        current = [index]
+        for other_index, other in enumerate(right, 1):
+            current.append(
+                min(current[-1] + 1, previous[other_index] + 1, previous[other_index - 1] + (char != other))
+            )
+        previous = current
+    return previous[-1]
+
+
+def names_suggest(left: object, right: object) -> bool:
+    """Exact token match, or the same first name and a last name one edit away.
+
+    Callers must keep this as a suggestion. It never authorizes an automatic link.
+    """
+    if names_match(left, right):
+        return True
+    first_left, last_left = name_parts(left)
+    first_right, last_right = name_parts(right)
+    if not first_left or first_left != first_right or not last_left or not last_right:
+        return False
+    distance = edit_distance(last_left, last_right)
+    if distance <= 1:
+        return True
+    longest = max(len(last_left), len(last_right))
+    return longest > 0 and (1 - distance / longest) >= 0.85
 
 
 def street_number(value: object) -> str:
@@ -306,6 +367,8 @@ def match_job(
     existing: dict | None = None,
     *,
     now: str = "",
+    opener=None,
+    location_id: str = "",
 ) -> dict:
     """Stop at the first match. Address and name stay suggestions."""
     contacts = contacts or {}
@@ -404,10 +467,164 @@ def match_job(
     if customer:
         for opp in empower + others:
             contact = _contact_of(opp, contacts)
-            if any(names_match(customer, candidate) for candidate in _names(opp, contact)):
+            if any(names_suggest(customer, candidate) for candidate in _names(opp, contact)):
                 return _suggested(body, opp, "name", "name")
 
-    # A contact with no opportunity is not an Empower+ link.
+    found = find_contact_without_empower_opp(match, customer, opener=opener, location_id=location_id)
+    if found is not None:
+        return _classify_contact_search(body, found)
+    return body
+
+
+def _ghl_readonly_get(path: str, params: dict, *, opener, location_id: str) -> dict:
+    """GET only. A missing opener does not call the network."""
+    from urllib.parse import urlencode
+    import urllib.request
+
+    from metrics.empower_ids import GHL_API_VERSION, GHL_LOCATION_ID_DEFAULT
+
+    if opener is None:
+        return {}
+    query = {key: value for key, value in params.items() if value}
+    if "locationId" not in query and "location_id" not in query:
+        if path.startswith("/contacts"):
+            query["locationId"] = location_id or GHL_LOCATION_ID_DEFAULT
+        else:
+            query["location_id"] = location_id or GHL_LOCATION_ID_DEFAULT
+    url = "https://services.leadconnectorhq.com" + path
+    if query:
+        url = url + "?" + urlencode(query)
+    headers = {"Version": GHL_API_VERSION, "Accept": "application/json"}
+    import os
+
+    api_key = (os.environ.get("GHL_API_KEY") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    if request.get_method() != "GET":
+        raise RuntimeError("contact search is read-only")
+    payload = opener(request)
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, bytes):
+        import json
+        return json.loads(payload.decode("utf-8") or "{}")
+    return {}
+
+
+def _pick_contact(rows: list, kind: str, query: str) -> dict | None:
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if kind == "phone" and query in _phones({}, row):
+            return row
+        if kind == "email" and query in _emails({}, row):
+            return row
+        if kind == "name":
+            candidate = " ".join(
+                part
+                for part in (
+                    _text(row.get("firstName") or row.get("first_name")),
+                    _text(row.get("lastName") or row.get("last_name")),
+                )
+                if part
+            ) or _text(row.get("name"))
+            if candidate and names_suggest(query, candidate):
+                return row
+    return None
+
+
+def readonly_opener_from_env():
+    """Live GET opener only when GHL_API_KEY is set. Otherwise matching stays local."""
+    import json
+    import os
+    import urllib.request
+
+    if not (os.environ.get("GHL_API_KEY") or "").strip():
+        return None
+
+    def opener(request):
+        if request.get_method() != "GET":
+            raise RuntimeError("contact search is read-only")
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+
+    return opener
+
+
+def find_contact_without_empower_opp(match: dict, customer: str, *, opener=None, location_id: str = "") -> dict | None:
+    """Search contacts by phone, then email, then name. Read-only GETs."""
+    if opener is None:
+        return None
+    queries: list[tuple[str, str]] = []
+    phone = ""
+    for key in ("phone", "altPhone", "alt_phone"):
+        phone = normalize_phone(match.get(key))
+        if phone:
+            break
+    if phone:
+        queries.append(("phone", phone))
+    mail = normalize_email(match.get("email") or match.get("applicantEmail"))
+    if mail:
+        queries.append(("email", mail))
+    if customer:
+        queries.append(("name", customer))
+    for kind, query in queries:
+        payload = _ghl_readonly_get("/contacts/", {"query": query}, opener=opener, location_id=location_id)
+        chosen = _pick_contact(payload.get("contacts") or [], kind, query)
+        if chosen is None:
+            continue
+        contact_id = _text(chosen.get("id"))
+        opps_payload = _ghl_readonly_get(
+            "/opportunities/search",
+            {"contact_id": contact_id},
+            opener=opener,
+            location_id=location_id,
+        )
+        return {"method": kind, "contact": chosen, "opportunities": opps_payload.get("opportunities") or []}
+    return None
+
+
+def _classify_contact_search(body: dict, found: dict) -> dict:
+    contact = found.get("contact") or {}
+    method = found.get("method") or "name"
+    contact_id = _text(contact.get("id"))
+    opportunities = [row for row in found.get("opportunities") or [] if isinstance(row, dict)]
+    empower = [row for row in opportunities if _pipeline_id(row) == EMPOWER_PIPELINE_ID]
+    others = [row for row in opportunities if _pipeline_id(row) and _pipeline_id(row) != EMPOWER_PIPELINE_ID]
+    if empower:
+        if method == "name":
+            return _suggested(body, empower[0], "name", "name")
+        return _linked(body, empower[0], method, other=False, reason="same pipeline")
+    body["contact_id"] = contact_id
+    body["method"] = method
+    if others:
+        opp = others[0]
+        body.update(
+            {
+                "opp_id": None,
+                "pipeline_id": _pipeline_id(opp),
+                "pipeline_name": _text(opp.get("pipeline_name") or opp.get("pipelineName")) or "other pipeline",
+                "suggested_opp_id": _opp_id(opp),
+                "confidence": "suggested",
+                "status": "unmatched_nyhep",
+                "other_pipeline": True,
+                "bucket": "ghl_other_pipeline",
+                "suggested_reason": _text(opp.get("pipeline_name") or opp.get("pipelineName")) or "other pipeline",
+            }
+        )
+        return body
+    body.update(
+        {
+            "opp_id": None,
+            "suggested_opp_id": None,
+            "confidence": "suggested",
+            "status": "unmatched_nyhep",
+            "other_pipeline": False,
+            "bucket": "ghl_contact_only",
+            "suggested_reason": "ghl record only",
+        }
+    )
     return body
 
 
@@ -475,7 +692,15 @@ def sync_links(
         if not enrollment_id:
             continue
         prior = existing.get(enrollment_id)
-        body = match_job(project, by_match.get(enrollment_id), opps, contacts, prior, now=now)
+        body = match_job(
+            project,
+            by_match.get(enrollment_id),
+            opps,
+            contacts,
+            prior,
+            now=now,
+            opener=readonly_opener_from_env(),
+        )
         if _same_link(prior, body):
             continue
         changed.append((link_doc_id(enrollment_id), body))
@@ -666,17 +891,17 @@ def build_link_health(
 
     suggested = []
     other_pipeline = []
+    ghl_other_pipeline = []
     contact_only = []
     not_in_ghl = []
+    closed_or_cancelled = []
     disagreements = []
 
     for project in projects:
         if not isinstance(project, dict):
             continue
-        if _text(project.get("status")).lower() not in {"open", "active", ""}:
-            status = _text(project.get("status")).lower()
-            if status and status not in {"open", "active"}:
-                continue
+        enrollment_status = _text(project.get("status")).lower()
+        closed = enrollment_status in {"closed", "completed", "complete", "cancelled", "canceled"}
         enrollment_id = _text(project.get("id"))
         link = by_enroll.get(enrollment_id) or {}
         opp = opps_by_id.get(_text(link.get("opp_id") or link.get("suggested_opp_id")))
@@ -687,6 +912,29 @@ def build_link_health(
             "step": _text(project.get("step")),
         }
         status = _text(link.get("status"))
+        empower_linked = (
+            status == "linked"
+            and not link.get("other_pipeline")
+            and _text(link.get("pipeline_id")) in {"", EMPOWER_PIPELINE_ID}
+            and _text(link.get("opp_id"))
+        )
+        if closed:
+            if not empower_linked:
+                label = "Cancelled" if enrollment_status in {"cancelled", "canceled"} else "Closed"
+                closed_or_cancelled.append(
+                    _public_row(
+                        {
+                            **base,
+                            "enrollmentStatus": label,
+                            "suggestedOppId": _text(link.get("suggested_opp_id")),
+                            "reason": _text(link.get("suggested_reason")) or "missing match",
+                            "priority": "low",
+                        }
+                    )
+                )
+            continue
+        if enrollment_status not in {"open", "active", ""}:
+            continue
         if status == "needs_confirmation":
             suggested.append(
                 _public_row(
@@ -694,6 +942,23 @@ def build_link_health(
                         **base,
                         "suggestedOppId": _text(link.get("suggested_opp_id")),
                         "reason": _text(link.get("suggested_reason")) or "needs confirmation",
+                    }
+                )
+            )
+            continue
+        if link.get("bucket") == "ghl_contact_only" or (
+            _text(link.get("contact_id")) and not _text(link.get("opp_id")) and not link.get("other_pipeline")
+        ):
+            contact_only.append(_public_row(base))
+            continue
+        if link.get("bucket") == "ghl_other_pipeline":
+            ghl_other_pipeline.append(
+                _public_row(
+                    {
+                        **base,
+                        "oppId": _text(link.get("suggested_opp_id") or link.get("opp_id")),
+                        "pipelineName": _text(link.get("pipeline_name")) or "other pipeline",
+                        "reason": _text(link.get("suggested_reason")) or "other pipeline",
                     }
                 )
             )
@@ -728,9 +993,6 @@ def build_link_health(
                         }
                     )
                 )
-            continue
-        if _text(link.get("contact_id")) and not _text(link.get("opp_id")):
-            contact_only.append(_public_row(base))
             continue
         not_in_ghl.append(_public_row(base))
 
@@ -767,8 +1029,10 @@ def build_link_health(
         "staleBanner": banner,
         "suggested": suggested,
         "otherPipeline": other_pipeline,
+        "ghlOtherPipeline": ghl_other_pipeline,
         "ghlContactOnly": contact_only,
         "notInGhl": not_in_ghl,
+        "closedOrCancelled": closed_or_cancelled,
         "unmatchedGhl": unmatched_ghl,
         "stageDisagreements": disagreements,
     }
@@ -780,8 +1044,10 @@ def empty_link_health() -> dict[str, Any]:
         "staleBanner": "",
         "suggested": [],
         "otherPipeline": [],
+        "ghlOtherPipeline": [],
         "ghlContactOnly": [],
         "notInGhl": [],
+        "closedOrCancelled": [],
         "unmatchedGhl": [],
         "stageDisagreements": [],
     }

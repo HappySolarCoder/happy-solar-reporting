@@ -225,6 +225,13 @@ def render_empower_portal_html() -> str:
                 <tbody id="ghlContactBody"></tbody>
               </table>
             </div>
+            <h3>Closed or cancelled, still unmatched</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Enroll #</th><th>Customer</th><th>Status</th><th>Why</th></tr></thead>
+                <tbody id="closedLinkBody"></tbody>
+              </table>
+            </div>
             <h3>Not in GHL</h3>
             <div class="tablewrap">
               <table>
@@ -432,8 +439,12 @@ __BLOOM_FRAME__
           const reject = '<button type="button" class="ep-reject" data-enroll="' + esc(row.id) + '">Reject</button>';
           return [esc(row.id), esc(row.customer), esc(row.suggestedOppId), esc(row.reason), confirm + " " + reject];
         });
-        fill("otherPipelineBody", health.otherPipeline || [], function (row) {
+        const otherRows = (health.ghlOtherPipeline || []).concat(health.otherPipeline || []);
+        fill("otherPipelineBody", otherRows, function (row) {
           return [esc(row.id), esc(row.customer), esc(row.pipelineName), esc(row.oppId)];
+        });
+        fill("closedLinkBody", health.closedOrCancelled || [], function (row) {
+          return [esc(row.id), esc(row.customer), esc(row.enrollmentStatus), esc(row.reason)];
         });
         fill("ghlContactBody", health.ghlContactOnly || [], function (row) {
           return [esc(row.id), esc(row.customer), esc(row.city), esc(row.step)];

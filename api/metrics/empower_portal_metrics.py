@@ -367,8 +367,10 @@ def _empty_link_health() -> dict[str, Any]:
         "staleBanner": "",
         "suggested": [],
         "otherPipeline": [],
+        "ghlOtherPipeline": [],
         "ghlContactOnly": [],
         "notInGhl": [],
+        "closedOrCancelled": [],
         "unmatchedGhl": [],
         "stageDisagreements": [],
     }

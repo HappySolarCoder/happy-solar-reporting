@@ -50,8 +50,11 @@ from metrics.empower_ids import (  # noqa: E402
 )
 from metrics.empower_linker import (  # noqa: E402
     build_link_health,
+    find_contact_without_empower_opp,
     guarded_set,
     match_job,
+    names_match,
+    names_suggest,
 )
 from metrics.empower_portal_metrics import contains_forbidden_keys, strip_portal_fields  # noqa: E402
 from copilot.auth import sign_bloom_token  # noqa: E402
@@ -351,6 +354,151 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(health["otherPipeline"][0]["pipelineName"], "Buffalo")
         self.assertEqual(health["suggested"], [])
 
+    def test_one_letter_last_name_is_only_a_suggestion(self):
+        self.assertFalse(names_match("Maren, Quinn", "Quinn Marenn"))
+        self.assertTrue(names_suggest("Maren, Quinn", "Quinn Marenn"))
+        self.assertEqual(names_suggest("Maren, Quinn", "Quinn Marenn"), True)
+        self.assertFalse(names_suggest("Maren, Quinn", "Quinn Marexx"))
+        self.assertFalse(names_suggest("Maren, Quinn", "Casey Marenn"))
+        opps = [_opp("opp-near", EMPOWER_PIPELINE_ID, "c-near")]
+        contacts = {"c-near": _contact("c-near", firstName="Quinn", lastName="Marenn")}
+        suggested = match_job(
+            {"id": "E-NEAR", "customer": "Maren, Quinn", "status": "Open"},
+            {},
+            opps,
+            contacts,
+        )
+        self.assertEqual(suggested["method"], "name")
+        self.assertEqual(suggested["confidence"], "suggested")
+        self.assertEqual(suggested["status"], "needs_confirmation")
+        self.assertIsNone(suggested["opp_id"])
+        self.assertEqual(suggested["suggested_opp_id"], "opp-near")
+
+        health = build_link_health(
+            [
+                {"id": "E-NEAR", "customer": "Nia Sample", "status": "Open", "step": "Workscope Review"},
+                {"id": "E-SHUT", "customer": "Remy Review", "status": "Closed", "step": "Payment"},
+                {"id": "E-STOP", "customer": "Casey Assign", "status": "Cancelled", "step": "Payment"},
+                {"id": "E-KEPT", "customer": "Wynn Scope", "status": "Closed", "step": "Payment"},
+            ],
+            [
+                suggested,
+                {
+                    "enrollment_id": "E-KEPT",
+                    "status": "linked",
+                    "opp_id": "opp-kept",
+                    "pipeline_id": EMPOWER_PIPELINE_ID,
+                    "other_pipeline": False,
+                },
+            ],
+            opps,
+            as_of=date(2026, 11, 17),
+            today=date(2026, 11, 18),
+        )
+        closed_ids = [row["id"] for row in health["closedOrCancelled"]]
+        self.assertEqual(closed_ids, ["E-SHUT", "E-STOP"])
+        self.assertTrue(all(row["priority"] == "low" for row in health["closedOrCancelled"]))
+        self.assertNotIn("E-KEPT", closed_ids)
+        self.assertNotIn("E-NEAR", closed_ids)
+        self.assertIn("E-NEAR", [row["id"] for row in health["suggested"]])
+
+
+class ContactSearchTests(unittest.TestCase):
+    def _opener(self, routes):
+        calls = []
+
+        def opener(request):
+            self.assertEqual(request.get_method(), "GET")
+            calls.append(request.full_url)
+            for needle, payload in routes:
+                if needle in request.full_url:
+                    return payload
+            return {"contacts": [], "opportunities": []}
+
+        opener.calls = calls
+        return opener
+
+    def test_phone_then_email_then_name_are_read_only_gets(self):
+        solo = self._opener(
+            [
+                ("query=5552223333", {"contacts": [{"id": "c-solo", "phone": "5552223333"}]}),
+                ("contact_id=c-solo", {"opportunities": []}),
+            ]
+        )
+        found = find_contact_without_empower_opp(
+            {"phone": "555-222-3333", "email": "solo@example.com"},
+            "Nia Sample",
+            opener=solo,
+        )
+        self.assertEqual(found["method"], "phone")
+        self.assertEqual(found["contact"]["id"], "c-solo")
+        self.assertTrue(all("contacts/" in url or "opportunities/search" in url for url in solo.calls))
+        self.assertEqual(len(solo.calls), 2)
+        self.assertNotIn("solo@example.com", solo.calls[0])
+
+        other = self._opener(
+            [
+                ("query=other%40example.com", {"contacts": [{"id": "c-other", "email": "other@example.com"}]}),
+                (
+                    "contact_id=c-other",
+                    {
+                        "opportunities": [
+                            {
+                                "id": "opp-buffalo",
+                                "pipelineId": BUFFALO,
+                                "contactId": "c-other",
+                                "pipeline_name": "Buffalo",
+                            }
+                        ]
+                    },
+                ),
+            ]
+        )
+        classified = match_job(
+            {"id": "E-OTHER", "customer": "Nia Sample", "status": "Open"},
+            {"email": "other@example.com"},
+            [],
+            {},
+            opener=other,
+        )
+        self.assertEqual(classified["bucket"], "ghl_other_pipeline")
+        self.assertEqual(classified["status"], "unmatched_nyhep")
+        self.assertIsNone(classified["opp_id"])
+        self.assertEqual(classified["suggested_opp_id"], "opp-buffalo")
+        self.assertTrue(all(request_method == "GET" for request_method in ["GET"]))
+        self.assertTrue(all("POST" not in url.split("?")[0] for url in other.calls))
+
+        named = self._opener(
+            [
+                ("query=Maren%2C+Quinn", {"contacts": [{"id": "c-name", "firstName": "Quinn", "lastName": "Marenn"}]}),
+                ("contact_id=c-name", {"opportunities": []}),
+            ]
+        )
+        name_hit = match_job(
+            {"id": "E-NAME2", "customer": "Maren, Quinn", "status": "Open"},
+            {},
+            [],
+            {},
+            opener=named,
+        )
+        self.assertEqual(name_hit["bucket"], "ghl_contact_only")
+        self.assertEqual(name_hit["method"], "name")
+        self.assertEqual(name_hit["confidence"], "suggested")
+        self.assertNotEqual(name_hit["status"], "linked")
+        health = build_link_health(
+            [{"id": "E-OTHER", "customer": "Nia Sample", "status": "Open", "city": "Buffalo", "step": "Enrollment Acceptance"},
+             {"id": "E-NAME2", "customer": "Nia Sample", "status": "Open", "city": "Buffalo", "step": "Enrollment Acceptance"}],
+            [classified, name_hit],
+            [],
+            as_of=date(2026, 11, 17),
+            today=date(2026, 11, 18),
+        )
+        public = json.dumps(health).lower()
+        self.assertNotIn("phone", public)
+        self.assertNotIn("email", public)
+        self.assertEqual(health["ghlOtherPipeline"][0]["id"], "E-OTHER")
+        self.assertEqual(health["ghlContactOnly"][0]["id"], "E-NAME2")
+
 
 def portal_metrics_validate(payload):
     from empower_portal_ingest import validate_payload
@@ -625,6 +773,9 @@ class AlertTests(unittest.TestCase):
         final = evaluate_jobs([projects[4]], [], [], [], [], date(2026, 10, 16))
         self.assertEqual(final[0]["rule_id"], "install_scheduled")
         self.assertEqual(final[0]["severity"], "red")
+        closed = dict(projects[1])
+        closed["status"] = "Closed"
+        self.assertEqual(evaluate_jobs([closed], [], [], [events[0]], [], date(2026, 11, 10)), [])
 
         calls = []
 

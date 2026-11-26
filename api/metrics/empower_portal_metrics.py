@@ -175,7 +175,7 @@ def _history_rank(entry: dict) -> tuple:
     snapshot = str(entry.get("snapshot") or "")
     day = snapshot[:10]
     suffix = snapshot.split("_", 1)[1].lower() if "_" in snapshot else ""
-    period = {"am": 1, "pm": 2}.get(suffix, 0)
+    period = {"am": 1, "pm": 2, "eod": 3}.get(suffix, 0)
     return (day, period, snapshot)
 
 
@@ -290,7 +290,7 @@ def _public_changes(changes: object) -> list[dict]:
     return rows
 
 
-def build_portal_view(payload: dict | None) -> dict[str, Any]:
+def build_portal_view(payload: dict | None, events: list | None = None) -> dict[str, Any]:
     """Public view model. Phone, email, and contact keys are not copied."""
     source = payload if isinstance(payload, dict) else {}
     projects = [row for row in source.get("projects") or [] if isinstance(row, dict)]
@@ -300,6 +300,11 @@ def build_portal_view(payload: dict | None) -> dict[str, Any]:
     closed_count = statuses.count("Closed")
     cancelled_count = statuses.count("Cancelled")
     waiting = _waiting_rows(projects, as_of)
+    from metrics.nyhep_stage_events import attach_timelines, with_program_rows
+
+    event_rows = events if isinstance(events, list) else []
+    enrollments = attach_timelines(_enrollment_rows(projects), event_rows, as_of)
+    stage = {"withProgram": with_program_rows(event_rows, projects, as_of)}
     overdue = sum(1 for row in waiting if row["tone"] == "danger")
     past = sum(1 for row in projects if is_past_workscope(row.get("step"), row.get("status")))
     return {
@@ -331,6 +336,7 @@ def build_portal_view(payload: dict | None) -> dict[str, Any]:
         "changes": _public_changes(source.get("changes")),
         "stages": _stage_rows(projects),
         "waiting": waiting,
-        "enrollments": _enrollment_rows(projects),
+        "enrollments": enrollments,
         "history": _history_rows(source.get("history")),
+        "withProgram": stage["withProgram"],
     }

@@ -5,6 +5,8 @@
 Weekday box routine posts the NYHEP EmPower+ snapshot. The shared secret is
 NYHEP_INGEST_SECRET, sent as Authorization: Bearer or X-Webhook-Secret.
 GET never writes. Re-posting one snapshot replaces that history row.
+After the latest and snapshot documents are written, open stage events in
+``nyhep_empower_stage_events`` are moved forward for this check only.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
 from metrics.empower_portal_metrics import build_portal_view, contains_forbidden_keys
+from metrics.nyhep_stage_events import sync_stage_events
 
 
 ENV_NAME = "NYHEP_INGEST_SECRET"
@@ -47,6 +50,9 @@ _PROJECT_FIELDS = (
     "initialProcess",
     "tier",
     "installer",
+    "program",
+    "projectType",
+    "todoStep",
 )
 _CHANGE_FIELDS = ("id", "customer", "change")
 
@@ -123,6 +129,9 @@ def _clean_project(row: dict) -> dict:
         cleaned["id"] = _clean_text(cleaned.get("id"), 80)
     if "customer" in cleaned:
         cleaned["customer"] = _clean_text(cleaned.get("customer"), 200)
+    for field in ("program", "projectType", "todoStep"):
+        if field in cleaned:
+            cleaned[field] = _clean_text(cleaned.get(field), 200)
     return cleaned
 
 
@@ -246,24 +255,24 @@ def merge_history(existing: object, incoming: object, current: dict) -> list[dic
     return items
 
 
-def _existing_history(db, collection: str, doc_id: str) -> list:
+def _existing_latest(db) -> dict:
     try:
-        snap = db.collection(collection).document(doc_id).get()
+        snap = db.collection(LATEST_COLLECTION).document(LATEST_DOC_ID).get()
     except Exception:
-        return []
+        return {}
     if not getattr(snap, "exists", False):
-        return []
+        return {}
     data = snap.to_dict() or {}
-    history = data.get("history") if isinstance(data, dict) else None
-    return history if isinstance(history, list) else []
+    return data if isinstance(data, dict) else {}
 
 
 def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
     updated_at = moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existing = _existing_latest(db)
     current = _computed_history_entry(cleaned)
     history = merge_history(
-        _existing_history(db, LATEST_COLLECTION, LATEST_DOC_ID),
+        existing.get("history") if existing else [],
         cleaned["history"],
         current,
     )
@@ -288,6 +297,7 @@ def upsert_snapshot(db, cleaned: dict, *, now: datetime | None = None) -> dict:
     }
     db.collection(LATEST_COLLECTION).document(LATEST_DOC_ID).set(latest)
     db.collection(SNAPSHOT_COLLECTION).document(cleaned["snapshot"]).set(snapshot_doc)
+    sync_stage_events(db, cleaned["projects"], cleaned["snapshot"], cleaned["checkedAt"])
     return {
         "ok": True,
         "snapshot": cleaned["snapshot"],

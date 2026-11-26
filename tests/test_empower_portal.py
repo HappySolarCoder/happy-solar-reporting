@@ -127,9 +127,13 @@ class FakeDb:
     def __init__(self):
         self.docs = {}
         self.writes = []
+        self.queries = []
 
     def collection(self, name):
         return _FakeCollection(self, name)
+
+    def batch(self):
+        return _FakeBatch(self)
 
 
 class _FakeCollection:
@@ -140,14 +144,63 @@ class _FakeCollection:
     def document(self, doc_id):
         return _FakeDoc(self.db, self.name, doc_id)
 
+    def where(self, field, op, value):
+        self.db.queries.append((self.name, field, op, value))
+        return _FakeQuery(self.db, self.name, [(field, op, value)])
+
+
+class _FakeQuery:
+    def __init__(self, db: FakeDb, name: str, filters: list):
+        self.db = db
+        self.name = name
+        self.filters = filters
+
+    def where(self, field, op, value):
+        self.db.queries.append((self.name, field, op, value))
+        return _FakeQuery(self.db, self.name, self.filters + [(field, op, value)])
+
+    def order_by(self, field, direction=None):
+        return self
+
+    def stream(self):
+        rows = []
+        for (collection, doc_id), data in self.db.docs.items():
+            if collection != self.name or not isinstance(data, dict):
+                continue
+            if all(_query_match(data.get(field), op, value) for field, op, value in self.filters):
+                rows.append(_FakeSnap(data, doc_id))
+        return rows
+
+
+class _FakeBatch:
+    def __init__(self, db: FakeDb):
+        self.db = db
+        self.ops = []
+
+    def set(self, ref, payload, merge=False):
+        self.ops.append((ref, payload, merge))
+
+    def commit(self):
+        for ref, payload, merge in self.ops:
+            ref.set(payload, merge=merge)
+
+
+def _query_match(stored, op, value):
+    if op == "==":
+        return stored == value
+    if op == ">=":
+        return stored is not None and stored >= value
+    return False
+
 
 class _FakeDoc:
     def __init__(self, db: FakeDb, collection: str, doc_id: str):
         self.db = db
+        self.id = doc_id
         self.key = (collection, doc_id)
 
     def get(self):
-        return _FakeSnap(self.db.docs.get(self.key))
+        return _FakeSnap(self.db.docs.get(self.key), self.id)
 
     def set(self, payload, merge=False):
         self.db.writes.append({"key": self.key, "merge": merge})
@@ -160,8 +213,9 @@ class _FakeDoc:
 
 
 class _FakeSnap:
-    def __init__(self, data):
+    def __init__(self, data, doc_id=None):
         self.exists = data is not None
+        self.id = doc_id
         self._data = data
 
     def to_dict(self):
@@ -314,7 +368,6 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(by_id["E-21"]["stepLabel"], "Install Started")
         self.assertEqual(view["waiting"][0]["stepLabel"], "Workscope Submission (New)")
 
-
 class IngestTests(unittest.TestCase):
     def _post(self, payload, headers):
         raw = json.dumps(payload).encode("utf-8")
@@ -375,7 +428,12 @@ class IngestTests(unittest.TestCase):
         self.assertNotIn(INGEST_SECRET, json.dumps(list(db.docs.values())))
         snapshot_keys = [key for key in db.docs if key[0] == ingest.SNAPSHOT_COLLECTION]
         self.assertEqual(snapshot_keys, [(ingest.SNAPSHOT_COLLECTION, "2026-11-17_pm")])
-        self.assertEqual(len(db.writes), 4)
+        self.assertNotIn("stageHistory", latest)
+        self.assertNotIn("stageChanges", db.docs[(ingest.SNAPSHOT_COLLECTION, "2026-11-17_pm")])
+        event_docs = [key for key in db.docs if key[0] == "nyhep_empower_stage_events"]
+        self.assertEqual(len(event_docs), len(FIXTURE["projects"]))
+        # Two latest/snapshot writes per post, plus one event document per enrollment on the first post only.
+        self.assertEqual(len(db.writes), 4 + len(FIXTURE["projects"]))
 
     def test_phone_email_and_contact_are_rejected(self):
         db = FakeDb()
@@ -432,12 +490,16 @@ class PageTests(unittest.TestCase):
         self.assertIn('data.action === "token-unavailable"', html)
         self.assertIn('data-default="Open"', html)
         self.assertIn("Changed since the last check", html)
+        self.assertIn("With the program", html)
+        self.assertNotIn("Stage history", html)
         self.assertIn("Open projects by stage", html)
         self.assertIn("Waiting on us, by due date", html)
         self.assertIn("All enrollments", html)
         self.assertIn("Check history", html)
         self.assertIn('href="/api/empower_portal"', html)
         self.assertIn("esc(row.stepLabel || row.step)", html)
+        self.assertIn("withProgram", html)
+        self.assertIn("ep-history", html)
         self.assertEqual(
             Path(empower_portal.__file__).resolve(),
             (API / "empower_portal.py").resolve(),
@@ -464,7 +526,8 @@ class PageTests(unittest.TestCase):
 
         status, headers, raw = allowed({})
         self.assertEqual(status, 401)
-        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(headers["Cache-Control"], "private, max-age=300")
+        self.assertEqual(headers["Vary"], "Authorization")
         self.assertEqual(headers["Content-Security-Policy"], FRAME_ANCESTORS)
         self.assertNotIn("*.vercel.app", headers["Content-Security-Policy"])
         self.assertEqual(json.loads(raw.decode()), {"ok": False, "error": "unauthorized"})
@@ -498,7 +561,8 @@ class PageTests(unittest.TestCase):
         for role in ("manager", "coach"):
             status, headers, raw = allowed(bloom_headers(role))
             self.assertEqual(status, 200, role)
-            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertEqual(headers["Cache-Control"], "private, max-age=300")
+            self.assertEqual(headers["Vary"], "Authorization")
             self.assertEqual(headers["Content-Security-Policy"], FRAME_ANCESTORS)
             body = json.loads(raw.decode())
             self.assertEqual(body["metrics"]["overdue"], 1)
